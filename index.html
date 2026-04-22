@@ -1,0 +1,1702 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Editor 2D</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='%23ffffff' stroke='%232A2D34' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z'/%3E%3C/svg%3E") 4 4, auto;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        min-height: 100vh;
+        overflow: hidden;
+        background: #ffffff;
+        color: #f5f7fb;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      .editor-page {
+        --left-rail-width: 72px;
+        --left-drawer-width: 265px;
+        --left-panel-width: calc(var(--left-rail-width) + var(--left-drawer-width));
+        --right-panel-width: 245px;
+
+        position: relative;
+        width: 100%;
+        min-height: 100vh;
+      }
+
+      .editor-page.left-panel-collapsed {
+        --left-panel-width: var(--left-rail-width);
+      }
+
+      .editor-stage {
+        min-height: 100vh;
+        margin: 0 var(--right-panel-width) 0 var(--left-panel-width);
+        background: #ffffff;
+        transition: margin 180ms ease;
+      }
+
+      .side-panel {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        z-index: 1000;
+        width: 245px;
+        height: 100vh;
+        background: #181A1F;
+      }
+
+      .side-panel.left-rail {
+        left: 0;
+        z-index: 1002;
+        width: var(--left-rail-width);
+        overflow: visible;
+      }
+
+      .side-panel.left-drawer {
+        left: var(--left-rail-width);
+        z-index: 1001;
+        width: var(--left-drawer-width);
+        overflow: hidden;
+        transition: transform 180ms ease;
+      }
+
+      .editor-page.left-panel-collapsed .side-panel.left-drawer {
+        pointer-events: none;
+        transform: translateX(-100%);
+      }
+
+      .panel-toggle-bg {
+        position: fixed;
+        top: 12px;
+        left: calc(var(--left-rail-width) + var(--left-drawer-width) - 22px);
+        z-index: 999;
+        width: 44px;
+        height: 44px;
+        border-radius: 9px;
+        background: #181A1F;
+        pointer-events: none;
+        transition: left 180ms ease;
+      }
+
+      .editor-page.left-panel-collapsed .panel-toggle-bg {
+        left: calc(var(--left-rail-width) - 22px);
+      }
+
+      .side-panel.right {
+        right: 0;
+        width: var(--right-panel-width);
+      }
+
+      .panel-toggle {
+        position: absolute;
+        top: 12px;
+        right: calc(0px - var(--left-drawer-width) - 22px);
+        z-index: 2;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: #c3c8d1;
+        transition: right 180ms ease;
+      }
+
+      .editor-page.left-panel-collapsed .panel-toggle {
+        right: -22px;
+      }
+
+      .panel-toggle:hover,
+      .panel-toggle:focus-visible {
+        color: #ffffff;
+      }
+
+      .panel-toggle svg {
+        width: 24px;
+        height: 24px;
+        fill: none;
+        stroke: currentColor;
+      }
+
+      .panel-title {
+        position: absolute;
+        top: 12px;
+        z-index: 1;
+        left: 9px;
+        right: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: 9px;
+        overflow: visible;
+        background: transparent;
+        color: #dfe3ea;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .panel-title:hover,
+      .panel-title:focus-visible {
+        background: rgb(44, 48, 58);
+        color: #ffffff;
+      }
+
+      .drawer-title {
+        position: absolute;
+        top: 12px;
+        left: 32px;
+        right: 16px;
+        display: flex;
+        align-items: center;
+        height: 44px;
+        overflow: hidden;
+        color: #dfe3ea;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .drawer-search {
+        position: absolute;
+        top: 72px;
+        left: 16px;
+        right: 16px;
+        display: flex;
+        align-items: center;
+        height: 38px;
+        border-radius: 9px;
+        background: rgb(44, 48, 58);
+      }
+
+      .drawer-search input {
+        width: 100%;
+        height: 100%;
+        padding: 0 38px 0 12px;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: #dfe3ea;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .drawer-search input::placeholder {
+        color: #8f96a3;
+      }
+
+      .drawer-search input::-webkit-search-cancel-button {
+        appearance: none;
+      }
+
+      .drawer-search input::-ms-clear {
+        display: none;
+      }
+
+      .drawer-search-clear {
+        position: absolute;
+        right: 7px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #c3c8d1;
+      }
+
+      .drawer-search input:not(:placeholder-shown) + .drawer-search-clear {
+        display: inline-flex;
+      }
+
+      .drawer-search-clear:hover,
+      .drawer-search-clear:focus-visible {
+        color: #ffffff;
+      }
+
+      .drawer-search-clear svg {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+      }
+
+      .drawer-section {
+        width: 100%;
+      }
+
+      .drawer-section.hidden {
+        display: none;
+      }
+
+      .drawer-section + .drawer-section {
+        margin-top: 24px;
+      }
+
+      .drawer-content {
+        position: absolute;
+        top: 136px;
+        left: 16px;
+        right: 2px;
+        bottom: 16px;
+        overflow-y: auto;
+        padding-right: 20px;
+        scrollbar-color: rgb(68, 73, 86) transparent;
+        scrollbar-width: thin;
+        user-select: none;
+      }
+
+      .drawer-content::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .drawer-content::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .drawer-content::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: rgb(68, 73, 86);
+      }
+
+      .drawer-content::-webkit-scrollbar-thumb:hover {
+        background: #c3c8d1;
+      }
+
+      .drawer-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 24px;
+      }
+
+      .drawer-section-title {
+        color: #dfe3ea;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0;
+        line-height: 1;
+      }
+
+      .drawer-section-link {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #8f96a3;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0;
+        line-height: 1;
+        text-decoration: none;
+      }
+
+      .drawer-section-link:hover,
+      .drawer-section-link:focus-visible {
+        color: #dfe3ea;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      .drawer-image-container {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        width: 100%;
+        min-height: 120px;
+        margin-top: 10px;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+        touch-action: pan-y;
+        user-select: none;
+      }
+
+      .drawer-image-container::-webkit-scrollbar {
+        display: none;
+      }
+
+      .drawer-image-container.dragging {
+        scroll-behavior: auto;
+      }
+
+      .drawer-content.dragging {
+        scroll-behavior: auto;
+      }
+
+      .drawer-image-placeholder {
+        flex: 0 0 92px;
+        width: 92px;
+        height: 92px;
+        aspect-ratio: 1;
+        border-radius: 8px;
+        background: rgb(44, 48, 58);
+      }
+
+      .drawer-see-all-card {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 56px;
+        width: 56px;
+        height: 92px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: #c3c8d1;
+      }
+
+      .drawer-see-all-card:hover,
+      .drawer-see-all-card:focus-visible {
+        color: #ffffff;
+      }
+
+      .drawer-see-all-card svg {
+        width: 34px;
+        height: 34px;
+        fill: none;
+        stroke: currentColor;
+      }
+
+
+      .rail-tools {
+        position: absolute;
+        top: 72px;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+      }
+
+      .rail-button {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: #c3c8d1;
+      }
+
+      .rail-button:hover,
+      .rail-button:focus-visible {
+        background: rgb(44, 48, 58);
+        color: #ffffff;
+      }
+
+      .rail-button svg {
+        width: 27px;
+        height: 27px;
+        fill: none;
+        stroke: currentColor;
+      }
+
+      .toolbar-dock {
+        position: fixed;
+        left: 50%;
+        bottom: 28px;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        max-width: calc(100vw - var(--left-panel-width) - var(--right-panel-width) - 50px);
+        transform: translateX(-50%);
+      }
+
+      .bottom-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 7px;
+        width: fit-content;
+        height: 51px;
+        padding: 6px 7px;
+        border-radius: 9px;
+        background: #181A1F;
+        box-shadow:
+          0 6px 14px rgba(0, 0, 0, 0.35),
+          0 18px 44px rgba(0, 0, 0, 0.42);
+      }
+
+      .tool-button {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 37px;
+        height: 37px;
+        padding: 0;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: #c3c8d1;
+      }
+
+      .tool-button::after,
+      .rail-button::after,
+      .panel-title::after {
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 10px);
+        z-index: 20;
+        width: max-content;
+        max-width: 140px;
+        padding: 6px 8px;
+        transform: translateX(-50%) translateY(4px);
+        border-radius: 7px;
+        background: #181A1F;
+        box-shadow:
+          0 6px 14px rgba(0, 0, 0, 0.28),
+          0 14px 34px rgba(0, 0, 0, 0.28);
+        color: #dfe3ea;
+        content: attr(data-tooltip);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0;
+        line-height: 1;
+        opacity: 0;
+        pointer-events: none;
+        transition:
+          opacity 120ms ease,
+          transform 120ms ease;
+      }
+
+      .rail-button::after,
+      .panel-title::after {
+        top: 50%;
+        bottom: auto;
+        left: calc(100% + 10px);
+        transform: translateX(-4px) translateY(-50%);
+      }
+
+      .tool-button.tooltip-visible::after {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+      }
+
+      .rail-button.tooltip-visible::after,
+      .panel-title.tooltip-visible::after {
+        transform: translateX(0) translateY(-50%);
+        opacity: 1;
+      }
+
+      .tool-menu-button.open::after,
+      .tool-menu-button.open.tooltip-visible::after {
+        display: none;
+      }
+
+      .tool-button:hover,
+      .tool-button:focus-visible {
+        color: #ffffff;
+      }
+
+      .tool-button.active,
+      .tool-menu-button.open {
+        background: rgb(44, 48, 58);
+      }
+
+      .tool-button:hover,
+      .tool-button:focus-visible {
+        background: rgb(44, 48, 58);
+      }
+
+      .tool-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 1px;
+      }
+
+      .tool-menu-button {
+        width: 18px;
+        min-width: 18px;
+        border-radius: 9px;
+      }
+
+      .tool-button svg {
+        width: 25px;
+        height: 25px;
+        fill: none;
+        stroke: currentColor;
+      }
+
+      .tool-button.tool-menu-button svg {
+        width: 12px;
+        height: 12px;
+      }
+
+      .tool-menu-button {
+        position: relative;
+      }
+
+      .tool-popover {
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 12px);
+        display: none;
+        width: max-content;
+        min-width: 128px;
+        padding: 6px;
+        transform: translateX(-50%);
+        border-radius: 9px;
+        background: #181A1F;
+        box-shadow:
+          0 6px 14px rgba(0, 0, 0, 0.35),
+          0 18px 44px rgba(0, 0, 0, 0.42);
+      }
+
+      .tool-menu-button.open .tool-popover {
+        display: block;
+      }
+
+      .popover-option {
+        position: relative;
+        display: grid;
+        grid-template-columns: 18px max-content minmax(28px, 1fr);
+        align-items: center;
+        column-gap: 8px;
+        width: 100%;
+        height: 32px;
+        padding: 0 8px;
+        border-radius: 7px;
+        color: #c3c8d1;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0;
+        line-height: 32px;
+      }
+
+      .popover-option.active {
+        background: rgb(44, 48, 58);
+      }
+
+      .popover-option:hover {
+        background: rgb(44, 48, 58);
+        color: #ffffff;
+      }
+
+      .popover-option + .popover-option {
+        margin-top: 4px;
+      }
+
+      .popover-option svg {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        fill: none;
+        stroke: currentColor;
+      }
+
+      .popover-label {
+        justify-self: center;
+      }
+
+      .popover-key {
+        display: inline-grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        justify-self: end;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #8f96a3;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .popover-key:empty {
+        visibility: hidden;
+      }
+
+    </style>
+  </head>
+  <body>
+    <main class="editor-page left-panel-collapsed" aria-label="Editor 2D">
+      <div class="panel-toggle-bg" aria-hidden="true"></div>
+      <aside class="side-panel left-rail" aria-label="Pannello rapido">
+        <button class="panel-title" type="button" data-tooltip="CBOs" data-panel-title>CBOs</button>
+        <button class="panel-toggle" type="button" aria-label="Open left panel" aria-expanded="false">
+          <svg
+            class="panel-toggle-open-icon"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <path d="M15 3v18" />
+            <path d="m8 9 3 3-3 3" />
+          </svg>
+        </button>
+        <div class="rail-tools">
+          <button class="rail-button" type="button" aria-label="Templates" data-tooltip="TEMPLATE" data-rail-button>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <rect width="18" height="7" x="3" y="3" rx="1" />
+              <rect width="9" height="7" x="3" y="14" rx="1" />
+              <rect width="5" height="7" x="16" y="14" rx="1" />
+            </svg>
+          </button>
+        </div>
+      </aside>
+      <aside class="side-panel left-drawer" aria-label="Menu editor">
+        <div class="drawer-title">CLOTHING BRAND OWNER</div>
+        <label class="drawer-search" aria-label="Search">
+          <input type="search" placeholder="Search" />
+          <button class="drawer-search-clear" type="button" aria-label="Clear search">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+        </label>
+        <div class="drawer-content">
+          <section class="drawer-section" aria-label="Flames">
+            <div class="drawer-section-header">
+              <h2 class="drawer-section-title">FLAMES</h2>
+              <button class="drawer-section-link" type="button">SEE ALL</button>
+            </div>
+            <div class="drawer-image-container" aria-hidden="true">
+              <span class="drawer-image-placeholder" data-tags="flames fire hot"></span>
+              <span class="drawer-image-placeholder" data-tags="flames tribal fire"></span>
+              <span class="drawer-image-placeholder" data-tags="flames racing"></span>
+              <span class="drawer-image-placeholder" data-tags="flames gothic"></span>
+              <span class="drawer-image-placeholder" data-tags="flames streetwear"></span>
+              <span class="drawer-image-placeholder" data-tags="flames vintage"></span>
+              <button class="drawer-see-all-card" type="button" aria-label="See all Flames">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 5v14" />
+                  <path d="M21 12H7" />
+                  <path d="m15 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          <section class="drawer-section" aria-label="Y2K">
+            <div class="drawer-section-header">
+              <h2 class="drawer-section-title">Y2K</h2>
+              <button class="drawer-section-link" type="button">SEE ALL</button>
+            </div>
+            <div class="drawer-image-container" aria-hidden="true">
+              <span class="drawer-image-placeholder" data-tags="y2k chrome cyber"></span>
+              <span class="drawer-image-placeholder" data-tags="y2k tribal cyber"></span>
+              <span class="drawer-image-placeholder" data-tags="y2k star digital"></span>
+              <span class="drawer-image-placeholder" data-tags="y2k futuristic"></span>
+              <span class="drawer-image-placeholder" data-tags="y2k metal"></span>
+              <span class="drawer-image-placeholder" data-tags="y2k streetwear"></span>
+              <button class="drawer-see-all-card" type="button" aria-label="See all Y2K">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 5v14" />
+                  <path d="M21 12H7" />
+                  <path d="m15 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          <section class="drawer-section" aria-label="Spikes">
+            <div class="drawer-section-header">
+              <h2 class="drawer-section-title">SPIKES</h2>
+              <button class="drawer-section-link" type="button">SEE ALL</button>
+            </div>
+            <div class="drawer-image-container" aria-hidden="true">
+              <span class="drawer-image-placeholder" data-tags="spikes sharp punk"></span>
+              <span class="drawer-image-placeholder" data-tags="spikes metal"></span>
+              <span class="drawer-image-placeholder" data-tags="spikes thorn"></span>
+              <span class="drawer-image-placeholder" data-tags="spikes edgy"></span>
+              <span class="drawer-image-placeholder" data-tags="spikes streetwear"></span>
+              <span class="drawer-image-placeholder" data-tags="spikes gothic"></span>
+              <button class="drawer-see-all-card" type="button" aria-label="See all Spikes">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 5v14" />
+                  <path d="M21 12H7" />
+                  <path d="m15 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          <section class="drawer-section" aria-label="Pattern">
+            <div class="drawer-section-header">
+              <h2 class="drawer-section-title">PATTERN</h2>
+              <button class="drawer-section-link" type="button">SEE ALL</button>
+            </div>
+            <div class="drawer-image-container" aria-hidden="true">
+              <span class="drawer-image-placeholder" data-tags="pattern repeat texture"></span>
+              <span class="drawer-image-placeholder" data-tags="pattern abstract"></span>
+              <span class="drawer-image-placeholder" data-tags="pattern grid"></span>
+              <span class="drawer-image-placeholder" data-tags="pattern textile"></span>
+              <span class="drawer-image-placeholder" data-tags="pattern seamless"></span>
+              <span class="drawer-image-placeholder" data-tags="pattern streetwear"></span>
+              <button class="drawer-see-all-card" type="button" aria-label="See all Pattern">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 5v14" />
+                  <path d="M21 12H7" />
+                  <path d="m15 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          <section class="drawer-section" aria-label="Sparks">
+            <div class="drawer-section-header">
+              <h2 class="drawer-section-title">SPARKS</h2>
+              <button class="drawer-section-link" type="button">SEE ALL</button>
+            </div>
+            <div class="drawer-image-container" aria-hidden="true">
+              <span class="drawer-image-placeholder" data-tags="sparks shine glitter"></span>
+              <span class="drawer-image-placeholder" data-tags="sparks star glow"></span>
+              <span class="drawer-image-placeholder" data-tags="sparks magic"></span>
+              <span class="drawer-image-placeholder" data-tags="sparks chrome"></span>
+              <span class="drawer-image-placeholder" data-tags="sparks light"></span>
+              <span class="drawer-image-placeholder" data-tags="sparks y2k"></span>
+              <button class="drawer-see-all-card" type="button" aria-label="See all Sparks">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 5v14" />
+                  <path d="M21 12H7" />
+                  <path d="m15 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          <section class="drawer-section" aria-label="Skulls">
+            <div class="drawer-section-header">
+              <h2 class="drawer-section-title">SKULLS</h2>
+              <button class="drawer-section-link" type="button">SEE ALL</button>
+            </div>
+            <div class="drawer-image-container" aria-hidden="true">
+              <span class="drawer-image-placeholder" data-tags="skulls death gothic"></span>
+              <span class="drawer-image-placeholder" data-tags="skulls punk"></span>
+              <span class="drawer-image-placeholder" data-tags="skulls bones"></span>
+              <span class="drawer-image-placeholder" data-tags="skulls streetwear"></span>
+              <span class="drawer-image-placeholder" data-tags="skulls dark"></span>
+              <span class="drawer-image-placeholder" data-tags="skulls vintage"></span>
+              <button class="drawer-see-all-card" type="button" aria-label="See all Skulls">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 5v14" />
+                  <path d="M21 12H7" />
+                  <path d="m15 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+          </section>
+        </div>
+      </aside>
+      <section class="editor-stage" aria-label="Area editor"></section>
+      <aside class="side-panel right" aria-label="Pannello proprieta"></aside>
+      <div class="toolbar-dock" aria-label="Controlli editor">
+        <nav class="bottom-toolbar" aria-label="Toolbar editor">
+          <div class="tool-group" aria-label="Strumenti selezione">
+            <button class="tool-button active" type="button" aria-label="MOVE" aria-pressed="true" data-tooltip="MOVE" data-selection-primary data-tool>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />
+              </svg>
+            </button>
+            <button class="tool-button tool-menu-button" type="button" aria-label="Apri selezione" aria-pressed="false" data-tooltip="Selection tools" data-selection-menu>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+              <span class="tool-popover" aria-hidden="true">
+                <span class="popover-option active" data-selection-option data-shortcut="v" data-label="MOVE">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />
+                  </svg>
+                  <span class="popover-label">MOVE</span>
+                  <span class="popover-key">V</span>
+                </span>
+                <span class="popover-option" data-selection-option data-shortcut="h" data-label="HANDTOOL">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" />
+                    <path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" />
+                    <path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" />
+                    <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+                  </svg>
+                  <span class="popover-label">HANDTOOL</span>
+                  <span class="popover-key">H</span>
+                </span>
+                <span class="popover-option" data-selection-option data-shortcut="z" data-label="ZOOM">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+                    <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                    <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+                    <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="m16 16-1.9-1.9" />
+                  </svg>
+                  <span class="popover-label">ZOOM</span>
+                  <span class="popover-key">Z</span>
+                </span>
+              </span>
+            </button>
+          </div>
+          <div class="tool-group" aria-label="Strumenti forma">
+            <button class="tool-button" type="button" aria-label="SQUARE" aria-pressed="false" data-tooltip="SQUARE" data-shape-primary data-tool>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+              </svg>
+            </button>
+            <button class="tool-button tool-menu-button" type="button" aria-label="Apri forme" aria-pressed="false" data-tooltip="Shape tools" data-shape-menu>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+              <span class="tool-popover" aria-hidden="true">
+                <span class="popover-option active" data-shape-option data-shortcut="r" data-label="SQUARE">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                  </svg>
+                  <span class="popover-label">SQUARE</span>
+                  <span class="popover-key">R</span>
+                </span>
+                <span class="popover-option" data-shape-option data-label="CIRCLE">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                  </svg>
+                  <span class="popover-label">CIRCLE</span>
+                  <span class="popover-key"></span>
+                </span>
+                <span class="popover-option" data-shape-option data-label="TRIANGLE">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M13.73 4a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                  </svg>
+                  <span class="popover-label">TRIANGLE</span>
+                  <span class="popover-key"></span>
+                </span>
+                <span class="popover-option" data-shape-option data-label="STAR">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" />
+                  </svg>
+                  <span class="popover-label">STAR</span>
+                  <span class="popover-key"></span>
+                </span>
+              </span>
+            </button>
+          </div>
+          <div class="tool-group" aria-label="Strumenti penna">
+            <button class="tool-button" type="button" aria-label="PEN" aria-pressed="false" data-tooltip="PEN" data-draw-primary data-tool>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z" />
+                <path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18" />
+                <path d="m2.3 2.3 7.286 7.286" />
+                <circle cx="11" cy="11" r="2" />
+              </svg>
+            </button>
+            <button class="tool-button tool-menu-button" type="button" aria-label="Apri penna" aria-pressed="false" data-tooltip="Pen tools" data-draw-menu>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+              <span class="tool-popover" aria-hidden="true">
+                <span class="popover-option active" data-draw-option data-shortcut="p" data-label="PEN">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z" />
+                    <path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18" />
+                    <path d="m2.3 2.3 7.286 7.286" />
+                    <circle cx="11" cy="11" r="2" />
+                  </svg>
+                  <span class="popover-label">PEN</span>
+                  <span class="popover-key">P</span>
+                </span>
+                <span class="popover-option" data-draw-option data-shortcut="n" data-label="PENCIL">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+                    <path d="m15 5 4 4" />
+                  </svg>
+                  <span class="popover-label">PENCIL</span>
+                  <span class="popover-key">N</span>
+                </span>
+              </span>
+            </button>
+          </div>
+          <div class="tool-group" aria-label="Strumenti brush">
+            <button class="tool-button" type="button" aria-label="BRUSH" aria-pressed="false" data-tooltip="BRUSH" data-brush-primary data-tool>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m11 10 3 3" />
+                <path d="M6.5 21A3.5 3.5 0 1 0 3 17.5a2.62 2.62 0 0 1-.708 1.792A1 1 0 0 0 3 21z" />
+                <path d="M9.969 17.031 21.378 5.624a1 1 0 0 0-3.002-3.002L6.967 14.031" />
+              </svg>
+            </button>
+            <button class="tool-button tool-menu-button" type="button" aria-label="Apri brush" aria-pressed="false" data-tooltip="Brush tools">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+              <span class="tool-popover" aria-hidden="true">
+                <span class="popover-option active" data-brush-option data-shortcut="b" data-label="BRUSH">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m11 10 3 3" />
+                    <path d="M6.5 21A3.5 3.5 0 1 0 3 17.5a2.62 2.62 0 0 1-.708 1.792A1 1 0 0 0 3 21z" />
+                    <path d="M9.969 17.031 21.378 5.624a1 1 0 0 0-3.002-3.002L6.967 14.031" />
+                  </svg>
+                  <span class="popover-label">BRUSH</span>
+                  <span class="popover-key">B</span>
+                </span>
+              </span>
+            </button>
+          </div>
+          <button class="tool-button" type="button" aria-label="Testo" aria-pressed="false" data-tooltip="TYPE" data-tool>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 4v16" />
+              <path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" />
+              <path d="M9 20h6" />
+            </svg>
+          </button>
+          <button class="tool-button" type="button" aria-label="A.I" aria-pressed="false" data-tooltip="A.I" data-tool>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+              <path d="M20 2v4" />
+              <path d="M22 4h-4" />
+              <circle cx="4" cy="20" r="2" />
+            </svg>
+          </button>
+        </nav>
+        <nav class="bottom-toolbar history-toolbar" aria-label="Cronologia editor">
+          <button class="tool-button" type="button" aria-label="Indietro" aria-pressed="false" data-tooltip="UNDO">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+              <path d="m9 10-5 5 5 5" />
+            </svg>
+          </button>
+          <button class="tool-button" type="button" aria-label="Avanti" aria-pressed="false" data-tooltip="REDO">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m15 10 5 5-5 5" />
+              <path d="M4 4v7a4 4 0 0 0 4 4h12" />
+            </svg>
+          </button>
+        </nav>
+      </div>
+    </main>
+    <script>
+      const editorPage = document.querySelector(".editor-page");
+      const leftPanelToggle = document.querySelector(".panel-toggle");
+      const leftRail = document.querySelector(".left-rail");
+      const railButtons = document.querySelectorAll("[data-rail-button]");
+      const drawerSearchInput = document.querySelector(".drawer-search input");
+      const drawerSearchClear = document.querySelector(".drawer-search-clear");
+      const drawerContent = document.querySelector(".drawer-content");
+      const drawerSections = document.querySelectorAll(".drawer-section");
+      const imageRows = document.querySelectorAll(".drawer-image-container");
+      const leftPanelCloseIcon = `
+        <svg
+          class="panel-toggle-close-icon"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <rect width="18" height="18" x="3" y="3" rx="2" />
+          <path d="M15 3v18" />
+          <path d="m10 15-3-3 3-3" />
+        </svg>
+      `;
+      const leftPanelOpenIcon = `
+        <svg
+          class="panel-toggle-open-icon"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <rect width="18" height="18" x="3" y="3" rx="2" />
+          <path d="M15 3v18" />
+          <path d="m8 9 3 3-3 3" />
+        </svg>
+      `;
+      const toolButtons = document.querySelectorAll("[data-tool]");
+      const menuButtons = document.querySelectorAll(".tool-menu-button");
+      const toolbarDock = document.querySelector(".toolbar-dock");
+      const tooltipButtons = document.querySelectorAll("[data-tooltip]");
+      const tooltipDelay = 1000;
+      let tooltipTimer = null;
+      let tooltipWarm = false;
+      const selectionPrimary = document.querySelector("[data-selection-primary]");
+      const selectionOptions = document.querySelectorAll("[data-selection-option]");
+      const shapePrimary = document.querySelector("[data-shape-primary]");
+      const shapeOptions = document.querySelectorAll("[data-shape-option]");
+      const drawPrimary = document.querySelector("[data-draw-primary]");
+      const drawOptions = document.querySelectorAll("[data-draw-option]");
+      const brushPrimary = document.querySelector("[data-brush-primary]");
+      const brushOptions = document.querySelectorAll("[data-brush-option]");
+
+      railButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          railButtons.forEach((railButton) => railButton.classList.remove("active"));
+          button.classList.add("active");
+          editorPage.classList.remove("left-panel-collapsed");
+          leftPanelToggle.innerHTML = leftPanelCloseIcon;
+          leftPanelToggle.setAttribute("aria-expanded", "true");
+          leftPanelToggle.setAttribute("aria-label", "Close left panel");
+        });
+      });
+
+      drawerSearchClear.addEventListener("click", () => {
+        drawerSearchInput.value = "";
+        filterDrawerSections();
+        drawerSearchInput.focus();
+      });
+
+      function filterDrawerSections() {
+        const query = drawerSearchInput.value.trim().toLowerCase().replace(/^#/, "");
+
+        drawerSections.forEach((section) => {
+          const title = section.querySelector(".drawer-section-title").textContent.toLowerCase();
+          const imageTags = Array.from(section.querySelectorAll("[data-tags]"))
+            .map((image) => image.dataset.tags)
+            .join(" ")
+            .toLowerCase();
+          const matchesTitle = title.includes(query);
+          const matchesTags = imageTags.includes(query);
+
+          section.classList.toggle("hidden", query.length > 0 && !matchesTitle && !matchesTags);
+        });
+      }
+
+      drawerSearchInput.addEventListener("input", filterDrawerSections);
+
+      let isDrawerDragging = false;
+      let drawerStartY = 0;
+      let drawerStartScrollTop = 0;
+
+      drawerContent.addEventListener("pointerdown", (event) => {
+        const isInteractive =
+          event.target.closest(".drawer-image-container") ||
+          event.target.closest("button") ||
+          event.target.closest("input");
+
+        if (isInteractive) {
+          return;
+        }
+
+        isDrawerDragging = true;
+        drawerStartY = event.clientY;
+        drawerStartScrollTop = drawerContent.scrollTop;
+        drawerContent.classList.add("dragging");
+        drawerContent.setPointerCapture(event.pointerId);
+      });
+
+      drawerContent.addEventListener("pointermove", (event) => {
+        if (!isDrawerDragging) {
+          return;
+        }
+
+        const distance = event.clientY - drawerStartY;
+        drawerContent.scrollTop = drawerStartScrollTop - distance;
+        event.preventDefault();
+      });
+
+      function stopDrawerDragging(event) {
+        if (!isDrawerDragging) {
+          return;
+        }
+
+        isDrawerDragging = false;
+        drawerContent.classList.remove("dragging");
+
+        if (drawerContent.hasPointerCapture(event.pointerId)) {
+          drawerContent.releasePointerCapture(event.pointerId);
+        }
+      }
+
+      drawerContent.addEventListener("pointerup", stopDrawerDragging);
+      drawerContent.addEventListener("pointercancel", stopDrawerDragging);
+      drawerContent.addEventListener("lostpointercapture", () => {
+        isDrawerDragging = false;
+        drawerContent.classList.remove("dragging");
+      });
+
+      imageRows.forEach((row) => {
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+        let startScrollLeft = 0;
+        let startScrollTop = 0;
+        let dragMode = null;
+
+        row.addEventListener("pointerdown", (event) => {
+          isDragging = true;
+          startX = event.clientX;
+          startY = event.clientY;
+          startScrollLeft = row.scrollLeft;
+          startScrollTop = drawerContent.scrollTop;
+          dragMode = null;
+          row.classList.add("dragging");
+          row.setPointerCapture(event.pointerId);
+        });
+
+        row.addEventListener("pointermove", (event) => {
+          if (!isDragging) {
+            return;
+          }
+
+          const distanceX = event.clientX - startX;
+          const distanceY = event.clientY - startY;
+
+          if (!dragMode) {
+            const absX = Math.abs(distanceX);
+            const absY = Math.abs(distanceY);
+
+            if (absX < 3 && absY < 3) {
+              return;
+            }
+
+            dragMode = absX > absY ? "horizontal" : "vertical";
+          }
+
+          if (dragMode === "horizontal") {
+            row.scrollLeft = startScrollLeft - distanceX;
+          } else {
+            drawerContent.scrollTop = startScrollTop - distanceY;
+          }
+
+          event.preventDefault();
+        });
+
+        function stopDragging(event) {
+          if (!isDragging) {
+            return;
+          }
+
+          isDragging = false;
+          dragMode = null;
+          row.classList.remove("dragging");
+
+          if (row.hasPointerCapture(event.pointerId)) {
+            row.releasePointerCapture(event.pointerId);
+          }
+        }
+
+        row.addEventListener("pointerup", stopDragging);
+        row.addEventListener("pointercancel", stopDragging);
+        row.addEventListener("lostpointercapture", () => {
+          isDragging = false;
+          dragMode = null;
+          row.classList.remove("dragging");
+        });
+      });
+
+      leftPanelToggle.addEventListener("click", () => {
+        const isCollapsed = editorPage.classList.toggle("left-panel-collapsed");
+
+        leftPanelToggle.innerHTML = isCollapsed ? leftPanelOpenIcon : leftPanelCloseIcon;
+        leftPanelToggle.setAttribute("aria-expanded", String(!isCollapsed));
+        leftPanelToggle.setAttribute(
+          "aria-label",
+          isCollapsed ? "Open left panel" : "Close left panel",
+        );
+      });
+
+      function activateTool(button) {
+        toolButtons.forEach((toolButton) => {
+          toolButton.classList.remove("active");
+          toolButton.setAttribute("aria-pressed", "false");
+        });
+
+        button.classList.add("active");
+        button.setAttribute("aria-pressed", "true");
+      }
+
+      function selectSelectionOption(option) {
+        const icon = option.querySelector("svg").cloneNode(true);
+
+        selectionOptions.forEach((selectionOption) => {
+          selectionOption.classList.remove("active");
+        });
+
+        option.classList.add("active");
+        selectionPrimary.replaceChildren(icon);
+        selectionPrimary.setAttribute("aria-label", option.dataset.label);
+        selectionPrimary.dataset.tooltip = option.dataset.label;
+        activateTool(selectionPrimary);
+      }
+
+      function selectShapeOption(option) {
+        const icon = option.querySelector("svg").cloneNode(true);
+
+        shapeOptions.forEach((shapeOption) => {
+          shapeOption.classList.remove("active");
+        });
+
+        option.classList.add("active");
+        shapePrimary.replaceChildren(icon);
+        shapePrimary.setAttribute("aria-label", option.dataset.label);
+        shapePrimary.dataset.tooltip = option.dataset.label;
+        activateTool(shapePrimary);
+      }
+
+      function selectDrawOption(option) {
+        const icon = option.querySelector("svg").cloneNode(true);
+
+        drawOptions.forEach((drawOption) => {
+          drawOption.classList.remove("active");
+        });
+
+        option.classList.add("active");
+        drawPrimary.replaceChildren(icon);
+        drawPrimary.setAttribute("aria-label", option.dataset.label);
+        drawPrimary.dataset.tooltip = option.dataset.label;
+        activateTool(drawPrimary);
+      }
+
+      function selectBrushOption(option) {
+        const icon = option.querySelector("svg").cloneNode(true);
+
+        brushOptions.forEach((brushOption) => {
+          brushOption.classList.remove("active");
+        });
+
+        option.classList.add("active");
+        brushPrimary.replaceChildren(icon);
+        brushPrimary.setAttribute("aria-label", option.dataset.label);
+        brushPrimary.dataset.tooltip = option.dataset.label;
+        activateTool(brushPrimary);
+      }
+
+      function closeMenus(exceptButton = null) {
+        menuButtons.forEach((button) => {
+          if (button !== exceptButton) {
+            button.classList.remove("open");
+            button.setAttribute("aria-pressed", "false");
+          }
+        });
+      }
+
+      function hideTooltips() {
+        window.clearTimeout(tooltipTimer);
+        tooltipTimer = null;
+
+        tooltipButtons.forEach((button) => {
+          button.classList.remove("tooltip-visible");
+        });
+      }
+
+      function showTooltip(button) {
+        if (!button.dataset.tooltip || button.classList.contains("open")) {
+          return;
+        }
+
+        hideTooltips();
+        button.classList.add("tooltip-visible");
+        tooltipWarm = true;
+      }
+
+      function queueTooltip(button) {
+        hideTooltips();
+
+        if (tooltipWarm) {
+          showTooltip(button);
+          return;
+        }
+
+        tooltipTimer = window.setTimeout(() => {
+          showTooltip(button);
+        }, tooltipDelay);
+      }
+
+      toolButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          activateTool(button);
+        });
+      });
+
+      selectionOptions.forEach((option) => {
+        option.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectSelectionOption(option);
+          closeMenus();
+        });
+      });
+
+      shapeOptions.forEach((option) => {
+        option.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectShapeOption(option);
+          closeMenus();
+        });
+      });
+
+      drawOptions.forEach((option) => {
+        option.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectDrawOption(option);
+          closeMenus();
+        });
+      });
+
+      brushOptions.forEach((option) => {
+        option.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectBrushOption(option);
+          closeMenus();
+        });
+      });
+
+      menuButtons.forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const pairedTool = button.previousElementSibling;
+
+          if (pairedTool?.matches("[data-tool]")) {
+            activateTool(pairedTool);
+          }
+
+          closeMenus(button);
+          button.classList.toggle("open");
+          button.setAttribute("aria-pressed", button.classList.contains("open"));
+        });
+      });
+
+      document.addEventListener("click", () => {
+        closeMenus();
+      });
+
+      tooltipButtons.forEach((button) => {
+        button.addEventListener("mouseenter", () => {
+          queueTooltip(button);
+        });
+
+        button.addEventListener("focus", () => {
+          queueTooltip(button);
+        });
+
+        button.addEventListener("mouseleave", () => {
+          button.classList.remove("tooltip-visible");
+          window.clearTimeout(tooltipTimer);
+          tooltipTimer = null;
+        });
+
+        button.addEventListener("blur", () => {
+          button.classList.remove("tooltip-visible");
+          window.clearTimeout(tooltipTimer);
+          tooltipTimer = null;
+        });
+      });
+
+      toolbarDock.addEventListener("mouseleave", () => {
+        tooltipWarm = false;
+        hideTooltips();
+      });
+
+      leftRail.addEventListener("mouseleave", () => {
+        tooltipWarm = false;
+        hideTooltips();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        const target = event.target;
+        const isTyping =
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          target.isContentEditable;
+
+        if (isTyping) {
+          return;
+        }
+
+        const selectionOption = document.querySelector(
+          `[data-selection-option][data-shortcut="${event.key.toLowerCase()}"]`,
+        );
+        const shapeOption = document.querySelector(
+          `[data-shape-option][data-shortcut="${event.key.toLowerCase()}"]`,
+        );
+        const drawOption = document.querySelector(
+          `[data-draw-option][data-shortcut="${event.key.toLowerCase()}"]`,
+        );
+        const brushOption = document.querySelector(
+          `[data-brush-option][data-shortcut="${event.key.toLowerCase()}"]`,
+        );
+        const toolbarTool = document.querySelector(
+          `[data-tool][data-shortcut="${event.key.toLowerCase()}"]`,
+        );
+
+        if (selectionOption) {
+          event.preventDefault();
+          selectSelectionOption(selectionOption);
+          closeMenus();
+          return;
+        }
+
+        if (shapeOption) {
+          event.preventDefault();
+          selectShapeOption(shapeOption);
+          closeMenus();
+          return;
+        }
+
+        if (drawOption) {
+          event.preventDefault();
+          selectDrawOption(drawOption);
+          closeMenus();
+          return;
+        }
+
+        if (brushOption) {
+          event.preventDefault();
+          selectBrushOption(brushOption);
+          closeMenus();
+          return;
+        }
+
+        if (toolbarTool) {
+          event.preventDefault();
+          activateTool(toolbarTool);
+          closeMenus();
+        }
+      });
+    </script>
+  </body>
+</html>
