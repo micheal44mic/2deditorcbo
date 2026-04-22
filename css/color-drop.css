@@ -1,0 +1,75 @@
+.color-drop-filter {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.color-drop-ghost,
+.color-drop-ripple {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 3000;
+  pointer-events: none;
+  will-change: opacity;
+}
+
+.color-drop-ghost {
+  width: 1px;
+  height: 1px;
+  filter: url("#color-drop-goo");
+  opacity: 0.98;
+}
+
+.color-drop-blob {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  background: var(--color-drop-color, #ffffff);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+  transform: translate3d(0, 0, 0) translate(-50%, -50%) scale(1);
+  will-change: transform;
+}
+
+.color-drop-blob-main {
+  width: 36px;
+  height: 36px;
+}
+
+.color-drop-blob-trail-a {
+  width: 25px;
+  height: 25px;
+  opacity: 0.92;
+}
+
+.color-drop-blob-trail-b {
+  width: 17px;
+  height: 17px;
+  opacity: 0.86;
+}
+
+.color-drop-ripple {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--color-drop-color, #ffffff);
+  opacity: 0.2;
+  animation: color-drop-ripple 300ms ease-out forwards;
+}
+
+@keyframes color-drop-ripple {
+  from {
+    opacity: 0.22;
+    transform: translate3d(var(--drop-x), var(--drop-y), 0) translate(-50%, -50%) scale(0.7);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate3d(var(--drop-x), var(--drop-y), 0) translate(-50%, -50%) scale(1.9);
+  }
+}
