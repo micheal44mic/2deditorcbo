@@ -58,7 +58,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
           <path d="m5.082 11.09 8.828 8.828" />
         </svg>
       </button>
-      <button class="tool-button color-picker-button" type="button" aria-label="COLOR" data-tooltip="COLOR">
+      <button class="tool-button color-picker-button" type="button" aria-label="COLOR" aria-expanded="false" data-tooltip="COLOR">
         <span class="color-picker-swatch" aria-hidden="true"></span>
       </button>
     </nav>

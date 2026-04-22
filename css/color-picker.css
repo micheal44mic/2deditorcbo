@@ -1,0 +1,260 @@
+.color-picker-button:hover,
+.color-picker-button:focus-visible,
+.color-picker-button.active,
+.color-picker-button.open {
+  background: transparent;
+}
+
+.color-picker-swatch {
+  display: block;
+  width: 29px;
+  height: 29px;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: 50%;
+  background: var(--selected-color, #ffffff);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.color-picker-popover {
+  --picker-hue: 0;
+
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 30;
+  width: 278px;
+  padding: 16px;
+  border-radius: 9px;
+  background: #181a1f;
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.35),
+    0 18px 44px rgba(0, 0, 0, 0.42);
+}
+
+.color-picker-popover[hidden] {
+  display: none;
+}
+
+.color-picker-wheel {
+  position: relative;
+  width: 246px;
+  height: 246px;
+  margin: 0 auto;
+}
+
+.color-picker-hue-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    hsl(0 100% 50%),
+    hsl(300 100% 50%),
+    hsl(240 100% 50%),
+    hsl(180 100% 50%),
+    hsl(120 100% 50%),
+    hsl(60 100% 50%),
+    hsl(360 100% 50%)
+  );
+  -webkit-mask: radial-gradient(circle, transparent 0 56%, #000 57%);
+  mask: radial-gradient(circle, transparent 0 56%, #000 57%);
+  touch-action: none;
+}
+
+.color-picker-sv-square {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 112px;
+  height: 112px;
+  transform: translate(-50%, -50%);
+  background:
+    linear-gradient(to top, #000000, rgba(0, 0, 0, 0)),
+    linear-gradient(to right, #ffffff, hsl(var(--picker-hue) 100% 50%));
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  touch-action: none;
+  z-index: 2;
+}
+
+.color-picker-hue-handle,
+.color-picker-sv-handle {
+  position: absolute;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.38),
+    0 0 0 1px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.color-picker-hue-handle {
+  z-index: 3;
+  width: 30px;
+  height: 30px;
+  transform: translate(-50%, -50%);
+}
+
+.color-picker-sv-handle {
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+}
+
+.color-picker-slots {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  width: 246px;
+  margin: 12px auto 0;
+}
+
+.color-picker-eyedropper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #c3c8d1;
+}
+
+.color-picker-eyedropper:hover,
+.color-picker-eyedropper:focus-visible {
+  background: rgb(44, 48, 58);
+  color: #ffffff;
+}
+
+.color-picker-eyedropper svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.color-picker-slot {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
+.color-picker-slot[data-color-slot="primary"] {
+  background: var(--primary-color, #ffffff);
+}
+
+.color-picker-slot[data-color-slot="secondary"] {
+  background: var(--secondary-color, #000000);
+}
+
+.color-picker-slot:hover,
+.color-picker-slot:focus-visible {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.42),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
+.color-picker-slot.active {
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 4px 12px rgba(0, 0, 0, 0.32),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
+.color-picker-hex-input {
+  display: block;
+  width: 246px;
+  height: 38px;
+  margin: 12px auto 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: rgb(44, 48, 58);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 12px rgba(0, 0, 0, 0.18);
+  color: #f5f7fb;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 38px;
+  text-transform: uppercase;
+  outline: none;
+}
+
+.color-picker-hex-input:focus {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+.color-picker-presets {
+  display: grid;
+  grid-template-rows: repeat(3, 24px);
+  grid-auto-flow: column;
+  grid-auto-columns: 24px;
+  justify-content: space-between;
+  gap: 7px;
+  width: 246px;
+  margin: 14px auto 0;
+}
+
+.color-picker-preset {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--preset-color);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.color-picker-preset:hover,
+.color-picker-preset:focus-visible {
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 4px 12px rgba(0, 0, 0, 0.28);
+}
+
+.color-picker-book-button {
+  display: block;
+  width: 246px;
+  height: 38px;
+  margin: 14px auto 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 7px;
+  background: rgb(44, 48, 58);
+  box-shadow:
+    inset 0 0 0 3px currentColor,
+    0 4px 12px rgba(0, 0, 0, 0.18);
+  color: #f5f7fb;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 38px;
+  text-align: center;
+}
+
+.color-picker-book-button:hover,
+.color-picker-book-button:focus-visible {
+  background: rgb(55, 60, 72);
+  box-shadow:
+    inset 0 0 0 3px currentColor,
+    0 4px 12px rgba(0, 0, 0, 0.18);
+  color: #ffffff;
+}
