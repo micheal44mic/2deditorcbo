@@ -17,6 +17,15 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   dock.dataset.tooltipZone = "";
 
   dock.innerHTML = `
+    <nav class="bottom-toolbar top-layers-toolbar" aria-label="Layers toolbar">
+      <button class="tool-button top-layers-button" type="button" aria-label="LAYERS" aria-pressed="false" data-tooltip="LAYERS">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+          <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+          <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+        </svg>
+      </button>
+    </nav>
     <nav class="bottom-toolbar top-toolbar" aria-label="Paint toolbar">
       <div class="tool-group" aria-label="Brush tools">
         <button class="tool-button" type="button" aria-label="BRUSH" aria-pressed="false" data-tooltip="BRUSH" data-toolset-primary="top-brush" data-tool-sync="brush" data-tool>
@@ -65,4 +74,13 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   `;
 
   editorPage.appendChild(dock);
+
+  const layersButton = dock.querySelector(".top-layers-button");
+
+  layersButton.addEventListener("click", () => {
+    layersButton.classList.add("active");
+    window.setTimeout(() => {
+      layersButton.classList.remove("active");
+    }, 140);
+  });
 };

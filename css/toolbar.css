@@ -22,8 +22,8 @@
   border-radius: 9px;
   background: #181a1f;
   box-shadow:
-    0 6px 14px rgba(0, 0, 0, 0.35),
-    0 18px 44px rgba(0, 0, 0, 0.42);
+    0 4px 8px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.16);
 }
 
 .tool-button {
@@ -88,8 +88,8 @@
   border-radius: 9px;
   background: #181a1f;
   box-shadow:
-    0 6px 14px rgba(0, 0, 0, 0.35),
-    0 18px 44px rgba(0, 0, 0, 0.42);
+    0 4px 8px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.16);
 }
 
 .tool-menu-button.open .tool-popover {
