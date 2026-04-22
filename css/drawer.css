@@ -86,29 +86,51 @@
   position: absolute;
   top: 136px;
   left: 16px;
-  right: 4px;
+  right: 18px;
   bottom: 16px;
   overflow-y: auto;
-  padding-right: 8px;
-  scrollbar-color: rgb(68, 73, 86) transparent;
-  scrollbar-width: thin;
+  padding-right: 0;
+  scrollbar-width: none;
   user-select: none;
 }
 
 .drawer-content::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.drawer-custom-scrollbar {
+  position: absolute;
+  top: 136px;
+  right: 8px;
+  bottom: 16px;
+  z-index: 3;
   width: 4px;
-}
-
-.drawer-content::-webkit-scrollbar-track {
+  border-radius: 999px;
   background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
 
-.drawer-content::-webkit-scrollbar-thumb {
+.drawer-custom-scrollbar.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.drawer-custom-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-height: 24px;
   border-radius: 999px;
   background: rgb(68, 73, 86);
 }
 
-.drawer-content::-webkit-scrollbar-thumb:hover {
+.drawer-custom-scrollbar:hover .drawer-custom-scrollbar-thumb,
+.drawer-custom-scrollbar.dragging .drawer-custom-scrollbar-thumb {
   background: #c3c8d1;
 }
 
@@ -117,16 +139,15 @@
 }
 
 .drawer-template-grid,
-.drawer-mockup-grid {
+.drawer-mockup-sections {
   display: none;
 }
 
 .drawer-content.template-mode .drawer-search-results,
 .drawer-content.template-mode .drawer-section,
-.drawer-content.template-mode .drawer-mockup-grid,
-.drawer-content.mockup-mode .drawer-search-results,
-.drawer-content.mockup-mode .drawer-section,
-.drawer-content.mockup-mode .drawer-template-grid {
+.drawer-content.template-mode .drawer-mockup-sections,
+.drawer-content.mockup-mode .drawer-template-grid,
+.drawer-content.mockup-mode > .drawer-section {
   display: none;
 }
 
@@ -137,11 +158,8 @@
   align-content: start;
 }
 
-.drawer-content.mockup-mode .drawer-mockup-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  align-content: start;
+.drawer-content.mockup-mode .drawer-mockup-sections {
+  display: block;
 }
 
 .drawer-section {
@@ -160,8 +178,8 @@
   display: none;
 }
 
-.drawer-section + .drawer-section {
-  margin-top: 24px;
+.drawer-section:last-child {
+  margin-bottom: 8px;
 }
 
 .drawer-section-header {
@@ -251,7 +269,7 @@
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  min-height: 120px;
+  min-height: 128px;
   margin-top: 10px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
@@ -278,9 +296,9 @@
 
 .drawer-image-placeholder {
   position: relative;
-  flex: 0 0 92px;
-  width: 92px;
-  height: 92px;
+  flex: 0 0 104px;
+  width: 104px;
+  height: 104px;
   overflow: hidden;
   border-radius: 8px;
   background: rgb(44, 48, 58);
@@ -308,8 +326,7 @@
   flex: initial;
 }
 
-.drawer-template-placeholder,
-.drawer-mockup-placeholder {
+.drawer-template-placeholder {
   width: 100%;
   height: auto;
   aspect-ratio: 1;
@@ -327,7 +344,7 @@
   justify-content: center;
   flex: 0 0 56px;
   width: 56px;
-  height: 92px;
+  height: 104px;
   padding: 0;
   border: 0;
   border-radius: 8px;

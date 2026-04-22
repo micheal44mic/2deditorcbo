@@ -1,0 +1,43 @@
+.top-toolbar-dock {
+  position: fixed;
+  top: 28px;
+  right: calc(var(--right-panel-width) + 12px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: calc(100vw - var(--left-panel-width) - var(--right-panel-width) - 24px);
+}
+
+.top-toolbar-dock .tool-button::after {
+  top: calc(100% + 10px);
+  bottom: auto;
+  transform: translateX(-50%) translateY(-4px);
+}
+
+.top-toolbar-dock .tool-button.tooltip-visible::after {
+  transform: translateX(-50%) translateY(0);
+}
+
+.top-toolbar-dock .tool-popover {
+  top: calc(100% + 12px);
+  bottom: auto;
+}
+
+.color-picker-button:hover,
+.color-picker-button:focus-visible,
+.color-picker-button.active {
+  background: transparent;
+}
+
+.color-picker-swatch {
+  display: block;
+  width: 29px;
+  height: 29px;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}

@@ -6,13 +6,20 @@ window.CBO.initToolbar = function initToolbar() {
   const toolsetOptions = document.querySelectorAll("[data-toolset-option]");
 
   function activateTool(button) {
+    const syncGroup = button.dataset.toolSync;
+    const activeButtons = syncGroup
+      ? Array.from(toolButtons).filter((toolButton) => toolButton.dataset.toolSync === syncGroup)
+      : [button];
+
     toolButtons.forEach((toolButton) => {
       toolButton.classList.remove("active");
       toolButton.setAttribute("aria-pressed", "false");
     });
 
-    button.classList.add("active");
-    button.setAttribute("aria-pressed", "true");
+    activeButtons.forEach((toolButton) => {
+      toolButton.classList.add("active");
+      toolButton.setAttribute("aria-pressed", "true");
+    });
   }
 
   function closeMenus(exceptButton = null) {

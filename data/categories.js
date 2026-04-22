@@ -48,9 +48,30 @@ const TEMP_TEMPLATE_ITEMS_TO_REMOVE = [
   { tags: ["temporary", "template", "blank"] },
 ];
 
+const TEMP_HAT_MOCKUPS_TO_REMOVE = [
+  { tags: ["temporary", "mockup", "hats"] },
+  { tags: ["temporary", "mockup", "hats"] },
+  { tags: ["temporary", "mockup", "hats"] },
+  { tags: ["temporary", "mockup", "hats"] },
+  { tags: ["temporary", "mockup", "hats"] },
+  { tags: ["temporary", "mockup", "hats"] },
+];
+
+const TEMP_ACCESSORY_MOCKUPS_TO_REMOVE = [
+  { tags: ["temporary", "mockup", "accessory"] },
+  { tags: ["temporary", "mockup", "accessory"] },
+  { tags: ["temporary", "mockup", "accessory"] },
+  { tags: ["temporary", "mockup", "accessory"] },
+  { tags: ["temporary", "mockup", "accessory"] },
+  { tags: ["temporary", "mockup", "accessory"] },
+];
+
 window.CBO_TEMPLATES = TEMP_TEMPLATE_ITEMS_TO_REMOVE;
 
-window.CBO_MOCKUPS = [];
+window.CBO_MOCKUP_CATEGORIES = [
+  { title: "HATS", items: TEMP_HAT_MOCKUPS_TO_REMOVE },
+  { title: "ACCESSORY", items: TEMP_ACCESSORY_MOCKUPS_TO_REMOVE },
+];
 
 window.CBO_CATEGORIES = [
   { title: "FLAMES", items: TEMP_PREVIEW_ITEMS_TO_REMOVE },

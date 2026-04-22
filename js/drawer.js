@@ -3,14 +3,28 @@ window.CBO = window.CBO || {};
 window.CBO.initDrawer = function initDrawer() {
   const categories = window.CBO_CATEGORIES || [];
   const templates = window.CBO_TEMPLATES || [];
-  const mockups = window.CBO_MOCKUPS || [];
+  const mockupCategories = window.CBO_MOCKUP_CATEGORIES || [];
   const drawerPanel = document.querySelector(".left-drawer");
   const drawerContent = document.querySelector(".drawer-content");
   const searchInput = document.querySelector(".drawer-search input");
   const searchClear = document.querySelector(".drawer-search-clear");
   const previewLimit = 6;
+  let scrollbarFrame = 0;
   let activePanel = "elements";
   let activeCategory = null;
+
+  const existingScrollbar = drawerPanel.querySelector(".drawer-custom-scrollbar");
+
+  if (existingScrollbar) {
+    existingScrollbar.remove();
+  }
+
+  const customScrollbar = document.createElement("div");
+  const customScrollbarThumb = document.createElement("div");
+  customScrollbar.className = "drawer-custom-scrollbar";
+  customScrollbarThumb.className = "drawer-custom-scrollbar-thumb";
+  customScrollbar.append(customScrollbarThumb);
+  drawerPanel.append(customScrollbar);
 
   function getItemTags(item) {
     return Array.isArray(item) ? item : item.tags || [];
@@ -51,6 +65,101 @@ window.CBO.initDrawer = function initDrawer() {
     );
   }
 
+  function updateCustomScrollbar() {
+    const maxScroll = drawerContent.scrollHeight - drawerContent.clientHeight;
+    const trackHeight = customScrollbar.clientHeight;
+
+    customScrollbar.classList.toggle("visible", maxScroll > 1);
+
+    if (maxScroll <= 1 || trackHeight <= 0) {
+      customScrollbarThumb.style.height = "0px";
+      customScrollbarThumb.style.transform = "translateY(0)";
+      return;
+    }
+
+    const thumbHeight = Math.max(
+      24,
+      (drawerContent.clientHeight / drawerContent.scrollHeight) * trackHeight,
+    );
+    const maxThumbTop = trackHeight - thumbHeight;
+    const thumbTop = (drawerContent.scrollTop / maxScroll) * maxThumbTop;
+
+    customScrollbarThumb.style.height = `${thumbHeight}px`;
+    customScrollbarThumb.style.transform = `translateY(${thumbTop}px)`;
+  }
+
+  function scheduleCustomScrollbarUpdate() {
+    if (scrollbarFrame) {
+      return;
+    }
+
+    scrollbarFrame = requestAnimationFrame(() => {
+      scrollbarFrame = 0;
+      updateCustomScrollbar();
+    });
+  }
+
+  function createCategorySection(category, sectionClass) {
+    const section = document.createElement("section");
+    section.className = `drawer-section ${sectionClass}`;
+    section.dataset.category = category.title.toLowerCase();
+    section.setAttribute("aria-label", category.title);
+
+    const header = document.createElement("div");
+    header.className = "drawer-section-header";
+
+    const title = document.createElement("h2");
+    title.className = "drawer-section-title";
+    title.textContent = category.title;
+
+    const seeAll = document.createElement("button");
+    seeAll.className = "drawer-section-link";
+    seeAll.type = "button";
+    seeAll.textContent = "SEE ALL";
+    seeAll.dataset.categoryFilter = category.title.toLowerCase();
+
+    const backButton = document.createElement("button");
+    backButton.className = "drawer-back-button";
+    backButton.type = "button";
+    backButton.setAttribute("aria-label", "Back to all sections");
+    backButton.dataset.categoryBack = "";
+    backButton.innerHTML = window.CBO.icons.backToSections;
+
+    const row = document.createElement("div");
+    row.className = "drawer-image-container";
+
+    category.items.forEach((categoryItem, index) => {
+      row.append(createImagePlaceholder(category.title, categoryItem, index));
+    });
+
+    const seeAllCard = document.createElement("button");
+    seeAllCard.className = "drawer-see-all-card";
+    seeAllCard.type = "button";
+    seeAllCard.setAttribute("aria-label", `See all ${category.title}`);
+    seeAllCard.dataset.categoryFilter = category.title.toLowerCase();
+    seeAllCard.innerHTML = window.CBO.icons.seeAll;
+
+    row.append(seeAllCard);
+    header.append(title, seeAll, backButton);
+    section.append(header, row);
+
+    return section;
+  }
+
+  function getActiveCategoryPanel() {
+    if (activePanel === "mockups") {
+      return {
+        categories: mockupCategories,
+        sectionSelector: ".drawer-mockup-section",
+      };
+    }
+
+    return {
+      categories,
+      sectionSelector: ".drawer-elements-section",
+    };
+  }
+
   function renderDrawer() {
     drawerContent.replaceChildren();
 
@@ -62,9 +171,9 @@ window.CBO.initDrawer = function initDrawer() {
     templateGrid.className = "drawer-template-grid";
     drawerContent.append(templateGrid);
 
-    const mockupGrid = document.createElement("div");
-    mockupGrid.className = "drawer-mockup-grid";
-    drawerContent.append(mockupGrid);
+    const mockupSections = document.createElement("div");
+    mockupSections.className = "drawer-mockup-sections";
+    drawerContent.append(mockupSections);
 
     templates.forEach((templateItem, index) => {
       const item = createImagePlaceholder("template", templateItem, index);
@@ -72,64 +181,20 @@ window.CBO.initDrawer = function initDrawer() {
       templateGrid.append(item);
     });
 
-    mockups.forEach((mockupItem, index) => {
-      const item = createImagePlaceholder("mockup", mockupItem, index);
-      item.classList.add("drawer-mockup-placeholder");
-      mockupGrid.append(item);
+    categories.forEach((category) => {
+      drawerContent.append(createCategorySection(category, "drawer-elements-section"));
     });
 
-    categories.forEach((category) => {
-      const section = document.createElement("section");
-      section.className = "drawer-section";
-      section.dataset.category = category.title.toLowerCase();
-      section.setAttribute("aria-label", category.title);
-
-      const header = document.createElement("div");
-      header.className = "drawer-section-header";
-
-      const title = document.createElement("h2");
-      title.className = "drawer-section-title";
-      title.textContent = category.title;
-
-      const seeAll = document.createElement("button");
-      seeAll.className = "drawer-section-link";
-      seeAll.type = "button";
-      seeAll.textContent = "SEE ALL";
-      seeAll.dataset.categoryFilter = category.title.toLowerCase();
-
-      const backButton = document.createElement("button");
-      backButton.className = "drawer-back-button";
-      backButton.type = "button";
-      backButton.setAttribute("aria-label", "Back to all sections");
-      backButton.dataset.categoryBack = "";
-      backButton.innerHTML = window.CBO.icons.backToSections;
-
-      const row = document.createElement("div");
-      row.className = "drawer-image-container";
-
-      category.items.forEach((categoryItem, index) => {
-        row.append(createImagePlaceholder(category.title, categoryItem, index));
-      });
-
-      const seeAllCard = document.createElement("button");
-      seeAllCard.className = "drawer-see-all-card";
-      seeAllCard.type = "button";
-      seeAllCard.setAttribute("aria-label", `See all ${category.title}`);
-      seeAllCard.dataset.categoryFilter = category.title.toLowerCase();
-      seeAllCard.innerHTML = window.CBO.icons.seeAll;
-
-      row.append(seeAllCard);
-      header.append(title, seeAll, backButton);
-      section.append(header, row);
-      drawerContent.append(section);
+    mockupCategories.forEach((category) => {
+      mockupSections.append(createCategorySection(category, "drawer-mockup-section"));
     });
   }
 
-  function renderSearchResults(queryTags) {
+  function renderSearchResults(queryTags, categoryList) {
     const searchResults = drawerContent.querySelector(".drawer-search-results");
     searchResults.replaceChildren();
 
-    categories.forEach((category) => {
+    categoryList.forEach((category) => {
       const categoryKey = category.title.toLowerCase();
 
       if (activeCategory && categoryKey !== activeCategory) {
@@ -156,7 +221,7 @@ window.CBO.initDrawer = function initDrawer() {
   }
 
   function filterMockups(queryTags) {
-    const mockupItems = drawerContent.querySelectorAll(".drawer-mockup-grid [data-tags]");
+    const mockupItems = drawerContent.querySelectorAll(".drawer-mockup-section [data-tags]");
 
     mockupItems.forEach((item) => {
       const tags = item.dataset.tags.toLowerCase().split(/\s+/);
@@ -174,16 +239,18 @@ window.CBO.initDrawer = function initDrawer() {
   }
 
   function filterDrawerSections() {
-    if (activePanel !== "elements") {
+    if (activePanel === "template") {
       drawerContent.classList.remove("category-mode", "search-mode");
       const queryTags = normalizeSearch(searchInput.value);
-      filterTemplates(activePanel === "template" ? queryTags : []);
-      filterMockups(activePanel === "mockups" ? queryTags : []);
+      filterTemplates(queryTags);
+      filterMockups([]);
+      scheduleCustomScrollbarUpdate();
       return;
     }
 
+    const activeCategoryPanel = getActiveCategoryPanel();
     const queryTags = normalizeSearch(searchInput.value);
-    const sections = drawerContent.querySelectorAll(".drawer-section");
+    const sections = drawerContent.querySelectorAll(activeCategoryPanel.sectionSelector);
     const isSearchMode = queryTags.length > 0;
     const hasCategoryScope = Boolean(activeCategory);
     const isCategoryMode = hasCategoryScope && !isSearchMode;
@@ -192,7 +259,7 @@ window.CBO.initDrawer = function initDrawer() {
     drawerContent.classList.toggle("search-mode", isSearchMode);
 
     if (isSearchMode) {
-      renderSearchResults(queryTags);
+      renderSearchResults(queryTags, activeCategoryPanel.categories);
     }
 
     sections.forEach((section) => {
@@ -221,6 +288,8 @@ window.CBO.initDrawer = function initDrawer() {
       );
       seeAllCard.classList.toggle("hidden", isSearchMode || isCategoryMode);
     });
+
+    scheduleCustomScrollbarUpdate();
   }
 
   function updateDrawerPanel() {
@@ -233,6 +302,7 @@ window.CBO.initDrawer = function initDrawer() {
     searchInput.value = "";
     filterDrawerSections();
     drawerContent.scrollTop = 0;
+    scheduleCustomScrollbarUpdate();
   }
 
   window.CBO.setDrawerPanel = function setDrawerPanel(panelName) {
@@ -242,6 +312,66 @@ window.CBO.initDrawer = function initDrawer() {
 
   renderDrawer();
   updateDrawerPanel();
+
+  drawerContent.addEventListener("scroll", scheduleCustomScrollbarUpdate);
+  window.addEventListener("resize", scheduleCustomScrollbarUpdate);
+
+  customScrollbar.addEventListener("pointerdown", (event) => {
+    if (event.target !== customScrollbar) {
+      return;
+    }
+
+    const trackRect = customScrollbar.getBoundingClientRect();
+    const thumbRect = customScrollbarThumb.getBoundingClientRect();
+    const maxScroll = drawerContent.scrollHeight - drawerContent.clientHeight;
+    const maxThumbTop = customScrollbar.clientHeight - customScrollbarThumb.offsetHeight;
+    const clickTop = event.clientY - trackRect.top - thumbRect.height / 2;
+
+    if (maxScroll > 0 && maxThumbTop > 0) {
+      drawerContent.scrollTop =
+        (Math.max(0, Math.min(clickTop, maxThumbTop)) / maxThumbTop) * maxScroll;
+    }
+
+    event.preventDefault();
+  });
+
+  customScrollbarThumb.addEventListener("pointerdown", (event) => {
+    const startY = event.clientY;
+    const startScrollTop = drawerContent.scrollTop;
+
+    customScrollbar.classList.add("dragging");
+    customScrollbarThumb.setPointerCapture(event.pointerId);
+
+    function handlePointerMove(moveEvent) {
+      const maxScroll = drawerContent.scrollHeight - drawerContent.clientHeight;
+      const maxThumbTop = customScrollbar.clientHeight - customScrollbarThumb.offsetHeight;
+
+      if (maxScroll > 0 && maxThumbTop > 0) {
+        drawerContent.scrollTop =
+          startScrollTop + ((moveEvent.clientY - startY) / maxThumbTop) * maxScroll;
+      }
+
+      moveEvent.preventDefault();
+    }
+
+    function stopDragging(endEvent) {
+      customScrollbar.classList.remove("dragging");
+      customScrollbarThumb.removeEventListener("pointermove", handlePointerMove);
+      customScrollbarThumb.removeEventListener("pointerup", stopDragging);
+      customScrollbarThumb.removeEventListener("pointercancel", stopDragging);
+
+      if (customScrollbarThumb.hasPointerCapture(endEvent.pointerId)) {
+        customScrollbarThumb.releasePointerCapture(endEvent.pointerId);
+      }
+    }
+
+    customScrollbarThumb.addEventListener("pointermove", handlePointerMove);
+    customScrollbarThumb.addEventListener("pointerup", stopDragging);
+    customScrollbarThumb.addEventListener("pointercancel", stopDragging);
+    event.preventDefault();
+  });
+
+  scheduleCustomScrollbarUpdate();
 
   searchInput.addEventListener("input", () => {
     filterDrawerSections();
