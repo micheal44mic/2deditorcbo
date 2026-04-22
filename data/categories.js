@@ -1,83 +1,62 @@
-// Demo items: when real images arrive, each one can keep multiple searchable hashtags here.
+/*
+  Future item example:
+
+  {
+    src: "./assets/templates/flames/flame-01.png",
+    alt: "Flame graphic",
+    tags: ["flames", "fire", "streetwear"],
+  }
+
+  How it works:
+  - The first 6 items appear in the category preview.
+  - SEE ALL or the final arrow opens the full category grid.
+  - Search matches the tags. If a category is open, search stays inside it.
+*/
+const TEMP_PREVIEW_ITEMS_TO_REMOVE = [
+  { tags: ["temporary", "preview"] },
+  { tags: ["temporary", "preview"] },
+  { tags: ["temporary", "preview"] },
+  { tags: ["temporary", "preview"] },
+  { tags: ["temporary", "preview"] },
+  { tags: ["temporary", "preview"] },
+];
+
+const TEMP_TEMPLATE_ITEMS_TO_REMOVE = [
+  { tags: ["temporary", "template", "hoodie"] },
+  { tags: ["temporary", "template", "tshirt"] },
+  { tags: ["temporary", "template", "crewneck"] },
+  { tags: ["temporary", "template", "zip"] },
+  { tags: ["temporary", "template", "pants"] },
+  { tags: ["temporary", "template", "shorts"] },
+  { tags: ["temporary", "template", "cap"] },
+  { tags: ["temporary", "template", "beanie"] },
+  { tags: ["temporary", "template", "front"] },
+  { tags: ["temporary", "template", "back"] },
+  { tags: ["temporary", "template", "sleeve"] },
+  { tags: ["temporary", "template", "pocket"] },
+  { tags: ["temporary", "template", "oversize"] },
+  { tags: ["temporary", "template", "regular"] },
+  { tags: ["temporary", "template", "cropped"] },
+  { tags: ["temporary", "template", "boxy"] },
+  { tags: ["temporary", "template", "streetwear"] },
+  { tags: ["temporary", "template", "luxury"] },
+  { tags: ["temporary", "template", "sport"] },
+  { tags: ["temporary", "template", "minimal"] },
+  { tags: ["temporary", "template", "y2k"] },
+  { tags: ["temporary", "template", "gothic"] },
+  { tags: ["temporary", "template", "vintage"] },
+  { tags: ["temporary", "template", "blank"] },
+];
+
+window.CBO_TEMPLATES = TEMP_TEMPLATE_ITEMS_TO_REMOVE;
+
+window.CBO_MOCKUPS = [];
+
 window.CBO_CATEGORIES = [
-  {
-    title: "FLAMES",
-    items: [
-      { tags: ["flames", "fire", "design"], color: "#2f7d4f" },
-      { tags: ["flames", "tribal", "fashion"], color: "#c9a22e" },
-      { tags: ["flames", "fashion", "yummy"], color: "#b83b3b" },
-      { tags: ["flames", "racing", "speed"], color: "#c94b35" },
-      { tags: ["flames", "gothic", "dark"], color: "#4d3e72" },
-      { tags: ["flames", "streetwear", "fashion"], color: "#d5b63a" },
-      { tags: ["flames", "vintage", "hot"], color: "#b95e38" },
-      { tags: ["flames", "design", "bold"], color: "#327f57" },
-      { tags: ["flames", "chrome", "y2k"], color: "#5b758b" },
-      { tags: ["flames", "punk", "black"], color: "#30343d" },
-      { tags: ["flames", "tattoo", "ink"], color: "#734d4d" },
-      { tags: ["flames", "design", "logo"], color: "#3a8a61" },
-      { tags: ["flames", "skater", "street"], color: "#91613f" },
-      { tags: ["flames", "fashion", "print"], color: "#dac14b" },
-      { tags: ["flames", "fashion", "yummy"], color: "#b83b3b" },
-      { tags: ["flames", "metal", "sharp"], color: "#56606c" },
-      { tags: ["flames", "airbrush", "retro"], color: "#aa6d42" },
-      { tags: ["flames", "design", "patch"], color: "#2f7d4f" },
-      { tags: ["flames", "heat", "orange"], color: "#bf5737" },
-      { tags: ["flames", "graphic", "drop"], color: "#8b4f6a" },
-    ],
-  },
-  {
-    title: "Y2K",
-    items: [
-      { tags: ["y2k", "chrome", "cyber"], color: "#617789" },
-      { tags: ["y2k", "tribal", "design"], color: "#347d58" },
-      { tags: ["y2k", "star", "digital"], color: "#67598d" },
-      { tags: ["y2k", "futuristic", "fashion"], color: "#d2b23b" },
-      { tags: ["y2k", "metal"], color: "#6a727e" },
-      { tags: ["y2k", "streetwear"], color: "#405b78" },
-    ],
-  },
-  {
-    title: "SPIKES",
-    items: [
-      { tags: ["spikes", "sharp", "punk"], color: "#59606a" },
-      { tags: ["spikes", "metal"], color: "#727985" },
-      { tags: ["spikes", "thorn", "design"], color: "#2f7d4f" },
-      { tags: ["spikes", "edgy"], color: "#4f435b" },
-      { tags: ["spikes", "streetwear", "fashion"], color: "#d0ad38" },
-      { tags: ["spikes", "gothic"], color: "#363942" },
-    ],
-  },
-  {
-    title: "PATTERN",
-    items: [
-      { tags: ["pattern", "repeat", "texture"], color: "#586f70" },
-      { tags: ["pattern", "abstract", "design"], color: "#367f55" },
-      { tags: ["pattern", "grid"], color: "#496079" },
-      { tags: ["pattern", "textile", "fashion"], color: "#d6ba44" },
-      { tags: ["pattern", "seamless"], color: "#76547a" },
-      { tags: ["pattern", "streetwear"], color: "#6a5842" },
-    ],
-  },
-  {
-    title: "SPARKS",
-    items: [
-      { tags: ["sparks", "shine", "glitter"], color: "#866b43" },
-      { tags: ["sparks", "star", "glow"], color: "#a67a3e" },
-      { tags: ["sparks", "magic", "design"], color: "#35875b" },
-      { tags: ["sparks", "chrome"], color: "#667888" },
-      { tags: ["sparks", "light", "fashion"], color: "#d8bd45" },
-      { tags: ["sparks", "y2k"], color: "#5c5789" },
-    ],
-  },
-  {
-    title: "SKULLS",
-    items: [
-      { tags: ["skulls", "death", "gothic"], color: "#3b3e47" },
-      { tags: ["skulls", "punk"], color: "#5a4a58" },
-      { tags: ["skulls", "bones", "design"], color: "#347f59" },
-      { tags: ["skulls", "streetwear", "fashion"], color: "#d4b43d" },
-      { tags: ["skulls", "dark"], color: "#2f333b" },
-      { tags: ["skulls", "vintage"], color: "#735942" },
-    ],
-  },
+  { title: "FLAMES", items: TEMP_PREVIEW_ITEMS_TO_REMOVE },
+  { title: "Y2K", items: [] },
+  { title: "SPIKES", items: [] },
+  { title: "PATTERN", items: [] },
+  { title: "SPARKS", items: [] },
+  { title: "SKULLS", items: TEMP_PREVIEW_ITEMS_TO_REMOVE },
 ];

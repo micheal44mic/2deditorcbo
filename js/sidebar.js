@@ -16,6 +16,11 @@ window.CBO.initSidebar = function initSidebar() {
     button.addEventListener("click", () => {
       railButtons.forEach((railButton) => railButton.classList.remove("active"));
       button.classList.add("active");
+
+      if (window.CBO.setDrawerPanel) {
+        window.CBO.setDrawerPanel(button.dataset.drawerPanel || "elements");
+      }
+
       setDrawerOpen(true);
     });
   });

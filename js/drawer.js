@@ -2,37 +2,44 @@ window.CBO = window.CBO || {};
 
 window.CBO.initDrawer = function initDrawer() {
   const categories = window.CBO_CATEGORIES || [];
+  const templates = window.CBO_TEMPLATES || [];
+  const mockups = window.CBO_MOCKUPS || [];
+  const drawerPanel = document.querySelector(".left-drawer");
   const drawerContent = document.querySelector(".drawer-content");
   const searchInput = document.querySelector(".drawer-search input");
   const searchClear = document.querySelector(".drawer-search-clear");
   const previewLimit = 6;
+  let activePanel = "elements";
   let activeCategory = null;
 
   function getItemTags(item) {
     return Array.isArray(item) ? item : item.tags || [];
   }
 
-  function getItemColor(item) {
-    return Array.isArray(item) ? "" : item.color || "";
+  function getItemSrc(item) {
+    return Array.isArray(item) ? "" : item.src || "";
+  }
+
+  function getItemAlt(item, categoryTitle) {
+    return Array.isArray(item) ? categoryTitle : item.alt || categoryTitle;
   }
 
   function createImagePlaceholder(categoryTitle, categoryItem, index) {
     const tags = getItemTags(categoryItem);
-    const color = getItemColor(categoryItem);
+    const src = getItemSrc(categoryItem);
     const item = document.createElement("span");
     item.className = "drawer-image-placeholder";
     item.dataset.tags = tags.join(" ");
     item.dataset.category = categoryTitle.toLowerCase();
     item.dataset.preview = index < previewLimit ? "true" : "false";
 
-    if (color) {
-      item.style.setProperty("--placeholder-color", color);
+    if (src) {
+      const image = document.createElement("img");
+      image.className = "drawer-image";
+      image.src = src;
+      image.alt = getItemAlt(categoryItem, categoryTitle);
+      item.append(image);
     }
-
-    const tagLabel = document.createElement("span");
-    tagLabel.className = "drawer-image-tags";
-    tagLabel.textContent = tags.map((tag) => `#${tag}`).join(" ");
-    item.append(tagLabel);
 
     return item;
   }
@@ -50,6 +57,26 @@ window.CBO.initDrawer = function initDrawer() {
     const searchResults = document.createElement("div");
     searchResults.className = "drawer-search-results";
     drawerContent.append(searchResults);
+
+    const templateGrid = document.createElement("div");
+    templateGrid.className = "drawer-template-grid";
+    drawerContent.append(templateGrid);
+
+    const mockupGrid = document.createElement("div");
+    mockupGrid.className = "drawer-mockup-grid";
+    drawerContent.append(mockupGrid);
+
+    templates.forEach((templateItem, index) => {
+      const item = createImagePlaceholder("template", templateItem, index);
+      item.classList.add("drawer-template-placeholder");
+      templateGrid.append(item);
+    });
+
+    mockups.forEach((mockupItem, index) => {
+      const item = createImagePlaceholder("mockup", mockupItem, index);
+      item.classList.add("drawer-mockup-placeholder");
+      mockupGrid.append(item);
+    });
 
     categories.forEach((category) => {
       const section = document.createElement("section");
@@ -119,6 +146,24 @@ window.CBO.initDrawer = function initDrawer() {
     });
   }
 
+  function filterTemplates(queryTags) {
+    const templateItems = drawerContent.querySelectorAll(".drawer-template-grid [data-tags]");
+
+    templateItems.forEach((item) => {
+      const tags = item.dataset.tags.toLowerCase().split(/\s+/);
+      item.classList.toggle("hidden", !matchesTags(tags, queryTags));
+    });
+  }
+
+  function filterMockups(queryTags) {
+    const mockupItems = drawerContent.querySelectorAll(".drawer-mockup-grid [data-tags]");
+
+    mockupItems.forEach((item) => {
+      const tags = item.dataset.tags.toLowerCase().split(/\s+/);
+      item.classList.toggle("hidden", !matchesTags(tags, queryTags));
+    });
+  }
+
   function normalizeSearch(value) {
     return value
       .trim()
@@ -129,6 +174,14 @@ window.CBO.initDrawer = function initDrawer() {
   }
 
   function filterDrawerSections() {
+    if (activePanel !== "elements") {
+      drawerContent.classList.remove("category-mode", "search-mode");
+      const queryTags = normalizeSearch(searchInput.value);
+      filterTemplates(activePanel === "template" ? queryTags : []);
+      filterMockups(activePanel === "mockups" ? queryTags : []);
+      return;
+    }
+
     const queryTags = normalizeSearch(searchInput.value);
     const sections = drawerContent.querySelectorAll(".drawer-section");
     const isSearchMode = queryTags.length > 0;
@@ -170,8 +223,25 @@ window.CBO.initDrawer = function initDrawer() {
     });
   }
 
+  function updateDrawerPanel() {
+    const isTemplatePanel = activePanel === "template";
+    const isMockupPanel = activePanel === "mockups";
+    drawerPanel.dataset.drawerPanel = activePanel;
+    drawerContent.classList.toggle("template-mode", isTemplatePanel);
+    drawerContent.classList.toggle("mockup-mode", isMockupPanel);
+    activeCategory = null;
+    searchInput.value = "";
+    filterDrawerSections();
+    drawerContent.scrollTop = 0;
+  }
+
+  window.CBO.setDrawerPanel = function setDrawerPanel(panelName) {
+    activePanel = ["template", "mockups"].includes(panelName) ? panelName : "elements";
+    updateDrawerPanel();
+  };
+
   renderDrawer();
-  filterDrawerSections();
+  updateDrawerPanel();
 
   searchInput.addEventListener("input", () => {
     filterDrawerSections();

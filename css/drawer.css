@@ -86,17 +86,17 @@
   position: absolute;
   top: 136px;
   left: 16px;
-  right: 2px;
+  right: 4px;
   bottom: 16px;
   overflow-y: auto;
-  padding-right: 20px;
+  padding-right: 8px;
   scrollbar-color: rgb(68, 73, 86) transparent;
   scrollbar-width: thin;
   user-select: none;
 }
 
 .drawer-content::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
 }
 
 .drawer-content::-webkit-scrollbar-track {
@@ -114,6 +114,34 @@
 
 .drawer-content.dragging {
   scroll-behavior: auto;
+}
+
+.drawer-template-grid,
+.drawer-mockup-grid {
+  display: none;
+}
+
+.drawer-content.template-mode .drawer-search-results,
+.drawer-content.template-mode .drawer-section,
+.drawer-content.template-mode .drawer-mockup-grid,
+.drawer-content.mockup-mode .drawer-search-results,
+.drawer-content.mockup-mode .drawer-section,
+.drawer-content.mockup-mode .drawer-template-grid {
+  display: none;
+}
+
+.drawer-content.template-mode .drawer-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  align-content: start;
+}
+
+.drawer-content.mockup-mode .drawer-mockup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-content: start;
 }
 
 .drawer-section {
@@ -255,24 +283,15 @@
   height: 92px;
   overflow: hidden;
   border-radius: 8px;
-  background: var(--placeholder-color, rgb(44, 48, 58));
+  background: rgb(44, 48, 58);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
-.drawer-image-tags {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  right: 6px;
+.drawer-image {
   display: block;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
-  text-transform: uppercase;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .drawer-content.category-mode .drawer-image-placeholder {
@@ -287,6 +306,15 @@
   height: auto;
   aspect-ratio: 1;
   flex: initial;
+}
+
+.drawer-template-placeholder,
+.drawer-mockup-placeholder {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  flex: initial;
+  border-radius: 0;
 }
 
 .drawer-content.category-mode .drawer-see-all-card {
