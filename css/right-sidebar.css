@@ -1,0 +1,4 @@
+.side-panel.right-panel {
+  right: 0;
+  width: var(--right-panel-width);
+}

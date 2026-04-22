@@ -1,0 +1,52 @@
+.tool-button::after,
+.rail-button::after,
+.panel-title::after {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  z-index: 20;
+  width: max-content;
+  max-width: 140px;
+  padding: 6px 8px;
+  transform: translateX(-50%) translateY(4px);
+  border-radius: 7px;
+  background: #181a1f;
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.28),
+    0 14px 34px rgba(0, 0, 0, 0.28);
+  color: #dfe3ea;
+  content: attr(data-tooltip);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.rail-button::after,
+.panel-title::after {
+  top: 50%;
+  bottom: auto;
+  left: calc(100% + 10px);
+  transform: translateX(-4px) translateY(-50%);
+}
+
+.tool-button.tooltip-visible::after {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+.rail-button.tooltip-visible::after,
+.panel-title.tooltip-visible::after {
+  transform: translateX(0) translateY(-50%);
+  opacity: 1;
+}
+
+.tool-menu-button.open::after,
+.tool-menu-button.open.tooltip-visible::after {
+  display: none;
+}

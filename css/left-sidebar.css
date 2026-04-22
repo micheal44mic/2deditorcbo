@@ -1,0 +1,136 @@
+.side-panel.left-rail {
+  left: 0;
+  z-index: 1002;
+  width: var(--left-rail-width);
+  overflow: visible;
+}
+
+.side-panel.left-drawer {
+  left: var(--left-rail-width);
+  z-index: 1001;
+  width: var(--left-drawer-width);
+  overflow: hidden;
+  transition: transform 180ms ease;
+}
+
+.editor-page.left-panel-collapsed .side-panel.left-drawer {
+  pointer-events: none;
+  transform: translateX(-100%);
+}
+
+.panel-toggle-bg {
+  position: fixed;
+  top: 12px;
+  left: calc(var(--left-rail-width) + var(--left-drawer-width) - 22px);
+  z-index: 999;
+  width: 44px;
+  height: 44px;
+  border-radius: 9px;
+  background: #181a1f;
+  pointer-events: none;
+  transition: left 180ms ease;
+}
+
+.editor-page.left-panel-collapsed .panel-toggle-bg {
+  left: calc(var(--left-rail-width) - 22px);
+}
+
+.panel-toggle {
+  position: absolute;
+  top: 12px;
+  right: calc(0px - var(--left-drawer-width) - 22px);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #c3c8d1;
+  transition: right 180ms ease;
+}
+
+.editor-page.left-panel-collapsed .panel-toggle {
+  right: -22px;
+}
+
+.panel-toggle:hover,
+.panel-toggle:focus-visible {
+  color: #ffffff;
+}
+
+.panel-toggle svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.panel-title {
+  position: absolute;
+  top: 12px;
+  z-index: 1;
+  left: 9px;
+  right: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  overflow: visible;
+  background: transparent;
+  color: #dfe3ea;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.panel-title:hover,
+.panel-title:focus-visible {
+  background: rgb(44, 48, 58);
+  color: #ffffff;
+}
+
+.rail-tools {
+  position: absolute;
+  top: 72px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.rail-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #c3c8d1;
+}
+
+.rail-button:hover,
+.rail-button:focus-visible,
+.rail-button.active {
+  background: rgb(44, 48, 58);
+  color: #ffffff;
+}
+
+.rail-button svg {
+  width: 27px;
+  height: 27px;
+  fill: none;
+  stroke: currentColor;
+}

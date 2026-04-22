@@ -1,0 +1,30 @@
+.editor-page {
+  --left-rail-width: 72px;
+  --left-drawer-width: 265px;
+  --left-panel-width: calc(var(--left-rail-width) + var(--left-drawer-width));
+  --right-panel-width: 245px;
+
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+}
+
+.editor-page.left-panel-collapsed {
+  --left-panel-width: var(--left-rail-width);
+}
+
+.editor-stage {
+  min-height: 100vh;
+  margin: 0 var(--right-panel-width) 0 var(--left-panel-width);
+  background: #ffffff;
+  transition: margin 180ms ease;
+}
+
+.side-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 1000;
+  height: 100vh;
+  background: #181a1f;
+}
