@@ -22,7 +22,7 @@
   width: 1px;
   height: 1px;
   filter: url("#color-drop-goo");
-  opacity: 0.98;
+  opacity: 1;
 }
 
 .color-drop-blob {
@@ -37,20 +37,21 @@
 }
 
 .color-drop-blob-main {
+  z-index: 3;
   width: 36px;
   height: 36px;
 }
 
 .color-drop-blob-trail-a {
+  z-index: 2;
   width: 25px;
   height: 25px;
-  opacity: 0.92;
 }
 
 .color-drop-blob-trail-b {
+  z-index: 1;
   width: 17px;
   height: 17px;
-  opacity: 0.86;
 }
 
 .color-drop-ripple {

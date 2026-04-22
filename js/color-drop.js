@@ -88,9 +88,23 @@ window.CBO.initColorDrop = function initColorDrop() {
       return;
     }
 
-    blobs.forEach((blob) => {
-      blob.x += (targetX - blob.x) * blob.ease;
-      blob.y += (targetY - blob.y) * blob.ease;
+    const mainBlob = blobs[0];
+
+    mainBlob.x += (targetX - mainBlob.x) * mainBlob.ease;
+    mainBlob.y += (targetY - mainBlob.y) * mainBlob.ease;
+    setBlobTransform(mainBlob);
+
+    blobs.slice(1).forEach((blob) => {
+      const mainDistanceToTarget = Math.hypot(targetX - mainBlob.x, targetY - mainBlob.y);
+
+      if (mainDistanceToTarget < 2.5) {
+        blob.x += (mainBlob.x - blob.x) * 0.42;
+        blob.y += (mainBlob.y - blob.y) * 0.42;
+      } else {
+        blob.x += (targetX - blob.x) * blob.ease;
+        blob.y += (targetY - blob.y) * blob.ease;
+      }
+
       setBlobTransform(blob);
     });
 
@@ -123,7 +137,7 @@ window.CBO.initColorDrop = function initColorDrop() {
       blob.element = document.createElement("div");
       blob.element.className = `color-drop-blob color-drop-blob-${blob.name}`;
       ghost.appendChild(blob.element);
-      setBlobTransform(blob, 0.92);
+      setBlobTransform(blob);
     });
 
     document.body.appendChild(ghost);
