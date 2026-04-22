@@ -5,10 +5,51 @@ window.CBO.initDrawer = function initDrawer() {
   const drawerContent = document.querySelector(".drawer-content");
   const searchInput = document.querySelector(".drawer-search input");
   const searchClear = document.querySelector(".drawer-search-clear");
+  const previewLimit = 6;
   let activeCategory = null;
+
+  function getItemTags(item) {
+    return Array.isArray(item) ? item : item.tags || [];
+  }
+
+  function getItemColor(item) {
+    return Array.isArray(item) ? "" : item.color || "";
+  }
+
+  function createImagePlaceholder(categoryTitle, categoryItem, index) {
+    const tags = getItemTags(categoryItem);
+    const color = getItemColor(categoryItem);
+    const item = document.createElement("span");
+    item.className = "drawer-image-placeholder";
+    item.dataset.tags = tags.join(" ");
+    item.dataset.category = categoryTitle.toLowerCase();
+    item.dataset.preview = index < previewLimit ? "true" : "false";
+
+    if (color) {
+      item.style.setProperty("--placeholder-color", color);
+    }
+
+    const tagLabel = document.createElement("span");
+    tagLabel.className = "drawer-image-tags";
+    tagLabel.textContent = tags.map((tag) => `#${tag}`).join(" ");
+    item.append(tagLabel);
+
+    return item;
+  }
+
+  function matchesTags(tags, queryTags) {
+    return (
+      queryTags.length === 0 ||
+      queryTags.every((queryTag) => tags.some((tag) => tag.includes(queryTag)))
+    );
+  }
 
   function renderDrawer() {
     drawerContent.replaceChildren();
+
+    const searchResults = document.createElement("div");
+    searchResults.className = "drawer-search-results";
+    drawerContent.append(searchResults);
 
     categories.forEach((category) => {
       const section = document.createElement("section");
@@ -39,12 +80,8 @@ window.CBO.initDrawer = function initDrawer() {
       const row = document.createElement("div");
       row.className = "drawer-image-container";
 
-      category.items.forEach((tags) => {
-        const item = document.createElement("span");
-        item.className = "drawer-image-placeholder";
-        item.dataset.tags = tags.join(" ");
-        item.dataset.category = category.title.toLowerCase();
-        row.append(item);
+      category.items.forEach((categoryItem, index) => {
+        row.append(createImagePlaceholder(category.title, categoryItem, index));
       });
 
       const seeAllCard = document.createElement("button");
@@ -61,15 +98,49 @@ window.CBO.initDrawer = function initDrawer() {
     });
   }
 
+  function renderSearchResults(queryTags) {
+    const searchResults = drawerContent.querySelector(".drawer-search-results");
+    searchResults.replaceChildren();
+
+    categories.forEach((category) => {
+      const categoryKey = category.title.toLowerCase();
+
+      if (activeCategory && categoryKey !== activeCategory) {
+        return;
+      }
+
+      category.items.forEach((categoryItem, index) => {
+        const tags = getItemTags(categoryItem).map((tag) => tag.toLowerCase());
+
+        if (matchesTags(tags, queryTags)) {
+          searchResults.append(createImagePlaceholder(category.title, categoryItem, index));
+        }
+      });
+    });
+  }
+
   function normalizeSearch(value) {
-    return value.trim().toLowerCase().replace(/^#/, "");
+    return value
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .map((token) => token.replace(/^#/, ""))
+      .filter(Boolean);
   }
 
   function filterDrawerSections() {
-    const query = normalizeSearch(searchInput.value);
+    const queryTags = normalizeSearch(searchInput.value);
     const sections = drawerContent.querySelectorAll(".drawer-section");
+    const isSearchMode = queryTags.length > 0;
+    const hasCategoryScope = Boolean(activeCategory);
+    const isCategoryMode = hasCategoryScope && !isSearchMode;
 
-    drawerContent.classList.toggle("category-mode", Boolean(activeCategory));
+    drawerContent.classList.toggle("category-mode", isCategoryMode);
+    drawerContent.classList.toggle("search-mode", isSearchMode);
+
+    if (isSearchMode) {
+      renderSearchResults(queryTags);
+    }
 
     sections.forEach((section) => {
       const sectionCategory = section.dataset.category;
@@ -78,10 +149,11 @@ window.CBO.initDrawer = function initDrawer() {
       let visibleItems = 0;
 
       items.forEach((item) => {
-        const tags = item.dataset.tags.toLowerCase();
-        const matchesCategory = !activeCategory || item.dataset.category === activeCategory;
-        const matchesQuery = query.length === 0 || tags.includes(query);
-        const isVisible = matchesCategory && matchesQuery;
+        const tags = item.dataset.tags.toLowerCase().split(/\s+/);
+        const matchesCategory = !hasCategoryScope || item.dataset.category === activeCategory;
+        const matchesQuery = matchesTags(tags, queryTags);
+        const fitsPreview = isCategoryMode || isSearchMode || item.dataset.preview === "true";
+        const isVisible = matchesCategory && matchesQuery && fitsPreview;
 
         item.classList.toggle("hidden", !isVisible);
 
@@ -92,18 +164,21 @@ window.CBO.initDrawer = function initDrawer() {
 
       section.classList.toggle(
         "hidden",
-        (activeCategory && sectionCategory !== activeCategory) || visibleItems === 0,
+        (hasCategoryScope && sectionCategory !== activeCategory) || visibleItems === 0,
       );
-      seeAllCard.classList.toggle("hidden", query.length > 0 || Boolean(activeCategory));
+      seeAllCard.classList.toggle("hidden", isSearchMode || isCategoryMode);
     });
   }
 
   renderDrawer();
+  filterDrawerSections();
 
-  searchInput.addEventListener("input", filterDrawerSections);
+  searchInput.addEventListener("input", () => {
+    filterDrawerSections();
+    drawerContent.scrollTop = 0;
+  });
   searchClear.addEventListener("click", () => {
     searchInput.value = "";
-    activeCategory = null;
     filterDrawerSections();
     searchInput.focus();
   });

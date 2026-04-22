@@ -62,6 +62,10 @@ window.CBO.initDragScroll = function initDragScroll() {
     let dragMode = null;
 
     row.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button")) {
+        return;
+      }
+
       isDragging = true;
       startX = event.clientX;
       startY = event.clientY;
