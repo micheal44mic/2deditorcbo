@@ -21,6 +21,15 @@ window.CBO.initToolbar = function initToolbar() {
       toolButton.classList.add("active");
       toolButton.setAttribute("aria-pressed", "true");
     });
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:tool-change", {
+        detail: {
+          label: button.getAttribute("aria-label") || "",
+          syncGroup: syncGroup || "",
+        },
+      }),
+    );
   }
 
   function closeMenus(exceptButton = null) {

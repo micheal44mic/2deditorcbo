@@ -6,6 +6,8 @@
 
 .right-sidebar-content {
   --right-sidebar-svg-color: #dfe3ea;
+  --right-sidebar-header-gap: 12px;
+  --right-sidebar-section-gap: 16px;
 
   position: absolute;
   top: 12px;
@@ -15,7 +17,11 @@
 
 .right-sidebar-section {
   position: relative;
-  padding-bottom: 12px;
+  padding-bottom: var(--right-sidebar-section-gap);
+}
+
+.right-sidebar-actions.right-sidebar-section {
+  padding-bottom: var(--right-sidebar-header-gap);
 }
 
 .right-sidebar-section::after {
@@ -27,6 +33,14 @@
   height: 1px;
   background: var(--right-sidebar-svg-color);
   opacity: 0.32;
+}
+
+.right-sidebar-content > .right-sidebar-section + .right-sidebar-section {
+  margin-top: var(--right-sidebar-section-gap);
+}
+
+.right-sidebar-actions.right-sidebar-section + .right-sidebar-section {
+  margin-top: var(--right-sidebar-header-gap);
 }
 
 .right-sidebar-actions {
@@ -88,7 +102,7 @@
   flex-direction: column;
   gap: 7px;
   width: 100%;
-  margin-top: 12px;
+  margin-top: 0;
   color: #9da5b4;
   font-size: 11px;
   font-weight: 800;
