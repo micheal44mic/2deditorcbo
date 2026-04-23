@@ -10,16 +10,6 @@
   max-width: calc(100vw - var(--left-panel-width) - var(--right-panel-width) - 24px);
 }
 
-.top-toolbar-dock .tool-button::after {
-  top: calc(100% + 10px);
-  bottom: auto;
-  transform: translateX(-50%) translateY(-4px);
-}
-
-.top-toolbar-dock .tool-button.tooltip-visible::after {
-  transform: translateX(-50%) translateY(0);
-}
-
 .top-toolbar-dock .tool-popover {
   top: calc(100% + 12px);
   bottom: auto;

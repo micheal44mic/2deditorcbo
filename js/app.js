@@ -1,6 +1,7 @@
 document.addEventListener("DOMContentLoaded", () => {
   window.CBO.initSidebar();
   window.CBO.initDrawer();
+  window.CBO.initLayersPanel();
   window.CBO.initDragScroll();
   window.CBO.initTopToolbar();
   window.CBO.initVerticalToolbar();

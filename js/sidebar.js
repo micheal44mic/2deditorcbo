@@ -5,6 +5,18 @@ window.CBO.initSidebar = function initSidebar() {
   const toggle = document.querySelector(".panel-toggle");
   const railButtons = document.querySelectorAll("[data-rail-button]");
 
+  function setDrawerTriggerActive(panelName) {
+    railButtons.forEach((button) => {
+      button.classList.toggle("active", button.dataset.drawerPanel === panelName);
+    });
+
+    document.querySelectorAll("[data-drawer-sync]").forEach((button) => {
+      const isActive = button.dataset.drawerSync === panelName;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+  }
+
   function setDrawerOpen(isOpen) {
     editorPage.classList.toggle("left-panel-collapsed", !isOpen);
     toggle.innerHTML = isOpen ? window.CBO.icons.panelClose : window.CBO.icons.panelOpen;
@@ -12,16 +24,21 @@ window.CBO.initSidebar = function initSidebar() {
     toggle.setAttribute("aria-label", isOpen ? "Close left panel" : "Open left panel");
   }
 
+  window.CBO.openDrawerPanel = function openDrawerPanel(panelName = "elements") {
+    setDrawerTriggerActive(panelName);
+
+    if (window.CBO.setDrawerPanel) {
+      window.CBO.setDrawerPanel(panelName);
+    }
+
+    setDrawerOpen(true);
+  };
+
+  window.CBO.setDrawerTriggerActive = setDrawerTriggerActive;
+
   railButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      railButtons.forEach((railButton) => railButton.classList.remove("active"));
-      button.classList.add("active");
-
-      if (window.CBO.setDrawerPanel) {
-        window.CBO.setDrawerPanel(button.dataset.drawerPanel || "elements");
-      }
-
-      setDrawerOpen(true);
+      window.CBO.openDrawerPanel(button.dataset.drawerPanel || "elements");
     });
   });
 

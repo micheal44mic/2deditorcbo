@@ -12,8 +12,8 @@ window.CBO.initColorDrop = function initColorDrop() {
 
   const dragThreshold = 7;
   const blobs = [
-    { name: "main", ease: 0.28, x: 0, y: 0, previousX: 0, previousY: 0, element: null },
-    { name: "trail-a", ease: 0.17, x: 0, y: 0, previousX: 0, previousY: 0, element: null },
+    { name: "main", ease: 0.16, x: 0, y: 0, previousX: 0, previousY: 0, element: null },
+    { name: "trail-a", ease: 0.14, x: 0, y: 0, previousX: 0, previousY: 0, element: null },
     { name: "trail-b", ease: 0.1, x: 0, y: 0, previousX: 0, previousY: 0, element: null },
   ];
   let pointerId = null;
@@ -101,8 +101,8 @@ window.CBO.initColorDrop = function initColorDrop() {
         blob.x += (mainBlob.x - blob.x) * 0.42;
         blob.y += (mainBlob.y - blob.y) * 0.42;
       } else {
-        blob.x += (targetX - blob.x) * blob.ease;
-        blob.y += (targetY - blob.y) * blob.ease;
+        blob.x += (mainBlob.x - blob.x) * blob.ease;
+        blob.y += (mainBlob.y - blob.y) * blob.ease;
       }
 
       setBlobTransform(blob);

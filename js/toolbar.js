@@ -4,6 +4,7 @@ window.CBO.initToolbar = function initToolbar() {
   const toolButtons = document.querySelectorAll("[data-tool]");
   const menuButtons = document.querySelectorAll(".tool-menu-button");
   const toolsetOptions = document.querySelectorAll("[data-toolset-option]");
+  const historyButtons = document.querySelectorAll("[data-history-action]");
 
   function activateTool(button) {
     const syncGroup = button.dataset.toolSync;
@@ -46,9 +47,40 @@ window.CBO.initToolbar = function initToolbar() {
     activateTool(primary);
   }
 
+  function flashHistoryButton(button) {
+    button.classList.add("active");
+    button.setAttribute("aria-pressed", "true");
+
+    window.setTimeout(() => {
+      button.classList.remove("active");
+      button.setAttribute("aria-pressed", "false");
+    }, 140);
+  }
+
+  function triggerHistoryAction(action) {
+    const button = document.querySelector(`[data-history-action="${action}"]`);
+
+    if (!button) {
+      return;
+    }
+
+    flashHistoryButton(button);
+    window.dispatchEvent(
+      new CustomEvent("cbo:history-action", {
+        detail: { action },
+      }),
+    );
+  }
+
   toolButtons.forEach((button) => {
     button.addEventListener("click", () => {
       activateTool(button);
+    });
+  });
+
+  historyButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      triggerHistoryAction(button.dataset.historyAction);
     });
   });
 
@@ -92,6 +124,19 @@ window.CBO.initToolbar = function initToolbar() {
     }
 
     const key = event.key.toLowerCase();
+    const isModifierShortcut = event.ctrlKey || event.metaKey;
+    const isUndoShortcut = isModifierShortcut && key === "z" && !event.shiftKey;
+    const isRedoShortcut =
+      (isModifierShortcut && key === "z" && event.shiftKey) ||
+      (event.ctrlKey && key === "y" && !event.shiftKey);
+
+    if (isUndoShortcut || isRedoShortcut) {
+      event.preventDefault();
+      triggerHistoryAction(isUndoShortcut ? "undo" : "redo");
+      closeMenus();
+      return;
+    }
+
     const toolsetOption = document.querySelector(`[data-toolset-option][data-shortcut="${key}"]`);
     const toolbarTool = document.querySelector(`[data-tool][data-shortcut="${key}"]`);
 

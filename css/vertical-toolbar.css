@@ -14,15 +14,3 @@
   height: fit-content;
   padding: 7px 6px;
 }
-
-.right-vertical-toolbar .tool-button::after {
-  top: 50%;
-  right: calc(100% + 10px);
-  bottom: auto;
-  left: auto;
-  transform: translateX(4px) translateY(-50%);
-}
-
-.right-vertical-toolbar .tool-button.tooltip-visible::after {
-  transform: translateX(0) translateY(-50%);
-}

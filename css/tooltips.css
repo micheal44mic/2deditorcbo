@@ -1,21 +1,17 @@
-.tool-button::after,
-.rail-button::after,
-.panel-title::after {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 10px);
-  z-index: 20;
+.floating-tooltip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 6000;
   width: max-content;
   max-width: 140px;
   padding: 6px 8px;
-  transform: translateX(-50%) translateY(4px);
   border-radius: 7px;
   background: #181a1f;
   box-shadow:
     0 6px 14px rgba(0, 0, 0, 0.28),
     0 14px 34px rgba(0, 0, 0, 0.28);
   color: #dfe3ea;
-  content: attr(data-tooltip);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
@@ -27,26 +23,38 @@
     transform 120ms ease;
 }
 
-.rail-button::after,
-.panel-title::after {
-  top: 50%;
-  bottom: auto;
-  left: calc(100% + 10px);
-  transform: translateX(-4px) translateY(-50%);
-}
-
-.tool-button.tooltip-visible::after {
-  transform: translateX(-50%) translateY(0);
+.floating-tooltip.visible {
   opacity: 1;
 }
 
-.rail-button.tooltip-visible::after,
-.panel-title.tooltip-visible::after {
-  transform: translateX(0) translateY(-50%);
-  opacity: 1;
+.floating-tooltip[data-placement="top"] {
+  transform: translate(-50%, calc(-100% + 4px));
 }
 
-.tool-menu-button.open::after,
-.tool-menu-button.open.tooltip-visible::after {
-  display: none;
+.floating-tooltip[data-placement="top"].visible {
+  transform: translate(-50%, -100%);
+}
+
+.floating-tooltip[data-placement="bottom"] {
+  transform: translate(-50%, -4px);
+}
+
+.floating-tooltip[data-placement="bottom"].visible {
+  transform: translate(-50%, 0);
+}
+
+.floating-tooltip[data-placement="right"] {
+  transform: translate(-4px, -50%);
+}
+
+.floating-tooltip[data-placement="right"].visible {
+  transform: translate(0, -50%);
+}
+
+.floating-tooltip[data-placement="left"] {
+  transform: translate(calc(-100% + 4px), -50%);
+}
+
+.floating-tooltip[data-placement="left"].visible {
+  transform: translate(-100%, -50%);
 }

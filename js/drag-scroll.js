@@ -10,6 +10,7 @@ window.CBO.initDragScroll = function initDragScroll() {
   drawerContent.addEventListener("pointerdown", (event) => {
     const isInteractive =
       event.target.closest(".drawer-image-container") ||
+      event.target.closest("[data-layer-row]") ||
       event.target.closest("button") ||
       event.target.closest("input");
 

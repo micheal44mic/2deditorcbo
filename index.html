@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="./css/toolbar.css" />
     <link rel="stylesheet" href="./css/top-toolbar.css" />
     <link rel="stylesheet" href="./css/vertical-toolbar.css" />
+    <link rel="stylesheet" href="./css/layers-panel.css" />
     <link rel="stylesheet" href="./css/color-picker.css" />
     <link rel="stylesheet" href="./css/color-drop.css" />
     <link rel="stylesheet" href="./css/tooltips.css" />
@@ -54,11 +55,44 @@
               <path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z" />
             </svg>
           </button>
+          <button class="rail-button" type="button" aria-label="Upload" data-tooltip="UPLOAD" data-drawer-panel="upload" data-rail-button>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 13v8" />
+              <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+              <path d="m8 17 4-4 4 4" />
+            </svg>
+          </button>
+          <button class="rail-button" type="button" aria-label="Layers" data-tooltip="LAYERS" data-drawer-panel="layers" data-rail-button>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+              <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+              <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+            </svg>
+          </button>
         </div>
       </aside>
 
       <aside class="side-panel left-drawer" aria-label="Left drawer">
         <div class="drawer-title">CLOTHING BRAND OWNER</div>
+        <div class="drawer-panel-header">
+          <div class="drawer-panel-title" aria-hidden="true"></div>
+          <div class="drawer-panel-actions">
+            <button class="drawer-panel-action drawer-add-layer-button" type="button" aria-label="Add layer" data-tooltip="ADD LAYER">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 .83.18 2 2 0 0 0 .83-.18l8.58-3.9a1 1 0 0 0 0-1.831z" />
+                <path d="M16 17h6" />
+                <path d="M19 14v6" />
+                <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 .825.178" />
+                <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l2.116-.962" />
+              </svg>
+            </button>
+            <button class="drawer-panel-action drawer-new-folder-button" type="button" aria-label="New folder" data-tooltip="NEW FOLDER">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
+          </div>
+        </div>
         <div class="drawer-search" role="search" aria-label="Search elements">
           <input type="search" placeholder="Search" />
           <button class="drawer-search-clear" type="button" aria-label="Clear search">
@@ -245,13 +279,13 @@
         </nav>
 
         <nav class="bottom-toolbar history-toolbar" aria-label="History toolbar">
-          <button class="tool-button" type="button" aria-label="UNDO" aria-pressed="false" data-tooltip="UNDO">
+          <button class="tool-button" type="button" aria-label="UNDO" aria-pressed="false" data-tooltip="UNDO Ctrl+Z" data-history-action="undo">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20 4v7a4 4 0 0 1-4 4H4" />
               <path d="m9 10-5 5 5 5" />
             </svg>
           </button>
-          <button class="tool-button" type="button" aria-label="REDO" aria-pressed="false" data-tooltip="REDO">
+          <button class="tool-button" type="button" aria-label="REDO" aria-pressed="false" data-tooltip="REDO Ctrl+Shift+Z" data-history-action="redo">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="m15 10 5 5-5 5" />
               <path d="M4 4v7a4 4 0 0 0 4 4h12" />
@@ -265,6 +299,7 @@
     <script src="./js/icons.js"></script>
     <script src="./js/sidebar.js"></script>
     <script src="./js/drawer.js"></script>
+    <script src="./js/layers-panel.js"></script>
     <script src="./js/drag-scroll.js"></script>
     <script src="./js/top-toolbar.js"></script>
     <script src="./js/vertical-toolbar.js"></script>

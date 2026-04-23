@@ -5,6 +5,10 @@ window.CBO.initDrawer = function initDrawer() {
   const templates = window.CBO_TEMPLATES || [];
   const mockupCategories = window.CBO_MOCKUP_CATEGORIES || [];
   const drawerPanel = document.querySelector(".left-drawer");
+  const drawerPanelTitle = document.querySelector(".drawer-panel-title");
+  const layerActionButtons = document.querySelectorAll(
+    ".drawer-add-layer-button, .drawer-new-folder-button",
+  );
   const drawerContent = document.querySelector(".drawer-content");
   const searchInput = document.querySelector(".drawer-search input");
   const searchClear = document.querySelector(".drawer-search-clear");
@@ -25,6 +29,15 @@ window.CBO.initDrawer = function initDrawer() {
   customScrollbarThumb.className = "drawer-custom-scrollbar-thumb";
   customScrollbar.append(customScrollbarThumb);
   drawerPanel.append(customScrollbar);
+
+  layerActionButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      button.classList.add("active");
+      window.setTimeout(() => {
+        button.classList.remove("active");
+      }, 140);
+    });
+  });
 
   function getItemTags(item) {
     return Array.isArray(item) ? item : item.tags || [];
@@ -175,6 +188,14 @@ window.CBO.initDrawer = function initDrawer() {
     mockupSections.className = "drawer-mockup-sections";
     drawerContent.append(mockupSections);
 
+    const uploadPanel = document.createElement("div");
+    uploadPanel.className = "drawer-upload-panel";
+    drawerContent.append(uploadPanel);
+
+    const layersPanel = document.createElement("div");
+    layersPanel.className = "drawer-layers-panel";
+    drawerContent.append(layersPanel);
+
     templates.forEach((templateItem, index) => {
       const item = createImagePlaceholder("template", templateItem, index);
       item.classList.add("drawer-template-placeholder");
@@ -239,6 +260,14 @@ window.CBO.initDrawer = function initDrawer() {
   }
 
   function filterDrawerSections() {
+    if (activePanel === "upload" || activePanel === "layers") {
+      drawerContent.classList.remove("category-mode", "search-mode");
+      filterTemplates([]);
+      filterMockups([]);
+      scheduleCustomScrollbarUpdate();
+      return;
+    }
+
     if (activePanel === "template") {
       drawerContent.classList.remove("category-mode", "search-mode");
       const queryTags = normalizeSearch(searchInput.value);
@@ -295,9 +324,14 @@ window.CBO.initDrawer = function initDrawer() {
   function updateDrawerPanel() {
     const isTemplatePanel = activePanel === "template";
     const isMockupPanel = activePanel === "mockups";
+    const isUploadPanel = activePanel === "upload";
+    const isLayersPanel = activePanel === "layers";
     drawerPanel.dataset.drawerPanel = activePanel;
+    drawerPanelTitle.textContent = isLayersPanel ? "LAYERS" : "";
     drawerContent.classList.toggle("template-mode", isTemplatePanel);
     drawerContent.classList.toggle("mockup-mode", isMockupPanel);
+    drawerContent.classList.toggle("upload-mode", isUploadPanel);
+    drawerContent.classList.toggle("layers-mode", isLayersPanel);
     activeCategory = null;
     searchInput.value = "";
     filterDrawerSections();
@@ -306,7 +340,9 @@ window.CBO.initDrawer = function initDrawer() {
   }
 
   window.CBO.setDrawerPanel = function setDrawerPanel(panelName) {
-    activePanel = ["template", "mockups"].includes(panelName) ? panelName : "elements";
+    activePanel = ["template", "mockups", "upload", "layers"].includes(panelName)
+      ? panelName
+      : "elements";
     updateDrawerPanel();
   };
 
