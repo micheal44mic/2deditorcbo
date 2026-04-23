@@ -6,10 +6,12 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const studioSettings = {
     BASIC: {
       randomized: false,
+      size: 0,
       spacing: 50,
     },
   };
   const clampPercentage = (value) => Math.min(100, Math.max(0, Math.round(Number(value) || 0)));
+  const clampSignedPercentage = (value) => Math.min(100, Math.max(-100, Math.round(Number(value) || 0)));
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
     return;
@@ -92,6 +94,14 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     const randomizedSetting = document.createElement("div");
     const randomizedName = document.createElement("div");
     const randomizedToggle = document.createElement("button");
+    const sizeValue = studioSettings.BASIC.size;
+    const sizeSetting = document.createElement("div");
+    const sizeHeader = document.createElement("div");
+    const sizeName = document.createElement("div");
+    const sizeValueLabel = document.createElement("label");
+    const sizeValueInput = document.createElement("input");
+    const sizeValueUnit = document.createElement("span");
+    const sizeSlider = document.createElement("input");
 
     selectedName.className = "brush-studio-selected-name";
     setting.className = "brush-studio-setting";
@@ -104,11 +114,27 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     randomizedSetting.className = "brush-studio-setting brush-studio-toggle-setting";
     randomizedName.className = "brush-studio-setting-name";
     randomizedToggle.className = "brush-studio-toggle";
+    sizeSetting.className = "brush-studio-setting";
+    sizeHeader.className = "brush-studio-setting-header";
+    sizeName.className = "brush-studio-setting-name";
+    sizeValueLabel.className = "brush-studio-setting-value";
+    sizeValueInput.className = "brush-studio-setting-value-input";
+    sizeValueUnit.className = "brush-studio-setting-value-unit";
+    sizeSlider.className = "brush-studio-range brush-studio-range-centered";
+    randomizedToggle.innerHTML = `
+      <span class="brush-studio-toggle-knob" aria-hidden="true">
+        <svg class="brush-studio-toggle-check lucide lucide-check-icon lucide-check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 6 9 17l-5-5"></path>
+        </svg>
+      </span>
+    `;
 
     selectedName.textContent = selectedCategory;
     name.textContent = "SPACING";
     valueUnit.textContent = "%";
     randomizedName.textContent = "RANDOMIZED";
+    sizeName.textContent = "SIZE";
+    sizeValueUnit.textContent = "%";
 
     valueInput.type = "number";
     valueInput.min = "0";
@@ -124,12 +150,31 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     slider.style.setProperty("--brush-studio-range-progress", `${spacingValue}%`);
     randomizedToggle.type = "button";
     randomizedToggle.setAttribute("aria-label", "RANDOMIZED");
+    sizeValueInput.type = "number";
+    sizeValueInput.min = "-100";
+    sizeValueInput.max = "100";
+    sizeValueInput.step = "1";
+    sizeValueInput.value = String(sizeValue);
+    sizeValueInput.setAttribute("aria-label", "SIZE PERCENTAGE");
+    sizeSlider.type = "range";
+    sizeSlider.min = "-100";
+    sizeSlider.max = "100";
+    sizeSlider.value = String(sizeValue);
+    sizeSlider.setAttribute("aria-label", "SIZE");
+
+    function setCenteredRangeFill(rangeInput, value) {
+      const progress = ((value + 100) / 200) * 100;
+      const start = Math.min(50, progress);
+      const end = Math.max(50, progress);
+
+      rangeInput.style.setProperty("--brush-studio-range-start", `${start}%`);
+      rangeInput.style.setProperty("--brush-studio-range-end", `${end}%`);
+    }
 
     function setRandomizedValue(isRandomized) {
       studioSettings.BASIC.randomized = isRandomized;
       randomizedToggle.classList.toggle("active", isRandomized);
       randomizedToggle.setAttribute("aria-pressed", String(isRandomized));
-      randomizedToggle.textContent = isRandomized ? "ON" : "OFF";
     }
 
     function setSpacingValue(value) {
@@ -139,6 +184,15 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       slider.value = String(spacing);
       valueInput.value = String(spacing);
       slider.style.setProperty("--brush-studio-range-progress", `${spacing}%`);
+    }
+
+    function setSizeValue(value) {
+      const size = clampSignedPercentage(value);
+
+      studioSettings.BASIC.size = size;
+      sizeSlider.value = String(size);
+      sizeValueInput.value = String(size);
+      setCenteredRangeFill(sizeSlider, size);
     }
 
     slider.addEventListener("input", () => {
@@ -162,13 +216,35 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     randomizedToggle.addEventListener("click", () => {
       setRandomizedValue(!studioSettings.BASIC.randomized);
     });
+    sizeSlider.addEventListener("input", () => {
+      setSizeValue(sizeSlider.value);
+    });
+    sizeValueInput.addEventListener("input", () => {
+      if (sizeValueInput.value.trim() === "") {
+        return;
+      }
+
+      setSizeValue(sizeValueInput.value);
+    });
+    sizeValueInput.addEventListener("blur", () => {
+      setSizeValue(sizeValueInput.value || studioSettings.BASIC.size);
+    });
+    sizeValueInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        sizeValueInput.blur();
+      }
+    });
 
     value.append(valueInput, valueUnit);
     header.append(name, value);
     setting.append(header, slider);
     randomizedSetting.append(randomizedName, randomizedToggle);
+    sizeValueLabel.append(sizeValueInput, sizeValueUnit);
+    sizeHeader.append(sizeName, sizeValueLabel);
+    sizeSetting.append(sizeHeader, sizeSlider);
     setRandomizedValue(studioSettings.BASIC.randomized);
-    settingsPanel.replaceChildren(selectedName, setting, randomizedSetting);
+    setSizeValue(studioSettings.BASIC.size);
+    settingsPanel.replaceChildren(selectedName, setting, randomizedSetting, sizeSetting);
   }
 
   function renderSelectedCategoryName() {
