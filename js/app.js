@@ -10,5 +10,6 @@ document.addEventListener("DOMContentLoaded", () => {
   window.CBO.initToolbar();
   window.CBO.initRightSidebar();
   window.CBO.initBrushesPanel();
+  window.CBO.initBrushStudio();
   window.CBO.initTooltips();
 });
