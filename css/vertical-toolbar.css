@@ -10,7 +10,31 @@
 
 .right-vertical-toolbar {
   flex-direction: column;
-  width: 51px;
+  width: fit-content;
+  min-width: 51px;
   height: fit-content;
   padding: 7px 6px;
+}
+
+.right-vertical-toolbar .tool-group {
+  justify-content: center;
+}
+
+.right-vertical-toolbar .vertical-selection-tool-group {
+  flex-direction: column;
+  gap: 1px;
+}
+
+.right-vertical-toolbar .vertical-selection-tool-group .tool-menu-button {
+  width: 37px;
+  min-width: 37px;
+  height: 18px;
+}
+
+.right-vertical-toolbar .tool-popover {
+  top: 50%;
+  right: calc(100% + 12px);
+  bottom: auto;
+  left: auto;
+  transform: translateY(-50%);
 }

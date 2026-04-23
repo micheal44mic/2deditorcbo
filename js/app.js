@@ -8,6 +8,6 @@ document.addEventListener("DOMContentLoaded", () => {
   window.CBO.initColorPicker();
   window.CBO.initColorDrop();
   window.CBO.initToolbar();
-  window.CBO.initTooltips();
   window.CBO.initRightSidebar();
+  window.CBO.initTooltips();
 });

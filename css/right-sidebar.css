@@ -1,4 +1,134 @@
 .side-panel.right-panel {
   right: 0;
   width: var(--right-panel-width);
+  overflow: hidden;
+}
+
+.right-sidebar-content {
+  --right-sidebar-svg-color: #dfe3ea;
+
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+}
+
+.right-sidebar-section {
+  position: relative;
+  padding-bottom: 12px;
+}
+
+.right-sidebar-section::after {
+  content: "";
+  position: absolute;
+  right: -12px;
+  bottom: 0;
+  left: -12px;
+  height: 1px;
+  background: var(--right-sidebar-svg-color);
+  opacity: 0.32;
+}
+
+.right-sidebar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.right-sidebar-avatar,
+.right-sidebar-share-button {
+  border: 0;
+  color: var(--right-sidebar-svg-color);
+}
+
+.right-sidebar-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgb(44, 48, 58);
+}
+
+.right-sidebar-avatar:hover,
+.right-sidebar-avatar:focus-visible,
+.right-sidebar-share-button:hover,
+.right-sidebar-share-button:focus-visible {
+  color: #ffffff;
+  background: #3a3f4b;
+}
+
+.right-sidebar-avatar svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.right-sidebar-share-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 78px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: #2c303a;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.right-sidebar-project-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  margin-top: 12px;
+  color: #9da5b4;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.right-sidebar-project-label {
+  color: #c9ced8;
+}
+
+.right-sidebar-project-input-wrap {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: #242832;
+}
+
+.right-sidebar-project-input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: right;
+}
+
+.right-sidebar-project-input::placeholder {
+  color: #77808f;
+  opacity: 1;
+}
+
+.right-sidebar-project-field:focus-within .right-sidebar-project-input-wrap {
+  background: #2c303a;
+  box-shadow: inset 0 0 0 1px #4b5363;
 }

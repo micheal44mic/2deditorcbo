@@ -7,7 +7,7 @@ window.CBO.initDrawer = function initDrawer() {
   const drawerPanel = document.querySelector(".left-drawer");
   const drawerPanelTitle = document.querySelector(".drawer-panel-title");
   const layerActionButtons = document.querySelectorAll(
-    ".drawer-add-layer-button, .drawer-new-folder-button",
+    ".drawer-copy-layer-button, .drawer-new-folder-button",
   );
   const drawerContent = document.querySelector(".drawer-content");
   const searchInput = document.querySelector(".drawer-search input");
