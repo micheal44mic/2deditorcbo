@@ -111,7 +111,7 @@
       <div class="toolbar-dock" aria-label="Editor controls" data-tooltip-zone>
         <nav class="bottom-toolbar" aria-label="Toolbar editor">
           <div class="tool-group" aria-label="Selection tools">
-            <button class="tool-button active" type="button" aria-label="SELECTION" aria-pressed="true" data-tooltip="SELECTION" data-toolset-primary="selection" data-tool>
+            <button class="tool-button active" type="button" aria-label="SELECTION" aria-pressed="true" data-tooltip="SELECTION" data-toolset-primary="selection" data-tool-mode="selection" data-tool>
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />
               </svg>
@@ -121,14 +121,14 @@
                 <path d="m6 9 6 6 6-6" />
               </svg>
               <span class="tool-popover" aria-hidden="true">
-                <span class="popover-option active" data-toolset-option="selection" data-shortcut="v" data-label="SELECTION">
+                <span class="popover-option active" data-toolset-option="selection" data-tool-mode="selection" data-shortcut="v" data-label="SELECTION">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />
                   </svg>
                   <span class="popover-label">SELECTION</span>
                   <span class="popover-key">V</span>
                 </span>
-                <span class="popover-option" data-toolset-option="selection" data-shortcut="h" data-label="HANDTOOL">
+                <span class="popover-option" data-toolset-option="selection" data-tool-mode="hand" data-shortcut="h" data-label="HANDTOOL">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" />
                     <path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" />
@@ -138,7 +138,7 @@
                   <span class="popover-label">HANDTOOL</span>
                   <span class="popover-key">H</span>
                 </span>
-                <span class="popover-option" data-toolset-option="selection" data-shortcut="z" data-label="ZOOM">
+                <span class="popover-option" data-toolset-option="selection" data-tool-mode="zoom" data-shortcut="z" data-label="ZOOM">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M3 7V5a2 2 0 0 1 2-2h2" />
                     <path d="M17 3h2a2 2 0 0 1 2 2v2" />
@@ -198,7 +198,7 @@
           </div>
 
           <div class="tool-group" aria-label="Pen tools">
-            <button class="tool-button" type="button" aria-label="PEN" aria-pressed="false" data-tooltip="PEN" data-toolset-primary="draw" data-tool>
+            <button class="tool-button" type="button" aria-label="PEN" aria-pressed="false" data-tooltip="PEN" data-toolset-primary="draw" data-tool-mode="brush" data-tool>
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z" />
                 <path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18" />
@@ -234,7 +234,7 @@
           </div>
 
           <div class="tool-group" aria-label="Brush tools">
-            <button class="tool-button" type="button" aria-label="BRUSH" aria-pressed="false" data-tooltip="BRUSH" data-toolset-primary="brush" data-tool-sync="brush" data-tool>
+            <button class="tool-button" type="button" aria-label="BRUSH" aria-pressed="false" data-tooltip="BRUSH" data-toolset-primary="brush" data-tool-sync="brush" data-tool-mode="brush" data-tool>
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="m11 10 3 3" />
                 <path d="M6.5 21A3.5 3.5 0 1 0 3 17.5a2.62 2.62 0 0 1-.708 1.792A1 1 0 0 0 3 21z" />
@@ -312,6 +312,9 @@
     <script src="./js/right-sidebar.js"></script>
     <script src="./js/brushes-panel.js"></script>
     <script src="./js/brush-studio.js"></script>
+    <script src="./vendor/canvaskit/canvaskit.js"></script>
+    <script src="./js/smudge-tool.js"></script>
+    <script src="./js/editor-canvas.js"></script>
     <script src="./js/app.js"></script>
   </body>
 </html>

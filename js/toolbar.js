@@ -27,6 +27,7 @@ window.CBO.initToolbar = function initToolbar() {
         detail: {
           label: button.getAttribute("aria-label") || "",
           syncGroup: syncGroup || "",
+          toolMode: button.dataset.toolMode || "",
         },
       }),
     );
@@ -53,6 +54,7 @@ window.CBO.initToolbar = function initToolbar() {
     primary.replaceChildren(icon);
     primary.setAttribute("aria-label", option.dataset.label);
     primary.dataset.tooltip = option.dataset.label;
+    primary.dataset.toolMode = option.dataset.toolMode || "";
     activateTool(primary);
   }
 

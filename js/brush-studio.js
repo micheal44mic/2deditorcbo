@@ -2,20 +2,39 @@ window.CBO = window.CBO || {};
 
 window.CBO.initBrushStudio = function initBrushStudio() {
   const editorPage = document.querySelector(".editor-page");
-  const studioCategories = ["BASIC", "TEXTURE", "PRESSURE"];
-  const studioSettings = {
-    BASIC: {
-      randomized: false,
-      size: 0,
-      spacing: 50,
-    },
+  const studioCategories = ["STROKE", "STABILIZATION", "BASIC"];
+  const defaultBrushSettings = {
+    radius: 18,
+    opacity: 0.92,
+    spacing: 0.18,
+    smoothing: 0,
+    streamLineAmount: 0,
+    streamLinePressure: 0,
+    stabilizationAmount: 0,
+    spacingJitter: 0,
+    jitterLateral: 0,
+    jitterLinear: 0,
+    fallOff: 0,
   };
-  const clampPercentage = (value) => Math.min(100, Math.max(0, Math.round(Number(value) || 0)));
-  const clampSignedPercentage = (value) => Math.min(100, Math.max(-100, Math.round(Number(value) || 0)));
+
+  // Demo-only parameters parked while Brush Studio becomes the real brush engine UI.
+  // const demoCategories = ["TEXTURE", "PRESSURE", "TAPER", "APPLE PENCIL"];
+  // const demoParameters = {
+  //   randomized: false,
+  //   signedSizeOffset: 0,
+  // };
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
     return;
   }
+
+  const existingBrushSettings = window.CBO.brushSettings || {};
+
+  window.CBO.brushSettings = {
+    ...defaultBrushSettings,
+    ...existingBrushSettings,
+    streamLineAmount: existingBrushSettings.streamLineAmount ?? existingBrushSettings.smoothing ?? 0,
+  };
 
   editorPage.dataset.brushStudioReady = "true";
   editorPage.insertAdjacentHTML(
@@ -41,6 +60,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
               </button>
             </div>
           </div>
+          <div class="brush-studio-drawing-pad" data-brush-preview-pad></div>
         </div>
       </section>
     `,
@@ -49,9 +69,541 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const brushStudio = editorPage.querySelector("[data-brush-studio]");
   const categoryList = editorPage.querySelector("[data-brush-studio-categories]");
   const settingsPanel = editorPage.querySelector("[data-brush-studio-settings]");
+  const previewPad = editorPage.querySelector("[data-brush-preview-pad]");
+  const cancelButton = editorPage.querySelector(".brush-studio-cancel-button");
+  const confirmButton = editorPage.querySelector(".brush-studio-check-button");
   let selectedCategory = studioCategories[0];
+  let draftBrushSettings = { ...window.CBO.brushSettings };
+  let previewCanvas = null;
+  let previewContext = null;
+  let previewPointerId = null;
+  let previewStrokeState = null;
+  let previewResizeObserver = null;
+  let previewAnimationFrame = 0;
+  let previewSize = { width: 0, height: 0 };
+  let previewUserStroke = null;
 
-  // Temporary demo categories. Replace this array later with the real Brush Studio data.
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, Number(value) || 0));
+  }
+
+  function clamp01(value) {
+    return clamp(value, 0, 1);
+  }
+
+  function parseHexColor(hexColor) {
+    const normalized = String(hexColor || "#ffffff").replace("#", "");
+
+    if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+      return "#ffffff";
+    }
+
+    return `#${normalized}`;
+  }
+
+  function normalizePressure(pressure) {
+    const nextPressure = Number(pressure);
+
+    if (!Number.isFinite(nextPressure) || nextPressure <= 0) {
+      return 1;
+    }
+
+    return clamp(nextPressure, 0.2, 2);
+  }
+
+  function getPreviewRadius(pressure = 1) {
+    return Math.max(0.5, draftBrushSettings.radius * normalizePressure(pressure));
+  }
+
+  function getStreamLineAmount(settings) {
+    return clamp01(settings.streamLineAmount ?? settings.smoothing);
+  }
+
+  function getStabilizedPoint(point, state, settings) {
+    const stabilization = clamp01(settings.stabilizationAmount);
+
+    state.inputPoints.push({ ...point });
+
+    if (state.inputPoints.length > 28) {
+      state.inputPoints.shift();
+    }
+
+    if (stabilization <= 0 || state.inputPoints.length < 2) {
+      return point;
+    }
+
+    const previousPoint = state.inputPoints[state.inputPoints.length - 2];
+    const speed = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y);
+    const speedFactor = clamp(speed / 28, 0, 1);
+    const effectiveStabilization = stabilization * (0.35 + speedFactor * 0.65);
+    const windowSize = Math.min(
+      state.inputPoints.length,
+      2 + Math.round(effectiveStabilization * 16),
+    );
+    const points = state.inputPoints.slice(-windowSize);
+    const average = points.reduce(
+      (result, nextPoint) => ({
+        x: result.x + nextPoint.x / points.length,
+        y: result.y + nextPoint.y / points.length,
+      }),
+      { x: 0, y: 0 },
+    );
+
+    return {
+      x: point.x + (average.x - point.x) * effectiveStabilization,
+      y: point.y + (average.y - point.y) * effectiveStabilization,
+    };
+  }
+
+  function getSmoothedPressure(pressure, state, settings) {
+    const streamLinePressure = clamp01(settings.streamLinePressure);
+    const nextPressure = normalizePressure(pressure);
+
+    if (streamLinePressure <= 0) {
+      state.pressure = nextPressure;
+      return nextPressure;
+    }
+
+    const follow = clamp(1 - streamLinePressure * 0.92, 0.08, 1);
+
+    state.pressure += (nextPressure - state.pressure) * follow;
+
+    return state.pressure;
+  }
+
+  function createPreviewStrokeState(point, seed = Date.now(), pressure = 1) {
+    return {
+      distance: 0,
+      inputPoints: [{ ...point }],
+      lastStampPoint: { ...point },
+      pressure: normalizePressure(pressure),
+      seed: (seed || 1) >>> 0,
+      smoothedPoint: { ...point },
+    };
+  }
+
+  function nextPreviewRandom(state) {
+    state.seed = (Math.imul(state.seed, 1664525) + 1013904223) >>> 0;
+
+    return state.seed / 4294967296;
+  }
+
+  function previewRandomSigned(state) {
+    return nextPreviewRandom(state) * 2 - 1;
+  }
+
+  function getPreviewSmoothedPoint(point) {
+    if (!previewStrokeState) {
+      return point;
+    }
+
+    const smoothedPoint = getStabilizedPoint(point, previewStrokeState, draftBrushSettings);
+    const streamLineAmount = getStreamLineAmount(draftBrushSettings);
+
+    if (streamLineAmount <= 0) {
+      previewStrokeState.smoothedPoint = { ...smoothedPoint };
+      return smoothedPoint;
+    }
+
+    const follow = clamp(1 - streamLineAmount * 0.88, 0.08, 1);
+
+    previewStrokeState.smoothedPoint = {
+      x:
+        previewStrokeState.smoothedPoint.x +
+        (smoothedPoint.x - previewStrokeState.smoothedPoint.x) * follow,
+      y:
+        previewStrokeState.smoothedPoint.y +
+        (smoothedPoint.y - previewStrokeState.smoothedPoint.y) * follow,
+    };
+
+    return previewStrokeState.smoothedPoint;
+  }
+
+  function getNextPreviewStampStep(radius, state) {
+    const spacing = clamp01(draftBrushSettings.spacing);
+    const spacingJitter = clamp01(draftBrushSettings.spacingJitter);
+    const minStep = Math.max(1, radius * 0.12);
+    const maxStep = Math.max(minStep, radius * 2.6);
+    const baseStep = minStep + (maxStep - minStep) * spacing;
+    const jitterSpan = radius * (0.35 + spacing * 1.6) * spacingJitter;
+
+    return Math.max(minStep, baseStep + previewRandomSigned(state) * jitterSpan);
+  }
+
+  function getPreviewFallOffScale(radius) {
+    const fallOff = clamp01(draftBrushSettings.fallOff);
+
+    if (!previewStrokeState || fallOff <= 0) {
+      return 1;
+    }
+
+    const fadeDistance = Math.max(radius * 2, radius * (96 - fallOff * 88));
+
+    return clamp(1 - previewStrokeState.distance / fadeDistance, 0, 1);
+  }
+
+  function applyPreviewJitter(point, tangent, radius, state) {
+    const lateral = clamp(draftBrushSettings.jitterLateral, 0, 2) * radius;
+    const linear = clamp(draftBrushSettings.jitterLinear, 0, 2) * radius;
+
+    if (lateral <= 0 && linear <= 0) {
+      return point;
+    }
+
+    const lateralOffset = previewRandomSigned(state) * lateral;
+    const linearOffset = previewRandomSigned(state) * linear;
+    const perpendicular = {
+      x: -tangent.y,
+      y: tangent.x,
+    };
+
+    return {
+      x: clamp(point.x + perpendicular.x * lateralOffset + tangent.x * linearOffset, 0, previewSize.width),
+      y: clamp(point.y + perpendicular.y * lateralOffset + tangent.y * linearOffset, 0, previewSize.height),
+    };
+  }
+
+  function clearPreviewCanvas() {
+    if (!previewContext) {
+      return;
+    }
+
+    previewContext.clearRect(0, 0, previewSize.width, previewSize.height);
+  }
+
+  function drawPreviewDab(point, pressure = 1, opacityScale = 1) {
+    if (!previewContext) {
+      return;
+    }
+
+    const radius = getPreviewRadius(pressure);
+    const opacity = clamp01(draftBrushSettings.opacity) * clamp01(opacityScale);
+
+    if (opacity <= 0) {
+      return;
+    }
+
+    previewContext.save();
+    previewContext.globalAlpha = opacity;
+    previewContext.fillStyle = parseHexColor(window.CBO.selectedColor);
+    previewContext.beginPath();
+    previewContext.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    previewContext.fill();
+    previewContext.restore();
+  }
+
+  function drawPreviewSegment(to, pressure = 1) {
+    if (!previewStrokeState) {
+      return;
+    }
+
+    const strokePressure = getSmoothedPressure(pressure, previewStrokeState, draftBrushSettings);
+    const radius = getPreviewRadius(strokePressure);
+    let from = previewStrokeState.lastStampPoint;
+    let deltaX = to.x - from.x;
+    let deltaY = to.y - from.y;
+    let distance = Math.hypot(deltaX, deltaY);
+
+    while (distance > 0) {
+      const step = getNextPreviewStampStep(radius, previewStrokeState);
+
+      if (distance < step) {
+        break;
+      }
+
+      const tangent = {
+        x: deltaX / distance,
+        y: deltaY / distance,
+      };
+      const stampPoint = {
+        x: from.x + tangent.x * step,
+        y: from.y + tangent.y * step,
+      };
+
+      previewStrokeState.distance += step;
+      drawPreviewDab(
+        applyPreviewJitter(stampPoint, tangent, radius, previewStrokeState),
+        strokePressure,
+        getPreviewFallOffScale(radius),
+      );
+      previewStrokeState.lastStampPoint = stampPoint;
+      from = previewStrokeState.lastStampPoint;
+      deltaX = to.x - from.x;
+      deltaY = to.y - from.y;
+      distance = Math.hypot(deltaX, deltaY);
+    }
+  }
+
+  function toPreviewPoint(event) {
+    const rect = previewCanvas.getBoundingClientRect();
+
+    return {
+      x: clamp(event.clientX - rect.left, 0, previewSize.width),
+      y: clamp(event.clientY - rect.top, 0, previewSize.height),
+    };
+  }
+
+  function createPreviewPoint(point, pressure = 1) {
+    return {
+      pressure: normalizePressure(pressure),
+      x: previewSize.width > 0 ? clamp(point.x / previewSize.width, 0, 1) : 0,
+      y: previewSize.height > 0 ? clamp(point.y / previewSize.height, 0, 1) : 0,
+    };
+  }
+
+  function restorePreviewPoint(point) {
+    return {
+      x: clamp(point.x * previewSize.width, 0, previewSize.width),
+      y: clamp(point.y * previewSize.height, 0, previewSize.height),
+    };
+  }
+
+  function shouldStorePreviewPoint(point) {
+    const points = previewUserStroke?.points;
+
+    if (!points?.length) {
+      return true;
+    }
+
+    const previousPoint = restorePreviewPoint(points[points.length - 1]);
+
+    return Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y) >= 0.75;
+  }
+
+  function appendPreviewPoint(point, pressure = 1) {
+    if (!previewUserStroke || !shouldStorePreviewPoint(point)) {
+      return;
+    }
+
+    previewUserStroke.points.push(createPreviewPoint(point, pressure));
+  }
+
+  function renderPreviewUserStroke() {
+    if (
+      !previewUserStroke?.points?.length ||
+      !previewCanvas ||
+      !previewContext ||
+      previewSize.width <= 0 ||
+      previewSize.height <= 0
+    ) {
+      return false;
+    }
+
+    const [firstPoint, ...nextPoints] = previewUserStroke.points;
+    const startPoint = restorePreviewPoint(firstPoint);
+
+    clearPreviewCanvas();
+    previewStrokeState = createPreviewStrokeState(startPoint, previewUserStroke.seed, firstPoint.pressure);
+    drawPreviewDab(startPoint, firstPoint.pressure);
+
+    nextPoints.forEach((point) => {
+      drawPreviewSegment(getPreviewSmoothedPoint(restorePreviewPoint(point)), point.pressure);
+    });
+
+    previewStrokeState = null;
+
+    return true;
+  }
+
+  function renderPreviewSample() {
+    if (!previewCanvas || !previewContext || previewSize.width <= 0 || previewSize.height <= 0) {
+      return;
+    }
+
+    if (renderPreviewUserStroke()) {
+      return;
+    }
+
+    const padding = Math.max(30, draftBrushSettings.radius * 1.8);
+    const startPoint = {
+      x: padding,
+      y: previewSize.height * 0.52,
+    };
+    const steps = 88;
+    const usableWidth = Math.max(1, previewSize.width - padding * 2);
+    const wave = Math.min(72, previewSize.height * 0.22);
+
+    clearPreviewCanvas();
+    previewStrokeState = createPreviewStrokeState(startPoint, 0x6d2b79f5, 1);
+    drawPreviewDab(startPoint, 1);
+
+    for (let index = 1; index <= steps; index += 1) {
+      const progress = index / steps;
+      const rawPoint = {
+        x: padding + usableWidth * progress,
+        y:
+          previewSize.height * 0.52 +
+          Math.sin(progress * Math.PI * 2.2) * wave * (1 - progress * 0.15),
+      };
+
+      drawPreviewSegment(getPreviewSmoothedPoint(rawPoint), 1);
+    }
+
+    previewStrokeState = null;
+  }
+
+  function queuePreviewSample() {
+    if (!previewCanvas || brushStudio?.hidden) {
+      return;
+    }
+
+    if (previewAnimationFrame) {
+      cancelAnimationFrame(previewAnimationFrame);
+    }
+
+    previewAnimationFrame = requestAnimationFrame(() => {
+      previewAnimationFrame = 0;
+      renderPreviewSample();
+    });
+  }
+
+  function resizePreviewCanvas() {
+    if (!previewCanvas || !previewPad) {
+      return;
+    }
+
+    const rect = previewPad.getBoundingClientRect();
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const cssWidth = Math.max(1, Math.round(rect.width));
+    const cssHeight = Math.max(1, Math.round(rect.height));
+    const pixelWidth = Math.max(1, Math.round(cssWidth * ratio));
+    const pixelHeight = Math.max(1, Math.round(cssHeight * ratio));
+
+    if (previewCanvas.width !== pixelWidth || previewCanvas.height !== pixelHeight) {
+      previewCanvas.width = pixelWidth;
+      previewCanvas.height = pixelHeight;
+      previewCanvas.style.width = `${cssWidth}px`;
+      previewCanvas.style.height = `${cssHeight}px`;
+      previewContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+      previewSize = {
+        width: cssWidth,
+        height: cssHeight,
+      };
+      queuePreviewSample();
+    }
+  }
+
+  function ensurePreviewCanvas() {
+    if (!previewPad || previewCanvas) {
+      return;
+    }
+
+    previewCanvas = document.createElement("canvas");
+    previewCanvas.className = "brush-studio-preview-canvas";
+    previewCanvas.setAttribute("aria-label", "Brush preview drawing pad");
+    previewCanvas.setAttribute("data-brush-preview-canvas", "");
+    previewContext = previewCanvas.getContext("2d", {
+      alpha: true,
+      desynchronized: true,
+    });
+
+    if (!previewContext) {
+      previewCanvas = null;
+      return;
+    }
+
+    previewPad.append(previewCanvas);
+    previewCanvas.addEventListener("pointerdown", startPreviewStroke);
+    previewCanvas.addEventListener("pointermove", movePreviewStroke);
+    previewCanvas.addEventListener("pointerup", endPreviewStroke);
+    previewCanvas.addEventListener("pointercancel", endPreviewStroke);
+    previewCanvas.addEventListener("lostpointercapture", endPreviewStroke);
+    previewResizeObserver = new ResizeObserver(resizePreviewCanvas);
+    previewResizeObserver.observe(previewPad);
+    resizePreviewCanvas();
+    queuePreviewSample();
+  }
+
+  function destroyPreviewCanvas() {
+    if (previewAnimationFrame) {
+      cancelAnimationFrame(previewAnimationFrame);
+      previewAnimationFrame = 0;
+    }
+
+    previewResizeObserver?.disconnect();
+    previewResizeObserver = null;
+    previewPointerId = null;
+    previewStrokeState = null;
+    previewUserStroke = null;
+    previewCanvas?.remove();
+    previewCanvas = null;
+    previewContext = null;
+    previewSize = { width: 0, height: 0 };
+  }
+
+  function startPreviewStroke(event) {
+    if (!previewCanvas) {
+      return;
+    }
+
+    event.preventDefault();
+    const point = toPreviewPoint(event);
+
+    previewPointerId = event.pointerId;
+    previewUserStroke = {
+      points: [createPreviewPoint(point, event.pressure)],
+      seed: Date.now() >>> 0,
+    };
+    previewStrokeState = createPreviewStrokeState(point, previewUserStroke.seed, event.pressure);
+    clearPreviewCanvas();
+    previewCanvas.setPointerCapture(event.pointerId);
+    drawPreviewDab(point, event.pressure);
+  }
+
+  function movePreviewStroke(event) {
+    if (previewPointerId !== event.pointerId || !previewStrokeState) {
+      return;
+    }
+
+    event.preventDefault();
+    const point = toPreviewPoint(event);
+
+    appendPreviewPoint(point, event.pressure);
+    drawPreviewSegment(getPreviewSmoothedPoint(point), event.pressure);
+  }
+
+  function endPreviewStroke(event) {
+    if (previewPointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const point = toPreviewPoint(event);
+
+    appendPreviewPoint(point, event.pressure);
+    drawPreviewSegment(getPreviewSmoothedPoint(point), event.pressure);
+
+    if (previewCanvas?.hasPointerCapture(event.pointerId)) {
+      previewCanvas.releasePointerCapture(event.pointerId);
+    }
+
+    previewPointerId = null;
+    previewStrokeState = null;
+  }
+
+  function saveDraftBrushSettings() {
+    draftBrushSettings.smoothing = draftBrushSettings.streamLineAmount;
+    window.CBO.brushSettings = {
+      ...window.CBO.brushSettings,
+      ...draftBrushSettings,
+    };
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:brush-settings-change", {
+        detail: {
+          settings: { ...window.CBO.brushSettings },
+        },
+      }),
+    );
+  }
+
+  function resetDraftBrushSettings() {
+    draftBrushSettings = {
+      ...window.CBO.brushSettings,
+      streamLineAmount: window.CBO.brushSettings.streamLineAmount ?? window.CBO.brushSettings.smoothing ?? 0,
+    };
+  }
+
   function renderCategories() {
     if (!categoryList) {
       return;
@@ -77,211 +629,260 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
-  function renderSpacingSetting() {
-    if (!settingsPanel) {
-      return;
-    }
-
-    const spacingValue = studioSettings.BASIC.spacing;
-    const selectedName = document.createElement("div");
+  function createRangeSetting({ key, label, min, max, step, value, unit, toSetting, toDisplay }) {
     const setting = document.createElement("div");
     const header = document.createElement("div");
     const name = document.createElement("div");
-    const value = document.createElement("label");
+    const valueLabel = document.createElement("label");
     const valueInput = document.createElement("input");
     const valueUnit = document.createElement("span");
     const slider = document.createElement("input");
-    const randomizedSetting = document.createElement("div");
-    const randomizedName = document.createElement("div");
-    const randomizedToggle = document.createElement("button");
-    const sizeValue = studioSettings.BASIC.size;
-    const sizeSetting = document.createElement("div");
-    const sizeHeader = document.createElement("div");
-    const sizeName = document.createElement("div");
-    const sizeValueLabel = document.createElement("label");
-    const sizeValueInput = document.createElement("input");
-    const sizeValueUnit = document.createElement("span");
-    const sizeSlider = document.createElement("input");
 
-    selectedName.className = "brush-studio-selected-name";
     setting.className = "brush-studio-setting";
     header.className = "brush-studio-setting-header";
     name.className = "brush-studio-setting-name";
-    value.className = "brush-studio-setting-value";
+    valueLabel.className = "brush-studio-setting-value";
     valueInput.className = "brush-studio-setting-value-input";
     valueUnit.className = "brush-studio-setting-value-unit";
     slider.className = "brush-studio-range";
-    randomizedSetting.className = "brush-studio-setting brush-studio-toggle-setting";
-    randomizedName.className = "brush-studio-setting-name";
-    randomizedToggle.className = "brush-studio-toggle";
-    sizeSetting.className = "brush-studio-setting";
-    sizeHeader.className = "brush-studio-setting-header";
-    sizeName.className = "brush-studio-setting-name";
-    sizeValueLabel.className = "brush-studio-setting-value";
-    sizeValueInput.className = "brush-studio-setting-value-input";
-    sizeValueUnit.className = "brush-studio-setting-value-unit";
-    sizeSlider.className = "brush-studio-range brush-studio-range-centered";
-    randomizedToggle.innerHTML = `
-      <span class="brush-studio-toggle-knob" aria-hidden="true">
-        <svg class="brush-studio-toggle-check lucide lucide-check-icon lucide-check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20 6 9 17l-5-5"></path>
-        </svg>
-      </span>
-    `;
-
-    selectedName.textContent = selectedCategory;
-    name.textContent = "SPACING";
-    valueUnit.textContent = "%";
-    randomizedName.textContent = "RANDOMIZED";
-    sizeName.textContent = "SIZE";
-    sizeValueUnit.textContent = "%";
+    name.textContent = label;
+    valueUnit.textContent = unit;
 
     valueInput.type = "number";
-    valueInput.min = "0";
-    valueInput.max = "100";
-    valueInput.step = "1";
-    valueInput.value = String(spacingValue);
-    valueInput.setAttribute("aria-label", "SPACING PERCENTAGE");
+    valueInput.min = String(min);
+    valueInput.max = String(max);
+    valueInput.step = String(step);
+    valueInput.setAttribute("aria-label", `${label} VALUE`);
     slider.type = "range";
-    slider.min = "0";
-    slider.max = "100";
-    slider.value = String(spacingValue);
-    slider.setAttribute("aria-label", "SPACING");
-    slider.style.setProperty("--brush-studio-range-progress", `${spacingValue}%`);
-    randomizedToggle.type = "button";
-    randomizedToggle.setAttribute("aria-label", "RANDOMIZED");
-    sizeValueInput.type = "number";
-    sizeValueInput.min = "-100";
-    sizeValueInput.max = "100";
-    sizeValueInput.step = "1";
-    sizeValueInput.value = String(sizeValue);
-    sizeValueInput.setAttribute("aria-label", "SIZE PERCENTAGE");
-    sizeSlider.type = "range";
-    sizeSlider.min = "-100";
-    sizeSlider.max = "100";
-    sizeSlider.value = String(sizeValue);
-    sizeSlider.setAttribute("aria-label", "SIZE");
+    slider.min = String(min);
+    slider.max = String(max);
+    slider.step = String(step);
+    slider.setAttribute("aria-label", label);
 
-    function setCenteredRangeFill(rangeInput, value) {
-      const progress = ((value + 100) / 200) * 100;
-      const start = Math.min(50, progress);
-      const end = Math.max(50, progress);
+    function setValue(nextValue) {
+      const displayValue = clamp(nextValue, min, max);
+      const progress = ((displayValue - min) / (max - min)) * 100;
 
-      rangeInput.style.setProperty("--brush-studio-range-start", `${start}%`);
-      rangeInput.style.setProperty("--brush-studio-range-end", `${end}%`);
-    }
-
-    function setRandomizedValue(isRandomized) {
-      studioSettings.BASIC.randomized = isRandomized;
-      randomizedToggle.classList.toggle("active", isRandomized);
-      randomizedToggle.setAttribute("aria-pressed", String(isRandomized));
-    }
-
-    function setSpacingValue(value) {
-      const spacing = clampPercentage(value);
-
-      studioSettings.BASIC.spacing = spacing;
-      slider.value = String(spacing);
-      valueInput.value = String(spacing);
-      slider.style.setProperty("--brush-studio-range-progress", `${spacing}%`);
-    }
-
-    function setSizeValue(value) {
-      const size = clampSignedPercentage(value);
-
-      studioSettings.BASIC.size = size;
-      sizeSlider.value = String(size);
-      sizeValueInput.value = String(size);
-      setCenteredRangeFill(sizeSlider, size);
+      draftBrushSettings[key] = toSetting(displayValue);
+      slider.value = String(displayValue);
+      valueInput.value = String(toDisplay(displayValue));
+      slider.style.setProperty("--brush-studio-range-progress", `${progress}%`);
+      queuePreviewSample();
     }
 
     slider.addEventListener("input", () => {
-      setSpacingValue(slider.value);
+      setValue(slider.value);
     });
     valueInput.addEventListener("input", () => {
       if (valueInput.value.trim() === "") {
         return;
       }
 
-      setSpacingValue(valueInput.value);
+      setValue(valueInput.value);
     });
     valueInput.addEventListener("blur", () => {
-      setSpacingValue(valueInput.value || studioSettings.BASIC.spacing);
+      setValue(valueInput.value || value);
     });
     valueInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         valueInput.blur();
       }
     });
-    randomizedToggle.addEventListener("click", () => {
-      setRandomizedValue(!studioSettings.BASIC.randomized);
-    });
-    sizeSlider.addEventListener("input", () => {
-      setSizeValue(sizeSlider.value);
-    });
-    sizeValueInput.addEventListener("input", () => {
-      if (sizeValueInput.value.trim() === "") {
-        return;
-      }
 
-      setSizeValue(sizeValueInput.value);
-    });
-    sizeValueInput.addEventListener("blur", () => {
-      setSizeValue(sizeValueInput.value || studioSettings.BASIC.size);
-    });
-    sizeValueInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        sizeValueInput.blur();
-      }
-    });
-
-    value.append(valueInput, valueUnit);
-    header.append(name, value);
+    valueLabel.append(valueInput, valueUnit);
+    header.append(name, valueLabel);
     setting.append(header, slider);
-    randomizedSetting.append(randomizedName, randomizedToggle);
-    sizeValueLabel.append(sizeValueInput, sizeValueUnit);
-    sizeHeader.append(sizeName, sizeValueLabel);
-    sizeSetting.append(sizeHeader, sizeSlider);
-    setRandomizedValue(studioSettings.BASIC.randomized);
-    setSizeValue(studioSettings.BASIC.size);
-    settingsPanel.replaceChildren(selectedName, setting, randomizedSetting, sizeSetting);
+    setValue(value);
+
+    return setting;
   }
 
-  function renderSelectedCategoryName() {
+  function renderBasicSettings() {
     if (!settingsPanel) {
       return;
     }
 
     const selectedName = document.createElement("div");
+    const sizeSetting = createRangeSetting({
+      key: "radius",
+      label: "SIZE",
+      min: 1,
+      max: 120,
+      step: 1,
+      value: draftBrushSettings.radius,
+      unit: "PX",
+      toSetting: (displayValue) => displayValue,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const opacitySetting = createRangeSetting({
+      key: "opacity",
+      label: "OPACITY",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(draftBrushSettings.opacity * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
 
     selectedName.className = "brush-studio-selected-name";
     selectedName.textContent = selectedCategory;
-    settingsPanel.replaceChildren(selectedName);
+    settingsPanel.replaceChildren(selectedName, sizeSetting, opacitySetting);
   }
 
-  function renderSettings() {
-    if (selectedCategory === "BASIC") {
-      renderSpacingSetting();
+  function renderStrokeSettings() {
+    if (!settingsPanel) {
       return;
     }
 
-    renderSelectedCategoryName();
+    const selectedName = document.createElement("div");
+    const spacingSetting = createRangeSetting({
+      key: "spacing",
+      label: "SPACING",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(draftBrushSettings.spacing * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const spacingJitterSetting = createRangeSetting({
+      key: "spacingJitter",
+      label: "SPACING JITTER",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(draftBrushSettings.spacingJitter * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const lateralJitterSetting = createRangeSetting({
+      key: "jitterLateral",
+      label: "JITTER LATERAL",
+      min: 0,
+      max: 200,
+      step: 1,
+      value: Math.round(draftBrushSettings.jitterLateral * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const linearJitterSetting = createRangeSetting({
+      key: "jitterLinear",
+      label: "JITTER LINEAR",
+      min: 0,
+      max: 200,
+      step: 1,
+      value: Math.round(draftBrushSettings.jitterLinear * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const fallOffSetting = createRangeSetting({
+      key: "fallOff",
+      label: "FALL OFF",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(draftBrushSettings.fallOff * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+
+    selectedName.className = "brush-studio-selected-name";
+    selectedName.textContent = selectedCategory;
+    settingsPanel.replaceChildren(
+      selectedName,
+      spacingSetting,
+      spacingJitterSetting,
+      lateralJitterSetting,
+      linearJitterSetting,
+      fallOffSetting,
+    );
+  }
+
+  function renderStabilizationSettings() {
+    if (!settingsPanel) {
+      return;
+    }
+
+    const selectedName = document.createElement("div");
+    const streamLineAmountSetting = createRangeSetting({
+      key: "streamLineAmount",
+      label: "STREAMLINE AMOUNT",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(getStreamLineAmount(draftBrushSettings) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const streamLinePressureSetting = createRangeSetting({
+      key: "streamLinePressure",
+      label: "STREAMLINE PRESSURE",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.streamLinePressure) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const stabilizationAmountSetting = createRangeSetting({
+      key: "stabilizationAmount",
+      label: "STABILIZATION AMOUNT",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.stabilizationAmount) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+
+    selectedName.className = "brush-studio-selected-name";
+    selectedName.textContent = selectedCategory;
+    settingsPanel.replaceChildren(
+      selectedName,
+      streamLineAmountSetting,
+      streamLinePressureSetting,
+      stabilizationAmountSetting,
+    );
   }
 
   function renderStudioContent() {
     renderCategories();
-    renderSettings();
+
+    if (selectedCategory === "BASIC") {
+      renderBasicSettings();
+      return;
+    }
+
+    if (selectedCategory === "STABILIZATION") {
+      renderStabilizationSettings();
+      return;
+    }
+
+    renderStrokeSettings();
   }
 
   function openBrushStudio() {
     if (brushStudio) {
+      resetDraftBrushSettings();
       renderStudioContent();
       brushStudio.hidden = false;
+      ensurePreviewCanvas();
     }
   }
 
   function closeBrushStudio() {
     if (brushStudio) {
+      destroyPreviewCanvas();
       brushStudio.hidden = true;
     }
   }
@@ -305,6 +906,15 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     if (brushStudio && !brushStudio.hidden && !clickedInsideBrushStudio) {
       closeBrushStudio();
     }
+  });
+
+  cancelButton?.addEventListener("click", () => {
+    resetDraftBrushSettings();
+    closeBrushStudio();
+  });
+  confirmButton?.addEventListener("click", () => {
+    saveDraftBrushSettings();
+    closeBrushStudio();
   });
 
   renderStudioContent();
