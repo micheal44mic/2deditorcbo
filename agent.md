@@ -51,6 +51,7 @@ Gia' implementato:
 - Falloff reale del tratto via `brushState.fallOff`, passato alla GPU come alpha per istanza.
 - StreamLine/stabilization reali nel percorso input via `brushState.streamLineAmount`, `brushState.streamLinePressure` e `brushState.stabilizationAmount`.
 - Opacity reale del tratto via `brushState.opacity`.
+- Wet Mix v1 reale lato CPU via `brushState.wetDilution`, `wetCharge`, `wetAttack` e `wetnessJitter`: modula `alphaScale` per dab senza cambiare shader.
 - Anti opacity build-up: i dab del tratto attivo vengono scritti in `strokeFBO` con `gl.blendEquation(gl.MAX)`, poi fusi in `baseFBO` da `bakeStroke()` su `pointerup` con blend pre-moltiplicato standard.
 - PRNG per stroke seedato dal punto iniziale (LCG `Math.imul(seed, 1664525) + 1013904223`): jitter riproducibile, niente sfarfallio frame-by-frame.
 - Registrazione raw sample per stroke (`recordedStroke` -> `lastRecordedStroke` su pointerup): permette il replay del tratto.
@@ -126,6 +127,10 @@ Parametri gia' applicati end-to-end dal motore reale (UI -> brushState -> shader
 - `flow`
 - `hardness`
 - `minSizeRatio` (default 0.15, non ancora esposto in UI)
+- `wetDilution`
+- `wetCharge`
+- `wetAttack`
+- `wetnessJitter`
 
 Parametri senza contratto WebGL completo:
 

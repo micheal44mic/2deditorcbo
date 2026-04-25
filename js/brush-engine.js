@@ -229,6 +229,7 @@ void main() {
       this.strokeRandomState = { seed: 1 };
       this.strokeColorRandomState = null;
       this.strokeColorState = null;
+      this.strokeWetRandomState = null;
       this.strokeInitialSeed = 1;
       this.strokeShapeRotation = 0;
       this.strokeTotalLength = null;
@@ -1085,6 +1086,7 @@ void main() {
       this.strokeRandomState = { seed };
       this.strokeInitialSeed = seed;
       this.initializeStrokeColorDynamics(seed);
+      this.initializeWetMixRandom(seed);
       this.strokeShapeRotation = this.brushState.shapeRandomized === true
         ? (this.createSeededUnit(seed ^ 0x9e3779b9) * 2 - 1) * Math.PI
         : 0;
@@ -1215,6 +1217,21 @@ void main() {
 
       state.seed = (Math.imul(state.seed || 1, 1664525) + 1013904223) >>> 0;
       this.strokeColorRandomState = state;
+
+      return state.seed / 4294967296;
+    }
+
+    initializeWetMixRandom(seed) {
+      const wetSeed = ((((seed || 1) >>> 0) ^ 0xa24baed5) >>> 0) || 1;
+
+      this.strokeWetRandomState = { seed: wetSeed };
+    }
+
+    nextWetRandom() {
+      const state = this.strokeWetRandomState || { seed: 1 };
+
+      state.seed = (Math.imul(state.seed || 1, 1664525) + 1013904223) >>> 0;
+      this.strokeWetRandomState = state;
 
       return state.seed / 4294967296;
     }
@@ -1621,6 +1638,36 @@ void main() {
       return this.clamp(1 - this.strokeDistance / fadeDistance, 0, 1);
     }
 
+    getWetMixAlphaScale() {
+      const dilution = this.clamp01(this.brushState.wetDilution);
+      const charge = this.clamp01(this.brushState.wetCharge ?? 1);
+      const attack = this.clamp01(this.brushState.wetAttack ?? 1);
+      const jitter = this.clamp01(this.brushState.wetnessJitter);
+      const dilutionScale = this.lerp(1, 0.18, dilution);
+      const attackScale = this.lerp(0.12, 1, attack);
+      let chargeScale = 1;
+
+      if (charge < 1) {
+        const radius = Math.max(0.5, this.getBrushSize() * 0.5);
+        const initialLoad = Math.sqrt(charge);
+        const depletionDistance = radius * this.lerp(4, 96, charge);
+
+        chargeScale = initialLoad * this.clamp01(1 - this.strokeDistance / depletionDistance);
+      }
+
+      let alpha = dilutionScale * attackScale * chargeScale;
+
+      if (jitter > 0) {
+        alpha *= this.lerp(1 - jitter * 0.55, 1 + jitter * 0.35, this.nextWetRandom());
+      }
+
+      return this.clamp01(alpha);
+    }
+
+    getStampAlphaScale() {
+      return this.getFallOffScale() * this.getWetMixAlphaScale();
+    }
+
     clampStampToDocument(stamp) {
       return {
         ...stamp,
@@ -1769,7 +1816,7 @@ void main() {
             const stamp = this.applyStampJitter(this.lerpStamp(previousPoint, point, stampT), tangent);
 
             this.strokeDistance += stampDistance;
-            stamp.alphaScale = this.getFallOffScale();
+            stamp.alphaScale = this.getStampAlphaScale();
             stamp.sizeScale = 1;
             this.applyTaperToStamp(stamp);
             this.pushShapeStamps(stamp, tangent);
@@ -1925,7 +1972,7 @@ void main() {
 
       const stamp = this.clampStampToDocument(this.createStamp(point));
 
-      stamp.alphaScale = this.getFallOffScale();
+      stamp.alphaScale = this.getStampAlphaScale();
       stamp.sizeScale = 1;
       this.applyTaperToStamp(stamp);
       this.pushShapeStamps(stamp, null);
@@ -1951,6 +1998,7 @@ void main() {
       this.clearStrokeLayer();
       this.strokeRandomState = { seed: this.strokeInitialSeed };
       this.initializeStrokeColorDynamics(this.strokeInitialSeed);
+      this.initializeWetMixRandom(this.strokeInitialSeed);
       this.strokeDynamicsState = StrokeMath?.createStrokeState
         ? StrokeMath.createStrokeState(point, {
             pressure,
@@ -1967,6 +2015,8 @@ void main() {
       this.stampsBuffer = [];
       const startStamp = this.createStamp(startPoint);
 
+      startStamp.alphaScale = this.getStampAlphaScale();
+      startStamp.sizeScale = 1;
       this.applyTaperToStamp(startStamp);
       this.pushShapeStamps(startStamp, null);
       this.nextStampDistance = this.getStampSpacing(startStamp.sizeScale);
@@ -2010,6 +2060,8 @@ void main() {
       this.stampsBuffer = [];
       const startStamp = this.createStamp(startPoint);
 
+      startStamp.alphaScale = this.getStampAlphaScale();
+      startStamp.sizeScale = 1;
       this.pushShapeStamps(startStamp, null);
       this.nextStampDistance = this.getStampSpacing();
       this.currentStroke = [startPoint, startPoint, startPoint];
@@ -2046,6 +2098,7 @@ void main() {
       this.strokeDynamicsState = null;
       this.strokeColorRandomState = null;
       this.strokeColorState = null;
+      this.strokeWetRandomState = null;
       this.isDrawing = false;
     }
 
@@ -2085,7 +2138,11 @@ void main() {
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
       this.stampsBuffer = [];
-      this.pushShapeStamps(this.createStamp(point), null);
+      const startStamp = this.createStamp(point);
+
+      startStamp.alphaScale = this.getStampAlphaScale();
+      startStamp.sizeScale = 1;
+      this.pushShapeStamps(startStamp, null);
       this.nextStampDistance = this.getStampSpacing();
       this.currentStroke = [point, point, point];
       this.canvas.setPointerCapture(event.pointerId);
@@ -2157,6 +2214,7 @@ void main() {
       this.strokeDynamicsState = null;
       this.strokeColorRandomState = null;
       this.strokeColorState = null;
+      this.strokeWetRandomState = null;
       this.isDrawing = false;
       this.activePointerId = null;
     }
@@ -2186,6 +2244,7 @@ void main() {
       this.strokeDynamicsState = null;
       this.strokeColorRandomState = null;
       this.strokeColorState = null;
+      this.strokeWetRandomState = null;
       this.isDrawing = false;
       this.activePointerId = null;
     }

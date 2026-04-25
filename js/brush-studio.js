@@ -8,7 +8,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const defaultShapeAlphaSrc = "./data/brush-shape-alpha.png";
   const defaultShapeAlphaName = "SHAPE ALPHA";
   const shapeAlphaExportSize = 512;
-  const studioCategories = ["STROKE", "SHAPE", "COLOR DYNAMICS", "STABILIZATION", "TAPER", "BASIC"];
+  const studioCategories = ["STROKE", "SHAPE", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = 247;
   const taperTipRealMin = 0.15;
   const defaultBrushSettings = {
@@ -52,6 +52,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     strokeColorLightnessJitter: 0,
     strokeColorDarknessJitter: 0,
     strokeColorSecondaryJitter: 0,
+    wetDilution: 0,
+    wetCharge: 1,
+    wetAttack: 1,
+    wetnessJitter: 0,
   };
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
@@ -928,6 +932,28 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
+  function renderWetMixSettings() {
+    if (!settingsPanel) {
+      return;
+    }
+
+    const selectedName = document.createElement("div");
+    const dilutionSetting = createPercentSetting("wetDilution", "DILUTION");
+    const chargeSetting = createPercentSetting("wetCharge", "CHARGE");
+    const attackSetting = createPercentSetting("wetAttack", "ATTACK");
+    const wetnessJitterSetting = createPercentSetting("wetnessJitter", "WETNESS JITTER");
+
+    selectedName.className = "brush-studio-selected-name";
+    selectedName.textContent = selectedCategory;
+    settingsPanel.replaceChildren(
+      selectedName,
+      dilutionSetting,
+      chargeSetting,
+      attackSetting,
+      wetnessJitterSetting,
+    );
+  }
+
   function renderStabilizationSettings() {
     if (!settingsPanel) {
       return;
@@ -1339,6 +1365,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     if (selectedCategory === "COLOR DYNAMICS") {
       renderColorDynamicsSettings();
+      return;
+    }
+
+    if (selectedCategory === "WET MIX") {
+      renderWetMixSettings();
       return;
     }
 
