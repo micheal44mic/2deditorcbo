@@ -35,6 +35,13 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     taperTipAnimation: true,
     shapeAlphaSrc: defaultShapeAlphaSrc,
     shapeAlphaName: defaultShapeAlphaName,
+    shapeRotation: 0,
+    shapeScatter: 0,
+    shapeCount: 1,
+    shapeCountJitter: 0,
+    shapeRandomized: false,
+    shapeFlipX: false,
+    shapeFlipY: false,
   };
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
@@ -352,11 +359,69 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     const inputStyle = document.createElement("div");
     const inputStyleLabel = document.createElement("div");
     const inputStyleOptions = document.createElement("div");
+    const touchPropertiesLabel = document.createElement("div");
+    const shapePropertiesLabel = document.createElement("div");
     const inputOptions = [
       { label: "TOUCH ONLY", active: true, disabled: false },
       { label: "AZIMUTH", active: false, disabled: true },
       { label: "AZIMUTH AND BARREL ROLL", active: false, disabled: true },
     ];
+    const rotationSetting = createRangeSetting({
+      key: "shapeRotation",
+      label: "ROTATION",
+      min: -100,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp(draftBrushSettings.shapeRotation, -1, 1) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const randomizedToggle = createToggleSetting({
+      key: "shapeRandomized",
+      label: "RANDOMIZED",
+    });
+    const scatterSetting = createRangeSetting({
+      key: "shapeScatter",
+      label: "SCATTER",
+      min: 0,
+      max: 200,
+      step: 1,
+      value: Math.round(clamp(draftBrushSettings.shapeScatter, 0, 2) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const flipXToggle = createToggleSetting({
+      key: "shapeFlipX",
+      label: "FLIP X",
+    });
+    const flipYToggle = createToggleSetting({
+      key: "shapeFlipY",
+      label: "FLIP Y",
+    });
+    const countSetting = createRangeSetting({
+      key: "shapeCount",
+      label: "COUNT",
+      min: 1,
+      max: 16,
+      step: 1,
+      value: Math.round(clamp(draftBrushSettings.shapeCount ?? 1, 1, 16)),
+      unit: "",
+      toSetting: (displayValue) => Math.round(displayValue),
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const countJitterSetting = createRangeSetting({
+      key: "shapeCountJitter",
+      label: "COUNT JITTER",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.shapeCountJitter) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
 
     alphaButton.className = "brush-studio-shape-alpha-card";
     alphaButton.type = "button";
@@ -396,7 +461,25 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
     inputStyle.append(inputStyleLabel, inputStyleOptions);
 
-    settingsPanel.replaceChildren(selectedHeader, alphaButton, inputStyle);
+    touchPropertiesLabel.className = "brush-studio-shape-section-label";
+    touchPropertiesLabel.textContent = "TOUCH PROPERTIES";
+    shapePropertiesLabel.className = "brush-studio-shape-section-label";
+    shapePropertiesLabel.textContent = "SHAPE PROPERTIES";
+
+    settingsPanel.replaceChildren(
+      selectedHeader,
+      alphaButton,
+      inputStyle,
+      touchPropertiesLabel,
+      rotationSetting,
+      shapePropertiesLabel,
+      scatterSetting,
+      countSetting,
+      countJitterSetting,
+      randomizedToggle,
+      flipXToggle,
+      flipYToggle,
+    );
   }
 
   function openShapeEditor() {

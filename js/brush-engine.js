@@ -77,10 +77,12 @@ layout(location = 1) in vec2 aInstancePos;
 layout(location = 2) in float aInstancePressure;
 layout(location = 3) in float aInstanceAlpha;
 layout(location = 4) in float aInstanceSizeScale;
+layout(location = 5) in float aInstanceRotation;
 
 uniform vec2 u_docResolution;
 uniform float u_brushSize;
 uniform float u_minSizeRatio;
+uniform vec2 u_shapeFlip;
 
 out vec2 v_uv;
 out float v_alpha;
@@ -92,7 +94,15 @@ void main() {
   // aInstanceSizeScale e' il moltiplicatore esterno dei dab (taper, ecc.):
   // bypassa il min-size ratio quindi puo' arrivare davvero a 0 (taper a punta).
   float scale = max(aInstanceSizeScale, 0.0);
-  vec2 documentPosition = aInstancePos + a_position * u_brushSize * sizeFactor * scale;
+  vec2 localPosition = a_position * u_shapeFlip;
+  float angle = aInstanceRotation;
+  float c = cos(angle);
+  float s = sin(angle);
+  vec2 rotatedPosition = vec2(
+    localPosition.x * c - localPosition.y * s,
+    localPosition.x * s + localPosition.y * c
+  );
+  vec2 documentPosition = aInstancePos + rotatedPosition * u_brushSize * sizeFactor * scale;
   vec2 clipPosition = (documentPosition / u_docResolution) * 2.0 - 1.0;
 
   clipPosition.y *= -1.0;
@@ -215,6 +225,7 @@ void main() {
       this.strokeDynamicsState = null;
       this.strokeRandomState = { seed: 1 };
       this.strokeInitialSeed = 1;
+      this.strokeShapeRotation = 0;
       this.strokeTotalLength = null;
       this.taperSpacingCap = null;
       this.recordedStroke = [];
@@ -436,6 +447,7 @@ void main() {
           docResolution: gl.getUniformLocation(program, "u_docResolution"),
           color: gl.getUniformLocation(program, "u_color"),
           minSizeRatio: gl.getUniformLocation(program, "u_minSizeRatio"),
+          shapeFlip: gl.getUniformLocation(program, "u_shapeFlip"),
           flow: gl.getUniformLocation(program, "u_flow"),
           hardness: gl.getUniformLocation(program, "u_hardness"),
           shapeTexture: gl.getUniformLocation(program, "u_shapeTexture"),
@@ -735,19 +747,22 @@ void main() {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, instanceVBO);
       gl.bufferData(gl.ARRAY_BUFFER, 0, gl.DYNAMIC_DRAW);
-      // Instance stride 20 byte: pos (xy) + pressure + alphaScale + sizeScale.
+      // Instance stride 24 byte: pos (xy) + pressure + alphaScale + sizeScale + rotation.
       gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 0);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 24, 0);
       gl.vertexAttribDivisor(1, 1);
       gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 20, 8);
+      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 24, 8);
       gl.vertexAttribDivisor(2, 1);
       gl.enableVertexAttribArray(3);
-      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 20, 12);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 24, 12);
       gl.vertexAttribDivisor(3, 1);
       gl.enableVertexAttribArray(4);
-      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 20, 16);
+      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 24, 16);
       gl.vertexAttribDivisor(4, 1);
+      gl.enableVertexAttribArray(5);
+      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 24, 20);
+      gl.vertexAttribDivisor(5, 1);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
@@ -1036,6 +1051,12 @@ void main() {
       };
     }
 
+    createSeededUnit(seed) {
+      const nextSeed = (Math.imul((seed || 1) >>> 0, 1664525) + 1013904223) >>> 0;
+
+      return nextSeed / 4294967296;
+    }
+
     createStrokeSeed(point) {
       return (
         Date.now() ^
@@ -1048,13 +1069,17 @@ void main() {
     beginStrokeDynamics(sample) {
       const StrokeMath = namespace.StrokeMath;
       const point = { x: sample.x, y: sample.y };
-      const seed = this.createStrokeSeed(point) || 1;
+      const seed = (sample.strokeSeed ?? this.createStrokeSeed(point) ?? 1) >>> 0;
       const pressure = StrokeMath?.normalizePressure
         ? StrokeMath.normalizePressure(sample.pressure)
         : sample.pressure;
 
+      sample.strokeSeed = seed;
       this.strokeRandomState = { seed };
       this.strokeInitialSeed = seed;
+      this.strokeShapeRotation = this.brushState.shapeRandomized === true
+        ? (this.createSeededUnit(seed ^ 0x9e3779b9) * 2 - 1) * Math.PI
+        : 0;
       this.strokeDynamicsState = StrokeMath?.createStrokeState
         ? StrokeMath.createStrokeState(point, {
             pressure,
@@ -1238,6 +1263,7 @@ void main() {
         pressure: point.pressure,
         alphaScale,
         sizeScale: 1,
+        rotation: 0,
         tiltX: point.tiltX,
         tiltY: point.tiltY,
       };
@@ -1250,6 +1276,7 @@ void main() {
         pressure: this.lerp(from.pressure, to.pressure, t),
         alphaScale: this.lerp(from.alphaScale ?? 1, to.alphaScale ?? 1, t),
         sizeScale: this.lerp(from.sizeScale ?? 1, to.sizeScale ?? 1, t),
+        rotation: this.lerp(from.rotation ?? 0, to.rotation ?? 0, t),
         tiltX: this.lerp(from.tiltX, to.tiltX, t),
         tiltY: this.lerp(from.tiltY, to.tiltY, t),
       };
@@ -1404,6 +1431,91 @@ void main() {
       });
     }
 
+    getShapeRotation() {
+      return this.clamp(this.brushState.shapeRotation, -1, 1);
+    }
+
+    getShapeScatter() {
+      return this.clamp(this.brushState.shapeScatter, 0, 2);
+    }
+
+    getShapeCount() {
+      return this.clamp(Math.round(Number(this.brushState.shapeCount) || 1), 1, 16);
+    }
+
+    getShapeCountJitter() {
+      return this.clamp01(this.brushState.shapeCountJitter);
+    }
+
+    getShapeFlipXSign() {
+      return this.brushState.shapeFlipX === true ? -1 : 1;
+    }
+
+    getShapeFlipYSign() {
+      return this.brushState.shapeFlipY === true ? -1 : 1;
+    }
+
+    getEffectiveShapeCount() {
+      const count = this.getShapeCount();
+      const jitter = this.getShapeCountJitter();
+
+      if (jitter <= 0 || count <= 1) {
+        return count;
+      }
+
+      const minCount = Math.max(1, Math.ceil(count * (1 - jitter)));
+
+      if (minCount >= count) {
+        return count;
+      }
+
+      return minCount + Math.floor(this.nextRandom() * (count - minCount + 1));
+    }
+
+    getShapeDirectionalRotation(tangent) {
+      const rotationFollow = this.getShapeRotation();
+
+      if (rotationFollow === 0 || !tangent || (tangent.x === 0 && tangent.y === 0)) {
+        return this.strokeShapeRotation;
+      }
+
+      return this.strokeShapeRotation + Math.atan2(tangent.y, tangent.x) * rotationFollow;
+    }
+
+    getShapeScatterRotation() {
+      const scatter = this.getShapeScatter();
+
+      if (scatter <= 0) {
+        return 0;
+      }
+
+      return this.randomSigned() * Math.PI * scatter;
+    }
+
+    pushShapeStamps(baseStamp, tangent) {
+      const effectiveCount = this.getEffectiveShapeCount();
+      const directionalRotation = this.getShapeDirectionalRotation(tangent);
+
+      if (effectiveCount === 1) {
+        baseStamp.rotation = directionalRotation + this.getShapeScatterRotation();
+        this.stampsBuffer.push(baseStamp);
+        return;
+      }
+
+      for (let index = 0; index < effectiveCount; index += 1) {
+        this.stampsBuffer.push({
+          x: baseStamp.x,
+          y: baseStamp.y,
+          pressure: baseStamp.pressure,
+          alphaScale: baseStamp.alphaScale,
+          sizeScale: baseStamp.sizeScale,
+          rotation: directionalRotation + this.getShapeScatterRotation(),
+          tiltX: baseStamp.tiltX,
+          tiltY: baseStamp.tiltY,
+        });
+      }
+    }
+
     processStamps() {
       if (this.currentStroke.length !== 4) {
         return;
@@ -1437,7 +1549,7 @@ void main() {
             stamp.alphaScale = this.getFallOffScale();
             stamp.sizeScale = 1;
             this.applyTaperToStamp(stamp);
-            this.stampsBuffer.push(stamp);
+            this.pushShapeStamps(stamp, tangent);
             this.leftoverDistance -= stampDistance;
             this.nextStampDistance = this.getStampSpacing(stamp.sizeScale);
           }
@@ -1457,21 +1569,22 @@ void main() {
 
       const gl = this.gl;
       const stampCount = this.stampsBuffer.length;
-      // 5 float per istanza: x, y, pressure, alphaScale, sizeScale.
-      const instanceData = new Float32Array(stampCount * 5);
+      // 6 float per istanza: x, y, pressure, alphaScale, sizeScale, rotation.
+      const instanceData = new Float32Array(stampCount * 6);
       const brushSize = this.getBrushSize();
       const color = this.parseColorToRgb01(this.brushState.color);
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
-        const offset = index * 5;
+        const offset = index * 6;
 
         instanceData[offset] = stamp.x;
         instanceData[offset + 1] = stamp.y;
         instanceData[offset + 2] = stamp.pressure;
         instanceData[offset + 3] = stamp.alphaScale ?? 1;
         instanceData[offset + 4] = stamp.sizeScale ?? 1;
+        instanceData[offset + 5] = stamp.rotation ?? 0;
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
@@ -1486,6 +1599,7 @@ void main() {
       gl.uniform1f(this.brushProgramInfo.uniforms.brushSize, brushSize);
       gl.uniform3f(this.brushProgramInfo.uniforms.color, color[0], color[1], color[2]);
       gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
+      gl.uniform2f(this.brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
       gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
       gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getHardness());
       gl.uniform1f(this.brushProgramInfo.uniforms.useShapeTexture, useShapeTexture);
@@ -1588,7 +1702,7 @@ void main() {
       stamp.alphaScale = this.getFallOffScale();
       stamp.sizeScale = 1;
       this.applyTaperToStamp(stamp);
-      this.stampsBuffer.push(stamp);
+      this.pushShapeStamps(stamp, null);
     }
 
     regenerateStrokeWithTaper(rawSamples, totalLength) {
@@ -1623,9 +1737,12 @@ void main() {
       this.leftoverDistance = 0;
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
-      this.stampsBuffer = [this.createStamp(startPoint)];
-      this.applyTaperToStamp(this.stampsBuffer[0]);
-      this.nextStampDistance = this.getStampSpacing(this.stampsBuffer[0].sizeScale);
+      this.stampsBuffer = [];
+      const startStamp = this.createStamp(startPoint);
+
+      this.applyTaperToStamp(startStamp);
+      this.pushShapeStamps(startStamp, null);
+      this.nextStampDistance = this.getStampSpacing(startStamp.sizeScale);
       this.currentStroke = [startPoint, startPoint, startPoint];
 
       for (let index = 1; index < rawSamples.length - 1; index += 1) {
@@ -1663,7 +1780,10 @@ void main() {
       this.leftoverDistance = 0;
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
-      this.stampsBuffer = [this.createStamp(startPoint)];
+      this.stampsBuffer = [];
+      const startStamp = this.createStamp(startPoint);
+
+      this.pushShapeStamps(startStamp, null);
       this.nextStampDistance = this.getStampSpacing();
       this.currentStroke = [startPoint, startPoint, startPoint];
 
@@ -1735,7 +1855,8 @@ void main() {
       this.leftoverDistance = 0;
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
-      this.stampsBuffer = [this.createStamp(point)];
+      this.stampsBuffer = [];
+      this.pushShapeStamps(this.createStamp(point), null);
       this.nextStampDistance = this.getStampSpacing();
       this.currentStroke = [point, point, point];
       this.canvas.setPointerCapture(event.pointerId);
