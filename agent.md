@@ -1,16 +1,151 @@
 # RUOLO E OBIETTIVO
 
-Sei un Senior WebGL2 Graphics Architect. Stiamo costruendo il core rendering engine di un'app di pittura digitale ad altissime performance (stile Procreate). La UI è scritta in Vanilla JS. Le impostazioni UI vivono nell'oggetto globale `window.CBO.brushSettings` e vengono comunicate all'engine tramite l'evento custom `cbo:brush-settings-change`. L'engine WebGL NON DEVE MAI toccare o manipolare il DOM, tranne che per la gestione del suo Canvas.
+Sei un Senior WebGL2 Graphics Architect. Stiamo costruendo il core rendering engine di un'app di pittura digitale ad alte performance, stile Procreate. La UI e' Vanilla JS sotto `window.CBO`.
 
-# ARCHITETTURA RIGIDA (INVIOLABILI)
+Le impostazioni del pennello vivono in `window.CBO.brushSettings` e vengono comunicate al motore tramite l'evento custom `cbo:brush-settings-change`. L'engine WebGL non deve manipolare il DOM, tranne che per il proprio `<canvas>` e per i listener di input necessari.
 
-1. **Tecnologia Core:** ESCLUSIVAMENTE WebGL2 puro (GLSL ES 3.00). Assolutamente nessuna libreria esterna (No Three.js, No PixiJS) e divieto assoluto di usare fallback Canvas2D.
-2. **Paradigma Viewport-Camera-Document:**
-   - Il `<canvas>` HTML è il Viewport. Segue le dimensioni del layout (`clientWidth/Height * DPR`).
-   - Il "Documento" (Artboard) è un FBO a risoluzione fissa interna.
-   - La "Camera" (pan x, pan y, zoom, rotazione) mappa il Documento sul Viewport tramite calcoli in Vertex Shader o GLSL. NON usare trasformazioni CSS sul Canvas per lo zoom.
-3. **Limiti Risoluzione (VRAM Caps):** La risoluzione del Documento WebGL deve essere limitata a 4096px (Desktop) o 2048px (Mobile/Touch) sul lato lungo per evitare crash OOM su iOS/Android.
-4. **Acquisizione Input:** Usare rigorosamente la `PointerEvents` API. La conversione da coordinate Viewport (Screen Space) a Document Space DEVE avvenire applicando l'inversa della trasformazione della Camera per ottenere i pixel esatti dell'FBO.
-5. **Hardware Fallback:** Se `event.pointerType === 'mouse'`, forza in ingresso `pressure = 1.0` e `tiltX/tiltY = 0`.
-6. **Tecnica di Rendering (Stamping):** È VIETATO usare `gl.LINES` per tracciare. Useremo l'interpolazione Spline (Catmull-Rom) su CPU e disegneremo point sprites o instanced quads sulla GPU lungo la curva.
-7. **Struttura dei Layer:** Prevedere concettualmente il compositing "Ping-Pong": `activeStrokeFBO` (tratto in corso) fuso poi in `baseLayerFBO` (livello principale consolidato).
+# REGOLE RIGIDE
+
+1. **Tecnologia core:** usare solo WebGL2 puro e GLSL ES 3.00. Niente Three.js, PixiJS o fallback Canvas2D nel motore di rendering principale.
+2. **Niente line rendering:** e' vietato usare `gl.LINES` o `gl.LINE_STRIP` per tracciare pennellate.
+3. **Niente `gl.POINTS` per i dab:** usare quad istanziati con `gl.drawArraysInstanced`, per evitare i limiti hardware di `GL_ALIASED_POINT_SIZE_RANGE`.
+4. **Viewport-Camera-Document:**
+   - il canvas HTML e' il viewport DPR-aware;
+   - il documento e' in VRAM su FBO a risoluzione fissa;
+   - la camera matematica `{ x, y, zoom }` proietta il documento nello shader;
+   - niente CSS transform per zoom/pan del canvas.
+5. **Caps VRAM:** lato lungo massimo 4096 desktop e 2048 mobile/touch, rispettando anche `gl.MAX_TEXTURE_SIZE`.
+6. **Input:** usare PointerEvents. Convertire sempre screen/client space in document space applicando l'inversa della camera.
+7. **Fallback hardware:** se `event.pointerType === "mouse"`, usare `pressure = 1.0`, `tiltX = 0`, `tiltY = 0`.
+8. **Coordinate:** il documento usa coordinate stile DOM, con origine in alto a sinistra. Gli shader convertono correttamente verso clip space WebGL.
+
+# STATO ATTUALE DEL MOTORE
+
+Il file principale e' `js/brush-engine.js`.
+
+Gia' implementato:
+
+- WebGL2 init, shader compilation/linking, resource cleanup in `dispose()`.
+- Canvas DPR-aware e documento FBO con aspect ratio del viewport.
+- `baseTexture` + `baseFBO`: livello consolidato del documento, inizializzato bianco (o trasparente in modalita' preview).
+- `strokeTexture` + `strokeFBO`: livello del tratto attivo, trasparente e separato dal base layer.
+- Artboard shader: campiona `baseTexture`; durante il disegno sovrappone `strokeTexture`. Texture FBO con `MAG_FILTER = NEAREST` e `MIN_FILTER = LINEAR` (zoom in mostra pixel netti, zoom out resta liscio).
+- Pixel grid nello shader artboard, fade in tra zoom 6x e 12x.
+- Camera fit-to-screen, wheel zoom ancorato al cursore, pinch trackpad (Ctrl+wheel), pan con spazio + drag o middle mouse, flag `userManipulatedCamera` per non riterare con resize.
+- PointerEvents con pointer capture.
+- `screenToDocumentSpace()`.
+- Catmull-Rom CPU con finestra a 4 punti.
+- Spacing engine CPU con minimo rigido `1px`.
+- Buffer stamp CPU `stampsBuffer`.
+- Brush instancing GPU: quad unitario + `instanceVBO` con stride 16 byte: `x`, `y`, `pressure`, `alphaScale`.
+- Rendering dab via `gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count)`.
+- Dab circolare procedurale con edge anti-aliasing e hardness configurabile.
+- Colore reale via `brushState.color` -> `u_color`.
+- Size reale via `brushState.radius` oppure `brushState.size`.
+- Spacing reale via `brushState.spacing`, interpretato come frazione della dimensione.
+- Spacing jitter reale via `brushState.spacingJitter`.
+- Jitter reale dei dab via `brushState.jitterLateral` e `brushState.jitterLinear`.
+- Pressure reale sulla dimensione del dab con `u_minSizeRatio` (default 0.15) per evitare il collasso a 0px su stylus a pressione bassa.
+- Flow reale via `brushState.flow` -> `u_flow` come moltiplicatore di alpha per dab.
+- Hardness reale via `brushState.hardness` -> `u_hardness`: 1 = bordo nitido, 0 = gradiente radiale puro.
+- Falloff reale del tratto via `brushState.fallOff`, passato alla GPU come alpha per istanza.
+- StreamLine/stabilization reali nel percorso input via `brushState.streamLineAmount`, `brushState.streamLinePressure` e `brushState.stabilizationAmount`.
+- Opacity reale del tratto via `brushState.opacity`.
+- Anti opacity build-up: i dab del tratto attivo vengono scritti in `strokeFBO` con `gl.blendEquation(gl.MAX)`, poi fusi in `baseFBO` da `bakeStroke()` su `pointerup` con blend pre-moltiplicato standard.
+- PRNG per stroke seedato dal punto iniziale (LCG `Math.imul(seed, 1664525) + 1013904223`): jitter riproducibile, niente sfarfallio frame-by-frame.
+- Registrazione raw sample per stroke (`recordedStroke` -> `lastRecordedStroke` su pointerup): permette il replay del tratto.
+- Quick controls in alto: quando il tool BRUSH e' attivo, compaiono due toolbar orizzontali per `radius` e `opacity`.
+
+# API PUBBLICA DEL BRUSHENGINE
+
+Costruttore: `new BrushEngine(canvas, options?)`.
+
+`options` (tutti opzionali):
+
+- `getSettings: () => object` — callback che ritorna lo stato brush corrente. Se fornito, l'engine NON si iscrive all'evento globale `cbo:brush-settings-change`: il chiamante usa `setBrushState()`.
+- `transparentBackground: boolean` — clear del baseFBO a `(0,0,0,0)` invece che a bianco.
+- `singleStrokeMode: boolean` — ogni `pointerdown` chiama `clearAllLayers()` prima di iniziare il tratto. Utile per il preview pad.
+- `disableNavigation: boolean` — niente wheel/zoom/pan/Space.
+- `documentSizeCap: number` — cappa il lato lungo del documento (`policyCap` se omesso).
+
+Metodi pubblici:
+
+- `setBrushState(settings)` — sostituisce direttamente `this.brushState`.
+- `clearAllLayers()` — pulisce base + stroke FBO.
+- `replayLastStroke()` — re-disegna l'ultimo tratto cotto (usa `lastRecordedStroke`).
+- `replayStroke(rawSamples)` — accetta un array esterno di raw sample e li replay-a end-to-end (clear + replay + bake).
+- `dispose()` — cleanup completo (programmi, FBO, listener, cursor).
+
+# STATO ATTUALE DEL BRUSH STUDIO
+
+Il Brush Studio esiste in `js/brush-studio.js`.
+
+Gia' presente nella UI (slider):
+
+- `radius`
+- `opacity`
+- `spacing`
+- `spacingJitter`
+- `jitterLateral`
+- `jitterLinear`
+- `fallOff`
+- `streamLineAmount`
+- `streamLinePressure`
+- `stabilizationAmount`
+
+Drawing Pad: ora usa il vero BrushEngine WebGL, NON piu' Canvas2D. Una seconda istanza di `BrushEngine` viene creata sul canvas del pad con:
+
+- `getSettings: () => draftBrushSettings` — l'engine legge dalle settings draft, isolate dal canvas principale.
+- `transparentBackground: true`.
+- `singleStrokeMode: true` — ogni nuovo tratto resetta il pad.
+- `disableNavigation: true` — niente zoom/pan nel pad.
+- `documentSizeCap: 2048`.
+
+Ogni cambio slider:
+1. Aggiorna `draftBrushSettings`.
+2. Chiama `previewEngine.setBrushState(draftBrushSettings)`.
+3. Schedula `previewEngine.replayLastStroke()` su rAF (throttled): l'ultimo tratto disegnato viene re-renderizzato in tempo reale con le nuove settings.
+
+Su CONFIRM le draft diventano `window.CBO.brushSettings` globali e il canvas principale riceve l'evento. Su CANCEL le draft sono scartate.
+
+# GAP NOTI
+
+Parametri gia' applicati end-to-end dal motore reale (UI -> brushState -> shader/CPU):
+
+- `radius` (con `size` come fallback legacy)
+- `opacity`
+- `color`
+- `spacing`
+- `spacingJitter`
+- `jitterLateral`
+- `jitterLinear`
+- `fallOff`
+- `streamLineAmount`
+- `streamLinePressure`
+- `stabilizationAmount`
+- `flow`
+- `hardness`
+- `minSizeRatio` (default 0.15, non ancora esposto in UI)
+
+Parametri senza contratto WebGL completo:
+
+- shape mask del dab (texture RGBA della punta — Step 6).
+- grain/texture del pennello (texture tileable in document space — Step 6).
+- rotazione/orientamento del dab (lungo tangent o random).
+- curve/toggle pressione su size, opacity e flow (response curve editabile).
+- tilt mapping (azimuth + altitude su forma/orientamento).
+
+# PROSSIMO OBIETTIVO ARCHITETTURALE
+
+Step 6 — Texture brushes (shape + grain).
+
+Sostituire il dab procedurale `smoothstep(distance)` con campionamento di vere texture:
+
+- `uShapeTexture` (R8, `CLAMP_TO_EDGE`, mipmap `LINEAR_MIPMAP_LINEAR`) — silhouette del pennello.
+- `uGrainTexture` (R8, `REPEAT`, mipmap `LINEAR_MIPMAP_LINEAR`) — campionata in document space (grain locked alla canvas, non al dab).
+- `final_alpha = shape * grain * existing_alpha`.
+- Mantenere il fallback al cerchietto procedurale finche' una texture non e' caricata.
+- Cache delle texture per evitare ricaricamenti quando si cambia preset.
+- Compatibilita' con MAX blending (output sempre pre-moltiplicato).
+
+Dopo Step 6: rotazione dab e pressure curves (l'editor delle curve va costruito una volta che la "risposta" del pennello e' una texture vera, non piu' un cerchio).

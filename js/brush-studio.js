@@ -20,13 +20,6 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     fallOff: 0,
   };
 
-  // Demo-only parameters parked while Brush Studio becomes the real brush engine UI.
-  // const demoCategories = ["TEXTURE", "PRESSURE", "TAPER", "APPLE PENCIL"];
-  // const demoParameters = {
-  //   randomized: false,
-  //   signedSizeOffset: 0,
-  // };
-
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
     return;
   }
@@ -78,314 +71,65 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   let selectedCategory = studioCategories[0];
   let draftBrushSettings = { ...window.CBO.brushSettings };
   let previewCanvas = null;
-  let previewContext = null;
-  let previewPointerId = null;
-  let previewStrokeState = null;
-  let previewResizeObserver = null;
-  let previewAnimationFrame = 0;
-  let previewSize = { width: 0, height: 0 };
-  let previewUserStroke = null;
+  let previewEngine = null;
+  let replayFrame = 0;
 
-  function parseHexColor(hexColor) {
-    const normalized = String(hexColor || "#ffffff").replace("#", "");
-
-    if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-      return "#ffffff";
-    }
-
-    return `#${normalized}`;
-  }
-
-  function getPreviewRadius(pressure = 1) {
-    return StrokeMath.getEffectiveRadius(draftBrushSettings, pressure);
-  }
-
-  function clearPreviewCanvas() {
-    if (!previewContext) {
+  function pushDraftToEngine() {
+    if (!previewEngine) {
       return;
     }
 
-    previewContext.clearRect(0, 0, previewSize.width, previewSize.height);
-  }
+    previewEngine.setBrushState(draftBrushSettings);
 
-  function drawPreviewDab(point, pressure = 1, opacityScale = 1) {
-    if (!previewContext) {
+    // rAF throttle: durante il drag di uno slider arrivano decine di "input"; ne basta uno per frame.
+    if (replayFrame) {
       return;
     }
 
-    const radius = getPreviewRadius(pressure);
-    const opacity = clamp01(draftBrushSettings.opacity) * clamp01(opacityScale);
+    replayFrame = requestAnimationFrame(() => {
+      replayFrame = 0;
 
-    if (opacity <= 0) {
-      return;
-    }
-
-    previewContext.save();
-    previewContext.globalAlpha = opacity;
-    previewContext.fillStyle = parseHexColor(window.CBO.selectedColor);
-    previewContext.beginPath();
-    previewContext.arc(point.x, point.y, radius, 0, Math.PI * 2);
-    previewContext.fill();
-    previewContext.restore();
-  }
-
-  function createPreviewStrokeState(point, seed = Date.now(), pressure = 1) {
-    return StrokeMath.createStrokeState(point, {
-      pressure,
-      seed,
-      tool: "brush",
+      if (previewEngine && !previewEngine.isDrawing) {
+        previewEngine.replayLastStroke();
+      }
     });
-  }
-
-  function processPreviewPoint(point, pressure = 1) {
-    return StrokeMath.processStrokeInput(point, previewStrokeState, draftBrushSettings, pressure);
-  }
-
-  function drawPreviewSegment(to, pressure = 1, forceFinalDab = false) {
-    if (!previewStrokeState) {
-      return;
-    }
-
-    StrokeMath.drawStrokeSegment({
-      to,
-      state: previewStrokeState,
-      settings: draftBrushSettings,
-      radius: getPreviewRadius(pressure),
-      pressure,
-      bounds: {
-        minX: 0,
-        minY: 0,
-        maxX: previewSize.width,
-        maxY: previewSize.height,
-      },
-      forceFinalDab,
-      drawDab: drawPreviewDab,
-    });
-  }
-
-  function toPreviewPoint(event) {
-    const rect = previewCanvas.getBoundingClientRect();
-
-    return {
-      x: clamp(event.clientX - rect.left, 0, previewSize.width),
-      y: clamp(event.clientY - rect.top, 0, previewSize.height),
-    };
-  }
-
-  function createPreviewPoint(point, pressure = 1) {
-    return {
-      pressure: StrokeMath.normalizePressure(pressure),
-      x: previewSize.width > 0 ? clamp(point.x / previewSize.width, 0, 1) : 0,
-      y: previewSize.height > 0 ? clamp(point.y / previewSize.height, 0, 1) : 0,
-    };
-  }
-
-  function restorePreviewPoint(point) {
-    return {
-      x: clamp(point.x * previewSize.width, 0, previewSize.width),
-      y: clamp(point.y * previewSize.height, 0, previewSize.height),
-    };
-  }
-
-  function shouldStorePreviewPoint(point) {
-    const points = previewUserStroke?.points;
-
-    if (!points?.length) {
-      return true;
-    }
-
-    const previousPoint = restorePreviewPoint(points[points.length - 1]);
-
-    return Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y) >= 0.75;
-  }
-
-  function appendPreviewPoint(point, pressure = 1) {
-    if (!previewUserStroke || !shouldStorePreviewPoint(point)) {
-      return;
-    }
-
-    previewUserStroke.points.push(createPreviewPoint(point, pressure));
-  }
-
-  function renderPreviewUserStroke() {
-    if (
-      !previewUserStroke?.points?.length ||
-      !previewCanvas ||
-      !previewContext ||
-      previewSize.width <= 0 ||
-      previewSize.height <= 0
-    ) {
-      return false;
-    }
-
-    const [firstPoint, ...nextPoints] = previewUserStroke.points;
-    const startPoint = restorePreviewPoint(firstPoint);
-
-    clearPreviewCanvas();
-    previewStrokeState = createPreviewStrokeState(startPoint, previewUserStroke.seed, firstPoint.pressure);
-    drawPreviewDab(startPoint, firstPoint.pressure);
-
-    nextPoints.forEach((point) => {
-      const strokeInput = processPreviewPoint(restorePreviewPoint(point), point.pressure);
-
-      drawPreviewSegment(strokeInput.point, strokeInput.pressure);
-    });
-
-    previewStrokeState = null;
-
-    return true;
-  }
-
-  function renderPreviewSample() {
-    if (!previewCanvas || !previewContext || previewSize.width <= 0 || previewSize.height <= 0) {
-      return;
-    }
-
-    if (renderPreviewUserStroke()) {
-      return;
-    }
-
-    const padding = Math.max(30, draftBrushSettings.radius * 1.8);
-    const startPoint = {
-      x: padding,
-      y: previewSize.height * 0.52,
-    };
-    const steps = 88;
-    const usableWidth = Math.max(1, previewSize.width - padding * 2);
-    const wave = Math.min(72, previewSize.height * 0.22);
-
-    clearPreviewCanvas();
-    previewStrokeState = createPreviewStrokeState(startPoint, 0x6d2b79f5, 1);
-    drawPreviewDab(startPoint, 1);
-
-    for (let index = 1; index <= steps; index += 1) {
-      const progress = index / steps;
-      const rawPoint = {
-        x: padding + usableWidth * progress,
-        y:
-          previewSize.height * 0.52 +
-          Math.sin(progress * Math.PI * 2.2) * wave * (1 - progress * 0.15),
-      };
-      const strokeInput = processPreviewPoint(rawPoint, 1);
-
-      drawPreviewSegment(strokeInput.point, strokeInput.pressure);
-    }
-
-    previewStrokeState = null;
-  }
-
-  function queuePreviewSample() {
-    if (!previewCanvas || brushStudio?.hidden) {
-      return;
-    }
-
-    if (previewAnimationFrame) {
-      cancelAnimationFrame(previewAnimationFrame);
-    }
-
-    previewAnimationFrame = requestAnimationFrame(() => {
-      previewAnimationFrame = 0;
-      renderPreviewSample();
-    });
-  }
-
-  function resizePreviewCanvas() {
-    if (!previewCanvas || !previewPad) {
-      return;
-    }
-
-    const rect = previewPad.getBoundingClientRect();
-    const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    const cssWidth = Math.max(1, Math.round(rect.width));
-    const cssHeight = Math.max(1, Math.round(rect.height));
-    const pixelWidth = Math.max(1, Math.round(cssWidth * ratio));
-    const pixelHeight = Math.max(1, Math.round(cssHeight * ratio));
-
-    if (previewCanvas.width !== pixelWidth || previewCanvas.height !== pixelHeight) {
-      previewCanvas.width = pixelWidth;
-      previewCanvas.height = pixelHeight;
-      previewCanvas.style.width = `${cssWidth}px`;
-      previewCanvas.style.height = `${cssHeight}px`;
-      previewContext.setTransform(ratio, 0, 0, ratio, 0, 0);
-      previewSize = {
-        width: cssWidth,
-        height: cssHeight,
-      };
-      queuePreviewSample();
-    }
   }
 
   function ensurePreviewCanvas() {
-    previewPad?.replaceChildren();
+    if (!previewPad || !window.CBO.BrushEngine) {
+      return;
+    }
+
+    if (previewEngine) {
+      pushDraftToEngine();
+      return;
+    }
+
+    previewPad.replaceChildren();
+    previewCanvas = document.createElement("canvas");
+    previewCanvas.className = "brush-studio-preview-canvas";
+    previewPad.appendChild(previewCanvas);
+
+    previewEngine = new window.CBO.BrushEngine(previewCanvas, {
+      getSettings: () => draftBrushSettings,
+      transparentBackground: true,
+      singleStrokeMode: true,
+      disableNavigation: true,
+      documentSizeCap: 2048,
+    });
   }
 
   function destroyPreviewCanvas() {
-    if (previewAnimationFrame) {
-      cancelAnimationFrame(previewAnimationFrame);
-      previewAnimationFrame = 0;
+    if (replayFrame) {
+      cancelAnimationFrame(replayFrame);
+      replayFrame = 0;
     }
 
-    previewResizeObserver?.disconnect();
-    previewResizeObserver = null;
-    previewPointerId = null;
-    previewStrokeState = null;
-    previewUserStroke = null;
+    previewEngine?.dispose?.();
+    previewEngine = null;
     previewCanvas?.remove();
     previewCanvas = null;
-    previewContext = null;
-    previewSize = { width: 0, height: 0 };
-  }
-
-  function startPreviewStroke(event) {
-    if (!previewCanvas) {
-      return;
-    }
-
-    event.preventDefault();
-    const point = toPreviewPoint(event);
-
-    previewPointerId = event.pointerId;
-    previewUserStroke = {
-      points: [createPreviewPoint(point, event.pressure)],
-      seed: Date.now() >>> 0,
-    };
-    previewStrokeState = createPreviewStrokeState(point, previewUserStroke.seed, event.pressure);
-    clearPreviewCanvas();
-    previewCanvas.setPointerCapture(event.pointerId);
-    drawPreviewDab(point, event.pressure);
-  }
-
-  function movePreviewStroke(event) {
-    if (previewPointerId !== event.pointerId || !previewStrokeState) {
-      return;
-    }
-
-    event.preventDefault();
-    const point = toPreviewPoint(event);
-    const strokeInput = processPreviewPoint(point, event.pressure);
-
-    appendPreviewPoint(point, event.pressure);
-    drawPreviewSegment(strokeInput.point, strokeInput.pressure);
-  }
-
-  function endPreviewStroke(event) {
-    if (previewPointerId !== event.pointerId) {
-      return;
-    }
-
-    event.preventDefault();
-    const point = toPreviewPoint(event);
-    const strokeInput = processPreviewPoint(point, event.pressure);
-
-    appendPreviewPoint(point, event.pressure);
-    drawPreviewSegment(strokeInput.point, strokeInput.pressure, true);
-
-    if (previewCanvas?.hasPointerCapture(event.pointerId)) {
-      previewCanvas.releasePointerCapture(event.pointerId);
-    }
-
-    previewPointerId = null;
-    previewStrokeState = null;
+    previewPad?.replaceChildren();
   }
 
   function saveDraftBrushSettings() {
@@ -474,7 +218,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       slider.value = String(displayValue);
       valueInput.value = String(toDisplay(displayValue));
       slider.style.setProperty("--brush-studio-range-progress", `${progress}%`);
-      queuePreviewSample();
+      pushDraftToEngine();
     }
 
     slider.addEventListener("input", () => {
@@ -684,6 +428,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       renderStudioContent();
       brushStudio.hidden = false;
       ensurePreviewCanvas();
+      pushDraftToEngine();
     }
   }
 

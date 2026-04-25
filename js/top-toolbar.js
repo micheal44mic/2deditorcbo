@@ -2,6 +2,10 @@ window.CBO = window.CBO || {};
 
 window.CBO.initTopToolbar = function initTopToolbar() {
   const editorPage = document.querySelector(".editor-page");
+  const defaultBrushSettings = {
+    radius: 18,
+    opacity: 0.92,
+  };
 
   if (!editorPage) {
     return;
@@ -15,8 +19,24 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   dock.className = "top-toolbar-dock";
   dock.setAttribute("aria-label", "Paint controls");
   dock.dataset.tooltipZone = "";
+  window.CBO.brushSettings = {
+    ...defaultBrushSettings,
+    ...(window.CBO.brushSettings || {}),
+  };
 
   dock.innerHTML = `
+    <div class="brush-quick-controls" data-brush-quick-controls hidden>
+      <label class="bottom-toolbar brush-quick-toolbar">
+        <span class="brush-quick-label">SIZE</span>
+        <input class="brush-quick-range" type="range" min="1" max="120" step="1" data-brush-quick-input="radius" aria-label="Brush size" />
+        <span class="brush-quick-value" data-brush-quick-value="radius"></span>
+      </label>
+      <label class="bottom-toolbar brush-quick-toolbar">
+        <span class="brush-quick-label">OPACITY</span>
+        <input class="brush-quick-range" type="range" min="0" max="100" step="1" data-brush-quick-input="opacity" aria-label="Brush opacity" />
+        <span class="brush-quick-value" data-brush-quick-value="opacity"></span>
+      </label>
+    </div>
     <nav class="bottom-toolbar top-layers-toolbar" aria-label="Layers toolbar">
       <button class="tool-button top-layers-button" type="button" aria-label="LAYERS" aria-pressed="false" data-tooltip="LAYERS" data-drawer-sync="layers">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -76,10 +96,114 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   editorPage.appendChild(dock);
 
   const layersButton = dock.querySelector(".top-layers-button");
+  const quickControls = dock.querySelector("[data-brush-quick-controls]");
+  const quickInputs = dock.querySelectorAll("[data-brush-quick-input]");
+  const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, Number(value) || 0));
+  }
+
+  function getBrushSettings() {
+    window.CBO.brushSettings = {
+      ...defaultBrushSettings,
+      ...(window.CBO.brushSettings || {}),
+    };
+
+    return window.CBO.brushSettings;
+  }
+
+  function getControlDisplayValue(key, settings = getBrushSettings()) {
+    if (key === "opacity") {
+      return clamp(Math.round(Number(settings.opacity ?? defaultBrushSettings.opacity) * 100), 0, 100);
+    }
+
+    return clamp(Math.round(Number(settings.radius ?? defaultBrushSettings.radius)), 1, 120);
+  }
+
+  function updateRangeProgress(input) {
+    const min = Number(input.min) || 0;
+    const max = Number(input.max) || 100;
+    const progress = ((Number(input.value) - min) / (max - min)) * 100;
+
+    input.style.setProperty("--brush-quick-range-progress", `${progress}%`);
+  }
+
+  function syncQuickControls() {
+    const settings = getBrushSettings();
+
+    quickInputs.forEach((input) => {
+      const key = input.dataset.brushQuickInput;
+      const displayValue = getControlDisplayValue(key, settings);
+
+      input.value = String(displayValue);
+      updateRangeProgress(input);
+    });
+
+    quickValues.forEach((valueElement) => {
+      const key = valueElement.dataset.brushQuickValue;
+      const displayValue = getControlDisplayValue(key, settings);
+
+      valueElement.textContent = key === "opacity" ? `${displayValue}%` : `${displayValue}px`;
+    });
+  }
+
+  function dispatchBrushSettings() {
+    window.dispatchEvent(
+      new CustomEvent("cbo:brush-settings-change", {
+        detail: {
+          settings: { ...getBrushSettings() },
+        },
+      }),
+    );
+  }
+
+  function updateBrushSetting(key, displayValue) {
+    const settings = getBrushSettings();
+
+    if (key === "opacity") {
+      settings.opacity = clamp(displayValue, 0, 100) / 100;
+    } else if (key === "radius") {
+      settings.radius = clamp(displayValue, 1, 120);
+    }
+
+    syncQuickControls();
+    dispatchBrushSettings();
+  }
+
+  function showBrushQuickControls(isVisible) {
+    if (!quickControls) {
+      return;
+    }
+
+    quickControls.hidden = !isVisible;
+
+    if (isVisible) {
+      syncQuickControls();
+    }
+  }
 
   layersButton.addEventListener("click", () => {
     if (window.CBO.openDrawerPanel) {
       window.CBO.openDrawerPanel("layers");
     }
   });
+
+  quickInputs.forEach((input) => {
+    input.addEventListener("input", () => {
+      updateBrushSetting(input.dataset.brushQuickInput, input.value);
+    });
+  });
+
+  window.addEventListener("cbo:tool-change", (event) => {
+    const label = String(event.detail?.label || "").toUpperCase();
+    const toolMode = String(event.detail?.toolMode || "").toLowerCase();
+    const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
+    const isBrush = label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush");
+
+    showBrushQuickControls(isBrush);
+  });
+
+  window.addEventListener("cbo:brush-settings-change", syncQuickControls);
+  syncQuickControls();
 };

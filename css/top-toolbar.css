@@ -14,3 +14,122 @@
   top: calc(100% + 12px);
   bottom: auto;
 }
+
+.brush-quick-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.brush-quick-controls[hidden] {
+  display: none;
+}
+
+.brush-quick-toolbar {
+  width: 220px;
+  min-width: 180px;
+  gap: 9px;
+  cursor: default;
+}
+
+.brush-quick-label,
+.brush-quick-value {
+  flex: 0 0 auto;
+  color: #c3c8d1;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.brush-quick-label {
+  min-width: 45px;
+}
+
+.brush-quick-value {
+  min-width: 36px;
+  color: #ffffff;
+  text-align: right;
+}
+
+.brush-quick-range {
+  width: 100%;
+  min-width: 72px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.brush-quick-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 8px;
+  background: linear-gradient(
+    to right,
+    #dfe3ea 0 var(--brush-quick-range-progress, 50%),
+    #2c303a var(--brush-quick-range-progress, 50%) 100%
+  );
+}
+
+.brush-quick-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: #dfe3ea;
+  box-shadow: 0 0 0 2px #181a1f;
+}
+
+.brush-quick-range:hover::-webkit-slider-thumb,
+.brush-quick-range:focus-visible::-webkit-slider-thumb {
+  background: #ffffff;
+}
+
+.brush-quick-range::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: #2c303a;
+}
+
+.brush-quick-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 8px;
+  background: #dfe3ea;
+}
+
+.brush-quick-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: #dfe3ea;
+  box-shadow: 0 0 0 2px #181a1f;
+}
+
+.brush-quick-range:hover::-moz-range-thumb,
+.brush-quick-range:focus-visible::-moz-range-thumb {
+  background: #ffffff;
+}
+
+@media (max-width: 1120px) {
+  .brush-quick-toolbar {
+    width: 184px;
+    min-width: 160px;
+  }
+
+  .brush-quick-label {
+    min-width: 37px;
+  }
+}
+
+@media (max-width: 940px) {
+  .brush-quick-controls {
+    display: none;
+  }
+}

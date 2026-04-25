@@ -75,19 +75,25 @@ precision highp float;
 layout(location = 0) in vec2 a_position;
 layout(location = 1) in vec2 aInstancePos;
 layout(location = 2) in float aInstancePressure;
+layout(location = 3) in float aInstanceAlpha;
 
 uniform vec2 u_docResolution;
 uniform float u_brushSize;
+uniform float u_minSizeRatio;
 
 out vec2 v_uv;
+out float v_alpha;
 
 void main() {
-  float pressure = max(aInstancePressure, 0.0);
-  vec2 documentPosition = aInstancePos + a_position * u_brushSize * pressure;
+  // Min-size ratio evita che pressure=0 collassi lo stamp a 0px (problema con stylus).
+  float pressure = clamp(aInstancePressure, 0.0, 1.0);
+  float sizeFactor = mix(u_minSizeRatio, 1.0, pressure);
+  vec2 documentPosition = aInstancePos + a_position * u_brushSize * sizeFactor;
   vec2 clipPosition = (documentPosition / u_docResolution) * 2.0 - 1.0;
 
   clipPosition.y *= -1.0;
   v_uv = a_position + 0.5;
+  v_alpha = clamp(aInstanceAlpha, 0.0, 1.0);
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
 `;
@@ -96,8 +102,11 @@ void main() {
 precision highp float;
 
 uniform vec3 u_color;
+uniform float u_flow;
+uniform float u_hardness;
 
 in vec2 v_uv;
+in float v_alpha;
 
 out vec4 outColor;
 
@@ -108,8 +117,12 @@ void main() {
     discard;
   }
 
-  float edgeWidth = max(fwidth(distanceFromCenter), 0.001);
-  float alpha = 1.0 - smoothstep(0.5 - edgeWidth, 0.5, distanceFromCenter);
+  // Hardness=1: bordo nitido (fade in 1 px AA). Hardness=0: gradiente radiale dal centro.
+  float fw = max(fwidth(distanceFromCenter), 0.001);
+  float edgeStart = mix(0.0, 0.5 - fw, clamp(u_hardness, 0.0, 1.0));
+  float shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
+
+  float alpha = shape * v_alpha * clamp(u_flow, 0.0, 1.0);
 
   // Output strettamente pre-moltiplicato: necessario per MAX blending coerente.
   outColor = vec4(u_color * alpha, alpha);
@@ -145,12 +158,21 @@ void main() {
 `;
 
   class BrushEngine {
-    constructor(canvas) {
+    constructor(canvas, options = {}) {
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new TypeError("BrushEngine richiede un HTMLCanvasElement.");
       }
 
       this.canvas = canvas;
+      this.options = {
+        getSettings: typeof options.getSettings === "function" ? options.getSettings : null,
+        transparentBackground: options.transparentBackground === true,
+        singleStrokeMode: options.singleStrokeMode === true,
+        disableNavigation: options.disableNavigation === true,
+        documentSizeCap: Number.isFinite(options.documentSizeCap) && options.documentSizeCap > 0
+          ? Math.floor(options.documentSizeCap)
+          : null,
+      };
       this.gl = canvas.getContext("webgl2", {
         alpha: true,
         antialias: false,
@@ -167,11 +189,17 @@ void main() {
       this.dpr = 1;
       this.viewportWidth = 1;
       this.viewportHeight = 1;
-      this.brushState = { ...(namespace.brushSettings || {}) };
+      this.brushState = { ...(this.readBrushSettingsSource() || {}) };
       this.currentStroke = [];
       this.stampsBuffer = [];
       this.leftoverDistance = 0;
+      this.nextStampDistance = 1;
+      this.strokeDistance = 0;
       this.strokeStampCount = 0;
+      this.strokeDynamicsState = null;
+      this.strokeRandomState = { seed: 1 };
+      this.recordedStroke = [];
+      this.lastRecordedStroke = [];
       this.isDrawing = false;
       this.activePointerId = null;
       this.isPanning = false;
@@ -239,7 +267,9 @@ void main() {
       const gl = this.gl;
       const policyCap = this.isMobileLikeDevice() ? 2048 : 4096;
       const hardwareCap = gl.getParameter(gl.MAX_TEXTURE_SIZE) || policyCap;
-      const cap = Math.max(1, Math.min(policyCap, hardwareCap));
+      const optionCap = this.options.documentSizeCap;
+      const effectiveCap = optionCap ? Math.min(policyCap, optionCap) : policyCap;
+      const cap = Math.max(1, Math.min(effectiveCap, hardwareCap));
       const aspect =
         this.viewportWidth > 0 && this.viewportHeight > 0
           ? this.viewportWidth / this.viewportHeight
@@ -381,6 +411,9 @@ void main() {
           brushSize: gl.getUniformLocation(program, "u_brushSize"),
           docResolution: gl.getUniformLocation(program, "u_docResolution"),
           color: gl.getUniformLocation(program, "u_color"),
+          minSizeRatio: gl.getUniformLocation(program, "u_minSizeRatio"),
+          flow: gl.getUniformLocation(program, "u_flow"),
+          hardness: gl.getUniformLocation(program, "u_hardness"),
         },
       };
     }
@@ -563,7 +596,12 @@ void main() {
       }
 
       gl.viewport(0, 0, this.docWidth, this.docHeight);
-      gl.clearColor(1.0, 1.0, 1.0, 1.0);
+      // Sfondo trasparente per la modalità preview, bianco solido per il canvas principale.
+      if (this.options.transparentBackground) {
+        gl.clearColor(0, 0, 0, 0);
+      } else {
+        gl.clearColor(1.0, 1.0, 1.0, 1.0);
+      }
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
@@ -672,11 +710,14 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, instanceVBO);
       gl.bufferData(gl.ARRAY_BUFFER, 0, gl.DYNAMIC_DRAW);
       gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 12, 0);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 0);
       gl.vertexAttribDivisor(1, 1);
       gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 12, 8);
+      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 16, 8);
       gl.vertexAttribDivisor(2, 1);
+      gl.enableVertexAttribArray(3);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 16, 12);
+      gl.vertexAttribDivisor(3, 1);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
@@ -702,11 +743,29 @@ void main() {
     }
 
     bindBrushSettings() {
+      // Quando un getSettings esplicito è fornito (es. preview pad), non ascoltiamo l'evento globale:
+      // il chiamante usa setBrushState() per pilotare l'engine senza inquinare il brush principale.
+      if (this.options.getSettings) {
+        return;
+      }
+
       window.addEventListener("cbo:brush-settings-change", this.handleBrushSettingsChange);
     }
 
     handleBrushSettingsChange() {
-      this.brushState = { ...(namespace.brushSettings || {}) };
+      this.brushState = { ...(this.readBrushSettingsSource() || {}) };
+    }
+
+    readBrushSettingsSource() {
+      if (this.options.getSettings) {
+        return this.options.getSettings();
+      }
+
+      return namespace.brushSettings;
+    }
+
+    setBrushState(settings) {
+      this.brushState = { ...(settings || {}) };
     }
 
     bindPointerEvents() {
@@ -718,6 +777,10 @@ void main() {
     }
 
     bindNavigationEvents() {
+      if (this.options.disableNavigation) {
+        return;
+      }
+
       this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
       window.addEventListener("keydown", this.handleKeyDown);
       window.addEventListener("keyup", this.handleKeyUp);
@@ -867,6 +930,64 @@ void main() {
       };
     }
 
+    createStrokeSeed(point) {
+      return (
+        Date.now() ^
+        Math.round(point.x * 1000) ^
+        Math.round(point.y * 1000) ^
+        0x85ebca6b
+      ) >>> 0;
+    }
+
+    beginStrokeDynamics(sample) {
+      const StrokeMath = namespace.StrokeMath;
+      const point = { x: sample.x, y: sample.y };
+      const seed = this.createStrokeSeed(point) || 1;
+      const pressure = StrokeMath?.normalizePressure
+        ? StrokeMath.normalizePressure(sample.pressure)
+        : sample.pressure;
+
+      this.strokeRandomState = { seed };
+      this.strokeDynamicsState = StrokeMath?.createStrokeState
+        ? StrokeMath.createStrokeState(point, {
+            pressure,
+            seed,
+            tool: "brush",
+          })
+        : null;
+
+      return {
+        ...sample,
+        pressure,
+      };
+    }
+
+    processPointerSample(event) {
+      return this.applyStabilization(this.createPointerSample(event));
+    }
+
+    applyStabilization(rawSample) {
+      const StrokeMath = namespace.StrokeMath;
+
+      if (!this.strokeDynamicsState || !StrokeMath?.processStrokeInput) {
+        return rawSample;
+      }
+
+      const processed = StrokeMath.processStrokeInput(
+        { x: rawSample.x, y: rawSample.y },
+        this.strokeDynamicsState,
+        this.brushState,
+        rawSample.pressure,
+      );
+
+      return {
+        ...rawSample,
+        x: processed.point.x,
+        y: processed.point.y,
+        pressure: processed.pressure,
+      };
+    }
+
     parseColorToRgb01(value) {
       const fallback = [0, 0, 0];
 
@@ -925,6 +1046,57 @@ void main() {
       return Math.max(0, Math.min(1, value));
     }
 
+    getMinSizeRatio() {
+      const value = Number(this.brushState.minSizeRatio);
+
+      if (!Number.isFinite(value)) {
+        return 0.15;
+      }
+
+      return Math.max(0, Math.min(1, value));
+    }
+
+    getFlow() {
+      const value = Number(this.brushState.flow);
+
+      if (!Number.isFinite(value)) {
+        return 1.0;
+      }
+
+      return Math.max(0, Math.min(1, value));
+    }
+
+    getHardness() {
+      const value = Number(this.brushState.hardness);
+
+      if (!Number.isFinite(value)) {
+        return 1.0;
+      }
+
+      return Math.max(0, Math.min(1, value));
+    }
+
+    clamp(value, min, max) {
+      return Math.min(max, Math.max(min, Number(value) || 0));
+    }
+
+    clamp01(value) {
+      return this.clamp(value, 0, 1);
+    }
+
+    nextRandom() {
+      const state = this.strokeRandomState || { seed: 1 };
+
+      state.seed = (Math.imul(state.seed || 1, 1664525) + 1013904223) >>> 0;
+      this.strokeRandomState = state;
+
+      return state.seed / 4294967296;
+    }
+
+    randomSigned() {
+      return this.nextRandom() * 2 - 1;
+    }
+
     lerp(start, end, t) {
       return start + (end - start) * t;
     }
@@ -952,11 +1124,12 @@ void main() {
       };
     }
 
-    createStamp(point) {
+    createStamp(point, alphaScale = 1) {
       return {
         x: point.x,
         y: point.y,
         pressure: point.pressure,
+        alphaScale,
         tiltX: point.tiltX,
         tiltY: point.tiltY,
       };
@@ -967,6 +1140,7 @@ void main() {
         x: this.lerp(from.x, to.x, t),
         y: this.lerp(from.y, to.y, t),
         pressure: this.lerp(from.pressure, to.pressure, t),
+        alphaScale: this.lerp(from.alphaScale ?? 1, to.alphaScale ?? 1, t),
         tiltX: this.lerp(from.tiltX, to.tiltX, t),
         tiltY: this.lerp(from.tiltY, to.tiltY, t),
       };
@@ -993,8 +1167,55 @@ void main() {
       const spacingFraction = Number(this.brushState.spacing);
       const safeSpacing =
         Number.isFinite(spacingFraction) && spacingFraction > 0 ? spacingFraction : 0.1;
+      const spacingJitter = this.clamp01(this.brushState.spacingJitter);
+      const baseSpacing = Math.max(1, brushSize * safeSpacing);
+      const jitterAmount = baseSpacing * spacingJitter * 0.85;
 
-      return Math.max(1, brushSize * safeSpacing);
+      return Math.max(1, baseSpacing + this.randomSigned() * jitterAmount);
+    }
+
+    getFallOffScale() {
+      const fallOff = this.clamp01(this.brushState.fallOff);
+
+      if (fallOff <= 0) {
+        return 1;
+      }
+
+      const radius = Math.max(0.5, this.getBrushSize() * 0.5);
+      const fadeDistance = Math.max(radius * 2, radius * (96 - fallOff * 88));
+
+      return this.clamp(1 - this.strokeDistance / fadeDistance, 0, 1);
+    }
+
+    clampStampToDocument(stamp) {
+      return {
+        ...stamp,
+        x: this.clamp(stamp.x, 0, this.docWidth),
+        y: this.clamp(stamp.y, 0, this.docHeight),
+      };
+    }
+
+    applyStampJitter(stamp, tangent) {
+      const radius = Math.max(0.5, this.getBrushSize() * 0.5);
+      const lateral = this.clamp(this.brushState.jitterLateral, 0, 2) * radius;
+      const linear = this.clamp(this.brushState.jitterLinear, 0, 2) * radius;
+
+      if (lateral <= 0 && linear <= 0) {
+        return this.clampStampToDocument(stamp);
+      }
+
+      const lateralOffset = this.randomSigned() * lateral;
+      const linearOffset = this.randomSigned() * linear;
+      const perpendicular = {
+        x: -tangent.y,
+        y: tangent.x,
+      };
+
+      return this.clampStampToDocument({
+        ...stamp,
+        x: stamp.x + perpendicular.x * lateralOffset + tangent.x * linearOffset,
+        y: stamp.y + perpendicular.y * lateralOffset + tangent.y * linearOffset,
+      });
     }
 
     processStamps() {
@@ -1003,7 +1224,6 @@ void main() {
       }
 
       const [p0, p1, p2, p3] = this.currentStroke;
-      const spacing = this.getStampSpacing();
       const segmentDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
       const sampleCount = Math.max(8, Math.min(128, Math.ceil(segmentDistance / 4)));
       let previousPoint = this.catmullRom(p0, p1, p2, p3, 0);
@@ -1016,14 +1236,22 @@ void main() {
         if (stepDistance > 0) {
           this.leftoverDistance += stepDistance;
 
-          while (this.leftoverDistance >= spacing) {
-            const overshoot = this.leftoverDistance - spacing;
+          while (this.leftoverDistance >= this.nextStampDistance) {
+            const stampDistance = this.nextStampDistance;
+            const overshoot = this.leftoverDistance - stampDistance;
             const distanceFromPrevious = stepDistance - overshoot;
             const stampT = Math.max(0, Math.min(1, distanceFromPrevious / stepDistance));
-            const stamp = this.lerpStamp(previousPoint, point, stampT);
+            const tangent = {
+              x: (point.x - previousPoint.x) / stepDistance,
+              y: (point.y - previousPoint.y) / stepDistance,
+            };
+            const stamp = this.applyStampJitter(this.lerpStamp(previousPoint, point, stampT), tangent);
 
+            this.strokeDistance += stampDistance;
+            stamp.alphaScale = this.getFallOffScale();
             this.stampsBuffer.push(stamp);
-            this.leftoverDistance -= spacing;
+            this.leftoverDistance -= stampDistance;
+            this.nextStampDistance = this.getStampSpacing();
           }
         }
 
@@ -1041,17 +1269,18 @@ void main() {
 
       const gl = this.gl;
       const stampCount = this.stampsBuffer.length;
-      const instanceData = new Float32Array(stampCount * 3);
+      const instanceData = new Float32Array(stampCount * 4);
       const brushSize = this.getBrushSize();
       const color = this.parseColorToRgb01(this.brushState.color);
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
-        const offset = index * 3;
+        const offset = index * 4;
 
         instanceData[offset] = stamp.x;
         instanceData[offset + 1] = stamp.y;
         instanceData[offset + 2] = stamp.pressure;
+        instanceData[offset + 3] = stamp.alphaScale ?? 1;
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
@@ -1065,6 +1294,9 @@ void main() {
       gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, this.docWidth, this.docHeight);
       gl.uniform1f(this.brushProgramInfo.uniforms.brushSize, brushSize);
       gl.uniform3f(this.brushProgramInfo.uniforms.color, color[0], color[1], color[2]);
+      gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
+      gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
+      gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getHardness());
 
       gl.bindVertexArray(this.brush.vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.brush.instanceVBO);
@@ -1118,6 +1350,79 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
+    clearAllLayers() {
+      const gl = this.gl;
+
+      // Base layer: bianco solido o trasparente in base alla modalità.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.baseFBO);
+      gl.viewport(0, 0, this.docWidth, this.docHeight);
+
+      if (this.options.transparentBackground) {
+        gl.clearColor(0, 0, 0, 0);
+      } else {
+        gl.clearColor(1.0, 1.0, 1.0, 1.0);
+      }
+
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      this.clearStrokeLayer();
+    }
+
+    replayLastStroke() {
+      if (!this.lastRecordedStroke || this.lastRecordedStroke.length === 0) {
+        return;
+      }
+
+      this.replayStroke(this.lastRecordedStroke);
+    }
+
+    replayStroke(rawSamples) {
+      if (!Array.isArray(rawSamples) || rawSamples.length === 0 || this.isDrawing) {
+        return;
+      }
+
+      this.clearAllLayers();
+
+      const firstSample = rawSamples[0];
+      const startPoint = this.beginStrokeDynamics(firstSample);
+
+      this.isDrawing = true;
+      this.leftoverDistance = 0;
+      this.strokeDistance = 0;
+      this.strokeStampCount = 0;
+      this.stampsBuffer = [this.createStamp(startPoint)];
+      this.nextStampDistance = this.getStampSpacing();
+      this.currentStroke = [startPoint, startPoint, startPoint];
+
+      // Replay degli intermedi (escluso ultimo: lo trattiamo come pointer-up).
+      for (let index = 1; index < rawSamples.length - 1; index += 1) {
+        const stableSample = this.applyStabilization(rawSamples[index]);
+
+        this.currentStroke.push(stableSample);
+        this.processStamps();
+      }
+
+      const lastRaw = rawSamples[rawSamples.length - 1];
+      const lastPoint = rawSamples.length > 1 ? this.applyStabilization(lastRaw) : startPoint;
+
+      this.currentStroke.push(lastPoint);
+      this.processStamps();
+      this.currentStroke.push(lastPoint);
+      this.processStamps();
+      this.flushStamps();
+      this.bakeStroke();
+
+      this.currentStroke = [];
+      this.stampsBuffer = [];
+      this.leftoverDistance = 0;
+      this.nextStampDistance = 1;
+      this.strokeDistance = 0;
+      this.strokeStampCount = 0;
+      this.strokeDynamicsState = null;
+      this.isDrawing = false;
+    }
+
     handlePointerDown(event) {
       const isPanTrigger = event.button === 1 || (event.button === 0 && this.isSpaceHeld);
 
@@ -1136,13 +1441,25 @@ void main() {
       }
 
       event.preventDefault();
-      const point = this.createPointerSample(event);
+
+      // Modalità preview: ogni nuovo tratto resetta la canvas (utile nella drawing pad).
+      if (this.options.singleStrokeMode) {
+        this.clearAllLayers();
+      }
+
+      const rawSample = this.createPointerSample(event);
+
+      this.recordedStroke = [rawSample];
+
+      const point = this.beginStrokeDynamics(rawSample);
 
       this.isDrawing = true;
       this.activePointerId = event.pointerId;
       this.leftoverDistance = 0;
+      this.strokeDistance = 0;
       this.strokeStampCount = 0;
       this.stampsBuffer = [this.createStamp(point)];
+      this.nextStampDistance = this.getStampSpacing();
       this.currentStroke = [point, point, point];
       this.canvas.setPointerCapture(event.pointerId);
     }
@@ -1159,7 +1476,10 @@ void main() {
       }
 
       event.preventDefault();
-      this.currentStroke.push(this.createPointerSample(event));
+      const rawSample = this.createPointerSample(event);
+
+      this.recordedStroke.push(rawSample);
+      this.currentStroke.push(this.applyStabilization(rawSample));
       this.processStamps();
     }
 
@@ -1175,7 +1495,11 @@ void main() {
       }
 
       event.preventDefault();
-      const point = this.createPointerSample(event);
+      const rawSample = this.createPointerSample(event);
+
+      this.recordedStroke.push(rawSample);
+
+      const point = this.applyStabilization(rawSample);
 
       this.currentStroke.push(point);
       this.processStamps();
@@ -1188,11 +1512,15 @@ void main() {
         this.canvas.releasePointerCapture(event.pointerId);
       }
 
-      console.log("Tratto chiuso. Stamps generati in totale:", this.strokeStampCount);
+      this.lastRecordedStroke = this.recordedStroke.slice();
+      this.recordedStroke = [];
       this.currentStroke = [];
       this.stampsBuffer = [];
       this.leftoverDistance = 0;
+      this.nextStampDistance = 1;
+      this.strokeDistance = 0;
       this.strokeStampCount = 0;
+      this.strokeDynamicsState = null;
       this.isDrawing = false;
       this.activePointerId = null;
     }
@@ -1212,10 +1540,14 @@ void main() {
       }
 
       this.clearStrokeLayer();
+      this.recordedStroke = [];
       this.currentStroke = [];
       this.stampsBuffer = [];
       this.leftoverDistance = 0;
+      this.nextStampDistance = 1;
+      this.strokeDistance = 0;
       this.strokeStampCount = 0;
+      this.strokeDynamicsState = null;
       this.isDrawing = false;
       this.activePointerId = null;
     }
