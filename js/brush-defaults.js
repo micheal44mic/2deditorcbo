@@ -55,8 +55,18 @@ window.CBO = window.CBO || {};
     grainTextureName: defaultGrainTextureName,
     grainMode: "texturized",
     grainBlendMode: "multiply",
+    grainBrightness: 0,
+    grainContrast: 0,
     grainTexturizedScale: 1,
     grainTexturizedDepth: 1,
+    grainMovingMovement: 0,
+    grainMovingScale: 1,
+    grainMovingZoom: 0,
+    grainMovingRotation: 0,
+    grainMovingDepth: 1,
+    grainMovingDepthMinimum: 0,
+    grainMovingDepthJitter: 0,
+    grainMovingOffsetJitter: true,
     grainScale: 1,
     grainRotation: 0,
     grainStrength: 1,
@@ -93,6 +103,12 @@ window.CBO = window.CBO || {};
     const number = Number(value);
 
     return Number.isFinite(number) ? clamp01(number) : fallback;
+  }
+
+  function normalizeSigned(value, fallback = 0) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? clamp(number, -1, 1) : fallback;
   }
 
   function grainTextureScaleToTexturizedScale(textureScale) {
@@ -134,12 +150,28 @@ window.CBO = window.CBO || {};
       ? String(nextSettings.grainMode).toLowerCase()
       : "texturized";
     nextSettings.grainBlendMode = normalizeGrainBlendMode(nextSettings.grainBlendMode);
+    nextSettings.grainBrightness = normalizeSigned(nextSettings.grainBrightness, settings.grainBrightness);
+    nextSettings.grainContrast = normalizeSigned(nextSettings.grainContrast, settings.grainContrast);
     nextSettings.grainTexturizedScale = hasOwn(nextOverrides, "grainTexturizedScale")
       ? normalize01(nextOverrides.grainTexturizedScale, settings.grainTexturizedScale)
       : grainTextureScaleToTexturizedScale(nextOverrides.grainScale ?? nextSettings.grainScale);
     nextSettings.grainTexturizedDepth = hasOwn(nextOverrides, "grainTexturizedDepth")
       ? normalize01(nextOverrides.grainTexturizedDepth, settings.grainTexturizedDepth)
       : normalize01(nextOverrides.grainStrength ?? nextSettings.grainStrength, settings.grainTexturizedDepth);
+    nextSettings.grainMovingMovement = normalize01(nextSettings.grainMovingMovement, settings.grainMovingMovement);
+    nextSettings.grainMovingScale = normalize01(nextSettings.grainMovingScale, settings.grainMovingScale);
+    nextSettings.grainMovingZoom = normalize01(nextSettings.grainMovingZoom, settings.grainMovingZoom);
+    nextSettings.grainMovingRotation = normalizeSigned(nextSettings.grainMovingRotation, settings.grainMovingRotation);
+    nextSettings.grainMovingDepth = normalize01(nextSettings.grainMovingDepth, settings.grainMovingDepth);
+    nextSettings.grainMovingDepthMinimum = normalize01(
+      nextSettings.grainMovingDepthMinimum,
+      settings.grainMovingDepthMinimum,
+    );
+    nextSettings.grainMovingDepthJitter = normalize01(
+      nextSettings.grainMovingDepthJitter,
+      settings.grainMovingDepthJitter,
+    );
+    nextSettings.grainMovingOffsetJitter = nextSettings.grainMovingOffsetJitter !== false;
 
     return nextSettings;
   }

@@ -37,7 +37,7 @@ Gia' implementato:
 - Catmull-Rom CPU con finestra a 4 punti.
 - Spacing engine CPU con minimo rigido `1px`.
 - Buffer stamp CPU `stampsBuffer`.
-- Brush instancing GPU: quad unitario + `instanceVBO` con stride 16 byte: `x`, `y`, `pressure`, `alphaScale`.
+- Brush instancing GPU: quad unitario + `instanceVBO` con stride 56 byte: `x`, `y`, `pressure`, `alphaScale`, `sizeScale`, `rotation`, `color rgb`, dati Grain Moving.
 - Rendering dab via `gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count)`.
 - Dab circolare procedurale con edge anti-aliasing e hardness configurabile.
 - Colore reale via `brushState.color` -> `u_color`.
@@ -52,6 +52,13 @@ Gia' implementato:
 - StreamLine/stabilization reali nel percorso input via `brushState.streamLineAmount`, `brushState.streamLinePressure` e `brushState.stabilizationAmount`.
 - Opacity reale del tratto via `brushState.opacity`.
 - Wet Mix v1 reale lato CPU via `brushState.wetDilution`, `wetCharge`, `wetAttack` e `wetnessJitter`: modula `alphaScale` per dab senza cambiare shader.
+- Shape texture reale via `brushState.shapeAlphaSrc` -> `u_shapeTexture` con fallback al dab circolare procedurale.
+- Shape dynamics reali: `shapeRotation`, `shapeScatter`, `shapeCount`, `shapeCountJitter`, `shapeFlipX`, `shapeFlipY`.
+- Grain Texturized reale via `brushState.grainTextureSrc`: texture tileable campionata in document space, quindi bloccata alla canvas.
+- Grain Scale/Depth reali via `grainTexturizedScale` e `grainTexturizedDepth`.
+- Grain Blend Mode reale interno al brush, non al canvas/layer: usa il grain alpha come tono grayscale per modificare il colore del brush e una coverage conservativa. Prima ondata implementata: `multiply`, `darken`, `linear-burn`, `overlay`, `lighten`, `difference`.
+- Grain Brightness/Contrast reali via `grainBrightness` e `grainContrast` (`-1..1`), applicati al grain alpha prima di invert/blend/depth.
+- Grain Moving reale via `grainMode: "moving"`: sampling in spazio dab/stroke separato da Texturized, con Movement, Scale, Zoom, Rotation, Depth, Depth Minimum, Depth Jitter e Offset Jitter.
 - Anti opacity build-up: i dab del tratto attivo vengono scritti in `strokeFBO` con `gl.blendEquation(gl.MAX)`, poi fusi in `baseFBO` da `bakeStroke()` su `pointerup` con blend pre-moltiplicato standard.
 - PRNG per stroke seedato dal punto iniziale (LCG `Math.imul(seed, 1664525) + 1013904223`): jitter riproducibile, niente sfarfallio frame-by-frame.
 - Registrazione raw sample per stroke (`recordedStroke` -> `lastRecordedStroke` su pointerup): permette il replay del tratto.
@@ -95,6 +102,9 @@ Gia' presente nella UI (slider):
 - `streamLineAmount`
 - `streamLinePressure`
 - `stabilizationAmount`
+- Shape: alpha import/invert, rotation, scatter, count, count jitter, randomized, flip X/Y.
+- Grain: texture import/invert, mode selector Moving/Texturized. Texturized ha scale/depth. Moving ha movement, scale, zoom, rotation, depth, depth minimum, depth jitter, offset jitter. Blend mode, brightness e contrast sono condivisi ma applicati nel ramo attivo.
+- Nel menu Grain Blend Mode sono selezionabili solo i mode implementati (`multiply`, `darken`, `linear-burn`, `overlay`, `lighten`, `difference`); `color-burn`, `color-dodge`, `hard-mix`, `subtract`, `divide`, `height`, `linear-height` restano visibili ma disabilitati finche' non hanno una formula stabile.
 
 Drawing Pad: ora usa il vero BrushEngine WebGL, NON piu' Canvas2D. Una seconda istanza di `BrushEngine` viene creata sul canvas del pad con:
 
@@ -133,26 +143,53 @@ Parametri gia' applicati end-to-end dal motore reale (UI -> brushState -> shader
 - `wetCharge`
 - `wetAttack`
 - `wetnessJitter`
+- `shapeAlphaSrc`
+- `shapeRotation`
+- `shapeScatter`
+- `shapeCount`
+- `shapeCountJitter`
+- `shapeFlipX`
+- `shapeFlipY`
+- `grainTextureSrc`
+- `grainMode` (`texturized` e `moving` applicati nel motore con rami separati)
+- `grainTexturizedScale`
+- `grainTexturizedDepth`
+- `grainMovingMovement`
+- `grainMovingScale`
+- `grainMovingZoom`
+- `grainMovingRotation`
+- `grainMovingDepth`
+- `grainMovingDepthMinimum`
+- `grainMovingDepthJitter`
+- `grainMovingOffsetJitter`
+- `grainBlendMode` (`multiply`, `darken`, `linear-burn`, `overlay`, `lighten`, `difference`)
+- `grainBrightness`
+- `grainContrast`
+- `grainInvert`
 
 Parametri senza contratto WebGL completo:
 
-- shape mask del dab (texture RGBA della punta — Step 6).
-- grain/texture del pennello (texture tileable in document space — Step 6).
-- rotazione/orientamento del dab (lungo tangent o random).
+- Blend mode grain avanzati: `color-burn`, `color-dodge`, `hard-mix`, `subtract`, `divide`.
+- Modalita' speciali `height` e `linear-height`: da trattare come texture/height modes, non come normali layer blend mode.
+- Grain Filtering: per ora non previsto.
 - curve/toggle pressione su size, opacity e flow (response curve editabile).
 - tilt mapping (azimuth + altitude su forma/orientamento).
 
 # PROSSIMO OBIETTIVO ARCHITETTURALE
 
-Step 6 — Texture brushes (shape + grain).
+Step 6 — Texture brushes (shape + grain) e' ora parzialmente implementato.
 
-Sostituire il dab procedurale `smoothstep(distance)` con campionamento di vere texture:
+Gia' fatto:
 
-- `uShapeTexture` (R8, `CLAMP_TO_EDGE`, mipmap `LINEAR_MIPMAP_LINEAR`) — silhouette del pennello.
-- `uGrainTexture` (R8, `REPEAT`, mipmap `LINEAR_MIPMAP_LINEAR`) — campionata in document space (grain locked alla canvas, non al dab).
-- `final_alpha = shape * grain * existing_alpha`.
-- Mantenere il fallback al cerchietto procedurale finche' una texture non e' caricata.
-- Cache delle texture per evitare ricaricamenti quando si cambia preset.
+- `uShapeTexture` (RGBA upload, alpha campionata, `CLAMP_TO_EDGE`, mipmap `LINEAR_MIPMAP_LINEAR`) per la silhouette del pennello.
+- `uGrainTexture` (RGBA grayscale upload, canale `.r` come grain alpha, `REPEAT`, mipmap `LINEAR_MIPMAP_LINEAR`) campionata in document space per Texturized.
+- Fallback al cerchietto procedurale finche' la shape texture non e' caricata.
+- Cache delle immagini tramite `window.CBO.ImageCache` per evitare ricaricamenti quando si cambia preset.
 - Compatibilita' con MAX blending (output sempre pre-moltiplicato).
 
-Dopo Step 6: rotazione dab e pressure curves (l'editor delle curve va costruito una volta che la "risposta" del pennello e' una texture vera, non piu' un cerchio).
+Prossimi passi consigliati:
+
+- Rifinire visivamente i 6 Grain Blend Mode attuali su Texturized.
+- Implementare la seconda ondata di blend mode standard solo dopo tuning (`color-burn`, `color-dodge`, `hard-mix`, `subtract`, `divide`).
+- Implementare `height` e `linear-height` come modalita' speciali di texture/height.
+- Dopo il grain/shape maturo: pressure curves e tilt mapping.

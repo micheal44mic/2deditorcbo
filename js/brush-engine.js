@@ -79,6 +79,10 @@ layout(location = 3) in float aInstanceAlpha;
 layout(location = 4) in float aInstanceSizeScale;
 layout(location = 5) in float aInstanceRotation;
 layout(location = 6) in vec3 aInstanceColor;
+layout(location = 7) in vec2 aInstanceGrainOffset;
+layout(location = 8) in float aInstanceGrainTravel;
+layout(location = 9) in float aInstanceGrainRotation;
+layout(location = 10) in float aInstanceGrainDepthScale;
 
 uniform vec2 u_docResolution;
 uniform float u_brushSize;
@@ -86,7 +90,14 @@ uniform float u_minSizeRatio;
 uniform vec2 u_shapeFlip;
 
 out vec2 v_uv;
+out vec2 v_localPosition;
 out vec2 v_docPosition;
+out vec2 v_grainOffset;
+out float v_grainTravel;
+out float v_grainRotation;
+out float v_grainDepthScale;
+out float v_stampPixelSize;
+out float v_pressure;
 out float v_alpha;
 out vec3 v_color;
 
@@ -105,12 +116,20 @@ void main() {
     localPosition.x * c - localPosition.y * s,
     localPosition.x * s + localPosition.y * c
   );
-  vec2 documentPosition = aInstancePos + rotatedPosition * u_brushSize * sizeFactor * scale;
+  float stampPixelSize = u_brushSize * sizeFactor * scale;
+  vec2 documentPosition = aInstancePos + rotatedPosition * stampPixelSize;
   vec2 clipPosition = (documentPosition / u_docResolution) * 2.0 - 1.0;
 
   clipPosition.y *= -1.0;
   v_uv = a_position + 0.5;
+  v_localPosition = a_position;
   v_docPosition = documentPosition;
+  v_grainOffset = aInstanceGrainOffset;
+  v_grainTravel = aInstanceGrainTravel;
+  v_grainRotation = aInstanceGrainRotation;
+  v_grainDepthScale = clamp(aInstanceGrainDepthScale, 0.0, 1.0);
+  v_stampPixelSize = stampPixelSize;
+  v_pressure = pressure;
   v_alpha = clamp(aInstanceAlpha, 0.0, 1.0);
   v_color = aInstanceColor;
   gl_Position = vec4(clipPosition, 0.0, 1.0);
@@ -127,14 +146,27 @@ uniform float u_useShapeTexture;
 uniform bool u_grainEnabled;
 uniform sampler2D u_grainTexture;
 uniform vec2 u_grainTexSize;
+uniform int u_grainMode;
 uniform float u_grainScale;
 uniform mat2 u_grainRotationMat;
 uniform float u_grainDepth;
+uniform float u_grainMovement;
+uniform float u_grainZoom;
+uniform float u_grainDepthMinimum;
 uniform int u_grainBlendMode;
+uniform float u_grainBrightness;
+uniform float u_grainContrast;
 uniform bool u_grainInvert;
 
 in vec2 v_uv;
+in vec2 v_localPosition;
 in vec2 v_docPosition;
+in vec2 v_grainOffset;
+in float v_grainTravel;
+in float v_grainRotation;
+in float v_grainDepthScale;
+in float v_stampPixelSize;
+in float v_pressure;
 in float v_alpha;
 in vec3 v_color;
 
@@ -146,6 +178,8 @@ const int GRAIN_BLEND_LINEAR_BURN = 2;
 const int GRAIN_BLEND_OVERLAY = 3;
 const int GRAIN_BLEND_LIGHTEN = 4;
 const int GRAIN_BLEND_DIFFERENCE = 5;
+const int GRAIN_MODE_TEXTURIZED = 0;
+const int GRAIN_MODE_MOVING = 1;
 
 vec3 blendOverlay(vec3 baseColor, vec3 blendColor) {
   vec3 low = 2.0 * baseColor * blendColor;
@@ -204,6 +238,62 @@ float getGrainCoverage(float grain, int blendMode) {
   return grain;
 }
 
+float applyGrainAdjustments(float grain, float depth) {
+  float userContrast = u_grainContrast < 0.0
+    ? 1.0 + clamp(u_grainContrast, -1.0, 0.0)
+    : 1.0 + clamp(u_grainContrast, 0.0, 1.0) * 2.0;
+  float depthContrast = mix(1.0, 1.75, depth);
+  float contrastedGrain = (grain - 0.5) * depthContrast * userContrast + 0.5;
+
+  return clamp(contrastedGrain + clamp(u_grainBrightness, -1.0, 1.0), 0.0, 1.0);
+}
+
+vec2 rotateGrainPosition(vec2 position, float angle) {
+  float c = cos(angle);
+  float s = sin(angle);
+
+  return vec2(
+    position.x * c - position.y * s,
+    position.x * s + position.y * c
+  );
+}
+
+vec2 getMovingGrainUv(vec2 safeTextureSize) {
+  float zoom = clamp(u_grainZoom, 0.0, 1.0);
+  float movement = clamp(u_grainMovement, 0.0, 1.0);
+  vec2 followSizePosition = v_localPosition * safeTextureSize;
+  vec2 croppedPosition = v_localPosition * max(v_stampPixelSize, 1.0);
+  vec2 grainPosition = mix(followSizePosition, croppedPosition, zoom);
+
+  grainPosition += vec2(v_grainTravel * movement, 0.0);
+  grainPosition = rotateGrainPosition(grainPosition, v_grainRotation) + v_grainOffset;
+
+  return grainPosition / (safeTextureSize * max(u_grainScale, 0.0001));
+}
+
+float getMovingGrainDepth(float baseDepth) {
+  float minimum = clamp(u_grainDepthMinimum, 0.0, 1.0);
+  float pressureDepth = mix(minimum, 1.0, clamp(v_pressure, 0.0, 1.0));
+  float jitterDepth = clamp(v_grainDepthScale, 0.0, 1.0);
+  float depthScale = max(minimum, pressureDepth * jitterDepth);
+
+  return clamp(baseDepth * depthScale, 0.0, 1.0);
+}
+
+void applyGrainSample(vec2 grainUv, float depth, inout vec3 brushColor, inout float grainCoverage) {
+  float grain = texture(u_grainTexture, grainUv).r;
+  float adjustedGrain = applyGrainAdjustments(grain, depth);
+
+  if (u_grainInvert) {
+    adjustedGrain = 1.0 - adjustedGrain;
+  }
+
+  vec3 blendedColor = applyGrainBlendMode(v_color, adjustedGrain, u_grainBlendMode);
+
+  brushColor = mix(v_color, blendedColor, depth);
+  grainCoverage = mix(1.0, getGrainCoverage(adjustedGrain, u_grainBlendMode), depth);
+}
+
 void main() {
   float shape = 1.0;
 
@@ -230,22 +320,19 @@ void main() {
   float grainCoverage = 1.0;
 
   if (u_grainEnabled && u_grainScale > 0.0) {
-    vec2 rotatedPosition = u_grainRotationMat * v_docPosition;
     vec2 safeTextureSize = max(u_grainTexSize, vec2(1.0));
-    vec2 grainUv = rotatedPosition / (safeTextureSize * u_grainScale);
-    float grain = texture(u_grainTexture, grainUv).r;
+    float depth = clamp(u_grainDepth, 0.0, 1.0);
+    vec2 grainUv;
 
-    if (u_grainInvert) {
-      grain = 1.0 - grain;
+    if (u_grainMode == GRAIN_MODE_MOVING) {
+      grainUv = getMovingGrainUv(safeTextureSize);
+      depth = getMovingGrainDepth(depth);
+    } else {
+      vec2 rotatedPosition = u_grainRotationMat * v_docPosition;
+      grainUv = rotatedPosition / (safeTextureSize * u_grainScale);
     }
 
-    float depth = clamp(u_grainDepth, 0.0, 1.0);
-    float contrast = mix(1.0, 1.75, depth);
-    float adjustedGrain = clamp((grain - 0.5) * contrast + 0.5, 0.0, 1.0);
-    vec3 blendedColor = applyGrainBlendMode(v_color, adjustedGrain, u_grainBlendMode);
-
-    brushColor = mix(v_color, blendedColor, depth);
-    grainCoverage = mix(1.0, getGrainCoverage(adjustedGrain, u_grainBlendMode), depth);
+    applyGrainSample(grainUv, depth, brushColor, grainCoverage);
   }
 
   float alpha = shape * grainCoverage * v_alpha * clamp(u_flow, 0.0, 1.0);
@@ -371,8 +458,10 @@ void main() {
       this.strokeColorRandomState = null;
       this.strokeColorState = null;
       this.strokeWetRandomState = null;
+      this.strokeGrainRandomState = null;
       this.strokeInitialSeed = 1;
       this.strokeShapeRotation = 0;
+      this.strokeGrainOffset = { x: 0, y: 0 };
       this.strokeTotalLength = null;
       this.taperSpacingCap = null;
       this.recordedStroke = [];
@@ -611,10 +700,16 @@ void main() {
           grainEnabled: gl.getUniformLocation(program, "u_grainEnabled"),
           grainTexture: gl.getUniformLocation(program, "u_grainTexture"),
           grainTexSize: gl.getUniformLocation(program, "u_grainTexSize"),
+          grainMode: gl.getUniformLocation(program, "u_grainMode"),
           grainScale: gl.getUniformLocation(program, "u_grainScale"),
           grainRotationMat: gl.getUniformLocation(program, "u_grainRotationMat"),
           grainDepth: gl.getUniformLocation(program, "u_grainDepth"),
+          grainMovement: gl.getUniformLocation(program, "u_grainMovement"),
+          grainZoom: gl.getUniformLocation(program, "u_grainZoom"),
+          grainDepthMinimum: gl.getUniformLocation(program, "u_grainDepthMinimum"),
           grainBlendMode: gl.getUniformLocation(program, "u_grainBlendMode"),
+          grainBrightness: gl.getUniformLocation(program, "u_grainBrightness"),
+          grainContrast: gl.getUniformLocation(program, "u_grainContrast"),
           grainInvert: gl.getUniformLocation(program, "u_grainInvert"),
         },
       };
@@ -911,25 +1006,37 @@ void main() {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, instanceVBO);
       gl.bufferData(gl.ARRAY_BUFFER, 0, gl.DYNAMIC_DRAW);
-      // Instance stride 36 byte: pos (xy) + pressure + alphaScale + sizeScale + rotation + color (rgb).
+      // Instance stride 56 byte: pos, pressure, alpha, size, rotation, color, grain moving data.
       gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 36, 0);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 56, 0);
       gl.vertexAttribDivisor(1, 1);
       gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 36, 8);
+      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 56, 8);
       gl.vertexAttribDivisor(2, 1);
       gl.enableVertexAttribArray(3);
-      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 36, 12);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 56, 12);
       gl.vertexAttribDivisor(3, 1);
       gl.enableVertexAttribArray(4);
-      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 36, 16);
+      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 56, 16);
       gl.vertexAttribDivisor(4, 1);
       gl.enableVertexAttribArray(5);
-      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 36, 20);
+      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 56, 20);
       gl.vertexAttribDivisor(5, 1);
       gl.enableVertexAttribArray(6);
-      gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 36, 24);
+      gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 56, 24);
       gl.vertexAttribDivisor(6, 1);
+      gl.enableVertexAttribArray(7);
+      gl.vertexAttribPointer(7, 2, gl.FLOAT, false, 56, 36);
+      gl.vertexAttribDivisor(7, 1);
+      gl.enableVertexAttribArray(8);
+      gl.vertexAttribPointer(8, 1, gl.FLOAT, false, 56, 44);
+      gl.vertexAttribDivisor(8, 1);
+      gl.enableVertexAttribArray(9);
+      gl.vertexAttribPointer(9, 1, gl.FLOAT, false, 56, 48);
+      gl.vertexAttribDivisor(9, 1);
+      gl.enableVertexAttribArray(10);
+      gl.vertexAttribPointer(10, 1, gl.FLOAT, false, 56, 52);
+      gl.vertexAttribDivisor(10, 1);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
@@ -1369,6 +1476,7 @@ void main() {
       this.strokeInitialSeed = seed;
       this.initializeStrokeColorDynamics(seed);
       this.initializeWetMixRandom(seed);
+      this.initializeGrainDynamics(seed);
       this.strokeShapeRotation = this.brushState.shapeRandomized === true
         ? (this.createSeededUnit(seed ^ 0x9e3779b9) * 2 - 1) * Math.PI
         : 0;
@@ -1507,6 +1615,33 @@ void main() {
       const wetSeed = ((((seed || 1) >>> 0) ^ 0xa24baed5) >>> 0) || 1;
 
       this.strokeWetRandomState = { seed: wetSeed };
+    }
+
+    initializeGrainDynamics(seed) {
+      const grainSeed = ((((seed || 1) >>> 0) ^ 0x7f4a7c15) >>> 0) || 1;
+
+      this.strokeGrainRandomState = { seed: grainSeed };
+
+      if (this.getGrainMode() !== "moving" || !this.getGrainMovingOffsetJitter()) {
+        this.strokeGrainOffset = { x: 0, y: 0 };
+        return;
+      }
+
+      const grainWidth = Math.max(1, this.grainImageWidth || 1);
+      const grainHeight = Math.max(1, this.grainImageHeight || 1);
+      const x = (this.createSeededUnit(seed ^ 0x2c1b3c6d) - 0.5) * grainWidth;
+      const y = (this.createSeededUnit(seed ^ 0x9f4a7c15) - 0.5) * grainHeight;
+
+      this.strokeGrainOffset = { x, y };
+    }
+
+    nextGrainRandom() {
+      const state = this.strokeGrainRandomState || { seed: 1 };
+
+      state.seed = (Math.imul(state.seed || 1, 1664525) + 1013904223) >>> 0;
+      this.strokeGrainRandomState = state;
+
+      return state.seed / 4294967296;
     }
 
     nextWetRandom() {
@@ -2007,11 +2142,21 @@ void main() {
     }
 
     isGrainEnabled() {
+      const mode = this.getGrainMode();
+
+      if (
+        this.brushState.grainEnabled !== true ||
+        !this.grainTextureReady ||
+        !this.grainTexture
+      ) {
+        return false;
+      }
+
+      if (mode === "moving") {
+        return this.getGrainMovingScale() > 0 && this.getGrainMovingDepth() > 0;
+      }
+
       return (
-        this.brushState.grainEnabled === true &&
-        this.getGrainMode() === "texturized" &&
-        this.grainTextureReady &&
-        Boolean(this.grainTexture) &&
         this.getGrainTexturizedScale() > 0 &&
         this.getGrainTexturizedDepth() > 0
       );
@@ -2028,6 +2173,18 @@ void main() {
         .replace(/\s+/g, "-");
 
       return GRAIN_BLEND_MODE_IDS[mode] ?? GRAIN_BLEND_MODE_IDS.multiply;
+    }
+
+    getGrainBrightness() {
+      const value = Number(this.brushState.grainBrightness);
+
+      return Number.isFinite(value) ? this.clamp(value, -1, 1) : 0;
+    }
+
+    getGrainContrast() {
+      const value = Number(this.brushState.grainContrast);
+
+      return Number.isFinite(value) ? this.clamp(value, -1, 1) : 0;
     }
 
     textureScaleToTexturizedScale(textureScale) {
@@ -2056,7 +2213,9 @@ void main() {
     }
 
     getGrainScale() {
-      const value = this.getGrainTexturizedScale();
+      const value = this.getGrainMode() === "moving"
+        ? this.getGrainMovingScale()
+        : this.getGrainTexturizedScale();
 
       if (value <= 0) {
         return 0;
@@ -2079,6 +2238,44 @@ void main() {
       }
 
       return this.clamp01(this.brushState.grainStrength ?? 1);
+    }
+
+    getGrainMovingMovement() {
+      return this.clamp01(this.brushState.grainMovingMovement);
+    }
+
+    getGrainMovingScale() {
+      return this.clamp01(this.brushState.grainMovingScale ?? 1);
+    }
+
+    getGrainMovingZoom() {
+      return this.clamp01(this.brushState.grainMovingZoom);
+    }
+
+    getGrainMovingRotation() {
+      return this.clamp(this.brushState.grainMovingRotation, -1, 1);
+    }
+
+    getGrainMovingDepth() {
+      return this.clamp01(this.brushState.grainMovingDepth ?? 1);
+    }
+
+    getGrainMovingDepthMinimum() {
+      return this.clamp01(this.brushState.grainMovingDepthMinimum);
+    }
+
+    getGrainMovingDepthJitter() {
+      return this.clamp01(this.brushState.grainMovingDepthJitter);
+    }
+
+    getGrainMovingOffsetJitter() {
+      return this.brushState.grainMovingOffsetJitter !== false;
+    }
+
+    getActiveGrainDepth() {
+      return this.getGrainMode() === "moving"
+        ? this.getGrainMovingDepth()
+        : this.getGrainTexturizedDepth();
     }
 
     isGrainInverted() {
@@ -2122,19 +2319,57 @@ void main() {
       return this.randomSigned() * Math.PI * scatter;
     }
 
+    getGrainMovingDirectionalRotation(tangent) {
+      const rotationFollow = this.getGrainMovingRotation();
+
+      if (rotationFollow === 0 || !tangent || (tangent.x === 0 && tangent.y === 0)) {
+        return 0;
+      }
+
+      return Math.atan2(tangent.y, tangent.x) * rotationFollow;
+    }
+
+    getGrainMovingDepthScale() {
+      const jitter = this.getGrainMovingDepthJitter();
+
+      if (jitter <= 0) {
+        return 1;
+      }
+
+      return this.lerp(1, this.nextGrainRandom(), jitter);
+    }
+
+    applyMovingGrainToStamp(stamp, tangent) {
+      if (this.getGrainMode() !== "moving") {
+        stamp.grainOffsetX = 0;
+        stamp.grainOffsetY = 0;
+        stamp.grainTravel = 0;
+        stamp.grainRotation = 0;
+        stamp.grainDepthScale = 1;
+        return;
+      }
+
+      stamp.grainOffsetX = this.strokeGrainOffset?.x ?? 0;
+      stamp.grainOffsetY = this.strokeGrainOffset?.y ?? 0;
+      stamp.grainTravel = this.strokeDistance;
+      stamp.grainRotation = this.getGrainMovingDirectionalRotation(tangent);
+      stamp.grainDepthScale = this.getGrainMovingDepthScale();
+    }
+
     pushShapeStamps(baseStamp, tangent) {
       const effectiveCount = this.getEffectiveShapeCount();
       const directionalRotation = this.getShapeDirectionalRotation(tangent);
 
       if (effectiveCount === 1) {
         baseStamp.rotation = directionalRotation + this.getShapeScatterRotation();
+        this.applyMovingGrainToStamp(baseStamp, tangent);
         baseStamp.colorRgb = this.getNextStampColorRgb();
         this.stampsBuffer.push(baseStamp);
         return;
       }
 
       for (let index = 0; index < effectiveCount; index += 1) {
-        this.stampsBuffer.push({
+        const stamp = {
           x: baseStamp.x,
           y: baseStamp.y,
           pressure: baseStamp.pressure,
@@ -2143,8 +2378,11 @@ void main() {
           rotation: directionalRotation + this.getShapeScatterRotation(),
           tiltX: baseStamp.tiltX,
           tiltY: baseStamp.tiltY,
-          colorRgb: this.getNextStampColorRgb(),
-        });
+        };
+
+        this.applyMovingGrainToStamp(stamp, tangent);
+        stamp.colorRgb = this.getNextStampColorRgb();
+        this.stampsBuffer.push(stamp);
       }
     }
 
@@ -2201,8 +2439,8 @@ void main() {
 
       const gl = this.gl;
       const stampCount = this.stampsBuffer.length;
-      // 9 float per istanza: x, y, pressure, alphaScale, sizeScale, rotation, color rgb.
-      const instanceData = new Float32Array(stampCount * 9);
+      // 14 float per istanza: base dab + colore + dati grain Moving.
+      const instanceData = new Float32Array(stampCount * 14);
       const brushSize = this.getBrushSize();
       const fallbackColor = this.getCurrentStrokeColorRgb();
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
@@ -2210,7 +2448,7 @@ void main() {
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
-        const offset = index * 9;
+        const offset = index * 14;
         const color = stamp.colorRgb || fallbackColor;
 
         instanceData[offset] = stamp.x;
@@ -2222,6 +2460,11 @@ void main() {
         instanceData[offset + 6] = color[0];
         instanceData[offset + 7] = color[1];
         instanceData[offset + 8] = color[2];
+        instanceData[offset + 9] = stamp.grainOffsetX ?? 0;
+        instanceData[offset + 10] = stamp.grainOffsetY ?? 0;
+        instanceData[offset + 11] = stamp.grainTravel ?? 0;
+        instanceData[offset + 12] = stamp.grainRotation ?? 0;
+        instanceData[offset + 13] = stamp.grainDepthScale ?? 1;
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
@@ -2246,16 +2489,23 @@ void main() {
       gl.uniform1i(this.brushProgramInfo.uniforms.grainTexture, 2);
 
       if (useGrainTexture) {
-        const grainRotation = this.getGrainRotationRadians();
+        const grainMode = this.getGrainMode();
+        const grainRotation = grainMode === "moving" ? 0 : this.getGrainRotationRadians();
         const cos = Math.cos(grainRotation);
         const sin = Math.sin(grainRotation);
         const rotationMatrix = new Float32Array([cos, sin, -sin, cos]);
 
         gl.uniform2f(this.brushProgramInfo.uniforms.grainTexSize, this.grainImageWidth, this.grainImageHeight);
+        gl.uniform1i(this.brushProgramInfo.uniforms.grainMode, grainMode === "moving" ? 1 : 0);
         gl.uniform1f(this.brushProgramInfo.uniforms.grainScale, this.getGrainScale());
         gl.uniformMatrix2fv(this.brushProgramInfo.uniforms.grainRotationMat, false, rotationMatrix);
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainDepth, this.getGrainTexturizedDepth());
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainDepth, this.getActiveGrainDepth());
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainMovement, this.getGrainMovingMovement());
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainZoom, this.getGrainMovingZoom());
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainDepthMinimum, this.getGrainMovingDepthMinimum());
         gl.uniform1i(this.brushProgramInfo.uniforms.grainBlendMode, this.getGrainBlendModeId());
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainBrightness, this.getGrainBrightness());
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainContrast, this.getGrainContrast());
         gl.uniform1i(this.brushProgramInfo.uniforms.grainInvert, this.isGrainInverted() ? 1 : 0);
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, this.grainTexture);
@@ -2354,6 +2604,8 @@ void main() {
       this.strokeColorRandomState = null;
       this.strokeColorState = null;
       this.strokeWetRandomState = null;
+      this.strokeGrainRandomState = null;
+      this.strokeGrainOffset = { x: 0, y: 0 };
     }
 
     replayLastStroke() {
@@ -2400,6 +2652,7 @@ void main() {
       this.strokeRandomState = { seed: this.strokeInitialSeed };
       this.initializeStrokeColorDynamics(this.strokeInitialSeed);
       this.initializeWetMixRandom(this.strokeInitialSeed);
+      this.initializeGrainDynamics(this.strokeInitialSeed);
       this.strokeDynamicsState = StrokeMath?.createStrokeState
         ? StrokeMath.createStrokeState(point, {
             pressure,

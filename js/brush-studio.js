@@ -142,10 +142,6 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   let shapeEditorDraftName = draftBrushSettings.shapeAlphaName || defaultShapeAlphaName;
   let grainEditorDraftSrc = draftBrushSettings.grainTextureSrc || defaultGrainTextureSrc;
   let grainEditorDraftName = draftBrushSettings.grainTextureName || defaultGrainTextureName;
-  const grainAdjustmentUiState = {
-    brightness: 0,
-    contrast: 0,
-  };
   let grainBlendModeScrollIndex = 0;
   let grainBlendModeOpen = false;
   let activeGrainBlendOutline = null;
@@ -419,7 +415,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     });
   }
 
-  function createGrainPercentSetting({ key, label, value = 1, noneAtZero = false }) {
+  function createGrainPercentSetting({ key, label, value = 1, noneAtZero = false, formatDisplay = null }) {
     const setting = document.createElement("div");
     const header = document.createElement("div");
     const name = document.createElement("div");
@@ -445,7 +441,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
       draftBrushSettings[key] = displayValue / 100;
       slider.value = String(displayValue);
-      valuePill.textContent = noneAtZero && displayValue === 0 ? "NONE" : `${displayValue}%`;
+      valuePill.textContent = typeof formatDisplay === "function"
+        ? formatDisplay(displayValue)
+        : noneAtZero && displayValue === 0
+          ? "NONE"
+          : `${displayValue}%`;
       slider.style.setProperty("--brush-studio-range-progress", `${progress}%`);
       pushDraftToEngine();
     }
@@ -461,7 +461,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     return setting;
   }
 
-  function createGrainSignedPercentSetting({ key, label, value = 0 }) {
+  function createGrainSignedPercentSetting({ key, label, value = 0, formatDisplay = null }) {
     const setting = document.createElement("div");
     const header = document.createElement("div");
     const name = document.createElement("div");
@@ -488,11 +488,14 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       const end = Math.max(50, progress);
       const prefix = displayValue > 0 ? "+" : "";
 
-      grainAdjustmentUiState[key] = displayValue;
+      draftBrushSettings[key] = displayValue / 100;
       slider.value = String(displayValue);
-      valuePill.textContent = `${prefix}${displayValue}%`;
+      valuePill.textContent = typeof formatDisplay === "function"
+        ? formatDisplay(displayValue)
+        : `${prefix}${displayValue}%`;
       slider.style.setProperty("--brush-studio-range-start", `${start}%`);
       slider.style.setProperty("--brush-studio-range-end", `${end}%`);
+      pushDraftToEngine();
     }
 
     slider.addEventListener("input", () => {
@@ -597,6 +600,17 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       return currentIndex;
     }
 
+    function updateBlendBoxAnchor() {
+      const rect = outline.getBoundingClientRect();
+      const panelRect = brushStudio?.getBoundingClientRect();
+      const offsetTop = panelRect ? rect.top - panelRect.top : rect.top;
+      const offsetLeft = panelRect ? rect.left - panelRect.left : rect.left;
+
+      outline.style.setProperty("--grain-blend-box-top", `${offsetTop}px`);
+      outline.style.setProperty("--grain-blend-box-left", `${offsetLeft}px`);
+      outline.style.setProperty("--grain-blend-box-width", `${rect.width}px`);
+    }
+
     function setBlendModeOpen(isOpen) {
       if (!isOpen) {
         closeGrainBlendModeControl();
@@ -611,7 +625,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       grainBlendModeOpen = true;
       activeGrainBlendOutline = outline;
       brushStudio?.classList.add("brush-studio-panel-blend-mode-open");
-      selectionColumn?.classList.add("brush-studio-selection-column-lock-scroll");
+      updateBlendBoxAnchor();
       syncBlendModeUi();
     }
 
@@ -868,18 +882,104 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         }),
         createGrainBlendModeControl(),
         createGrainSignedPercentSetting({
-          key: "brightness",
+          key: "grainBrightness",
           label: "BRIGHTNESS",
-          value: grainAdjustmentUiState.brightness,
+          value: clamp(draftBrushSettings.grainBrightness, -1, 1) * 100,
         }),
         createGrainSignedPercentSetting({
-          key: "contrast",
+          key: "grainContrast",
           label: "CONTRAST",
-          value: grainAdjustmentUiState.contrast,
+          value: clamp(draftBrushSettings.grainContrast, -1, 1) * 100,
         }),
       );
     } else {
-      grainModeContent.append(createSectionLabel("MOVING"));
+      grainModeContent.append(
+        createSectionLabel("MOVING"),
+        createGrainPercentSetting({
+          key: "grainMovingMovement",
+          label: "MOVEMENT",
+          value: draftBrushSettings.grainMovingMovement,
+          formatDisplay: (displayValue) => {
+            if (displayValue === 0) {
+              return "STAMP";
+            }
+
+            return displayValue === 100 ? "ROLLING" : `${displayValue}%`;
+          },
+        }),
+        createGrainPercentSetting({
+          key: "grainMovingScale",
+          label: "SCALE",
+          value: draftBrushSettings.grainMovingScale,
+          formatDisplay: (displayValue) => {
+            if (displayValue === 0) {
+              return "NONE";
+            }
+
+            return displayValue === 100 ? "MAX" : `${displayValue}%`;
+          },
+        }),
+        createGrainPercentSetting({
+          key: "grainMovingZoom",
+          label: "ZOOM",
+          value: draftBrushSettings.grainMovingZoom,
+          formatDisplay: (displayValue) => {
+            if (displayValue === 0) {
+              return "FOLLOW SIZE";
+            }
+
+            return displayValue === 100 ? "CROPPED" : `${displayValue}%`;
+          },
+        }),
+        createGrainSignedPercentSetting({
+          key: "grainMovingRotation",
+          label: "ROTATION",
+          value: clamp(draftBrushSettings.grainMovingRotation, -1, 1) * 100,
+          formatDisplay: (displayValue) => {
+            if (displayValue === -100) {
+              return "INVERSE";
+            }
+
+            if (displayValue === 0) {
+              return "LOCKED";
+            }
+
+            return displayValue === 100 ? "FOLLOW STROKE" : `${displayValue > 0 ? "+" : ""}${displayValue}%`;
+          },
+        }),
+        createGrainPercentSetting({
+          key: "grainMovingDepth",
+          label: "DEPTH",
+          value: draftBrushSettings.grainMovingDepth,
+        }),
+        createGrainPercentSetting({
+          key: "grainMovingDepthMinimum",
+          label: "DEPTH MINIMUM",
+          value: draftBrushSettings.grainMovingDepthMinimum,
+          noneAtZero: true,
+        }),
+        createGrainPercentSetting({
+          key: "grainMovingDepthJitter",
+          label: "DEPTH JITTER",
+          value: draftBrushSettings.grainMovingDepthJitter,
+          noneAtZero: true,
+        }),
+        createToggleSetting({
+          key: "grainMovingOffsetJitter",
+          label: "OFFSET JITTER",
+        }),
+        createGrainBlendModeControl(),
+        createGrainSignedPercentSetting({
+          key: "grainBrightness",
+          label: "BRIGHTNESS",
+          value: clamp(draftBrushSettings.grainBrightness, -1, 1) * 100,
+        }),
+        createGrainSignedPercentSetting({
+          key: "grainContrast",
+          label: "CONTRAST",
+          value: clamp(draftBrushSettings.grainContrast, -1, 1) * 100,
+        }),
+      );
     }
 
     settingsPanel.replaceChildren(selectedHeader, grainButton, grainModeSelector, grainModeContent);
