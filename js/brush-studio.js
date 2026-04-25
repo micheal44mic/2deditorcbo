@@ -112,17 +112,16 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const grainCancelButton = editorPage.querySelector("[data-brush-grain-cancel]");
   const grainAcceptButton = editorPage.querySelector("[data-brush-grain-accept]");
   const grainEditorImage = editorPage.querySelector("[data-brush-grain-editor-image]");
+  const selectionColumn = editorPage.querySelector(".brush-studio-selection-column");
   let selectedCategory = studioCategories[0];
   let draftBrushSettings = { ...window.CBO.brushSettings };
   let shapeEditorDraftSrc = draftBrushSettings.shapeAlphaSrc || defaultShapeAlphaSrc;
   let shapeEditorDraftName = draftBrushSettings.shapeAlphaName || defaultShapeAlphaName;
   let grainEditorDraftSrc = draftBrushSettings.grainTextureSrc || defaultGrainTextureSrc;
   let grainEditorDraftName = draftBrushSettings.grainTextureName || defaultGrainTextureName;
-  let grainPanelUiState = {
-    mode: "texturized",
-    texturizedScale: 100,
-    texturizedDepth: 100,
-  };
+  let grainBlendModeScrollIndex = 0;
+  let grainBlendModeOpen = false;
+  let activeGrainBlendOutline = null;
   let previewCanvas = null;
   let previewEngine = null;
   let replayFrame = 0;
@@ -223,6 +222,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
   function getGrainTextureName() {
     return draftBrushSettings.grainTextureName || defaultGrainTextureName;
+  }
+
+  function getGrainMode() {
+    return draftBrushSettings.grainMode === "moving" ? "moving" : "texturized";
   }
 
   function createSelectedHeader({ editable = false, onEdit = openShapeEditor } = {}) {
@@ -373,14 +376,14 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     });
   }
 
-  function createUiOnlyPercentSetting({ key, label, value = 100, noneAtZero = false }) {
+  function createGrainPercentSetting({ key, label, value = 1, noneAtZero = false }) {
     const setting = document.createElement("div");
     const header = document.createElement("div");
     const name = document.createElement("div");
     const valuePill = document.createElement("span");
     const slider = document.createElement("input");
 
-    setting.className = "brush-studio-setting brush-studio-ui-only-setting";
+    setting.className = "brush-studio-setting";
     header.className = "brush-studio-setting-header";
     name.className = "brush-studio-setting-name";
     valuePill.className = "brush-studio-setting-value";
@@ -397,21 +400,155 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       const displayValue = Math.round(clamp(Number(nextValue), 0, 100));
       const progress = displayValue;
 
-      grainPanelUiState[key] = displayValue;
+      draftBrushSettings[key] = displayValue / 100;
       slider.value = String(displayValue);
       valuePill.textContent = noneAtZero && displayValue === 0 ? "NONE" : `${displayValue}%`;
       slider.style.setProperty("--brush-studio-range-progress", `${progress}%`);
+      pushDraftToEngine();
     }
 
     slider.addEventListener("input", () => {
       setValue(slider.value);
     });
 
-    setValue(value);
+    setValue(Math.round(clamp01(value) * 100));
     header.append(name, valuePill);
     setting.append(header, slider);
 
     return setting;
+  }
+
+  function closeGrainBlendModeControl() {
+    if (activeGrainBlendOutline) {
+      activeGrainBlendOutline.classList.remove("active");
+    }
+
+    grainBlendModeOpen = false;
+    activeGrainBlendOutline = null;
+    brushStudio?.classList.remove("brush-studio-panel-blend-mode-open");
+    selectionColumn?.classList.remove("brush-studio-selection-column-lock-scroll");
+  }
+
+  function createGrainBlendModeControl() {
+    const wrapper = document.createElement("div");
+    const label = document.createElement("div");
+    const outline = document.createElement("div");
+    const hoverLayer = document.createElement("div");
+    const fillLayer = document.createElement("div");
+    const list = document.createElement("div");
+    const blendModes = [
+      "Multiply",
+      "Darken",
+      "Color Burn",
+      "Linear Burn",
+      "Lighten",
+      "Color Dodge",
+      "Overlay",
+      "Hard Mix",
+      "Difference",
+      "Subtract",
+      "Divide",
+      "Height",
+      "Linear Height",
+    ];
+
+    wrapper.className = "brush-studio-grain-blend-outline";
+    label.className = "brush-studio-setting-name";
+    outline.className = "brush-studio-grain-blend-outline-box";
+    outline.tabIndex = 0;
+    hoverLayer.className = "brush-studio-grain-blend-hover-layer";
+    fillLayer.className = "brush-studio-grain-blend-fill-layer";
+    list.className = "brush-studio-grain-blend-word-list";
+    label.textContent = "BLEND MODE";
+    const options = blendModes.map((mode, index) => {
+      const option = document.createElement("div");
+
+      option.className = "brush-studio-grain-blend-word";
+      option.textContent = mode.toUpperCase();
+      option.addEventListener("click", (event) => {
+        if (!grainBlendModeOpen || activeGrainBlendOutline !== outline) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (index === grainBlendModeScrollIndex) {
+          closeGrainBlendModeControl();
+          return;
+        }
+
+        grainBlendModeScrollIndex = index;
+        syncBlendModeUi();
+      });
+
+      return option;
+    });
+
+    list.append(...options);
+
+    function syncBlendModeUi() {
+      outline.style.setProperty("--grain-blend-scroll-index", String(grainBlendModeScrollIndex));
+      outline.classList.toggle("active", grainBlendModeOpen && activeGrainBlendOutline === outline);
+
+      options.forEach((option, index) => {
+        option.classList.toggle("is-selected", index === grainBlendModeScrollIndex);
+      });
+    }
+
+    function setBlendModeOpen(isOpen) {
+      if (!isOpen) {
+        closeGrainBlendModeControl();
+        syncBlendModeUi();
+        return;
+      }
+
+      if (activeGrainBlendOutline && activeGrainBlendOutline !== outline) {
+        closeGrainBlendModeControl();
+      }
+
+      grainBlendModeOpen = true;
+      activeGrainBlendOutline = outline;
+      brushStudio?.classList.add("brush-studio-panel-blend-mode-open");
+      selectionColumn?.classList.add("brush-studio-selection-column-lock-scroll");
+      syncBlendModeUi();
+    }
+
+    syncBlendModeUi();
+
+    outline.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setBlendModeOpen(true);
+    });
+
+    outline.addEventListener(
+      "wheel",
+      (event) => {
+        if (!grainBlendModeOpen || activeGrainBlendOutline !== outline) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const direction = event.deltaY > 0 ? 1 : -1;
+        const nextIndex = clamp(grainBlendModeScrollIndex + direction, 0, blendModes.length - 1);
+
+        if (nextIndex === grainBlendModeScrollIndex) {
+          return;
+        }
+
+        grainBlendModeScrollIndex = nextIndex;
+        syncBlendModeUi();
+      },
+      { passive: false },
+    );
+
+    outline.append(hoverLayer, fillLayer, list);
+    wrapper.append(label, outline);
+
+    return wrapper;
   }
 
   function renderShapeSettings() {
@@ -570,6 +707,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       { key: "moving", label: "MOVING" },
       { key: "texturized", label: "TEXTURIZED" },
     ];
+    const activeMode = getGrainMode();
 
     grainButton.className = "brush-studio-shape-alpha-card";
     grainButton.type = "button";
@@ -592,7 +730,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     grainModeSelector.append(
       ...modeOptions.map((option) => {
         const optionButton = document.createElement("button");
-        const isActive = grainPanelUiState.mode === option.key;
+        const isActive = activeMode === option.key;
 
         optionButton.className = "brush-studio-grain-mode-button";
         optionButton.type = "button";
@@ -600,10 +738,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         optionButton.classList.toggle("active", isActive);
         optionButton.setAttribute("aria-pressed", String(isActive));
         optionButton.addEventListener("click", () => {
-          grainPanelUiState = {
-            ...grainPanelUiState,
-            mode: option.key,
-          };
+          draftBrushSettings.grainMode = option.key;
+          pushDraftToEngine();
           renderGrainSettings();
         });
 
@@ -613,20 +749,21 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     grainModeContent.className = "brush-studio-grain-mode-content";
 
-    if (grainPanelUiState.mode === "texturized") {
+    if (activeMode === "texturized") {
       grainModeContent.append(
         createSectionLabel("TEXTURIZED"),
-        createUiOnlyPercentSetting({
-          key: "texturizedScale",
+        createGrainPercentSetting({
+          key: "grainTexturizedScale",
           label: "SCALE",
-          value: grainPanelUiState.texturizedScale,
+          value: draftBrushSettings.grainTexturizedScale,
           noneAtZero: true,
         }),
-        createUiOnlyPercentSetting({
-          key: "texturizedDepth",
+        createGrainPercentSetting({
+          key: "grainTexturizedDepth",
           label: "DEPTH",
-          value: grainPanelUiState.texturizedDepth,
+          value: draftBrushSettings.grainTexturizedDepth,
         }),
+        createGrainBlendModeControl(),
       );
     } else {
       grainModeContent.append(createSectionLabel("MOVING"));
@@ -1648,6 +1785,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
   function closeBrushStudio() {
     if (brushStudio) {
+      closeGrainBlendModeControl();
       closeShapeEditor();
       closeGrainEditor();
       destroyPreviewCanvas();
@@ -1669,12 +1807,34 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       return;
     }
 
+    if (grainBlendModeOpen && !target.closest(".brush-studio-grain-blend-outline")) {
+      closeGrainBlendModeControl();
+    }
+
     const clickedInsideBrushStudio = event.composedPath().includes(brushStudio);
 
     if (brushStudio && !brushStudio.hidden && !clickedInsideBrushStudio) {
       closeBrushStudio();
     }
   });
+
+  selectionColumn?.addEventListener(
+    "wheel",
+    (event) => {
+      if (!grainBlendModeOpen) {
+        return;
+      }
+
+      const target = event.target;
+
+      if (target instanceof Element && target.closest(".brush-studio-grain-blend-outline-box")) {
+        return;
+      }
+
+      event.preventDefault();
+    },
+    { capture: true, passive: false },
+  );
 
   cancelButton?.addEventListener("click", () => {
     resetDraftBrushSettings();

@@ -23,6 +23,7 @@ window.CBO.initDragScroll = function initDragScroll() {
           "[data-upload-place]",
           "[data-layer-row]",
           ".brush-studio-taper-slider",
+          ".brush-studio-grain-blend-outline-box",
         ].join(","),
       ),
     );

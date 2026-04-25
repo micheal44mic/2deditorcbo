@@ -129,7 +129,7 @@ uniform sampler2D u_grainTexture;
 uniform vec2 u_grainTexSize;
 uniform float u_grainScale;
 uniform mat2 u_grainRotationMat;
-uniform float u_grainStrength;
+uniform float u_grainDepth;
 uniform bool u_grainInvert;
 
 in vec2 v_uv;
@@ -173,7 +173,11 @@ void main() {
       grain = 1.0 - grain;
     }
 
-    grainMultiplier = mix(1.0, grain, clamp(u_grainStrength, 0.0, 1.0));
+    float depth = clamp(u_grainDepth, 0.0, 1.0);
+    float contrast = mix(1.0, 1.75, depth);
+    float contrastedGrain = clamp((grain - 0.5) * contrast + 0.5, 0.0, 1.0);
+
+    grainMultiplier = mix(1.0, contrastedGrain, depth);
   }
 
   float alpha = shape * grainMultiplier * v_alpha * clamp(u_flow, 0.0, 1.0);
@@ -237,6 +241,10 @@ void main() {
   };
 
   namespace.ImageCache = ImageCache;
+  const GRAIN_TEXTURIZED_MIN_TEXTURE_SCALE = Math.max(
+    0.001,
+    namespace.BrushDefaults?.grainTexturizedMinTextureScale ?? 0.05,
+  );
 
   class BrushEngine {
     constructor(canvas, options = {}) {
@@ -529,7 +537,7 @@ void main() {
           grainTexSize: gl.getUniformLocation(program, "u_grainTexSize"),
           grainScale: gl.getUniformLocation(program, "u_grainScale"),
           grainRotationMat: gl.getUniformLocation(program, "u_grainRotationMat"),
-          grainStrength: gl.getUniformLocation(program, "u_grainStrength"),
+          grainDepth: gl.getUniformLocation(program, "u_grainDepth"),
           grainInvert: gl.getUniformLocation(program, "u_grainInvert"),
         },
       };
@@ -1922,13 +1930,48 @@ void main() {
     }
 
     isGrainEnabled() {
-      return this.brushState.grainEnabled === true && this.grainTextureReady && Boolean(this.grainTexture);
+      return (
+        this.brushState.grainEnabled === true &&
+        this.grainTextureReady &&
+        Boolean(this.grainTexture) &&
+        this.getGrainTexturizedScale() > 0 &&
+        this.getGrainTexturizedDepth() > 0
+      );
+    }
+
+    textureScaleToTexturizedScale(textureScale) {
+      const value = Number(textureScale);
+
+      if (!Number.isFinite(value) || value <= 0) {
+        return 0;
+      }
+
+      const minLog = Math.log(GRAIN_TEXTURIZED_MIN_TEXTURE_SCALE);
+      const maxLog = Math.log(1);
+
+      return this.clamp01((Math.log(value) - minLog) / (maxLog - minLog));
+    }
+
+    getGrainTexturizedScale() {
+      const value = Number(this.brushState.grainTexturizedScale);
+
+      if (Number.isFinite(value)) {
+        return this.clamp01(value);
+      }
+
+      const legacyScale = Number(this.brushState.grainScale);
+
+      return Number.isFinite(legacyScale) ? this.textureScaleToTexturizedScale(legacyScale) : 1;
     }
 
     getGrainScale() {
-      const value = Number(this.brushState.grainScale);
+      const value = this.getGrainTexturizedScale();
 
-      return Number.isFinite(value) && value > 0 ? Math.max(0.01, value) : 1;
+      if (value <= 0) {
+        return 0;
+      }
+
+      return Math.exp(Math.log(GRAIN_TEXTURIZED_MIN_TEXTURE_SCALE) * (1 - value));
     }
 
     getGrainRotationRadians() {
@@ -1937,7 +1980,13 @@ void main() {
       return Number.isFinite(degrees) ? degrees * (Math.PI / 180) : 0;
     }
 
-    getGrainStrength() {
+    getGrainTexturizedDepth() {
+      const value = Number(this.brushState.grainTexturizedDepth);
+
+      if (Number.isFinite(value)) {
+        return this.clamp01(value);
+      }
+
       return this.clamp01(this.brushState.grainStrength ?? 1);
     }
 
@@ -2114,7 +2163,7 @@ void main() {
         gl.uniform2f(this.brushProgramInfo.uniforms.grainTexSize, this.grainImageWidth, this.grainImageHeight);
         gl.uniform1f(this.brushProgramInfo.uniforms.grainScale, this.getGrainScale());
         gl.uniformMatrix2fv(this.brushProgramInfo.uniforms.grainRotationMat, false, rotationMatrix);
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainStrength, this.getGrainStrength());
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainDepth, this.getGrainTexturizedDepth());
         gl.uniform1i(this.brushProgramInfo.uniforms.grainInvert, this.isGrainInverted() ? 1 : 0);
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, this.grainTexture);

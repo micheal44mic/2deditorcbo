@@ -33,6 +33,10 @@
   display: none;
 }
 
+.brush-studio-panel-blend-mode-open {
+  overflow: visible;
+}
+
 .brush-studio-shape-editor[hidden] {
   display: none;
 }
@@ -106,6 +110,11 @@
   overflow-x: hidden;
   scrollbar-width: none;
   user-select: none;
+}
+
+.brush-studio-selection-column-lock-scroll {
+  overflow: visible;
+  overscroll-behavior: contain;
 }
 
 .brush-studio-selection-column::-webkit-scrollbar {
@@ -312,6 +321,97 @@
 
 .brush-studio-grain-mode-content {
   min-width: 0;
+}
+
+.brush-studio-grain-blend-outline {
+  min-width: 0;
+  margin-top: 12px;
+}
+
+.brush-studio-grain-blend-outline-box {
+  position: relative;
+  width: 100%;
+  height: 38px;
+  margin-top: 8px;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(223, 227, 234, 0.22);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  outline: 0;
+}
+
+.brush-studio-grain-blend-outline-box.active {
+  overflow: visible;
+}
+
+.brush-studio-grain-blend-hover-layer,
+.brush-studio-grain-blend-fill-layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+.brush-studio-grain-blend-hover-layer {
+  top: 0;
+  z-index: 1;
+  height: 494px;
+  border-radius: 8px;
+  background: #3a3f4b;
+  opacity: 0;
+  transform: translateY(calc(var(--grain-blend-scroll-index, 0) * -38px));
+  transition:
+    opacity 80ms ease,
+    transform 100ms ease;
+}
+
+.brush-studio-grain-blend-outline-box.active .brush-studio-grain-blend-hover-layer {
+  opacity: 1;
+}
+
+.brush-studio-grain-blend-fill-layer {
+  inset: 0;
+  z-index: 2;
+  border-radius: 8px;
+  background: #2c303a;
+}
+
+.brush-studio-grain-blend-word-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  transform: translateY(calc(var(--grain-blend-scroll-index, 0) * -38px));
+  transition: transform 100ms ease;
+}
+
+.brush-studio-grain-blend-word {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  color: #dfe3ea;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  opacity: 0;
+  text-transform: uppercase;
+}
+
+.brush-studio-grain-blend-word.is-selected,
+.brush-studio-grain-blend-outline-box.active .brush-studio-grain-blend-word {
+  opacity: 1;
 }
 
 .brush-studio-shape-alpha-preview {

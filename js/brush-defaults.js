@@ -7,6 +7,8 @@ window.CBO = window.CBO || {};
   const defaultGrainTextureName = namespace.defaultGrainTexture?.name || "PASTEL PENCIL GRAIN";
   const defaultTaperMinDistance = 247;
   const taperTipRealMin = 0.15;
+  const grainModeValues = new Set(["moving", "texturized"]);
+  const grainTexturizedMinTextureScale = 0.05;
 
   const settings = Object.freeze({
     radius: 18,
@@ -42,6 +44,9 @@ window.CBO = window.CBO || {};
     grainEnabled: true,
     grainTextureSrc: defaultGrainTextureSrc,
     grainTextureName: defaultGrainTextureName,
+    grainMode: "texturized",
+    grainTexturizedScale: 1,
+    grainTexturizedDepth: 1,
     grainScale: 1,
     grainRotation: 0,
     grainStrength: 1,
@@ -62,6 +67,37 @@ window.CBO = window.CBO || {};
     wetnessJitter: 0,
   });
 
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function clamp01(value) {
+    return clamp(value, 0, 1);
+  }
+
+  function hasOwn(source, key) {
+    return Object.prototype.hasOwnProperty.call(source, key);
+  }
+
+  function normalize01(value, fallback = 1) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? clamp01(number) : fallback;
+  }
+
+  function grainTextureScaleToTexturizedScale(textureScale) {
+    const value = Number(textureScale);
+
+    if (!Number.isFinite(value) || value <= 0) {
+      return 0;
+    }
+
+    const minLog = Math.log(grainTexturizedMinTextureScale);
+    const maxLog = Math.log(1);
+
+    return clamp01((Math.log(value) - minLog) / (maxLog - minLog));
+  }
+
   function createSettings(overrides = {}) {
     const nextOverrides = overrides || {};
     const nextSettings = {
@@ -75,6 +111,15 @@ window.CBO = window.CBO || {};
     nextSettings.shapeAlphaName = nextSettings.shapeAlphaName || defaultShapeAlphaName;
     nextSettings.grainTextureSrc = nextSettings.grainTextureSrc || defaultGrainTextureSrc;
     nextSettings.grainTextureName = nextSettings.grainTextureName || defaultGrainTextureName;
+    nextSettings.grainMode = grainModeValues.has(String(nextSettings.grainMode).toLowerCase())
+      ? String(nextSettings.grainMode).toLowerCase()
+      : "texturized";
+    nextSettings.grainTexturizedScale = hasOwn(nextOverrides, "grainTexturizedScale")
+      ? normalize01(nextOverrides.grainTexturizedScale, settings.grainTexturizedScale)
+      : grainTextureScaleToTexturizedScale(nextOverrides.grainScale ?? nextSettings.grainScale);
+    nextSettings.grainTexturizedDepth = hasOwn(nextOverrides, "grainTexturizedDepth")
+      ? normalize01(nextOverrides.grainTexturizedDepth, settings.grainTexturizedDepth)
+      : normalize01(nextOverrides.grainStrength ?? nextSettings.grainStrength, settings.grainTexturizedDepth);
 
     return nextSettings;
   }
@@ -85,6 +130,7 @@ window.CBO = window.CBO || {};
     defaultShapeAlphaName,
     defaultShapeAlphaSrc,
     defaultTaperMinDistance,
+    grainTexturizedMinTextureScale,
     grainTextureExportSize: 2048,
     shapeAlphaExportSize: 512,
     settings,
