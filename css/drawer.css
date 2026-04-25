@@ -160,9 +160,10 @@
   position: absolute;
   top: 136px;
   left: 16px;
-  right: 18px;
+  right: 16px;
   bottom: 16px;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 0;
   scrollbar-width: none;
   user-select: none;
@@ -175,6 +176,7 @@
 }
 
 .drawer-custom-scrollbar {
+  display: none !important;
   position: absolute;
   top: 136px;
   right: 8px;

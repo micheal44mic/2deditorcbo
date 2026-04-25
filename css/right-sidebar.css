@@ -15,7 +15,16 @@
   left: 12px;
   right: 12px;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 2px;
+  scrollbar-width: none;
+  user-select: none;
+}
+
+.right-sidebar-content::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .right-sidebar-section {

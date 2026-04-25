@@ -6,6 +6,47 @@
   box-sizing: border-box;
 }
 
+.editor-page,
+.side-panel,
+.brush-studio-panel,
+.brushes-gallery-popout {
+  user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+body.cbo-drag-scroll-active,
+body.cbo-drag-scroll-active * {
+  user-select: none !important;
+}
+
+.drawer-content,
+.right-sidebar-content,
+.brush-studio-selection-column,
+.brushes-panel-grid,
+.brushes-gallery-packages,
+.brushes-gallery-brushes {
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+.drawer-content::-webkit-scrollbar,
+.right-sidebar-content::-webkit-scrollbar,
+.brush-studio-selection-column::-webkit-scrollbar,
+.brushes-panel-grid::-webkit-scrollbar,
+.brushes-gallery-packages::-webkit-scrollbar,
+.brushes-gallery-brushes::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 html,
 body,
 body *,

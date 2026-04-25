@@ -6,6 +6,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const clamp = StrokeMath.clamp;
   const clamp01 = StrokeMath.clamp01;
   const studioCategories = ["STROKE", "STABILIZATION", "TAPER", "BASIC"];
+  const defaultTaperMinDistance = 247;
+  const taperTipRealMin = 0.15;
   const defaultBrushSettings = {
     radius: 18,
     opacity: 0.92,
@@ -24,7 +26,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     taperSize: 1,
     taperOpacity: 0,
     taperPressure: 0,
-    taperMinDistance: 0,
+    taperMinDistance: defaultTaperMinDistance,
+    taperMinDistanceEnabled: false,
     taperTip: 0.5,
     taperTipAnimation: true,
   };
@@ -193,7 +196,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
-  function createRangeSetting({ key, label, min, max, step, value, unit, toSetting, toDisplay }) {
+  function createRangeSetting({ key, label, min, max, step, value, unit, toSetting, toDisplay, disabled = false }) {
     const setting = document.createElement("div");
     const header = document.createElement("div");
     const name = document.createElement("div");
@@ -234,6 +237,12 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       pushDraftToEngine();
     }
 
+    function setDisabled(isDisabled) {
+      slider.disabled = isDisabled;
+      valueInput.disabled = isDisabled;
+      setting.classList.toggle("disabled", isDisabled);
+    }
+
     slider.addEventListener("input", () => {
       setValue(slider.value);
     });
@@ -257,6 +266,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     header.append(name, valueLabel);
     setting.append(header, slider);
     setValue(value);
+    setDisabled(disabled);
+    setting.setDisabled = setDisabled;
 
     return setting;
   }
@@ -419,7 +430,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
-  function createToggleSetting({ key, label }) {
+  function createToggleSetting({ key, label, onChange }) {
     const wrapper = document.createElement("div");
     const name = document.createElement("div");
     const toggle = document.createElement("button");
@@ -456,6 +467,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     toggle.addEventListener("click", () => {
       const next = !draftBrushSettings[key];
       setActive(next);
+      onChange?.(next);
       pushDraftToEngine();
     });
 
@@ -656,9 +668,29 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     const selectedName = document.createElement("div");
     const taperLabel = document.createElement("div");
     const taperSlider = createTaperSlider();
+    const isMinDistanceCustom = draftBrushSettings.taperMinDistanceEnabled === true;
+    const taperTipDisplayValue = Math.round(
+      clamp((clamp(draftBrushSettings.taperTip, taperTipRealMin, 1) - taperTipRealMin) / (1 - taperTipRealMin), 0, 1) * 100,
+    );
+
+    if (!isMinDistanceCustom) {
+      draftBrushSettings.taperMinDistance = defaultTaperMinDistance;
+    }
+
     const linkToggle = createToggleSetting({
       key: "taperLinkSizes",
       label: "LINK TIP SIZES",
+    });
+    const minDistanceToggle = createToggleSetting({
+      key: "taperMinDistanceEnabled",
+      label: "CUSTOM MIN DISTANCE",
+      onChange: (isActive) => {
+        if (!isActive) {
+          draftBrushSettings.taperMinDistance = defaultTaperMinDistance;
+        }
+
+        renderTaperSettings();
+      },
     });
     const sizeSetting = createRangeSetting({
       key: "taperSize",
@@ -699,10 +731,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       min: 0,
       max: 300,
       step: 1,
-      value: Math.round(clamp(draftBrushSettings.taperMinDistance, 0, 300)),
+      value: Math.round(clamp(isMinDistanceCustom ? draftBrushSettings.taperMinDistance : defaultTaperMinDistance, 0, 300)),
       unit: "PX",
       toSetting: (displayValue) => displayValue,
       toDisplay: (displayValue) => Math.round(displayValue),
+      disabled: !isMinDistanceCustom,
     });
     const tipSetting = createRangeSetting({
       key: "taperTip",
@@ -710,9 +743,9 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       min: 0,
       max: 100,
       step: 1,
-      value: Math.round(clamp01(draftBrushSettings.taperTip) * 100),
+      value: taperTipDisplayValue,
       unit: "%",
-      toSetting: (displayValue) => displayValue / 100,
+      toSetting: (displayValue) => taperTipRealMin + (displayValue / 100) * (1 - taperTipRealMin),
       toDisplay: (displayValue) => Math.round(displayValue),
     });
     const tipAnimationToggle = createToggleSetting({
@@ -733,6 +766,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       sizeSetting,
       opacitySetting,
       pressureSetting,
+      minDistanceToggle,
       minDistanceSetting,
       tipSetting,
       tipAnimationToggle,

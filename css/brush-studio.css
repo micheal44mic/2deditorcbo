@@ -86,7 +86,16 @@
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  user-select: none;
+}
+
+.brush-studio-selection-column::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .brush-studio-settings {
@@ -97,6 +106,15 @@
 .brush-studio-setting {
   min-width: 0;
   margin-top: 10px;
+}
+
+.brush-studio-setting.disabled {
+  opacity: 0.55;
+}
+
+.brush-studio-setting.disabled .brush-studio-range,
+.brush-studio-setting.disabled .brush-studio-setting-value {
+  cursor: not-allowed;
 }
 
 .brush-studio-setting-header {

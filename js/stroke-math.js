@@ -179,14 +179,19 @@ window.CBO = window.CBO || {};
   function applyTipCurve(t, taperTip) {
     // Curva del taper: tip=0 sharp (esponenziale ripida, recupera subito alla pienezza),
     // tip=1 chunky (curva quasi lineare, taper graduale e lungo).
-    const exponent = 0.35 + clamp01(taperTip) * 2.4;
+    const nextTip = Number(taperTip);
+    const safeTip = Number.isFinite(nextTip) ? clamp(nextTip, 0.15, 1) : 0.5;
+    const exponent = 0.35 + safeTip * 2.4;
     return Math.pow(clamp01(t), exponent);
   }
 
   function getTaperFactor(distanceFromStart, totalLength, settings) {
     const taperStart = clamp01(settings?.taperStart);
     const taperEnd = clamp01(settings?.taperEnd);
-    const taperMinDistance = Math.max(0, Number(settings?.taperMinDistance) || 0);
+    const rawMinDistance = Number(settings?.taperMinDistance);
+    const taperMinDistance = settings?.taperMinDistanceEnabled === true
+      ? Math.max(0, Number.isFinite(rawMinDistance) ? rawMinDistance : 247)
+      : 247;
 
     if (totalLength <= 0 || (taperStart <= 0 && taperEnd <= 0)) {
       return 1;
