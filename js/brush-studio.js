@@ -8,8 +8,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const clamp01 = StrokeMath.clamp01;
   const defaultShapeAlphaSrc = BrushDefaults.defaultShapeAlphaSrc;
   const defaultShapeAlphaName = BrushDefaults.defaultShapeAlphaName;
+  const defaultGrainTextureSrc = BrushDefaults.defaultGrainTextureSrc;
+  const defaultGrainTextureName = BrushDefaults.defaultGrainTextureName;
   const shapeAlphaExportSize = BrushDefaults.shapeAlphaExportSize;
-  const studioCategories = ["STROKE", "SHAPE", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
+  const grainTextureExportSize = BrushDefaults.grainTextureExportSize;
+  const studioCategories = ["STROKE", "SHAPE", "GRAIN", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = BrushDefaults.defaultTaperMinDistance;
   const taperTipRealMin = BrushDefaults.taperTipRealMin;
 
@@ -66,6 +69,25 @@ window.CBO.initBrushStudio = function initBrushStudio() {
             <img class="brush-studio-shape-editor-image" alt="Shape alpha preview" data-brush-shape-editor-image />
           </div>
         </div>
+        <div class="brush-studio-shape-editor" data-brush-grain-editor hidden>
+          <input class="brush-studio-shape-input" type="file" accept="image/*" data-brush-grain-input />
+          <div class="brush-studio-shape-editor-header">
+            <h2 class="brush-studio-drawing-title">GRAIN TEXTURE</h2>
+            <div class="brush-studio-shape-editor-actions">
+              <button class="brush-studio-shape-import-button" type="button" data-brush-grain-import>IMPORT</button>
+              <button class="brush-studio-shape-invert-button" type="button" data-brush-grain-invert>INVERT</button>
+              <button class="brush-studio-shape-cancel-button" type="button" data-brush-grain-cancel>CANCEL</button>
+              <button class="brush-studio-shape-accept-button" type="button" aria-label="Accept grain texture" data-brush-grain-accept>
+                <svg class="brush-studio-check-icon lucide lucide-check-icon lucide-check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="brush-studio-shape-editor-stage">
+            <img class="brush-studio-shape-editor-image brush-studio-grain-editor-image" alt="Grain texture preview" data-brush-grain-editor-image />
+          </div>
+        </div>
       </section>
     `,
   );
@@ -83,10 +105,24 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const shapeCancelButton = editorPage.querySelector("[data-brush-shape-cancel]");
   const shapeAcceptButton = editorPage.querySelector("[data-brush-shape-accept]");
   const shapeEditorImage = editorPage.querySelector("[data-brush-shape-editor-image]");
+  const grainEditor = editorPage.querySelector("[data-brush-grain-editor]");
+  const grainInput = editorPage.querySelector("[data-brush-grain-input]");
+  const grainImportButton = editorPage.querySelector("[data-brush-grain-import]");
+  const grainInvertButton = editorPage.querySelector("[data-brush-grain-invert]");
+  const grainCancelButton = editorPage.querySelector("[data-brush-grain-cancel]");
+  const grainAcceptButton = editorPage.querySelector("[data-brush-grain-accept]");
+  const grainEditorImage = editorPage.querySelector("[data-brush-grain-editor-image]");
   let selectedCategory = studioCategories[0];
   let draftBrushSettings = { ...window.CBO.brushSettings };
   let shapeEditorDraftSrc = draftBrushSettings.shapeAlphaSrc || defaultShapeAlphaSrc;
   let shapeEditorDraftName = draftBrushSettings.shapeAlphaName || defaultShapeAlphaName;
+  let grainEditorDraftSrc = draftBrushSettings.grainTextureSrc || defaultGrainTextureSrc;
+  let grainEditorDraftName = draftBrushSettings.grainTextureName || defaultGrainTextureName;
+  let grainPanelUiState = {
+    mode: "texturized",
+    texturizedScale: 100,
+    texturizedDepth: 100,
+  };
   let previewCanvas = null;
   let previewEngine = null;
   let replayFrame = 0;
@@ -181,7 +217,15 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     return draftBrushSettings.shapeAlphaName || defaultShapeAlphaName;
   }
 
-  function createSelectedHeader({ editable = false } = {}) {
+  function getGrainTextureSrc() {
+    return draftBrushSettings.grainTextureSrc || defaultGrainTextureSrc;
+  }
+
+  function getGrainTextureName() {
+    return draftBrushSettings.grainTextureName || defaultGrainTextureName;
+  }
+
+  function createSelectedHeader({ editable = false, onEdit = openShapeEditor } = {}) {
     const header = document.createElement("div");
     const selectedName = document.createElement("div");
 
@@ -196,7 +240,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       editButton.className = "brush-studio-edit-button";
       editButton.type = "button";
       editButton.textContent = "EDIT";
-      editButton.addEventListener("click", openShapeEditor);
+      editButton.addEventListener("click", onEdit);
       header.append(editButton);
     }
 
@@ -220,6 +264,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         categoryButton.classList.toggle("active", isActive);
         categoryButton.addEventListener("click", () => {
           selectedCategory = categoryName;
+          closeShapeEditor();
+          closeGrainEditor();
           renderStudioContent();
         });
 
@@ -325,6 +371,47 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       toSetting: (displayValue) => displayValue / 100,
       toDisplay: (displayValue) => Math.round(displayValue),
     });
+  }
+
+  function createUiOnlyPercentSetting({ key, label, value = 100, noneAtZero = false }) {
+    const setting = document.createElement("div");
+    const header = document.createElement("div");
+    const name = document.createElement("div");
+    const valuePill = document.createElement("span");
+    const slider = document.createElement("input");
+
+    setting.className = "brush-studio-setting brush-studio-ui-only-setting";
+    header.className = "brush-studio-setting-header";
+    name.className = "brush-studio-setting-name";
+    valuePill.className = "brush-studio-setting-value";
+    slider.className = "brush-studio-range";
+    name.textContent = label;
+
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "100";
+    slider.step = "1";
+    slider.setAttribute("aria-label", label);
+
+    function setValue(nextValue) {
+      const displayValue = Math.round(clamp(Number(nextValue), 0, 100));
+      const progress = displayValue;
+
+      grainPanelUiState[key] = displayValue;
+      slider.value = String(displayValue);
+      valuePill.textContent = noneAtZero && displayValue === 0 ? "NONE" : `${displayValue}%`;
+      slider.style.setProperty("--brush-studio-range-progress", `${progress}%`);
+    }
+
+    slider.addEventListener("input", () => {
+      setValue(slider.value);
+    });
+
+    setValue(value);
+    header.append(name, valuePill);
+    setting.append(header, slider);
+
+    return setting;
   }
 
   function renderShapeSettings() {
@@ -465,11 +552,95 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
+  function renderGrainSettings() {
+    if (!settingsPanel) {
+      return;
+    }
+
+    const selectedHeader = createSelectedHeader({ editable: true, onEdit: openGrainEditor });
+    const grainButton = document.createElement("button");
+    const grainHeader = document.createElement("div");
+    const grainLabel = document.createElement("span");
+    const grainName = document.createElement("span");
+    const grainPreview = document.createElement("span");
+    const grainImage = document.createElement("img");
+    const grainModeSelector = document.createElement("div");
+    const grainModeContent = document.createElement("div");
+    const modeOptions = [
+      { key: "moving", label: "MOVING" },
+      { key: "texturized", label: "TEXTURIZED" },
+    ];
+
+    grainButton.className = "brush-studio-shape-alpha-card";
+    grainButton.type = "button";
+    grainButton.setAttribute("aria-label", "Edit grain texture");
+    grainButton.addEventListener("click", openGrainEditor);
+    grainHeader.className = "brush-studio-shape-alpha-header";
+    grainLabel.className = "brush-studio-setting-name";
+    grainLabel.textContent = "TEXTURE";
+    grainName.className = "brush-studio-shape-alpha-name";
+    grainName.textContent = getGrainTextureName();
+    grainPreview.className = "brush-studio-shape-alpha-preview brush-studio-grain-texture-preview";
+    grainImage.className = "brush-studio-shape-alpha-image brush-studio-grain-texture-image";
+    grainImage.alt = "Grain texture";
+    grainImage.src = getGrainTextureSrc();
+
+    grainHeader.append(grainLabel, grainName);
+    grainPreview.append(grainImage);
+    grainButton.append(grainHeader, grainPreview);
+    grainModeSelector.className = "brush-studio-grain-mode-selector";
+    grainModeSelector.append(
+      ...modeOptions.map((option) => {
+        const optionButton = document.createElement("button");
+        const isActive = grainPanelUiState.mode === option.key;
+
+        optionButton.className = "brush-studio-grain-mode-button";
+        optionButton.type = "button";
+        optionButton.textContent = option.label;
+        optionButton.classList.toggle("active", isActive);
+        optionButton.setAttribute("aria-pressed", String(isActive));
+        optionButton.addEventListener("click", () => {
+          grainPanelUiState = {
+            ...grainPanelUiState,
+            mode: option.key,
+          };
+          renderGrainSettings();
+        });
+
+        return optionButton;
+      }),
+    );
+
+    grainModeContent.className = "brush-studio-grain-mode-content";
+
+    if (grainPanelUiState.mode === "texturized") {
+      grainModeContent.append(
+        createSectionLabel("TEXTURIZED"),
+        createUiOnlyPercentSetting({
+          key: "texturizedScale",
+          label: "SCALE",
+          value: grainPanelUiState.texturizedScale,
+          noneAtZero: true,
+        }),
+        createUiOnlyPercentSetting({
+          key: "texturizedDepth",
+          label: "DEPTH",
+          value: grainPanelUiState.texturizedDepth,
+        }),
+      );
+    } else {
+      grainModeContent.append(createSectionLabel("MOVING"));
+    }
+
+    settingsPanel.replaceChildren(selectedHeader, grainButton, grainModeSelector, grainModeContent);
+  }
+
   function openShapeEditor() {
     if (!shapeEditor || !shapeEditorImage) {
       return;
     }
 
+    closeGrainEditor();
     shapeEditorDraftSrc = getShapeAlphaSrc();
     shapeEditorDraftName = getShapeAlphaName();
     shapeEditorImage.src = shapeEditorDraftSrc;
@@ -494,12 +665,44 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     pushDraftToEngine();
   }
 
-  function loadImageFromObjectUrl(objectUrl) {
+  function openGrainEditor() {
+    if (!grainEditor || !grainEditorImage) {
+      return;
+    }
+
+    closeShapeEditor();
+    grainEditorDraftSrc = getGrainTextureSrc();
+    grainEditorDraftName = getGrainTextureName();
+    grainEditorImage.src = grainEditorDraftSrc;
+    grainEditor.hidden = false;
+  }
+
+  function closeGrainEditor() {
+    if (grainEditor) {
+      grainEditor.hidden = true;
+    }
+
+    if (grainInput) {
+      grainInput.value = "";
+    }
+  }
+
+  function acceptGrainEditor() {
+    draftBrushSettings.grainEnabled = true;
+    draftBrushSettings.grainTextureSrc = grainEditorDraftSrc || defaultGrainTextureSrc;
+    draftBrushSettings.grainTextureName = grainEditorDraftName || defaultGrainTextureName;
+    draftBrushSettings.grainInvert = false;
+    closeGrainEditor();
+    renderGrainSettings();
+    pushDraftToEngine();
+  }
+
+  function loadImageFromObjectUrl(objectUrl, label = "image") {
     return new Promise((resolve, reject) => {
       const image = new Image();
 
       image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Unable to load shape alpha image."));
+      image.onerror = () => reject(new Error(`Unable to load ${label}.`));
       image.src = objectUrl;
     });
   }
@@ -686,13 +889,62 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     return outputCanvas.toDataURL("image/png");
   }
 
+  function getLuminanceByte(red, green, blue) {
+    return clamp(Math.round(0.2126 * red + 0.7152 * green + 0.0722 * blue), 0, 255);
+  }
+
+  function createGrainDataUrlFromImage(image, { invert = false } = {}) {
+    const exportSize = Math.max(1, grainTextureExportSize || 2048);
+    const sourceWidth = Math.max(1, image.naturalWidth || image.width || exportSize);
+    const sourceHeight = Math.max(1, image.naturalHeight || image.height || exportSize);
+    const tempCanvas = document.createElement("canvas");
+    const tempContext = tempCanvas.getContext("2d", { willReadFrequently: true });
+    const outputCanvas = document.createElement("canvas");
+    const outputContext = outputCanvas.getContext("2d", { willReadFrequently: true });
+    const drawScale = Math.max(exportSize / sourceWidth, exportSize / sourceHeight);
+    const drawWidth = Math.max(1, Math.round(sourceWidth * drawScale));
+    const drawHeight = Math.max(1, Math.round(sourceHeight * drawScale));
+    const drawX = Math.round((exportSize - drawWidth) / 2);
+    const drawY = Math.round((exportSize - drawHeight) / 2);
+
+    if (!tempContext || !outputContext) {
+      throw new Error("Unable to convert grain texture.");
+    }
+
+    tempCanvas.width = exportSize;
+    tempCanvas.height = exportSize;
+    outputCanvas.width = exportSize;
+    outputCanvas.height = exportSize;
+    tempContext.clearRect(0, 0, exportSize, exportSize);
+    tempContext.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+
+    const imageData = tempContext.getImageData(0, 0, exportSize, exportSize);
+    const output = outputContext.createImageData(exportSize, exportSize);
+
+    for (let index = 0; index < imageData.data.length; index += 4) {
+      const sourceAlpha = imageData.data[index + 3] / 255;
+      const luminance = getLuminanceByte(imageData.data[index], imageData.data[index + 1], imageData.data[index + 2]);
+      const neutralLuminance = Math.round(luminance * sourceAlpha + 255 * (1 - sourceAlpha));
+      const grain = invert ? 255 - neutralLuminance : neutralLuminance;
+
+      output.data[index] = grain;
+      output.data[index + 1] = grain;
+      output.data[index + 2] = grain;
+      output.data[index + 3] = 255;
+    }
+
+    outputContext.putImageData(output, 0, 0);
+
+    return outputCanvas.toDataURL("image/png");
+  }
+
   async function invertShapeAlpha() {
     if (!shapeEditorDraftSrc) {
       return;
     }
 
     try {
-      const image = await loadImageFromObjectUrl(shapeEditorDraftSrc);
+      const image = await loadImageFromObjectUrl(shapeEditorDraftSrc, "shape alpha image");
 
       shapeEditorDraftSrc = createInvertedAlphaDataUrlFromImage(image);
 
@@ -712,7 +964,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     const objectUrl = URL.createObjectURL(file);
 
     try {
-      const image = await loadImageFromObjectUrl(objectUrl);
+      const image = await loadImageFromObjectUrl(objectUrl, "shape alpha image");
       const alphaSrc = createAlphaDataUrlFromImage(image);
 
       shapeEditorDraftSrc = alphaSrc;
@@ -728,6 +980,53 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
       if (shapeInput) {
         shapeInput.value = "";
+      }
+    }
+  }
+
+  async function invertGrainTexture() {
+    if (!grainEditorDraftSrc) {
+      return;
+    }
+
+    try {
+      const image = await loadImageFromObjectUrl(grainEditorDraftSrc, "grain texture image");
+      const currentName = grainEditorDraftName || defaultGrainTextureName;
+
+      grainEditorDraftSrc = createGrainDataUrlFromImage(image, { invert: true });
+      grainEditorDraftName = currentName.endsWith(" INV") ? currentName.slice(0, -4) : `${currentName} INV`;
+
+      if (grainEditorImage) {
+        grainEditorImage.src = grainEditorDraftSrc;
+      }
+    } catch (error) {
+      console.warn("Unable to invert grain texture.", error);
+    }
+  }
+
+  async function importGrainTexture(file) {
+    if (!file) {
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+
+    try {
+      const image = await loadImageFromObjectUrl(objectUrl, "grain texture image");
+
+      grainEditorDraftSrc = createGrainDataUrlFromImage(image);
+      grainEditorDraftName = (file.name || defaultGrainTextureName).replace(/\.[^.]+$/, "").toUpperCase();
+
+      if (grainEditorImage) {
+        grainEditorImage.src = grainEditorDraftSrc;
+      }
+    } catch (error) {
+      console.warn("Unable to import grain texture.", error);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+
+      if (grainInput) {
+        grainInput.value = "";
       }
     }
   }
@@ -1309,6 +1608,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       return;
     }
 
+    if (selectedCategory === "GRAIN") {
+      renderGrainSettings();
+      return;
+    }
+
     if (selectedCategory === "COLOR DYNAMICS") {
       renderColorDynamicsSettings();
       return;
@@ -1345,6 +1649,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   function closeBrushStudio() {
     if (brushStudio) {
       closeShapeEditor();
+      closeGrainEditor();
       destroyPreviewCanvas();
       brushStudio.hidden = true;
     }
@@ -1390,6 +1695,17 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   });
   shapeCancelButton?.addEventListener("click", closeShapeEditor);
   shapeAcceptButton?.addEventListener("click", acceptShapeEditor);
+  grainImportButton?.addEventListener("click", () => {
+    grainInput?.click();
+  });
+  grainInvertButton?.addEventListener("click", () => {
+    void invertGrainTexture();
+  });
+  grainInput?.addEventListener("change", () => {
+    void importGrainTexture(grainInput.files?.[0]);
+  });
+  grainCancelButton?.addEventListener("click", closeGrainEditor);
+  grainAcceptButton?.addEventListener("click", acceptGrainEditor);
 
   renderStudioContent();
 };

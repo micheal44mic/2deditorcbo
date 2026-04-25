@@ -276,6 +276,44 @@
   color: #ffffff;
 }
 
+.brush-studio-grain-mode-selector {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.brush-studio-grain-mode-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: #2c303a;
+  color: #c3c8d1;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.brush-studio-grain-mode-button:hover,
+.brush-studio-grain-mode-button:focus-visible,
+.brush-studio-grain-mode-button.active {
+  background: #3a3f4b;
+  color: #ffffff;
+  outline: 0;
+}
+
+.brush-studio-grain-mode-content {
+  min-width: 0;
+}
+
 .brush-studio-shape-alpha-preview {
   display: grid;
   place-items: center;
@@ -293,6 +331,18 @@
   max-width: calc(100% - 18px);
   max-height: calc(100% - 18px);
   object-fit: contain;
+}
+
+.brush-studio-grain-texture-preview {
+  background: #f5f6f8;
+}
+
+.brush-studio-grain-texture-image {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
 }
 
 .brush-studio-shape-input-style {
@@ -629,6 +679,11 @@
   max-width: 100%;
   aspect-ratio: 1;
   object-fit: contain;
+}
+
+.brush-studio-grain-editor-image {
+  background: #f5f6f8;
+  object-fit: cover;
 }
 
 .brush-studio-shape-editor-stage::before {

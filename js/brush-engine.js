@@ -86,6 +86,7 @@ uniform float u_minSizeRatio;
 uniform vec2 u_shapeFlip;
 
 out vec2 v_uv;
+out vec2 v_docPosition;
 out float v_alpha;
 out vec3 v_color;
 
@@ -109,6 +110,7 @@ void main() {
 
   clipPosition.y *= -1.0;
   v_uv = a_position + 0.5;
+  v_docPosition = documentPosition;
   v_alpha = clamp(aInstanceAlpha, 0.0, 1.0);
   v_color = aInstanceColor;
   gl_Position = vec4(clipPosition, 0.0, 1.0);
@@ -122,8 +124,16 @@ uniform float u_flow;
 uniform float u_hardness;
 uniform sampler2D u_shapeTexture;
 uniform float u_useShapeTexture;
+uniform bool u_grainEnabled;
+uniform sampler2D u_grainTexture;
+uniform vec2 u_grainTexSize;
+uniform float u_grainScale;
+uniform mat2 u_grainRotationMat;
+uniform float u_grainStrength;
+uniform bool u_grainInvert;
 
 in vec2 v_uv;
+in vec2 v_docPosition;
 in float v_alpha;
 in vec3 v_color;
 
@@ -151,7 +161,22 @@ void main() {
     discard;
   }
 
-  float alpha = shape * v_alpha * clamp(u_flow, 0.0, 1.0);
+  float grainMultiplier = 1.0;
+
+  if (u_grainEnabled && u_grainScale > 0.0) {
+    vec2 rotatedPosition = u_grainRotationMat * v_docPosition;
+    vec2 safeTextureSize = max(u_grainTexSize, vec2(1.0));
+    vec2 grainUv = rotatedPosition / (safeTextureSize * u_grainScale);
+    float grain = texture(u_grainTexture, grainUv).r;
+
+    if (u_grainInvert) {
+      grain = 1.0 - grain;
+    }
+
+    grainMultiplier = mix(1.0, grain, clamp(u_grainStrength, 0.0, 1.0));
+  }
+
+  float alpha = shape * grainMultiplier * v_alpha * clamp(u_flow, 0.0, 1.0);
 
   // Output strettamente pre-moltiplicato: necessario per MAX blending coerente.
   outColor = vec4(v_color * alpha, alpha);
@@ -186,6 +211,33 @@ void main() {
 }
 `;
 
+  const ImageCache = namespace.ImageCache || {
+    entries: new Map(),
+
+    load(source) {
+      if (this.entries.has(source)) {
+        return this.entries.get(source);
+      }
+
+      const promise = new Promise((resolve, reject) => {
+        const image = new Image();
+
+        image.onload = () => resolve(image);
+        image.onerror = () => {
+          this.entries.delete(source);
+          reject(new Error("Impossibile caricare la texture del pennello."));
+        };
+        image.src = source;
+      });
+
+      this.entries.set(source, promise);
+
+      return promise;
+    },
+  };
+
+  namespace.ImageCache = ImageCache;
+
   class BrushEngine {
     constructor(canvas, options = {}) {
       if (!(canvas instanceof HTMLCanvasElement)) {
@@ -198,6 +250,11 @@ void main() {
         transparentBackground: options.transparentBackground === true,
         singleStrokeMode: options.singleStrokeMode === true,
         disableNavigation: options.disableNavigation === true,
+        respectActiveTool: options.respectActiveTool === true
+          ? true
+          : options.respectActiveTool === false
+            ? false
+            : !options.getSettings,
         documentSizeCap: Number.isFinite(options.documentSizeCap) && options.documentSizeCap > 0
           ? Math.floor(options.documentSizeCap)
           : null,
@@ -247,6 +304,7 @@ void main() {
       this.frameRequest = 0;
       this.resizeObserver = null;
       this.isDisposed = false;
+      this.isBrushToolActive = this.getInitialBrushToolActive();
       this.baseTexture = null;
       this.baseFBO = null;
       this.strokeTexture = null;
@@ -258,10 +316,17 @@ void main() {
       this.shapeTextureSource = "";
       this.shapeTextureReady = false;
       this.shapeTextureRequestId = 0;
+      this.grainTexture = null;
+      this.grainTextureSource = "";
+      this.grainTextureReady = false;
+      this.grainTextureRequestId = 0;
+      this.grainImageWidth = 1;
+      this.grainImageHeight = 1;
       this.fullscreenQuad = null;
 
       this.handleResize = this.handleResize.bind(this);
       this.handleBrushSettingsChange = this.handleBrushSettingsChange.bind(this);
+      this.handleToolChange = this.handleToolChange.bind(this);
       this.handlePointerDown = this.handlePointerDown.bind(this);
       this.handlePointerMove = this.handlePointerMove.bind(this);
       this.handlePointerUp = this.handlePointerUp.bind(this);
@@ -284,9 +349,11 @@ void main() {
       this.createStrokeLayerTarget();
       this.brush = this.createBrushResources();
       this.syncShapeTextureFromState();
+      this.syncGrainTextureFromState();
       this.centerCamera();
       this.observeViewportSize();
       this.bindBrushSettings();
+      this.bindToolState();
       this.bindPointerEvents();
       this.bindNavigationEvents();
       this.startRenderLoop();
@@ -457,6 +524,13 @@ void main() {
           hardness: gl.getUniformLocation(program, "u_hardness"),
           shapeTexture: gl.getUniformLocation(program, "u_shapeTexture"),
           useShapeTexture: gl.getUniformLocation(program, "u_useShapeTexture"),
+          grainEnabled: gl.getUniformLocation(program, "u_grainEnabled"),
+          grainTexture: gl.getUniformLocation(program, "u_grainTexture"),
+          grainTexSize: gl.getUniformLocation(program, "u_grainTexSize"),
+          grainScale: gl.getUniformLocation(program, "u_grainScale"),
+          grainRotationMat: gl.getUniformLocation(program, "u_grainRotationMat"),
+          grainStrength: gl.getUniformLocation(program, "u_grainStrength"),
+          grainInvert: gl.getUniformLocation(program, "u_grainInvert"),
         },
       };
     }
@@ -805,9 +879,53 @@ void main() {
       window.addEventListener("cbo:brush-settings-change", this.handleBrushSettingsChange);
     }
 
+    bindToolState() {
+      if (!this.options.respectActiveTool) {
+        this.isBrushToolActive = true;
+        return;
+      }
+
+      window.addEventListener("cbo:tool-change", this.handleToolChange);
+    }
+
     handleBrushSettingsChange() {
       this.brushState = { ...(this.readBrushSettingsSource() || {}) };
       this.syncShapeTextureFromState();
+      this.syncGrainTextureFromState();
+    }
+
+    getInitialBrushToolActive() {
+      if (this.options?.respectActiveTool === false || this.options?.getSettings) {
+        return true;
+      }
+
+      const activeTool = document.querySelector("[data-tool].active");
+
+      if (!activeTool) {
+        return false;
+      }
+
+      return this.isBrushToolDetail({
+        label: activeTool.getAttribute("aria-label") || "",
+        syncGroup: activeTool.dataset.toolSync || "",
+        toolMode: activeTool.dataset.toolMode || "",
+      });
+    }
+
+    isBrushToolDetail(detail = {}) {
+      const label = String(detail.label || "").toUpperCase();
+      const toolMode = String(detail.toolMode || "").toLowerCase();
+      const syncGroup = String(detail.syncGroup || "").toLowerCase();
+
+      return label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush");
+    }
+
+    handleToolChange(event) {
+      this.isBrushToolActive = this.isBrushToolDetail(event.detail);
+    }
+
+    canStartBrushStroke() {
+      return !this.options.respectActiveTool || this.isBrushToolActive;
     }
 
     readBrushSettingsSource() {
@@ -821,10 +939,17 @@ void main() {
     setBrushState(settings) {
       this.brushState = { ...(settings || {}) };
       this.syncShapeTextureFromState();
+      this.syncGrainTextureFromState();
     }
 
     getShapeTextureSource() {
       const source = this.brushState?.shapeAlphaSrc;
+
+      return typeof source === "string" && source.trim() ? source : "";
+    }
+
+    getGrainTextureSource() {
+      const source = this.brushState?.grainTextureSrc;
 
       return typeof source === "string" && source.trim() ? source : "";
     }
@@ -891,6 +1016,78 @@ void main() {
       gl.generateMipmap(gl.TEXTURE_2D);
       gl.bindTexture(gl.TEXTURE_2D, null);
       this.shapeTextureReady = true;
+
+      if (this.options.singleStrokeMode && !this.isDrawing && this.lastRecordedStroke.length > 0) {
+        this.replayLastStroke();
+      }
+    }
+
+    syncGrainTextureFromState() {
+      const source = this.getGrainTextureSource();
+
+      if (source === this.grainTextureSource) {
+        return;
+      }
+
+      this.grainTextureSource = source;
+      this.grainTextureReady = false;
+      this.grainImageWidth = 1;
+      this.grainImageHeight = 1;
+      this.grainTextureRequestId += 1;
+
+      if (!source) {
+        return;
+      }
+
+      const requestId = this.grainTextureRequestId;
+
+      ImageCache.load(source)
+        .then((image) => {
+          if (this.isDisposed || requestId !== this.grainTextureRequestId) {
+            return;
+          }
+
+          this.uploadGrainTexture(image);
+        })
+        .catch(() => {
+          if (requestId === this.grainTextureRequestId) {
+            this.grainTextureReady = false;
+          }
+        });
+    }
+
+    uploadGrainTexture(image) {
+      const gl = this.gl;
+
+      if (!this.grainTexture) {
+        this.grainTexture = gl.createTexture();
+      }
+
+      if (!this.grainTexture) {
+        this.grainTextureReady = false;
+        return;
+      }
+
+      this.grainImageWidth = Math.max(1, image.naturalWidth || image.width || 1);
+      this.grainImageHeight = Math.max(1, image.naturalHeight || image.height || 1);
+
+      gl.bindTexture(gl.TEXTURE_2D, this.grainTexture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        image,
+      );
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      this.grainTextureReady = true;
 
       if (this.options.singleStrokeMode && !this.isDrawing && this.lastRecordedStroke.length > 0) {
         this.replayLastStroke();
@@ -1643,11 +1840,12 @@ void main() {
       const charge = this.clamp01(this.brushState.wetCharge ?? 1);
       const attack = this.clamp01(this.brushState.wetAttack ?? 1);
       const jitter = this.clamp01(this.brushState.wetnessJitter);
+      const disabledThreshold = 0.001;
       const dilutionScale = this.lerp(1, 0.18, dilution);
-      const attackScale = this.lerp(0.12, 1, attack);
+      const attackScale = attack <= disabledThreshold ? 1 : this.lerp(0.12, 1, attack);
       let chargeScale = 1;
 
-      if (charge < 1) {
+      if (charge > disabledThreshold && charge < 1) {
         const radius = Math.max(0.5, this.getBrushSize() * 0.5);
         const initialLoad = Math.sqrt(charge);
         const depletionDistance = radius * this.lerp(4, 96, charge);
@@ -1721,6 +1919,30 @@ void main() {
 
     getShapeFlipYSign() {
       return this.brushState.shapeFlipY === true ? -1 : 1;
+    }
+
+    isGrainEnabled() {
+      return this.brushState.grainEnabled === true && this.grainTextureReady && Boolean(this.grainTexture);
+    }
+
+    getGrainScale() {
+      const value = Number(this.brushState.grainScale);
+
+      return Number.isFinite(value) && value > 0 ? Math.max(0.01, value) : 1;
+    }
+
+    getGrainRotationRadians() {
+      const degrees = Number(this.brushState.grainRotation);
+
+      return Number.isFinite(degrees) ? degrees * (Math.PI / 180) : 0;
+    }
+
+    getGrainStrength() {
+      return this.clamp01(this.brushState.grainStrength ?? 1);
+    }
+
+    isGrainInverted() {
+      return this.brushState.grainInvert === true;
     }
 
     getEffectiveShapeCount() {
@@ -1844,6 +2066,7 @@ void main() {
       const brushSize = this.getBrushSize();
       const fallbackColor = this.getCurrentStrokeColorRgb();
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
+      const useGrainTexture = this.isGrainEnabled();
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
@@ -1879,6 +2102,24 @@ void main() {
       gl.uniform1i(this.brushProgramInfo.uniforms.shapeTexture, 1);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, useShapeTexture ? this.shapeTexture : null);
+      gl.uniform1i(this.brushProgramInfo.uniforms.grainEnabled, useGrainTexture ? 1 : 0);
+      gl.uniform1i(this.brushProgramInfo.uniforms.grainTexture, 2);
+
+      if (useGrainTexture) {
+        const grainRotation = this.getGrainRotationRadians();
+        const cos = Math.cos(grainRotation);
+        const sin = Math.sin(grainRotation);
+        const rotationMatrix = new Float32Array([cos, sin, -sin, cos]);
+
+        gl.uniform2f(this.brushProgramInfo.uniforms.grainTexSize, this.grainImageWidth, this.grainImageHeight);
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainScale, this.getGrainScale());
+        gl.uniformMatrix2fv(this.brushProgramInfo.uniforms.grainRotationMat, false, rotationMatrix);
+        gl.uniform1f(this.brushProgramInfo.uniforms.grainStrength, this.getGrainStrength());
+        gl.uniform1i(this.brushProgramInfo.uniforms.grainInvert, this.isGrainInverted() ? 1 : 0);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, this.grainTexture);
+      }
+
       gl.activeTexture(gl.TEXTURE0);
 
       gl.bindVertexArray(this.brush.vao);
@@ -1888,6 +2129,8 @@ void main() {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, null);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.activeTexture(gl.TEXTURE0);
@@ -2121,6 +2364,10 @@ void main() {
         return;
       }
 
+      if (!this.canStartBrushStroke()) {
+        return;
+      }
+
       event.preventDefault();
 
       // Modalità preview: ogni nuovo tratto resetta la canvas (utile nella drawing pad).
@@ -2305,6 +2552,7 @@ void main() {
 
       window.removeEventListener("resize", this.handleResize);
       window.removeEventListener("cbo:brush-settings-change", this.handleBrushSettingsChange);
+      window.removeEventListener("cbo:tool-change", this.handleToolChange);
       this.resizeObserver?.disconnect();
       this.resizeObserver = null;
       this.canvas.removeEventListener("pointerdown", this.handlePointerDown);
@@ -2358,6 +2606,11 @@ void main() {
       if (this.shapeTexture) {
         gl.deleteTexture(this.shapeTexture);
         this.shapeTexture = null;
+      }
+
+      if (this.grainTexture) {
+        gl.deleteTexture(this.grainTexture);
+        this.grainTexture = null;
       }
 
       if (this.compositeProgramInfo?.program) {

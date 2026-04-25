@@ -1,8 +1,10 @@
 window.CBO = window.CBO || {};
 
 (function registerBrushDefaults(namespace) {
-  const defaultShapeAlphaSrc = "./data/brush-shape-alpha.png";
-  const defaultShapeAlphaName = "SHAPE ALPHA";
+  const defaultShapeAlphaSrc = namespace.defaultShapeAlpha?.src || "./data/brush-shape-alpha.png";
+  const defaultShapeAlphaName = namespace.defaultShapeAlpha?.name || "SHAPE ALPHA";
+  const defaultGrainTextureSrc = namespace.defaultGrainTexture?.src || "./data/pastel-pencil-grain-texture.png";
+  const defaultGrainTextureName = namespace.defaultGrainTexture?.name || "PASTEL PENCIL GRAIN";
   const defaultTaperMinDistance = 247;
   const taperTipRealMin = 0.15;
 
@@ -37,6 +39,13 @@ window.CBO = window.CBO || {};
     shapeRandomized: false,
     shapeFlipX: false,
     shapeFlipY: false,
+    grainEnabled: true,
+    grainTextureSrc: defaultGrainTextureSrc,
+    grainTextureName: defaultGrainTextureName,
+    grainScale: 1,
+    grainRotation: 0,
+    grainStrength: 1,
+    grainInvert: false,
     stampColorHueJitter: 0,
     stampColorSaturationJitter: 0,
     stampColorLightnessJitter: 0,
@@ -64,14 +73,19 @@ window.CBO = window.CBO || {};
       nextOverrides.streamLineAmount ?? nextOverrides.smoothing ?? nextSettings.streamLineAmount;
     nextSettings.shapeAlphaSrc = nextSettings.shapeAlphaSrc || defaultShapeAlphaSrc;
     nextSettings.shapeAlphaName = nextSettings.shapeAlphaName || defaultShapeAlphaName;
+    nextSettings.grainTextureSrc = nextSettings.grainTextureSrc || defaultGrainTextureSrc;
+    nextSettings.grainTextureName = nextSettings.grainTextureName || defaultGrainTextureName;
 
     return nextSettings;
   }
 
   namespace.BrushDefaults = Object.freeze({
+    defaultGrainTextureName,
+    defaultGrainTextureSrc,
     defaultShapeAlphaName,
     defaultShapeAlphaSrc,
     defaultTaperMinDistance,
+    grainTextureExportSize: 2048,
     shapeAlphaExportSize: 512,
     settings,
     taperTipRealMin,
