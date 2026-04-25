@@ -5,7 +5,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const StrokeMath = window.CBO.StrokeMath;
   const clamp = StrokeMath.clamp;
   const clamp01 = StrokeMath.clamp01;
-  const studioCategories = ["STROKE", "STABILIZATION", "BASIC"];
+  const studioCategories = ["STROKE", "STABILIZATION", "TAPER", "BASIC"];
   const defaultBrushSettings = {
     radius: 18,
     opacity: 0.92,
@@ -18,6 +18,15 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     jitterLateral: 0,
     jitterLinear: 0,
     fallOff: 0,
+    taperStart: 0,
+    taperEnd: 0,
+    taperLinkSizes: false,
+    taperSize: 1,
+    taperOpacity: 0,
+    taperPressure: 0,
+    taperMinDistance: 0,
+    taperTip: 0.5,
+    taperTipAnimation: true,
   };
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
@@ -117,6 +126,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       disableNavigation: true,
       documentSizeCap: 2048,
     });
+
+    // Hook di test (read-only): permette di ispezionare lo stato dell'engine
+    // dalla console o da test E2E senza richiedere setter pubblici dedicati.
+    window.CBO.__brushStudioPreviewEngine = previewEngine;
   }
 
   function destroyPreviewCanvas() {
@@ -406,6 +419,329 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
+  function createToggleSetting({ key, label }) {
+    const wrapper = document.createElement("div");
+    const name = document.createElement("div");
+    const toggle = document.createElement("button");
+    const knob = document.createElement("span");
+    const checkIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const checkPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+    wrapper.className = "brush-studio-toggle-setting";
+    name.className = "brush-studio-setting-name";
+    name.textContent = label;
+    toggle.className = "brush-studio-toggle";
+    toggle.type = "button";
+    toggle.setAttribute("aria-label", label);
+    knob.className = "brush-studio-toggle-knob";
+    checkIcon.classList.add("brush-studio-toggle-check");
+    checkIcon.setAttribute("viewBox", "0 0 24 24");
+    checkIcon.setAttribute("fill", "none");
+    checkIcon.setAttribute("stroke", "currentColor");
+    checkIcon.setAttribute("stroke-width", "3");
+    checkIcon.setAttribute("stroke-linecap", "round");
+    checkIcon.setAttribute("stroke-linejoin", "round");
+    checkPath.setAttribute("d", "M20 6 9 17l-5-5");
+
+    checkIcon.appendChild(checkPath);
+    knob.appendChild(checkIcon);
+    toggle.appendChild(knob);
+
+    function setActive(isActive) {
+      draftBrushSettings[key] = isActive;
+      toggle.classList.toggle("active", isActive);
+      toggle.setAttribute("aria-pressed", String(isActive));
+    }
+
+    toggle.addEventListener("click", () => {
+      const next = !draftBrushSettings[key];
+      setActive(next);
+      pushDraftToEngine();
+    });
+
+    setActive(Boolean(draftBrushSettings[key]));
+    wrapper.append(name, toggle);
+
+    return wrapper;
+  }
+
+  function createTaperShapePath(startFraction, endFraction, width, height) {
+    // Disegna un cuneo orizzontale: i due handle definiscono dove inizia/finisce il
+    // tratto "pieno". Fuori dagli handle la shape si stringe a punta verso i bordi.
+    const safeWidth = Math.max(1, width);
+    const midY = height / 2;
+    const halfThick = Math.max(2, Math.min(height * 0.32, 12));
+    const startX = clamp01(startFraction) * safeWidth;
+    const endX = (1 - clamp01(endFraction)) * safeWidth;
+    const leftX = Math.min(startX, endX);
+    const rightX = Math.max(startX, endX);
+
+    return [
+      `M 0 ${midY}`,
+      `L ${leftX} ${midY - halfThick}`,
+      `L ${rightX} ${midY - halfThick}`,
+      `L ${safeWidth} ${midY}`,
+      `L ${rightX} ${midY + halfThick}`,
+      `L ${leftX} ${midY + halfThick}`,
+      "Z",
+    ].join(" ");
+  }
+
+  function createTaperSlider() {
+    const container = document.createElement("div");
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    const shapePath = document.createElementNS(svgNS, "path");
+    const startGuide = document.createElementNS(svgNS, "line");
+    const endGuide = document.createElementNS(svgNS, "line");
+    const startHandle = document.createElement("button");
+    const endHandle = document.createElement("button");
+
+    container.className = "brush-studio-taper-slider";
+    container.setAttribute("role", "group");
+    container.setAttribute("aria-label", "Pressure taper");
+
+    svg.classList.add("brush-studio-taper-shape");
+    svg.setAttribute("preserveAspectRatio", "none");
+    shapePath.classList.add("brush-studio-taper-shape-fill");
+    startGuide.classList.add("brush-studio-taper-guide");
+    endGuide.classList.add("brush-studio-taper-guide");
+    svg.append(startGuide, endGuide, shapePath);
+
+    startHandle.className = "brush-studio-taper-handle";
+    startHandle.dataset.handle = "start";
+    startHandle.type = "button";
+    startHandle.setAttribute("aria-label", "Pressure taper start");
+    endHandle.className = "brush-studio-taper-handle";
+    endHandle.dataset.handle = "end";
+    endHandle.type = "button";
+    endHandle.setAttribute("aria-label", "Pressure taper end");
+
+    container.append(svg, startHandle, endHandle);
+
+    function syncHandles() {
+      const start = clamp01(draftBrushSettings.taperStart);
+      const end = clamp01(draftBrushSettings.taperEnd);
+      const startPercent = `${start * 100}%`;
+      const endPercent = `${(1 - end) * 100}%`;
+      const rect = container.getBoundingClientRect();
+      const width = rect.width || 200;
+      const height = rect.height || 96;
+
+      startHandle.style.left = startPercent;
+      endHandle.style.left = endPercent;
+
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      shapePath.setAttribute("d", createTaperShapePath(start, end, width, height));
+
+      const midY = height / 2;
+      const startX = start * width;
+      const endX = (1 - end) * width;
+
+      startGuide.setAttribute("x1", String(startX));
+      startGuide.setAttribute("x2", String(startX));
+      startGuide.setAttribute("y1", String(midY - height * 0.42));
+      startGuide.setAttribute("y2", String(midY + height * 0.42));
+      endGuide.setAttribute("x1", String(endX));
+      endGuide.setAttribute("x2", String(endX));
+      endGuide.setAttribute("y1", String(midY - height * 0.42));
+      endGuide.setAttribute("y2", String(midY + height * 0.42));
+    }
+
+    function setHandleValue(handle, fraction) {
+      const next = clamp01(fraction);
+
+      if (handle === "start") {
+        draftBrushSettings.taperStart = next;
+
+        if (draftBrushSettings.taperLinkSizes) {
+          draftBrushSettings.taperEnd = next;
+        }
+      } else {
+        draftBrushSettings.taperEnd = next;
+
+        if (draftBrushSettings.taperLinkSizes) {
+          draftBrushSettings.taperStart = next;
+        }
+      }
+
+      // Evita che gli handle si scavalchino. Con il link attivo entrambi
+      // si fermano al centro (0.5) simmetrici.
+      const startVal = clamp01(draftBrushSettings.taperStart);
+      const endVal = clamp01(draftBrushSettings.taperEnd);
+
+      if (startVal + endVal > 1) {
+        if (draftBrushSettings.taperLinkSizes) {
+          draftBrushSettings.taperStart = 0.5;
+          draftBrushSettings.taperEnd = 0.5;
+        } else if (handle === "start") {
+          draftBrushSettings.taperStart = clamp(1 - endVal, 0, 1);
+        } else {
+          draftBrushSettings.taperEnd = clamp(1 - startVal, 0, 1);
+        }
+      }
+
+      syncHandles();
+      pushDraftToEngine();
+    }
+
+    function attachDrag(handle) {
+      const which = handle.dataset.handle;
+      let activePointer = null;
+
+      handle.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        activePointer = event.pointerId;
+        handle.setPointerCapture(event.pointerId);
+      });
+
+      handle.addEventListener("pointermove", (event) => {
+        if (activePointer !== event.pointerId) {
+          return;
+        }
+
+        const rect = container.getBoundingClientRect();
+        const localX = event.clientX - rect.left;
+        const fraction = rect.width > 0 ? localX / rect.width : 0;
+        const value = which === "start" ? fraction : 1 - fraction;
+
+        setHandleValue(which, value);
+      });
+
+      handle.addEventListener("pointerup", (event) => {
+        if (activePointer !== event.pointerId) {
+          return;
+        }
+
+        if (handle.hasPointerCapture(event.pointerId)) {
+          handle.releasePointerCapture(event.pointerId);
+        }
+
+        activePointer = null;
+      });
+
+      handle.addEventListener("pointercancel", (event) => {
+        if (activePointer !== event.pointerId) {
+          return;
+        }
+
+        if (handle.hasPointerCapture(event.pointerId)) {
+          handle.releasePointerCapture(event.pointerId);
+        }
+
+        activePointer = null;
+      });
+    }
+
+    attachDrag(startHandle);
+    attachDrag(endHandle);
+
+    // Re-sync su resize del pannello: l'SVG e' in pixel concreti.
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(() => syncHandles());
+      observer.observe(container);
+      container.dataset.taperObserver = "true";
+    }
+
+    container.refreshTaper = syncHandles;
+
+    return container;
+  }
+
+  function renderTaperSettings() {
+    if (!settingsPanel) {
+      return;
+    }
+
+    const selectedName = document.createElement("div");
+    const taperLabel = document.createElement("div");
+    const taperSlider = createTaperSlider();
+    const linkToggle = createToggleSetting({
+      key: "taperLinkSizes",
+      label: "LINK TIP SIZES",
+    });
+    const sizeSetting = createRangeSetting({
+      key: "taperSize",
+      label: "SIZE",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.taperSize) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const opacitySetting = createRangeSetting({
+      key: "taperOpacity",
+      label: "OPACITY",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.taperOpacity) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const pressureSetting = createRangeSetting({
+      key: "taperPressure",
+      label: "PRESSURE",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.taperPressure) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const minDistanceSetting = createRangeSetting({
+      key: "taperMinDistance",
+      label: "MIN DISTANCE",
+      min: 0,
+      max: 300,
+      step: 1,
+      value: Math.round(clamp(draftBrushSettings.taperMinDistance, 0, 300)),
+      unit: "PX",
+      toSetting: (displayValue) => displayValue,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tipSetting = createRangeSetting({
+      key: "taperTip",
+      label: "TIP",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.taperTip) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tipAnimationToggle = createToggleSetting({
+      key: "taperTipAnimation",
+      label: "TIP ANIMATION",
+    });
+
+    selectedName.className = "brush-studio-selected-name";
+    selectedName.textContent = selectedCategory;
+    taperLabel.className = "brush-studio-taper-label";
+    taperLabel.textContent = "PRESSURE TAPER";
+
+    settingsPanel.replaceChildren(
+      selectedName,
+      taperLabel,
+      taperSlider,
+      linkToggle,
+      sizeSetting,
+      opacitySetting,
+      pressureSetting,
+      minDistanceSetting,
+      tipSetting,
+      tipAnimationToggle,
+    );
+
+    // Sync iniziale ora che il container e' nel DOM e ha layout valido.
+    taperSlider.refreshTaper?.();
+  }
+
   function renderStudioContent() {
     renderCategories();
 
@@ -416,6 +752,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     if (selectedCategory === "STABILIZATION") {
       renderStabilizationSettings();
+      return;
+    }
+
+    if (selectedCategory === "TAPER") {
+      renderTaperSettings();
       return;
     }
 

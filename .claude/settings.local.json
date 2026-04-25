@@ -3,7 +3,12 @@
     "allow": [
       "Bash(node --check \"C:/Users/michi/Desktop/editor 2d cbos - aggiunti brush/js/brush-engine.js\")",
       "Bash(node --check \"C:/Users/michi/Desktop/editor 2d cbos - aggiunti brush/js/color-picker.js\")",
-      "Bash(node --check \"C:/Users/michi/Desktop/editor 2d cbos - aggiunti brush/js/brush-studio.js\")"
+      "Bash(node --check \"C:/Users/michi/Desktop/editor 2d cbos - aggiunti brush/js/brush-studio.js\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const code=fs.readFileSync\\('js/brush-engine.js','utf8'\\);try{new Function\\(code\\);console.log\\('SYNTAX OK'\\);}catch\\(e\\){console.error\\('SYNTAX ERROR:',e.message\\);process.exit\\(1\\);}\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const code=fs.readFileSync\\('js/stroke-math.js','utf8'\\);try{new Function\\(code\\);console.log\\('SYNTAX OK'\\);}catch\\(e\\){console.error\\('SYNTAX ERROR:',e.message\\);process.exit\\(1\\);}\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const code=fs.readFileSync\\('js/brush-studio.js','utf8'\\);try{new Function\\(code\\);console.log\\('SYNTAX OK'\\);}catch\\(e\\){console.error\\('SYNTAX ERROR:',e.message\\);process.exit\\(1\\);}\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(node -e \"const fs=require\\('fs'\\);try{new Function\\(fs.readFileSync\\('js/brush-studio.js','utf8'\\)\\);console.log\\('SYNTAX OK'\\);}catch\\(e\\){console.error\\(e.message\\);process.exit\\(1\\);}\")"
     ]
   }
 }

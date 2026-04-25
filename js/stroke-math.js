@@ -176,6 +176,43 @@ window.CBO = window.CBO || {};
     return clamp(1 - state.distance / fadeDistance, 0, 1);
   }
 
+  function applyTipCurve(t, taperTip) {
+    // Curva del taper: tip=0 sharp (esponenziale ripida, recupera subito alla pienezza),
+    // tip=1 chunky (curva quasi lineare, taper graduale e lungo).
+    const exponent = 0.35 + clamp01(taperTip) * 2.4;
+    return Math.pow(clamp01(t), exponent);
+  }
+
+  function getTaperFactor(distanceFromStart, totalLength, settings) {
+    const taperStart = clamp01(settings?.taperStart);
+    const taperEnd = clamp01(settings?.taperEnd);
+    const taperMinDistance = Math.max(0, Number(settings?.taperMinDistance) || 0);
+
+    if (totalLength <= 0 || (taperStart <= 0 && taperEnd <= 0)) {
+      return 1;
+    }
+
+    const tip = clamp01(settings?.taperTip ?? 0.5);
+    let factor = 1;
+
+    const startLen = taperStart > 0
+      ? Math.max(taperStart * totalLength, taperMinDistance)
+      : 0;
+    if (startLen > 0 && distanceFromStart < startLen) {
+      factor = Math.min(factor, applyTipCurve(distanceFromStart / startLen, tip));
+    }
+
+    const endLen = taperEnd > 0
+      ? Math.max(taperEnd * totalLength, taperMinDistance)
+      : 0;
+    const distanceFromEnd = totalLength - distanceFromStart;
+    if (endLen > 0 && distanceFromEnd < endLen) {
+      factor = Math.min(factor, applyTipCurve(distanceFromEnd / endLen, tip));
+    }
+
+    return clamp01(factor);
+  }
+
   function clampPointToBounds(point, bounds) {
     if (!bounds) {
       return point;
@@ -282,5 +319,7 @@ window.CBO = window.CBO || {};
     getFallOffScale,
     applyStampJitter,
     drawStrokeSegment,
+    getTaperFactor,
+    applyTipCurve,
   };
 })(window.CBO);

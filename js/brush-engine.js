@@ -76,6 +76,7 @@ layout(location = 0) in vec2 a_position;
 layout(location = 1) in vec2 aInstancePos;
 layout(location = 2) in float aInstancePressure;
 layout(location = 3) in float aInstanceAlpha;
+layout(location = 4) in float aInstanceSizeScale;
 
 uniform vec2 u_docResolution;
 uniform float u_brushSize;
@@ -88,7 +89,10 @@ void main() {
   // Min-size ratio evita che pressure=0 collassi lo stamp a 0px (problema con stylus).
   float pressure = clamp(aInstancePressure, 0.0, 1.0);
   float sizeFactor = mix(u_minSizeRatio, 1.0, pressure);
-  vec2 documentPosition = aInstancePos + a_position * u_brushSize * sizeFactor;
+  // aInstanceSizeScale e' il moltiplicatore esterno dei dab (taper, ecc.):
+  // bypassa il min-size ratio quindi puo' arrivare davvero a 0 (taper a punta).
+  float scale = max(aInstanceSizeScale, 0.0);
+  vec2 documentPosition = aInstancePos + a_position * u_brushSize * sizeFactor * scale;
   vec2 clipPosition = (documentPosition / u_docResolution) * 2.0 - 1.0;
 
   clipPosition.y *= -1.0;
@@ -198,6 +202,9 @@ void main() {
       this.strokeStampCount = 0;
       this.strokeDynamicsState = null;
       this.strokeRandomState = { seed: 1 };
+      this.strokeInitialSeed = 1;
+      this.strokeTotalLength = null;
+      this.taperSpacingCap = null;
       this.recordedStroke = [];
       this.lastRecordedStroke = [];
       this.isDrawing = false;
@@ -709,15 +716,19 @@ void main() {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, instanceVBO);
       gl.bufferData(gl.ARRAY_BUFFER, 0, gl.DYNAMIC_DRAW);
+      // Instance stride 20 byte: pos (xy) + pressure + alphaScale + sizeScale.
       gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 0);
       gl.vertexAttribDivisor(1, 1);
       gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 16, 8);
+      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 20, 8);
       gl.vertexAttribDivisor(2, 1);
       gl.enableVertexAttribArray(3);
-      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 16, 12);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 20, 12);
       gl.vertexAttribDivisor(3, 1);
+      gl.enableVertexAttribArray(4);
+      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 20, 16);
+      gl.vertexAttribDivisor(4, 1);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
@@ -948,6 +959,7 @@ void main() {
         : sample.pressure;
 
       this.strokeRandomState = { seed };
+      this.strokeInitialSeed = seed;
       this.strokeDynamicsState = StrokeMath?.createStrokeState
         ? StrokeMath.createStrokeState(point, {
             pressure,
@@ -1130,6 +1142,7 @@ void main() {
         y: point.y,
         pressure: point.pressure,
         alphaScale,
+        sizeScale: 1,
         tiltX: point.tiltX,
         tiltY: point.tiltY,
       };
@@ -1141,9 +1154,50 @@ void main() {
         y: this.lerp(from.y, to.y, t),
         pressure: this.lerp(from.pressure, to.pressure, t),
         alphaScale: this.lerp(from.alphaScale ?? 1, to.alphaScale ?? 1, t),
+        sizeScale: this.lerp(from.sizeScale ?? 1, to.sizeScale ?? 1, t),
         tiltX: this.lerp(from.tiltX, to.tiltX, t),
         tiltY: this.lerp(from.tiltY, to.tiltY, t),
       };
+    }
+
+    applyTaperToStamp(stamp) {
+      // Il taper si applica solo nel pass di "rigenerazione" post-stroke,
+      // quando la lunghezza totale del tratto e' nota. In live drawing sta a null.
+      if (this.strokeTotalLength == null) {
+        return;
+      }
+
+      const StrokeMath = namespace.StrokeMath;
+      const factor =
+        StrokeMath?.getTaperFactor != null
+          ? StrokeMath.getTaperFactor(this.strokeDistance, this.strokeTotalLength, this.brushState)
+          : 1;
+
+      if (factor >= 1) {
+        return;
+      }
+
+      const taperSize = this.clamp01(this.brushState.taperSize ?? 1);
+      const taperOpacity = this.clamp01(this.brushState.taperOpacity ?? 0);
+      const taperPressure = this.clamp01(this.brushState.taperPressure ?? 0);
+      // taperSize 1 -> il taper porta il dab a sparire; 0 -> nessun effetto sulla size.
+      const sizeContribution = this.lerp(1 - taperSize, 1, factor);
+      const opacityContribution = this.lerp(1 - taperOpacity, 1, factor);
+      const pressureContribution = this.lerp(1 - taperPressure, 1, factor);
+
+      stamp.pressure = (stamp.pressure ?? 1) * pressureContribution;
+      stamp.sizeScale = (stamp.sizeScale ?? 1) * sizeContribution;
+      stamp.alphaScale = (stamp.alphaScale ?? 1) * opacityContribution;
+    }
+
+    isTaperActive() {
+      const taperStart = this.clamp01(this.brushState.taperStart);
+      const taperEnd = this.clamp01(this.brushState.taperEnd);
+      const taperSize = this.clamp01(this.brushState.taperSize ?? 1);
+      const taperOpacity = this.clamp01(this.brushState.taperOpacity ?? 0);
+      const taperPressure = this.clamp01(this.brushState.taperPressure ?? 0);
+
+      return (taperStart > 0 || taperEnd > 0) && (taperSize > 0 || taperOpacity > 0 || taperPressure > 0);
     }
 
     getBrushSize() {
@@ -1162,16 +1216,53 @@ void main() {
       return 40;
     }
 
-    getStampSpacing() {
+    getStampSpacing(sizeScale = 1) {
       const brushSize = this.getBrushSize();
       const spacingFraction = Number(this.brushState.spacing);
-      const safeSpacing =
-        Number.isFinite(spacingFraction) && spacingFraction > 0 ? spacingFraction : 0.1;
+      const safeSpacing = Number.isFinite(spacingFraction)
+        ? this.clamp(spacingFraction, 0, 1)
+        : 0.1;
       const spacingJitter = this.clamp01(this.brushState.spacingJitter);
-      const baseSpacing = Math.max(1, brushSize * safeSpacing);
+      const effectiveSizeScale = this.clamp(sizeScale, 0.05, 1);
+      const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * safeSpacing);
       const jitterAmount = baseSpacing * spacingJitter * 0.85;
+      const spacing = Math.max(0.5, baseSpacing + this.randomSigned() * jitterAmount);
 
-      return Math.max(1, baseSpacing + this.randomSigned() * jitterAmount);
+      if (this.taperSpacingCap != null) {
+        return Math.min(spacing, this.taperSpacingCap);
+      }
+
+      return spacing;
+    }
+
+    getCurrentStrokePathLength() {
+      return Math.max(0, this.strokeDistance + this.leftoverDistance);
+    }
+
+    getTaperMinDistance() {
+      if (this.brushState.taperMinDistanceEnabled !== true) {
+        return 247;
+      }
+
+      const minDistance = Number(this.brushState.taperMinDistance);
+
+      if (!Number.isFinite(minDistance) || minDistance <= 0) {
+        return 247;
+      }
+
+      return this.clamp(minDistance, 0, 1000);
+    }
+
+    getTaperSpacingCap(totalLength) {
+      const safeLength = Number(totalLength);
+
+      if (!Number.isFinite(safeLength) || safeLength <= 0) {
+        return null;
+      }
+
+      // Durante la rigenerazione taper i tratti molto corti hanno bisogno di
+      // abbastanza dab per descrivere la percentuale della traccia, non un solo cerchio.
+      return Math.max(0.5, safeLength / 12);
     }
 
     getFallOffScale() {
@@ -1249,9 +1340,11 @@ void main() {
 
             this.strokeDistance += stampDistance;
             stamp.alphaScale = this.getFallOffScale();
+            stamp.sizeScale = 1;
+            this.applyTaperToStamp(stamp);
             this.stampsBuffer.push(stamp);
             this.leftoverDistance -= stampDistance;
-            this.nextStampDistance = this.getStampSpacing();
+            this.nextStampDistance = this.getStampSpacing(stamp.sizeScale);
           }
         }
 
@@ -1269,18 +1362,20 @@ void main() {
 
       const gl = this.gl;
       const stampCount = this.stampsBuffer.length;
-      const instanceData = new Float32Array(stampCount * 4);
+      // 5 float per istanza: x, y, pressure, alphaScale, sizeScale.
+      const instanceData = new Float32Array(stampCount * 5);
       const brushSize = this.getBrushSize();
       const color = this.parseColorToRgb01(this.brushState.color);
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
-        const offset = index * 4;
+        const offset = index * 5;
 
         instanceData[offset] = stamp.x;
         instanceData[offset + 1] = stamp.y;
         instanceData[offset + 2] = stamp.pressure;
         instanceData[offset + 3] = stamp.alphaScale ?? 1;
+        instanceData[offset + 4] = stamp.sizeScale ?? 1;
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
@@ -1377,6 +1472,79 @@ void main() {
       this.replayStroke(this.lastRecordedStroke);
     }
 
+    pushForcedTaperStamp(point, distanceFromStart) {
+      if (!point || this.strokeTotalLength == null) {
+        return;
+      }
+
+      this.strokeDistance = this.clamp(distanceFromStart, 0, this.strokeTotalLength);
+
+      const stamp = this.clampStampToDocument(this.createStamp(point));
+
+      stamp.alphaScale = this.getFallOffScale();
+      stamp.sizeScale = 1;
+      this.applyTaperToStamp(stamp);
+      this.stampsBuffer.push(stamp);
+    }
+
+    regenerateStrokeWithTaper(rawSamples, totalLength) {
+      // Re-emette gli stamp del tratto su strokeFBO con il taper completo (start + end).
+      // NON tocca il base layer: chiamato durante pointerup PRIMA del bake.
+      if (!Array.isArray(rawSamples) || rawSamples.length === 0 || totalLength <= 0) {
+        return;
+      }
+
+      const StrokeMath = namespace.StrokeMath;
+      const firstSample = rawSamples[0];
+      const point = { x: firstSample.x, y: firstSample.y };
+      const pressure = StrokeMath?.normalizePressure
+        ? StrokeMath.normalizePressure(firstSample.pressure)
+        : firstSample.pressure;
+      const startPoint = { ...firstSample, pressure };
+
+      // Riusiamo il seed iniziale dello stroke originale per riprodurre l'identica
+      // sequenza di jitter spaziale (lateral/linear/spacing).
+      this.clearStrokeLayer();
+      this.strokeRandomState = { seed: this.strokeInitialSeed };
+      this.strokeDynamicsState = StrokeMath?.createStrokeState
+        ? StrokeMath.createStrokeState(point, {
+            pressure,
+            seed: this.strokeInitialSeed,
+            tool: "brush",
+          })
+        : null;
+
+      this.strokeTotalLength = totalLength;
+      this.taperSpacingCap = this.getTaperSpacingCap(totalLength);
+      this.leftoverDistance = 0;
+      this.strokeDistance = 0;
+      this.strokeStampCount = 0;
+      this.stampsBuffer = [this.createStamp(startPoint)];
+      this.applyTaperToStamp(this.stampsBuffer[0]);
+      this.nextStampDistance = this.getStampSpacing(this.stampsBuffer[0].sizeScale);
+      this.currentStroke = [startPoint, startPoint, startPoint];
+
+      for (let index = 1; index < rawSamples.length - 1; index += 1) {
+        const stableSample = this.applyStabilization(rawSamples[index]);
+
+        this.currentStroke.push(stableSample);
+        this.processStamps();
+      }
+
+      const lastRaw = rawSamples[rawSamples.length - 1];
+      const lastPoint = rawSamples.length > 1 ? this.applyStabilization(lastRaw) : startPoint;
+
+      this.currentStroke.push(lastPoint);
+      this.processStamps();
+      this.currentStroke.push(lastPoint);
+      this.processStamps();
+      this.pushForcedTaperStamp(lastPoint, totalLength);
+      this.flushStamps();
+
+      this.strokeTotalLength = null;
+      this.taperSpacingCap = null;
+    }
+
     replayStroke(rawSamples) {
       if (!Array.isArray(rawSamples) || rawSamples.length === 0 || this.isDrawing) {
         return;
@@ -1411,6 +1579,11 @@ void main() {
       this.currentStroke.push(lastPoint);
       this.processStamps();
       this.flushStamps();
+
+      if (this.isTaperActive() && rawSamples.length > 1) {
+        this.regenerateStrokeWithTaper(rawSamples, this.getCurrentStrokePathLength());
+      }
+
       this.bakeStroke();
 
       this.currentStroke = [];
@@ -1506,6 +1679,13 @@ void main() {
       this.currentStroke.push(point);
       this.processStamps();
       this.flushStamps();
+
+      // Taper: rifaccio l'intero tratto in strokeFBO conoscendo la lunghezza totale,
+      // cosi' posso modulare size+opacity ai due estremi. Solo dopo bake.
+      if (this.isTaperActive() && this.recordedStroke.length > 1) {
+        this.regenerateStrokeWithTaper(this.recordedStroke, this.getCurrentStrokePathLength());
+      }
+
       this.bakeStroke();
 
       if (this.canvas.hasPointerCapture(event.pointerId)) {
