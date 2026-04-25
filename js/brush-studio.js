@@ -5,7 +5,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const StrokeMath = window.CBO.StrokeMath;
   const clamp = StrokeMath.clamp;
   const clamp01 = StrokeMath.clamp01;
-  const studioCategories = ["STROKE", "STABILIZATION", "TAPER", "BASIC"];
+  const defaultShapeAlphaSrc = "./data/brush-shape-alpha.png";
+  const defaultShapeAlphaName = "SHAPE ALPHA";
+  const shapeAlphaExportSize = 512;
+  const studioCategories = ["STROKE", "SHAPE", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = 247;
   const taperTipRealMin = 0.15;
   const defaultBrushSettings = {
@@ -30,6 +33,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     taperMinDistanceEnabled: false,
     taperTip: 0.5,
     taperTipAnimation: true,
+    shapeAlphaSrc: defaultShapeAlphaSrc,
+    shapeAlphaName: defaultShapeAlphaName,
   };
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
@@ -70,6 +75,25 @@ window.CBO.initBrushStudio = function initBrushStudio() {
           </div>
           <div class="brush-studio-drawing-pad" data-brush-preview-pad></div>
         </div>
+        <div class="brush-studio-shape-editor" data-brush-shape-editor hidden>
+          <input class="brush-studio-shape-input" type="file" accept="image/*" data-brush-shape-input />
+          <div class="brush-studio-shape-editor-header">
+            <h2 class="brush-studio-drawing-title">SHAPE ALPHA</h2>
+            <div class="brush-studio-shape-editor-actions">
+              <button class="brush-studio-shape-import-button" type="button" data-brush-shape-import>IMPORT</button>
+              <button class="brush-studio-shape-invert-button" type="button" data-brush-shape-invert>INVERT</button>
+              <button class="brush-studio-shape-cancel-button" type="button" data-brush-shape-cancel>CANCEL</button>
+              <button class="brush-studio-shape-accept-button" type="button" aria-label="Accept shape alpha" data-brush-shape-accept>
+                <svg class="brush-studio-check-icon lucide lucide-check-icon lucide-check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="brush-studio-shape-editor-stage">
+            <img class="brush-studio-shape-editor-image" alt="Shape alpha preview" data-brush-shape-editor-image />
+          </div>
+        </div>
       </section>
     `,
   );
@@ -80,8 +104,17 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const previewPad = editorPage.querySelector("[data-brush-preview-pad]");
   const cancelButton = editorPage.querySelector(".brush-studio-cancel-button");
   const confirmButton = editorPage.querySelector(".brush-studio-check-button");
+  const shapeEditor = editorPage.querySelector("[data-brush-shape-editor]");
+  const shapeInput = editorPage.querySelector("[data-brush-shape-input]");
+  const shapeImportButton = editorPage.querySelector("[data-brush-shape-import]");
+  const shapeInvertButton = editorPage.querySelector("[data-brush-shape-invert]");
+  const shapeCancelButton = editorPage.querySelector("[data-brush-shape-cancel]");
+  const shapeAcceptButton = editorPage.querySelector("[data-brush-shape-accept]");
+  const shapeEditorImage = editorPage.querySelector("[data-brush-shape-editor-image]");
   let selectedCategory = studioCategories[0];
   let draftBrushSettings = { ...window.CBO.brushSettings };
+  let shapeEditorDraftSrc = draftBrushSettings.shapeAlphaSrc || defaultShapeAlphaSrc;
+  let shapeEditorDraftName = draftBrushSettings.shapeAlphaName || defaultShapeAlphaName;
   let previewCanvas = null;
   let previewEngine = null;
   let replayFrame = 0;
@@ -168,7 +201,39 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     draftBrushSettings = {
       ...window.CBO.brushSettings,
       streamLineAmount: window.CBO.brushSettings.streamLineAmount ?? window.CBO.brushSettings.smoothing ?? 0,
+      shapeAlphaSrc: window.CBO.brushSettings.shapeAlphaSrc || defaultShapeAlphaSrc,
+      shapeAlphaName: window.CBO.brushSettings.shapeAlphaName || defaultShapeAlphaName,
     };
+  }
+
+  function getShapeAlphaSrc() {
+    return draftBrushSettings.shapeAlphaSrc || defaultShapeAlphaSrc;
+  }
+
+  function getShapeAlphaName() {
+    return draftBrushSettings.shapeAlphaName || defaultShapeAlphaName;
+  }
+
+  function createSelectedHeader({ editable = false } = {}) {
+    const header = document.createElement("div");
+    const selectedName = document.createElement("div");
+
+    header.className = "brush-studio-selected-header";
+    selectedName.className = "brush-studio-selected-name";
+    selectedName.textContent = selectedCategory;
+    header.append(selectedName);
+
+    if (editable) {
+      const editButton = document.createElement("button");
+
+      editButton.className = "brush-studio-edit-button";
+      editButton.type = "button";
+      editButton.textContent = "EDIT";
+      editButton.addEventListener("click", openShapeEditor);
+      header.append(editButton);
+    }
+
+    return header;
   }
 
   function renderCategories() {
@@ -270,6 +335,335 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     setting.setDisabled = setDisabled;
 
     return setting;
+  }
+
+  function renderShapeSettings() {
+    if (!settingsPanel) {
+      return;
+    }
+
+    const selectedHeader = createSelectedHeader({ editable: true });
+    const alphaButton = document.createElement("button");
+    const alphaHeader = document.createElement("div");
+    const alphaLabel = document.createElement("span");
+    const alphaName = document.createElement("span");
+    const alphaPreview = document.createElement("span");
+    const alphaImage = document.createElement("img");
+    const inputStyle = document.createElement("div");
+    const inputStyleLabel = document.createElement("div");
+    const inputStyleOptions = document.createElement("div");
+    const inputOptions = [
+      { label: "TOUCH ONLY", active: true, disabled: false },
+      { label: "AZIMUTH", active: false, disabled: true },
+      { label: "AZIMUTH AND BARREL ROLL", active: false, disabled: true },
+    ];
+
+    alphaButton.className = "brush-studio-shape-alpha-card";
+    alphaButton.type = "button";
+    alphaButton.setAttribute("aria-label", "Edit shape alpha");
+    alphaButton.addEventListener("click", openShapeEditor);
+    alphaHeader.className = "brush-studio-shape-alpha-header";
+    alphaLabel.className = "brush-studio-setting-name";
+    alphaLabel.textContent = "ALPHA";
+    alphaName.className = "brush-studio-shape-alpha-name";
+    alphaName.textContent = getShapeAlphaName();
+    alphaPreview.className = "brush-studio-shape-alpha-preview";
+    alphaImage.className = "brush-studio-shape-alpha-image";
+    alphaImage.alt = "Shape alpha";
+    alphaImage.src = getShapeAlphaSrc();
+
+    alphaHeader.append(alphaLabel, alphaName);
+    alphaPreview.append(alphaImage);
+    alphaButton.append(alphaHeader, alphaPreview);
+
+    inputStyle.className = "brush-studio-shape-input-style";
+    inputStyleLabel.className = "brush-studio-setting-name";
+    inputStyleLabel.textContent = "INPUT STYLE";
+    inputStyleOptions.className = "brush-studio-shape-input-options";
+    inputStyleOptions.append(
+      ...inputOptions.map((option) => {
+        const optionButton = document.createElement("button");
+
+        optionButton.className = "brush-studio-shape-input-option";
+        optionButton.type = "button";
+        optionButton.textContent = option.label;
+        optionButton.disabled = option.disabled;
+        optionButton.classList.toggle("active", option.active);
+        optionButton.setAttribute("aria-pressed", String(option.active));
+
+        return optionButton;
+      }),
+    );
+    inputStyle.append(inputStyleLabel, inputStyleOptions);
+
+    settingsPanel.replaceChildren(selectedHeader, alphaButton, inputStyle);
+  }
+
+  function openShapeEditor() {
+    if (!shapeEditor || !shapeEditorImage) {
+      return;
+    }
+
+    shapeEditorDraftSrc = getShapeAlphaSrc();
+    shapeEditorDraftName = getShapeAlphaName();
+    shapeEditorImage.src = shapeEditorDraftSrc;
+    shapeEditor.hidden = false;
+  }
+
+  function closeShapeEditor() {
+    if (shapeEditor) {
+      shapeEditor.hidden = true;
+    }
+
+    if (shapeInput) {
+      shapeInput.value = "";
+    }
+  }
+
+  function acceptShapeEditor() {
+    draftBrushSettings.shapeAlphaSrc = shapeEditorDraftSrc || defaultShapeAlphaSrc;
+    draftBrushSettings.shapeAlphaName = shapeEditorDraftName || defaultShapeAlphaName;
+    closeShapeEditor();
+    renderShapeSettings();
+    pushDraftToEngine();
+  }
+
+  function loadImageFromObjectUrl(objectUrl) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Unable to load shape alpha image."));
+      image.src = objectUrl;
+    });
+  }
+
+  function getMaskValue({ red, green, blue, alpha, invert }) {
+    const sourceAlpha = alpha / 255;
+    const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+    const mask = invert ? 1 - luminance : luminance;
+
+    return clamp(Math.round(mask * sourceAlpha * 255), 0, 255);
+  }
+
+  function createAlphaDataUrlFromImage(image) {
+    const naturalWidth = Math.max(1, image.naturalWidth || image.width || shapeAlphaExportSize);
+    const naturalHeight = Math.max(1, image.naturalHeight || image.height || shapeAlphaExportSize);
+    const scanScale = Math.min(1, 512 / Math.max(naturalWidth, naturalHeight));
+    const scanWidth = Math.max(1, Math.round(naturalWidth * scanScale));
+    const scanHeight = Math.max(1, Math.round(naturalHeight * scanScale));
+    const scanCanvas = document.createElement("canvas");
+    const scanContext = scanCanvas.getContext("2d", { willReadFrequently: true });
+
+    if (!scanContext) {
+      throw new Error("Unable to read shape alpha image.");
+    }
+
+    scanCanvas.width = scanWidth;
+    scanCanvas.height = scanHeight;
+    scanContext.clearRect(0, 0, scanWidth, scanHeight);
+    scanContext.drawImage(image, 0, 0, scanWidth, scanHeight);
+
+    const scanPixels = scanContext.getImageData(0, 0, scanWidth, scanHeight).data;
+    let borderLuminance = 0;
+    let borderCount = 0;
+
+    for (let y = 0; y < scanHeight; y += 1) {
+      for (let x = 0; x < scanWidth; x += 1) {
+        if (x !== 0 && y !== 0 && x !== scanWidth - 1 && y !== scanHeight - 1) {
+          continue;
+        }
+
+        const offset = (y * scanWidth + x) * 4;
+        const alpha = scanPixels[offset + 3];
+
+        if (alpha <= 8) {
+          continue;
+        }
+
+        borderLuminance +=
+          (0.2126 * scanPixels[offset] + 0.7152 * scanPixels[offset + 1] + 0.0722 * scanPixels[offset + 2]) / 255;
+        borderCount += 1;
+      }
+    }
+
+    const invert = borderCount > 0 && borderLuminance / borderCount > 0.55;
+    let minX = scanWidth;
+    let minY = scanHeight;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < scanHeight; y += 1) {
+      for (let x = 0; x < scanWidth; x += 1) {
+        const offset = (y * scanWidth + x) * 4;
+        const mask = getMaskValue({
+          red: scanPixels[offset],
+          green: scanPixels[offset + 1],
+          blue: scanPixels[offset + 2],
+          alpha: scanPixels[offset + 3],
+          invert,
+        });
+
+        if (mask <= 18) {
+          continue;
+        }
+
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+
+    if (maxX < 0 || maxY < 0) {
+      minX = 0;
+      minY = 0;
+      maxX = scanWidth - 1;
+      maxY = scanHeight - 1;
+    }
+
+    const sourceX = minX / scanScale;
+    const sourceY = minY / scanScale;
+    const sourceWidth = Math.max(1, (maxX - minX + 1) / scanScale);
+    const sourceHeight = Math.max(1, (maxY - minY + 1) / scanScale);
+    const tempCanvas = document.createElement("canvas");
+    const tempContext = tempCanvas.getContext("2d", { willReadFrequently: true });
+    const outputCanvas = document.createElement("canvas");
+    const outputContext = outputCanvas.getContext("2d", { willReadFrequently: true });
+    const innerSize = shapeAlphaExportSize - 64;
+    const drawScale = Math.min(innerSize / sourceWidth, innerSize / sourceHeight);
+    const drawWidth = Math.max(1, Math.round(sourceWidth * drawScale));
+    const drawHeight = Math.max(1, Math.round(sourceHeight * drawScale));
+    const drawX = Math.round((shapeAlphaExportSize - drawWidth) / 2);
+    const drawY = Math.round((shapeAlphaExportSize - drawHeight) / 2);
+
+    if (!tempContext || !outputContext) {
+      throw new Error("Unable to convert shape alpha image.");
+    }
+
+    tempCanvas.width = shapeAlphaExportSize;
+    tempCanvas.height = shapeAlphaExportSize;
+    outputCanvas.width = shapeAlphaExportSize;
+    outputCanvas.height = shapeAlphaExportSize;
+    tempContext.clearRect(0, 0, shapeAlphaExportSize, shapeAlphaExportSize);
+    tempContext.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      drawX,
+      drawY,
+      drawWidth,
+      drawHeight,
+    );
+
+    const imageData = tempContext.getImageData(0, 0, shapeAlphaExportSize, shapeAlphaExportSize);
+    const output = outputContext.createImageData(shapeAlphaExportSize, shapeAlphaExportSize);
+
+    for (let index = 0; index < imageData.data.length; index += 4) {
+      const mask = getMaskValue({
+        red: imageData.data[index],
+        green: imageData.data[index + 1],
+        blue: imageData.data[index + 2],
+        alpha: imageData.data[index + 3],
+        invert,
+      });
+
+      output.data[index] = 255;
+      output.data[index + 1] = 255;
+      output.data[index + 2] = 255;
+      output.data[index + 3] = mask < 9 ? 0 : mask;
+    }
+
+    outputContext.putImageData(output, 0, 0);
+
+    return outputCanvas.toDataURL("image/png");
+  }
+
+  function createInvertedAlphaDataUrlFromImage(image) {
+    const sourceWidth = Math.max(1, image.naturalWidth || image.width || shapeAlphaExportSize);
+    const sourceHeight = Math.max(1, image.naturalHeight || image.height || shapeAlphaExportSize);
+    const tempCanvas = document.createElement("canvas");
+    const tempContext = tempCanvas.getContext("2d", { willReadFrequently: true });
+    const outputCanvas = document.createElement("canvas");
+    const outputContext = outputCanvas.getContext("2d", { willReadFrequently: true });
+    const drawScale = Math.min(shapeAlphaExportSize / sourceWidth, shapeAlphaExportSize / sourceHeight);
+    const drawWidth = Math.max(1, Math.round(sourceWidth * drawScale));
+    const drawHeight = Math.max(1, Math.round(sourceHeight * drawScale));
+    const drawX = Math.round((shapeAlphaExportSize - drawWidth) / 2);
+    const drawY = Math.round((shapeAlphaExportSize - drawHeight) / 2);
+
+    if (!tempContext || !outputContext) {
+      throw new Error("Unable to invert shape alpha.");
+    }
+
+    tempCanvas.width = shapeAlphaExportSize;
+    tempCanvas.height = shapeAlphaExportSize;
+    outputCanvas.width = shapeAlphaExportSize;
+    outputCanvas.height = shapeAlphaExportSize;
+    tempContext.clearRect(0, 0, shapeAlphaExportSize, shapeAlphaExportSize);
+    tempContext.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+
+    const imageData = tempContext.getImageData(0, 0, shapeAlphaExportSize, shapeAlphaExportSize);
+    const output = outputContext.createImageData(shapeAlphaExportSize, shapeAlphaExportSize);
+
+    for (let index = 0; index < imageData.data.length; index += 4) {
+      output.data[index] = 255;
+      output.data[index + 1] = 255;
+      output.data[index + 2] = 255;
+      output.data[index + 3] = 255 - imageData.data[index + 3];
+    }
+
+    outputContext.putImageData(output, 0, 0);
+
+    return outputCanvas.toDataURL("image/png");
+  }
+
+  async function invertShapeAlpha() {
+    if (!shapeEditorDraftSrc) {
+      return;
+    }
+
+    try {
+      const image = await loadImageFromObjectUrl(shapeEditorDraftSrc);
+
+      shapeEditorDraftSrc = createInvertedAlphaDataUrlFromImage(image);
+
+      if (shapeEditorImage) {
+        shapeEditorImage.src = shapeEditorDraftSrc;
+      }
+    } catch (error) {
+      console.warn("Unable to invert shape alpha.", error);
+    }
+  }
+
+  async function importShapeAlpha(file) {
+    if (!file) {
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+
+    try {
+      const image = await loadImageFromObjectUrl(objectUrl);
+      const alphaSrc = createAlphaDataUrlFromImage(image);
+
+      shapeEditorDraftSrc = alphaSrc;
+      shapeEditorDraftName = (file.name || defaultShapeAlphaName).replace(/\.[^.]+$/, "").toUpperCase();
+
+      if (shapeEditorImage) {
+        shapeEditorImage.src = shapeEditorDraftSrc;
+      }
+    } catch (error) {
+      console.warn("Unable to import shape alpha.", error);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+
+      if (shapeInput) {
+        shapeInput.value = "";
+      }
+    }
   }
 
   function renderBasicSettings() {
@@ -784,6 +1178,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       return;
     }
 
+    if (selectedCategory === "SHAPE") {
+      renderShapeSettings();
+      return;
+    }
+
     if (selectedCategory === "STABILIZATION") {
       renderStabilizationSettings();
       return;
@@ -809,6 +1208,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
   function closeBrushStudio() {
     if (brushStudio) {
+      closeShapeEditor();
       destroyPreviewCanvas();
       brushStudio.hidden = true;
     }
@@ -843,6 +1243,17 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     saveDraftBrushSettings();
     closeBrushStudio();
   });
+  shapeImportButton?.addEventListener("click", () => {
+    shapeInput?.click();
+  });
+  shapeInvertButton?.addEventListener("click", () => {
+    void invertShapeAlpha();
+  });
+  shapeInput?.addEventListener("change", () => {
+    void importShapeAlpha(shapeInput.files?.[0]);
+  });
+  shapeCancelButton?.addEventListener("click", closeShapeEditor);
+  shapeAcceptButton?.addEventListener("click", acceptShapeEditor);
 
   renderStudioContent();
 };

@@ -1,0 +1,398 @@
+PROMPT PER CODEX - SOLO MOTORE BRUSH SHAPE
+
+Sto usando Codex con un LLM dentro al progetto. Devi lavorare come un senior WebGL2 graphics engineer. Non devi rifare la UI: la UI la faccio io. Tu devi solo far funzionare il motore in modo pulito, performante e scalabile.
+
+Obiettivo engine-only
+Implementare nel BrushEngine il comportamento reale di questi parametri della shape:
+
+- shapeRotation
+  - valore interno previsto in brushState: -1 -> +1
+  - UI corrispondente: -100% -> +100%
+  - 0 = la shape resta statica.
+  - +1 = la shape segue la direzione del tratto.
+  - -1 = la shape ruota in direzione inversa rispetto al tratto.
+
+- shapeScatter
+  - valore interno previsto in brushState: 0 -> 2
+  - UI corrispondente: 0% -> 200%
+  - randomizza la rotazione di ogni stamp.
+  - non dipende dalla direzione del tratto.
+  - 2 deve corrispondere a rotazione random completa.
+
+- shapeCount
+  - valore interno previsto in brushState: integer 1 -> 16
+  - UI corrispondente: 1 -> 16
+  - numero di shape stampate nello stesso punto.
+
+- shapeCountJitter
+  - valore interno previsto in brushState: 0 -> 1
+  - UI corrispondente: 0% -> 100%
+  - randomizza il count effettivo tra un minimo e shapeCount.
+  - formula consigliata:
+    minCount = max(1, ceil(shapeCount * (1 - shapeCountJitter)))
+    effectiveCount = random integer tra minCount e shapeCount
+
+Importante
+- NON implementare UI.
+- NON modificare lo stile CSS.
+- NON aggiungere slider.
+- NON cambiare Brush Studio se non e' strettamente necessario per evitare errori, ma in principio devi lavorare solo su js/brush-engine.js.
+- Se serve un helper puro e condiviso puoi valutare js/stroke-math.js, ma preferisco tenere questa feature dentro BrushEngine se resta contenuta.
+- La UI scrivera' in window.CBO.brushSettings i campi shapeRotation, shapeScatter, shapeCount, shapeCountJitter.
+- Il motore deve funzionare anche se questi campi mancano, usando default sicuri.
+
+File principali da guardare
+- js/brush-engine.js
+- js/stroke-math.js solo se serve
+- agent.md per i vincoli architetturali
+
+Vincoli architetturali
+- Motore WebGL2 puro.
+- Shader GLSL ES 3.00.
+- Vietato gl.LINES / gl.LINE_STRIP per disegnare tratti.
+- Vietato gl.POINTS per i dab.
+- Continuare a usare quad istanziati con gl.drawArraysInstanced.
+- Non usare Canvas2D per il rendering principale.
+- Output pre-moltiplicato, compatibile con MAX blending dello stroke layer.
+- Random deterministico: usare lo stato esistente strokeRandomState / nextRandom(), non Math.random().
+- Deve essere stabile in replayLastStroke() e nel preview pad.
+- Evitare colli di bottiglia nel path caldo del disegno.
+- Evitare allocazioni inutili dentro loop caldi.
+- Massimo count 16: e' accettabile espandere gli stamp CPU, ma fallo in modo ragionato.
+
+Codice attuale che devi conoscere
+
+1. Shader brush attuale in js/brush-engine.js
+
+```js
+const BRUSH_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 a_position;
+layout(location = 1) in vec2 aInstancePos;
+layout(location = 2) in float aInstancePressure;
+layout(location = 3) in float aInstanceAlpha;
+layout(location = 4) in float aInstanceSizeScale;
+
+uniform vec2 u_docResolution;
+uniform float u_brushSize;
+uniform float u_minSizeRatio;
+
+out vec2 v_uv;
+out float v_alpha;
+
+void main() {
+  float pressure = clamp(aInstancePressure, 0.0, 1.0);
+  float sizeFactor = mix(u_minSizeRatio, 1.0, pressure);
+  float scale = max(aInstanceSizeScale, 0.0);
+  vec2 documentPosition = aInstancePos + a_position * u_brushSize * sizeFactor * scale;
+  vec2 clipPosition = (documentPosition / u_docResolution) * 2.0 - 1.0;
+
+  clipPosition.y *= -1.0;
+  v_uv = a_position + 0.5;
+  v_alpha = clamp(aInstanceAlpha, 0.0, 1.0);
+  gl_Position = vec4(clipPosition, 0.0, 1.0);
+}
+`;
+
+const BRUSH_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform vec3 u_color;
+uniform float u_flow;
+uniform float u_hardness;
+uniform sampler2D u_shapeTexture;
+uniform float u_useShapeTexture;
+
+in vec2 v_uv;
+in float v_alpha;
+
+out vec4 outColor;
+
+void main() {
+  float shape = 1.0;
+
+  if (u_useShapeTexture > 0.5) {
+    shape = texture(u_shapeTexture, v_uv).a;
+  } else {
+    float distanceFromCenter = distance(v_uv, vec2(0.5));
+
+    if (distanceFromCenter > 0.5) {
+      discard;
+    }
+
+    float fw = max(fwidth(distanceFromCenter), 0.001);
+    float edgeStart = mix(0.0, 0.5 - fw, clamp(u_hardness, 0.0, 1.0));
+    shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
+  }
+
+  if (shape <= 0.001) {
+    discard;
+  }
+
+  float alpha = shape * v_alpha * clamp(u_flow, 0.0, 1.0);
+  outColor = vec4(u_color * alpha, alpha);
+}
+`;
+```
+
+Implementazione attesa nello shader:
+- Aggiungi un attributo per la rotazione per istanza, ad esempio layout(location = 5) in float aInstanceRotation.
+- Ruota a_position nel vertex shader prima di moltiplicarlo per brush size / pressure / scale.
+- Mantieni v_uv = a_position + 0.5, cosi la texture shape resta campionata nello spazio locale del dab mentre il quad ruota nello spazio documento.
+
+Schema suggerito:
+
+```glsl
+float angle = aInstanceRotation;
+float c = cos(angle);
+float s = sin(angle);
+vec2 rotatedPosition = vec2(
+  a_position.x * c - a_position.y * s,
+  a_position.x * s + a_position.y * c
+);
+vec2 documentPosition = aInstancePos + rotatedPosition * u_brushSize * sizeFactor * scale;
+```
+
+2. createBrushResources() attuale
+
+Attualmente lo stride e' 20 byte:
+
+```js
+// Instance stride 20 byte: pos (xy) + pressure + alphaScale + sizeScale.
+gl.enableVertexAttribArray(1);
+gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 0);
+gl.vertexAttribDivisor(1, 1);
+gl.enableVertexAttribArray(2);
+gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 20, 8);
+gl.vertexAttribDivisor(2, 1);
+gl.enableVertexAttribArray(3);
+gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 20, 12);
+gl.vertexAttribDivisor(3, 1);
+gl.enableVertexAttribArray(4);
+gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 20, 16);
+gl.vertexAttribDivisor(4, 1);
+```
+
+Implementazione attesa:
+- Cambiare stride a 24 byte.
+- Mantenere:
+  - x, y
+  - pressure
+  - alphaScale
+  - sizeScale
+  - rotation
+- Aggiungere attribute location 5 offset 20.
+
+3. Stamp model attuale
+
+```js
+createStamp(point, alphaScale = 1) {
+  return {
+    x: point.x,
+    y: point.y,
+    pressure: point.pressure,
+    alphaScale,
+    sizeScale: 1,
+    tiltX: point.tiltX,
+    tiltY: point.tiltY,
+  };
+}
+
+lerpStamp(from, to, t) {
+  return {
+    x: this.lerp(from.x, to.x, t),
+    y: this.lerp(from.y, to.y, t),
+    pressure: this.lerp(from.pressure, to.pressure, t),
+    alphaScale: this.lerp(from.alphaScale ?? 1, to.alphaScale ?? 1, t),
+    sizeScale: this.lerp(from.sizeScale ?? 1, to.sizeScale ?? 1, t),
+    tiltX: this.lerp(from.tiltX, to.tiltX, t),
+    tiltY: this.lerp(from.tiltY, to.tiltY, t),
+  };
+}
+```
+
+Implementazione attesa:
+- Aggiungi rotation sugli stamp.
+- Non serve tilt/azimuth/barrel roll per ora.
+- Non usare pointer tilt.
+- Mouse-only/basico.
+
+4. Random deterministico esistente
+
+```js
+nextRandom() {
+  const state = this.strokeRandomState || { seed: 1 };
+  state.seed = (Math.imul(state.seed || 1, 1664525) + 1013904223) >>> 0;
+  this.strokeRandomState = state;
+  return state.seed / 4294967296;
+}
+
+randomSigned() {
+  return this.nextRandom() * 2 - 1;
+}
+```
+
+Usa questo per:
+- scatter
+- count jitter
+- rotazioni random per stamp multipli
+
+Non usare Math.random().
+
+5. processStamps() attuale, punto chiave
+
+La tangente viene gia calcolata qui:
+
+```js
+const tangent = {
+  x: (point.x - previousPoint.x) / stepDistance,
+  y: (point.y - previousPoint.y) / stepDistance,
+};
+const stamp = this.applyStampJitter(this.lerpStamp(previousPoint, point, stampT), tangent);
+
+this.strokeDistance += stampDistance;
+stamp.alphaScale = this.getFallOffScale();
+stamp.sizeScale = 1;
+this.applyTaperToStamp(stamp);
+this.stampsBuffer.push(stamp);
+```
+
+Implementazione attesa:
+- Calcolare rotation usando tangent.
+- Poi applicare scatter.
+- Poi gestire count/count jitter.
+- Idealmente crea helper tipo:
+  - getShapeRotation()
+  - getShapeScatter()
+  - getShapeCount()
+  - getShapeCountJitter()
+  - getTangentAngle(tangent)
+  - getShapeStampRotation(tangent)
+  - getEffectiveShapeCount()
+  - pushShapeStamp(baseStamp, tangent)
+- Non sporcare processStamps con troppa logica inline.
+
+Semantica rotation consigliata
+
+```js
+const directionAngle = Math.atan2(tangent.y, tangent.x);
+const rotationFollow = this.clamp(this.brushState.shapeRotation, -1, 1);
+const directionalRotation = directionAngle * rotationFollow;
+```
+
+Note:
+- shapeRotation 0 => directionalRotation 0.
+- shapeRotation 1 => segue directionAngle.
+- shapeRotation -1 => inverse direction.
+- Se il verso risulta visivamente invertito per via dell'asse Y DOM/WebGL, correggi in modo esplicito e commenta brevemente.
+
+Semantica scatter consigliata
+
+```js
+const scatter = this.clamp(this.brushState.shapeScatter, 0, 2);
+const scatterAngle = this.randomSigned() * Math.PI * scatter;
+```
+
+Con scatter 2, randomSigned * 2PI copre rotazione completa.
+
+Semantica count jitter consigliata
+
+```js
+const count = this.clamp(Math.round(this.brushState.shapeCount), 1, 16);
+const jitter = this.clamp01(this.brushState.shapeCountJitter);
+const minCount = Math.max(1, Math.ceil(count * (1 - jitter)));
+const effectiveCount = jitter <= 0
+  ? count
+  : minCount + Math.floor(this.nextRandom() * (count - minCount + 1));
+```
+
+6. flushStamps() attuale
+
+Attualmente:
+
+```js
+const stampCount = this.stampsBuffer.length;
+// 5 float per istanza: x, y, pressure, alphaScale, sizeScale.
+const instanceData = new Float32Array(stampCount * 5);
+
+for (let index = 0; index < stampCount; index += 1) {
+  const stamp = this.stampsBuffer[index];
+  const offset = index * 5;
+
+  instanceData[offset] = stamp.x;
+  instanceData[offset + 1] = stamp.y;
+  instanceData[offset + 2] = stamp.pressure;
+  instanceData[offset + 3] = stamp.alphaScale ?? 1;
+  instanceData[offset + 4] = stamp.sizeScale ?? 1;
+}
+```
+
+Implementazione attesa:
+- Passare a 6 float per istanza.
+- offset = index * 6.
+- instanceData[offset + 5] = stamp.rotation ?? 0.
+- Aggiornare commenti e stride.
+
+7. Taper / forced stamps / replay
+
+Attenzione:
+- Il taper rigenera il tratto in regenerateStrokeWithTaper().
+- Esiste pushForcedTaperStamp(point, distanceFromStart).
+- Anche gli stamp forzati devono avere rotation coerente o almeno fallback 0 sicuro.
+- replayStroke() deve restare deterministico.
+- preview pad usa setBrushState() e replayLastStroke().
+
+Accettazione
+La feature e' pronta quando:
+- shapeRotation, shapeScatter, shapeCount, shapeCountJitter sono letti da brushState con default sicuri.
+- Lo shader ruota i dab via attributo per istanza.
+- Lo stride del VBO e il packing instanceData sono corretti.
+- Count fino a 16 funziona senza crash.
+- Count jitter usa random deterministico.
+- Scatter usa random deterministico.
+- replayLastStroke resta stabile.
+- shape texture esistente continua a funzionare.
+- fallback cerchio procedurale continua a funzionare.
+- taper/falloff/spacing/jitter esistenti non vengono rotti.
+
+Test da eseguire
+Esegui almeno:
+
+```powershell
+node --check js\brush-engine.js
+```
+
+Se tocchi stroke-math:
+
+```powershell
+node --check js\stroke-math.js
+```
+
+Se hai browser/test visuale disponibile, verifica manualmente:
+- brush normale senza shape settings esplicite: comportamento invariato.
+- shapeRotation 0: dab statico.
+- shapeRotation 1: dab segue il tratto.
+- shapeRotation -1: dab segue inverso.
+- shapeScatter 2: rotazione completamente random.
+- shapeCount 16: non crasha e non crea rallentamenti assurdi.
+- shapeCountJitter 1 con Count 10: count varia tra 1 e 10.
+- preview replay stabile, senza sfarfallio.
+
+Output finale richiesto
+Non incollare tutto il codice.
+Dammi solo:
+- file modificati
+- breve descrizione tecnica
+- test eseguiti
+- eventuali punti delicati
+
+Se ti manca contesto
+Non chiedere tutto il progetto e non chiedere file interi.
+Chiedi solo snippet specifici, ad esempio:
+- createBrushResources()
+- BRUSH_VERTEX_SHADER_SOURCE / BRUSH_FRAGMENT_SHADER_SOURCE
+- createStamp() / lerpStamp()
+- processStamps()
+- flushStamps()
+- regenerateStrokeWithTaper() / pushForcedTaperStamp()

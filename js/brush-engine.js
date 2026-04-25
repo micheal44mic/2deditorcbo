@@ -108,6 +108,8 @@ precision highp float;
 uniform vec3 u_color;
 uniform float u_flow;
 uniform float u_hardness;
+uniform sampler2D u_shapeTexture;
+uniform float u_useShapeTexture;
 
 in vec2 v_uv;
 in float v_alpha;
@@ -115,16 +117,26 @@ in float v_alpha;
 out vec4 outColor;
 
 void main() {
-  float distanceFromCenter = distance(v_uv, vec2(0.5));
+  float shape = 1.0;
 
-  if (distanceFromCenter > 0.5) {
-    discard;
+  if (u_useShapeTexture > 0.5) {
+    shape = texture(u_shapeTexture, v_uv).a;
+  } else {
+    float distanceFromCenter = distance(v_uv, vec2(0.5));
+
+    if (distanceFromCenter > 0.5) {
+      discard;
+    }
+
+    // Hardness=1: bordo nitido (fade in 1 px AA). Hardness=0: gradiente radiale dal centro.
+    float fw = max(fwidth(distanceFromCenter), 0.001);
+    float edgeStart = mix(0.0, 0.5 - fw, clamp(u_hardness, 0.0, 1.0));
+    shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
   }
 
-  // Hardness=1: bordo nitido (fade in 1 px AA). Hardness=0: gradiente radiale dal centro.
-  float fw = max(fwidth(distanceFromCenter), 0.001);
-  float edgeStart = mix(0.0, 0.5 - fw, clamp(u_hardness, 0.0, 1.0));
-  float shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
+  if (shape <= 0.001) {
+    discard;
+  }
 
   float alpha = shape * v_alpha * clamp(u_flow, 0.0, 1.0);
 
@@ -225,6 +237,10 @@ void main() {
       this.brushProgramInfo = null;
       this.compositeProgramInfo = null;
       this.brush = null;
+      this.shapeTexture = null;
+      this.shapeTextureSource = "";
+      this.shapeTextureReady = false;
+      this.shapeTextureRequestId = 0;
       this.fullscreenQuad = null;
 
       this.handleResize = this.handleResize.bind(this);
@@ -250,6 +266,7 @@ void main() {
       this.createBaseLayerTarget();
       this.createStrokeLayerTarget();
       this.brush = this.createBrushResources();
+      this.syncShapeTextureFromState();
       this.centerCamera();
       this.observeViewportSize();
       this.bindBrushSettings();
@@ -421,6 +438,8 @@ void main() {
           minSizeRatio: gl.getUniformLocation(program, "u_minSizeRatio"),
           flow: gl.getUniformLocation(program, "u_flow"),
           hardness: gl.getUniformLocation(program, "u_hardness"),
+          shapeTexture: gl.getUniformLocation(program, "u_shapeTexture"),
+          useShapeTexture: gl.getUniformLocation(program, "u_useShapeTexture"),
         },
       };
     }
@@ -765,6 +784,7 @@ void main() {
 
     handleBrushSettingsChange() {
       this.brushState = { ...(this.readBrushSettingsSource() || {}) };
+      this.syncShapeTextureFromState();
     }
 
     readBrushSettingsSource() {
@@ -777,6 +797,81 @@ void main() {
 
     setBrushState(settings) {
       this.brushState = { ...(settings || {}) };
+      this.syncShapeTextureFromState();
+    }
+
+    getShapeTextureSource() {
+      const source = this.brushState?.shapeAlphaSrc;
+
+      return typeof source === "string" && source.trim() ? source : "";
+    }
+
+    syncShapeTextureFromState() {
+      const source = this.getShapeTextureSource();
+
+      if (source === this.shapeTextureSource) {
+        return;
+      }
+
+      this.shapeTextureSource = source;
+      this.shapeTextureReady = false;
+      this.shapeTextureRequestId += 1;
+
+      if (!source) {
+        return;
+      }
+
+      const requestId = this.shapeTextureRequestId;
+      const image = new Image();
+
+      image.onload = () => {
+        if (this.isDisposed || requestId !== this.shapeTextureRequestId) {
+          return;
+        }
+
+        this.uploadShapeTexture(image);
+      };
+      image.onerror = () => {
+        if (requestId === this.shapeTextureRequestId) {
+          this.shapeTextureReady = false;
+        }
+      };
+      image.src = source;
+    }
+
+    uploadShapeTexture(image) {
+      const gl = this.gl;
+
+      if (!this.shapeTexture) {
+        this.shapeTexture = gl.createTexture();
+      }
+
+      if (!this.shapeTexture) {
+        this.shapeTextureReady = false;
+        return;
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, this.shapeTexture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        image,
+      );
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      this.shapeTextureReady = true;
+
+      if (this.options.singleStrokeMode && !this.isDrawing && this.lastRecordedStroke.length > 0) {
+        this.replayLastStroke();
+      }
     }
 
     bindPointerEvents() {
@@ -1366,6 +1461,7 @@ void main() {
       const instanceData = new Float32Array(stampCount * 5);
       const brushSize = this.getBrushSize();
       const color = this.parseColorToRgb01(this.brushState.color);
+      const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
@@ -1392,6 +1488,11 @@ void main() {
       gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
       gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
       gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getHardness());
+      gl.uniform1f(this.brushProgramInfo.uniforms.useShapeTexture, useShapeTexture);
+      gl.uniform1i(this.brushProgramInfo.uniforms.shapeTexture, 1);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, useShapeTexture ? this.shapeTexture : null);
+      gl.activeTexture(gl.TEXTURE0);
 
       gl.bindVertexArray(this.brush.vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.brush.instanceVBO);
@@ -1400,6 +1501,9 @@ void main() {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.activeTexture(gl.TEXTURE0);
       gl.useProgram(null);
       // Ripristina la pipeline al blending pre-moltiplicato standard.
       gl.blendEquation(gl.FUNC_ADD);
@@ -1855,6 +1959,11 @@ void main() {
       if (this.strokeTexture) {
         gl.deleteTexture(this.strokeTexture);
         this.strokeTexture = null;
+      }
+
+      if (this.shapeTexture) {
+        gl.deleteTexture(this.shapeTexture);
+        this.shapeTexture = null;
       }
 
       if (this.compositeProgramInfo?.program) {
