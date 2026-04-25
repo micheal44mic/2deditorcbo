@@ -78,6 +78,7 @@ layout(location = 2) in float aInstancePressure;
 layout(location = 3) in float aInstanceAlpha;
 layout(location = 4) in float aInstanceSizeScale;
 layout(location = 5) in float aInstanceRotation;
+layout(location = 6) in vec3 aInstanceColor;
 
 uniform vec2 u_docResolution;
 uniform float u_brushSize;
@@ -86,6 +87,7 @@ uniform vec2 u_shapeFlip;
 
 out vec2 v_uv;
 out float v_alpha;
+out vec3 v_color;
 
 void main() {
   // Min-size ratio evita che pressure=0 collassi lo stamp a 0px (problema con stylus).
@@ -108,6 +110,7 @@ void main() {
   clipPosition.y *= -1.0;
   v_uv = a_position + 0.5;
   v_alpha = clamp(aInstanceAlpha, 0.0, 1.0);
+  v_color = aInstanceColor;
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
 `;
@@ -115,7 +118,6 @@ void main() {
   const BRUSH_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
-uniform vec3 u_color;
 uniform float u_flow;
 uniform float u_hardness;
 uniform sampler2D u_shapeTexture;
@@ -123,6 +125,7 @@ uniform float u_useShapeTexture;
 
 in vec2 v_uv;
 in float v_alpha;
+in vec3 v_color;
 
 out vec4 outColor;
 
@@ -151,7 +154,7 @@ void main() {
   float alpha = shape * v_alpha * clamp(u_flow, 0.0, 1.0);
 
   // Output strettamente pre-moltiplicato: necessario per MAX blending coerente.
-  outColor = vec4(u_color * alpha, alpha);
+  outColor = vec4(v_color * alpha, alpha);
 }
 `;
 
@@ -224,6 +227,8 @@ void main() {
       this.strokeStampCount = 0;
       this.strokeDynamicsState = null;
       this.strokeRandomState = { seed: 1 };
+      this.strokeColorRandomState = null;
+      this.strokeColorState = null;
       this.strokeInitialSeed = 1;
       this.strokeShapeRotation = 0;
       this.strokeTotalLength = null;
@@ -445,7 +450,6 @@ void main() {
         uniforms: {
           brushSize: gl.getUniformLocation(program, "u_brushSize"),
           docResolution: gl.getUniformLocation(program, "u_docResolution"),
-          color: gl.getUniformLocation(program, "u_color"),
           minSizeRatio: gl.getUniformLocation(program, "u_minSizeRatio"),
           shapeFlip: gl.getUniformLocation(program, "u_shapeFlip"),
           flow: gl.getUniformLocation(program, "u_flow"),
@@ -747,22 +751,25 @@ void main() {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, instanceVBO);
       gl.bufferData(gl.ARRAY_BUFFER, 0, gl.DYNAMIC_DRAW);
-      // Instance stride 24 byte: pos (xy) + pressure + alphaScale + sizeScale + rotation.
+      // Instance stride 36 byte: pos (xy) + pressure + alphaScale + sizeScale + rotation + color (rgb).
       gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 24, 0);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 36, 0);
       gl.vertexAttribDivisor(1, 1);
       gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 24, 8);
+      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 36, 8);
       gl.vertexAttribDivisor(2, 1);
       gl.enableVertexAttribArray(3);
-      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 24, 12);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 36, 12);
       gl.vertexAttribDivisor(3, 1);
       gl.enableVertexAttribArray(4);
-      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 24, 16);
+      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 36, 16);
       gl.vertexAttribDivisor(4, 1);
       gl.enableVertexAttribArray(5);
-      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 24, 20);
+      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 36, 20);
       gl.vertexAttribDivisor(5, 1);
+      gl.enableVertexAttribArray(6);
+      gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 36, 24);
+      gl.vertexAttribDivisor(6, 1);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
@@ -1077,6 +1084,7 @@ void main() {
       sample.strokeSeed = seed;
       this.strokeRandomState = { seed };
       this.strokeInitialSeed = seed;
+      this.initializeStrokeColorDynamics(seed);
       this.strokeShapeRotation = this.brushState.shapeRandomized === true
         ? (this.createSeededUnit(seed ^ 0x9e3779b9) * 2 - 1) * Math.PI
         : 0;
@@ -1166,6 +1174,219 @@ void main() {
       }
 
       return fallback;
+    }
+
+    getColorDynamicsAmount(key) {
+      const value = this.brushState?.[key] ?? namespace.brushSettings?.[key] ?? 0;
+
+      return this.clamp01(value);
+    }
+
+    getColorJitterAmounts(prefix) {
+      return {
+        hue: this.getColorDynamicsAmount(`${prefix}ColorHueJitter`),
+        saturation: this.getColorDynamicsAmount(`${prefix}ColorSaturationJitter`),
+        lightness: this.getColorDynamicsAmount(`${prefix}ColorLightnessJitter`),
+        darkness: this.getColorDynamicsAmount(`${prefix}ColorDarknessJitter`),
+        secondary: this.getColorDynamicsAmount(`${prefix}ColorSecondaryJitter`),
+      };
+    }
+
+    hasColorJitter(amounts) {
+      return (
+        amounts.hue > 0 ||
+        amounts.saturation > 0 ||
+        amounts.lightness > 0 ||
+        amounts.darkness > 0 ||
+        amounts.secondary > 0
+      );
+    }
+
+    getPrimaryColorRgb() {
+      return this.parseColorToRgb01(this.brushState?.color ?? namespace.selectedColor ?? "#000000");
+    }
+
+    getSecondaryColorRgb() {
+      return this.parseColorToRgb01(namespace.selectedColors?.secondary ?? this.brushState?.secondaryColor ?? "#000000");
+    }
+
+    nextColorRandom() {
+      const state = this.strokeColorRandomState || { seed: 1 };
+
+      state.seed = (Math.imul(state.seed || 1, 1664525) + 1013904223) >>> 0;
+      this.strokeColorRandomState = state;
+
+      return state.seed / 4294967296;
+    }
+
+    randomColorSigned() {
+      return this.nextColorRandom() * 2 - 1;
+    }
+
+    wrapHue(hue) {
+      return ((hue % 360) + 360) % 360;
+    }
+
+    rgbToHsl(rgb) {
+      const red = this.clamp01(rgb?.[0]);
+      const green = this.clamp01(rgb?.[1]);
+      const blue = this.clamp01(rgb?.[2]);
+      const max = Math.max(red, green, blue);
+      const min = Math.min(red, green, blue);
+      const lightness = (max + min) * 0.5;
+      const delta = max - min;
+      let hue = 0;
+      let saturation = 0;
+
+      if (delta > 0) {
+        saturation = lightness > 0.5
+          ? delta / (2 - max - min)
+          : delta / (max + min);
+
+        if (max === red) {
+          hue = (green - blue) / delta + (green < blue ? 6 : 0);
+        } else if (max === green) {
+          hue = (blue - red) / delta + 2;
+        } else {
+          hue = (red - green) / delta + 4;
+        }
+
+        hue *= 60;
+      }
+
+      return {
+        h: hue,
+        s: saturation,
+        l: lightness,
+      };
+    }
+
+    hueToRgb(p, q, t) {
+      let nextT = t;
+
+      if (nextT < 0) {
+        nextT += 1;
+      }
+
+      if (nextT > 1) {
+        nextT -= 1;
+      }
+
+      if (nextT < 1 / 6) {
+        return p + (q - p) * 6 * nextT;
+      }
+
+      if (nextT < 1 / 2) {
+        return q;
+      }
+
+      if (nextT < 2 / 3) {
+        return p + (q - p) * (2 / 3 - nextT) * 6;
+      }
+
+      return p;
+    }
+
+    hslToRgb(hsl) {
+      const hue = this.wrapHue(hsl?.h ?? 0) / 360;
+      const saturation = this.clamp01(hsl?.s);
+      const lightness = this.clamp01(hsl?.l);
+
+      if (saturation <= 0) {
+        return [lightness, lightness, lightness];
+      }
+
+      const q = lightness < 0.5
+        ? lightness * (1 + saturation)
+        : lightness + saturation - lightness * saturation;
+      const p = 2 * lightness - q;
+
+      return [
+        this.hueToRgb(p, q, hue + 1 / 3),
+        this.hueToRgb(p, q, hue),
+        this.hueToRgb(p, q, hue - 1 / 3),
+      ];
+    }
+
+    mixRgb(from, to, t) {
+      const amount = this.clamp01(t);
+
+      return [
+        this.lerp(this.clamp01(from?.[0]), this.clamp01(to?.[0]), amount),
+        this.lerp(this.clamp01(from?.[1]), this.clamp01(to?.[1]), amount),
+        this.lerp(this.clamp01(from?.[2]), this.clamp01(to?.[2]), amount),
+      ];
+    }
+
+    applyColorJitter(baseRgb, amounts, secondaryRgb) {
+      const hsl = this.rgbToHsl(baseRgb);
+
+      if (amounts.hue > 0) {
+        hsl.h = this.wrapHue(hsl.h + this.randomColorSigned() * 180 * amounts.hue);
+      }
+
+      if (amounts.saturation > 0) {
+        hsl.s = this.lerp(hsl.s, this.nextColorRandom(), amounts.saturation);
+      }
+
+      if (amounts.lightness > 0) {
+        hsl.l = this.lerp(hsl.l, 1, this.nextColorRandom() * amounts.lightness);
+      }
+
+      if (amounts.darkness > 0) {
+        hsl.l = this.lerp(hsl.l, 0, this.nextColorRandom() * amounts.darkness);
+      }
+
+      hsl.s = this.clamp01(hsl.s);
+      hsl.l = this.clamp01(hsl.l);
+
+      const rgb = this.hslToRgb(hsl);
+
+      if (amounts.secondary <= 0) {
+        return rgb;
+      }
+
+      return this.mixRgb(rgb, secondaryRgb, this.nextColorRandom() * amounts.secondary);
+    }
+
+    initializeStrokeColorDynamics(seed) {
+      const colorSeed = (((seed || 1) >>> 0) ^ 0x6c8e9cf5) >>> 0;
+      const primaryRgb = this.getPrimaryColorRgb();
+      const secondaryRgb = this.getSecondaryColorRgb();
+      const strokeAmounts = this.getColorJitterAmounts("stroke");
+      const stampAmounts = this.getColorJitterAmounts("stamp");
+      const hasStrokeJitter = this.hasColorJitter(strokeAmounts);
+      const hasStampJitter = this.hasColorJitter(stampAmounts);
+
+      this.strokeColorRandomState = { seed: colorSeed || 1 };
+      this.strokeColorState = {
+        secondaryRgb,
+        stampAmounts,
+        hasStampJitter,
+        strokeBaseColorRgb: hasStrokeJitter
+          ? this.applyColorJitter(primaryRgb, strokeAmounts, secondaryRgb)
+          : primaryRgb,
+      };
+    }
+
+    getCurrentStrokeColorRgb() {
+      return this.strokeColorState?.strokeBaseColorRgb || this.getPrimaryColorRgb();
+    }
+
+    getNextStampColorRgb() {
+      if (!this.strokeColorState) {
+        return this.getPrimaryColorRgb();
+      }
+
+      if (!this.strokeColorState.hasStampJitter) {
+        return this.strokeColorState.strokeBaseColorRgb;
+      }
+
+      return this.applyColorJitter(
+        this.strokeColorState.strokeBaseColorRgb,
+        this.strokeColorState.stampAmounts,
+        this.strokeColorState.secondaryRgb,
+      );
     }
 
     getOpacity01() {
@@ -1498,6 +1719,7 @@ void main() {
 
       if (effectiveCount === 1) {
         baseStamp.rotation = directionalRotation + this.getShapeScatterRotation();
+        baseStamp.colorRgb = this.getNextStampColorRgb();
         this.stampsBuffer.push(baseStamp);
         return;
       }
@@ -1512,6 +1734,7 @@ void main() {
           rotation: directionalRotation + this.getShapeScatterRotation(),
           tiltX: baseStamp.tiltX,
           tiltY: baseStamp.tiltY,
+          colorRgb: this.getNextStampColorRgb(),
         });
       }
     }
@@ -1569,15 +1792,16 @@ void main() {
 
       const gl = this.gl;
       const stampCount = this.stampsBuffer.length;
-      // 6 float per istanza: x, y, pressure, alphaScale, sizeScale, rotation.
-      const instanceData = new Float32Array(stampCount * 6);
+      // 9 float per istanza: x, y, pressure, alphaScale, sizeScale, rotation, color rgb.
+      const instanceData = new Float32Array(stampCount * 9);
       const brushSize = this.getBrushSize();
-      const color = this.parseColorToRgb01(this.brushState.color);
+      const fallbackColor = this.getCurrentStrokeColorRgb();
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
-        const offset = index * 6;
+        const offset = index * 9;
+        const color = stamp.colorRgb || fallbackColor;
 
         instanceData[offset] = stamp.x;
         instanceData[offset + 1] = stamp.y;
@@ -1585,6 +1809,9 @@ void main() {
         instanceData[offset + 3] = stamp.alphaScale ?? 1;
         instanceData[offset + 4] = stamp.sizeScale ?? 1;
         instanceData[offset + 5] = stamp.rotation ?? 0;
+        instanceData[offset + 6] = color[0];
+        instanceData[offset + 7] = color[1];
+        instanceData[offset + 8] = color[2];
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
@@ -1597,7 +1824,6 @@ void main() {
       gl.useProgram(this.brushProgramInfo.program);
       gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, this.docWidth, this.docHeight);
       gl.uniform1f(this.brushProgramInfo.uniforms.brushSize, brushSize);
-      gl.uniform3f(this.brushProgramInfo.uniforms.color, color[0], color[1], color[2]);
       gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
       gl.uniform2f(this.brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
       gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
@@ -1721,9 +1947,10 @@ void main() {
       const startPoint = { ...firstSample, pressure };
 
       // Riusiamo il seed iniziale dello stroke originale per riprodurre l'identica
-      // sequenza di jitter spaziale (lateral/linear/spacing).
+      // sequenza di jitter spaziale (lateral/linear/spacing) e colore.
       this.clearStrokeLayer();
       this.strokeRandomState = { seed: this.strokeInitialSeed };
+      this.initializeStrokeColorDynamics(this.strokeInitialSeed);
       this.strokeDynamicsState = StrokeMath?.createStrokeState
         ? StrokeMath.createStrokeState(point, {
             pressure,
@@ -1817,6 +2044,8 @@ void main() {
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
       this.strokeDynamicsState = null;
+      this.strokeColorRandomState = null;
+      this.strokeColorState = null;
       this.isDrawing = false;
     }
 
@@ -1926,6 +2155,8 @@ void main() {
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
       this.strokeDynamicsState = null;
+      this.strokeColorRandomState = null;
+      this.strokeColorState = null;
       this.isDrawing = false;
       this.activePointerId = null;
     }
@@ -1953,6 +2184,8 @@ void main() {
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
       this.strokeDynamicsState = null;
+      this.strokeColorRandomState = null;
+      this.strokeColorState = null;
       this.isDrawing = false;
       this.activePointerId = null;
     }

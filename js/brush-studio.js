@@ -8,7 +8,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const defaultShapeAlphaSrc = "./data/brush-shape-alpha.png";
   const defaultShapeAlphaName = "SHAPE ALPHA";
   const shapeAlphaExportSize = 512;
-  const studioCategories = ["STROKE", "SHAPE", "STABILIZATION", "TAPER", "BASIC"];
+  const studioCategories = ["STROKE", "SHAPE", "COLOR DYNAMICS", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = 247;
   const taperTipRealMin = 0.15;
   const defaultBrushSettings = {
@@ -42,6 +42,16 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     shapeRandomized: false,
     shapeFlipX: false,
     shapeFlipY: false,
+    stampColorHueJitter: 0,
+    stampColorSaturationJitter: 0,
+    stampColorLightnessJitter: 0,
+    stampColorDarknessJitter: 0,
+    stampColorSecondaryJitter: 0,
+    strokeColorHueJitter: 0,
+    strokeColorSaturationJitter: 0,
+    strokeColorLightnessJitter: 0,
+    strokeColorDarknessJitter: 0,
+    strokeColorSecondaryJitter: 0,
   };
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
@@ -342,6 +352,29 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     setting.setDisabled = setDisabled;
 
     return setting;
+  }
+
+  function createSectionLabel(text) {
+    const label = document.createElement("div");
+
+    label.className = "brush-studio-section-label";
+    label.textContent = text;
+
+    return label;
+  }
+
+  function createPercentSetting(key, label) {
+    return createRangeSetting({
+      key,
+      label,
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings[key]) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
   }
 
   function renderShapeSettings() {
@@ -857,6 +890,44 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
+  function renderColorDynamicsSettings() {
+    if (!settingsPanel) {
+      return;
+    }
+
+    const selectedName = document.createElement("div");
+    const stampJitterLabel = createSectionLabel("STAMP COLOR JITTER");
+    const strokeJitterLabel = createSectionLabel("STROKE COLOR JITTER");
+    const stampHueSetting = createPercentSetting("stampColorHueJitter", "HUE");
+    const stampSaturationSetting = createPercentSetting("stampColorSaturationJitter", "SATURATION");
+    const stampLightnessSetting = createPercentSetting("stampColorLightnessJitter", "LIGHTNESS");
+    const stampDarknessSetting = createPercentSetting("stampColorDarknessJitter", "DARKNESS");
+    const stampSecondarySetting = createPercentSetting("stampColorSecondaryJitter", "SECONDARY COLOR");
+    const strokeHueSetting = createPercentSetting("strokeColorHueJitter", "HUE");
+    const strokeSaturationSetting = createPercentSetting("strokeColorSaturationJitter", "SATURATION");
+    const strokeLightnessSetting = createPercentSetting("strokeColorLightnessJitter", "LIGHTNESS");
+    const strokeDarknessSetting = createPercentSetting("strokeColorDarknessJitter", "DARKNESS");
+    const strokeSecondarySetting = createPercentSetting("strokeColorSecondaryJitter", "SECONDARY COLOR");
+
+    selectedName.className = "brush-studio-selected-name";
+    selectedName.textContent = selectedCategory;
+    settingsPanel.replaceChildren(
+      selectedName,
+      stampJitterLabel,
+      stampHueSetting,
+      stampSaturationSetting,
+      stampLightnessSetting,
+      stampDarknessSetting,
+      stampSecondarySetting,
+      strokeJitterLabel,
+      strokeHueSetting,
+      strokeSaturationSetting,
+      strokeLightnessSetting,
+      strokeDarknessSetting,
+      strokeSecondarySetting,
+    );
+  }
+
   function renderStabilizationSettings() {
     if (!settingsPanel) {
       return;
@@ -1263,6 +1334,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     if (selectedCategory === "SHAPE") {
       renderShapeSettings();
+      return;
+    }
+
+    if (selectedCategory === "COLOR DYNAMICS") {
+      renderColorDynamicsSettings();
       return;
     }
 
