@@ -1,16 +1,12 @@
 .editor-page {
   --left-rail-width: 72px;
   --left-drawer-width: 265px;
-  --left-panel-width: calc(var(--left-rail-width) + var(--left-drawer-width));
+  --left-panel-width: var(--left-rail-width);
   --right-panel-width: 245px;
 
   position: relative;
   width: 100%;
   min-height: 100vh;
-}
-
-.editor-page.left-panel-collapsed {
-  --left-panel-width: var(--left-rail-width);
 }
 
 .editor-stage {
@@ -28,8 +24,8 @@
   --canvas-zoom: 1;
 
   position: relative;
-  width: 960px;
-  height: 620px;
+  width: 1960px;
+  height: 1960px;
   overflow: hidden;
   background-color: #f8fafc;
   box-shadow:
@@ -64,6 +60,36 @@
   touch-action: none;
 }
 
+.editor-app-center-guides {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  pointer-events: none;
+}
+
+.editor-app-center-guide {
+  position: absolute;
+  display: block;
+  background: rgba(42, 201, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.62), 0 0 12px rgba(42, 201, 255, 0.52);
+}
+
+.editor-app-center-guide.vertical {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+
+.editor-app-center-guide.horizontal {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
 .editor-pixel-grid {
   position: fixed;
   left: 0;
@@ -81,7 +107,7 @@
 }
 
 .editor-canvas-shell.pixel-grid-visible::before {
-  opacity: 0.22;
+  opacity: 0.11;
 }
 
 .editor-pixel-grid.active {

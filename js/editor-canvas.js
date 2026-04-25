@@ -3,20 +3,29 @@ window.CBO = window.CBO || {};
 window.CBO.initEditorCanvas = function initEditorCanvas() {
   const stage = document.querySelector(".editor-stage");
 
-  if (!stage || stage.dataset.canvasReady === "true" || !window.CBO.SmudgeTool) {
+  if (
+    !stage ||
+    stage.dataset.canvasReady === "true" ||
+    !window.CBO.StrokeMath ||
+    !window.CBO.SkiaBrushTool ||
+    !window.CBO.SmudgeTool
+  ) {
     return;
   }
 
   stage.dataset.canvasReady = "true";
 
-  const width = 960;
-  const height = 620;
+  const width = 1960;
+  const height = 1960;
   const minZoom = 0.25;
   const maxZoom = 32;
   const zoomLevels = [0.25, 0.333333, 0.5, 0.666667, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32];
   const shell = document.createElement("div");
   const canvas = document.createElement("canvas");
   const pixelGrid = document.createElement("canvas");
+  const appCenterGuides = document.createElement("div");
+  const verticalAppCenterGuide = document.createElement("span");
+  const horizontalAppCenterGuide = document.createElement("span");
   const pixelGridContext = pixelGrid.getContext("2d", {
     alpha: true,
     desynchronized: true,
@@ -53,21 +62,31 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     jitterLinear: 0,
     fallOff: 0,
   };
+  const existingSmudgeSettings = window.CBO.smudgeSettings || {};
+  const smudgeSettings = {
+    ...window.CBO.SmudgeBrushes.wetPaint,
+    ...existingSmudgeSettings,
+  };
 
   let CanvasKit = null;
   let surface = null;
   let skCanvas = null;
   let renderer = null;
   let smudge = null;
+  let skiaBrush = null;
   let pixels = new Uint8ClampedArray(width * height * 4);
   let activeTool = getActiveTool();
   let activePointerId = null;
   let activeStrokeTool = "";
+  let activeStrokeHandler = null;
   let activePanPointerId = null;
-  let lastPoint = null;
   let lastPanPoint = null;
-  let strokeState = null;
+  let resolveCanvasReady = null;
+  let uploadPlacementQueue = Promise.resolve();
   let spacePanning = false;
+  const canvasReady = new Promise((resolve) => {
+    resolveCanvasReady = resolve;
+  });
   let canvasView = {
     panX: 0,
     panY: 0,
@@ -77,23 +96,28 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     left: 0,
     top: 0,
   };
-  let brushPaint = null;
-  let brushFillPaint = null;
-  let eraserPaint = null;
-  let eraserFillPaint = null;
-
   window.CBO.brushSettings = brushSettings;
+  window.CBO.smudgeSettings = smudgeSettings;
   shell.className = "editor-canvas-shell";
+  shell.style.width = `${width}px`;
+  shell.style.height = `${height}px`;
   canvas.className = "editor-canvas editor-skia-paint-canvas";
+  appCenterGuides.className = "editor-app-center-guides";
+  verticalAppCenterGuide.className = "editor-app-center-guide vertical";
+  horizontalAppCenterGuide.className = "editor-app-center-guide horizontal";
   pixelGrid.className = "editor-pixel-grid";
   canvas.width = width;
   canvas.height = height;
   canvas.setAttribute("aria-label", "Canvas Skia editor");
+  appCenterGuides.setAttribute("aria-hidden", "true");
   pixelGrid.setAttribute("aria-hidden", "true");
+  appCenterGuides.append(verticalAppCenterGuide, horizontalAppCenterGuide);
   shell.append(canvas);
   stage.append(shell, pixelGrid);
+  document.querySelector(".editor-page")?.append(appCenterGuides);
   stage.dataset.activeCanvasTool = activeTool;
   resetCanvasView();
+  requestAnimationFrame(resetCanvasView);
 
   void bootCanvas();
 
@@ -136,6 +160,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   async function bootCanvas() {
     if (!window.CanvasKitInit) {
       stage.dataset.skiaStatus = "missing";
+      resolveCanvasReady?.();
+      resolveCanvasReady = null;
       return;
     }
 
@@ -147,14 +173,12 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
 
       if (!surface) {
         stage.dataset.skiaStatus = "surface-error";
+        resolveCanvasReady?.();
+        resolveCanvasReady = null;
         return;
       }
 
       skCanvas = surface.getCanvas();
-      brushPaint = new CanvasKit.Paint();
-      brushFillPaint = new CanvasKit.Paint();
-      eraserPaint = new CanvasKit.Paint();
-      eraserFillPaint = new CanvasKit.Paint();
       renderer = createSkiaRenderer(CanvasKit, surface, width, height);
       smudge = new window.CBO.SmudgeTool(
         pixels,
@@ -163,20 +187,26 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
         { ...window.CBO.SmudgeBrushes.wetPaint },
         renderer,
       );
-
-      configureStrokePaint(brushPaint);
-      configureFillPaint(brushFillPaint);
-      configureStrokePaint(eraserPaint);
-      configureFillPaint(eraserFillPaint);
-      eraserPaint.setBlendMode(CanvasKit.BlendMode.Clear);
-      eraserFillPaint.setBlendMode(CanvasKit.BlendMode.Clear);
+      skiaBrush = new window.CBO.SkiaBrushTool({
+        canvasKit: CanvasKit,
+        skCanvas,
+        surface,
+        width,
+        height,
+        getSettings: getToolSettings,
+        getColor: () => window.CBO.selectedColor,
+      });
       renderer.clear();
       syncPixelsFromSurface();
       bindCanvasEvents();
       stage.dataset.skiaStatus = "ready";
       stage.dataset.paintEngine = "skia";
+      resolveCanvasReady?.();
+      resolveCanvasReady = null;
     } catch (error) {
       stage.dataset.skiaStatus = "error";
+      resolveCanvasReady?.();
+      resolveCanvasReady = null;
       console.error("CanvasKit init failed", error);
     }
   }
@@ -211,33 +241,6 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
         skSurface.flush();
       },
     };
-  }
-
-  function configureStrokePaint(paint) {
-    paint.setAntiAlias(true);
-    paint.setStyle(CanvasKit.PaintStyle.Stroke);
-    paint.setStrokeCap(CanvasKit.StrokeCap.Round);
-    paint.setStrokeJoin(CanvasKit.StrokeJoin.Round);
-  }
-
-  function configureFillPaint(paint) {
-    paint.setAntiAlias(true);
-    paint.setStyle(CanvasKit.PaintStyle.Fill);
-  }
-
-  function parseHexColor(hexColor) {
-    const fallback = [1, 1, 1];
-    const normalized = String(hexColor || "").replace("#", "");
-
-    if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-      return fallback;
-    }
-
-    return [
-      parseInt(normalized.slice(0, 2), 16) / 255,
-      parseInt(normalized.slice(2, 4), 16) / 255,
-      parseInt(normalized.slice(4, 6), 16) / 255,
-    ];
   }
 
   function clamp(value, min, max) {
@@ -320,16 +323,32 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
       parseFloat(stageStyle.paddingLeft || "0") + parseFloat(stageStyle.paddingRight || "0");
     const verticalPadding =
       parseFloat(stageStyle.paddingTop || "0") + parseFloat(stageStyle.paddingBottom || "0");
-    const availableWidth = Math.max(1, stage.clientWidth - horizontalPadding);
-    const availableHeight = Math.max(1, stage.clientHeight - verticalPadding);
+    const pageStyle = getComputedStyle(document.querySelector(".editor-page") || document.body);
+    const leftPanelWidth = parseFloat(pageStyle.getPropertyValue("--left-panel-width") || "0");
+    const rightPanelWidth = parseFloat(pageStyle.getPropertyValue("--right-panel-width") || "0");
+    const viewportBreathingRoom = 0.86;
+    const availableWidth = Math.max(
+      1,
+      window.innerWidth - leftPanelWidth - rightPanelWidth - horizontalPadding,
+    );
+    const availableHeight = Math.max(1, window.innerHeight - verticalPadding);
 
-    return clamp(Math.min(availableWidth / width, availableHeight / height, 1), minZoom, 1);
+    return clamp(
+      Math.min(availableWidth / width, availableHeight / height, 1) * viewportBreathingRoom,
+      minZoom,
+      1,
+    );
   }
 
   function getCenteredPan(zoom) {
+    const viewportCenter = {
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    };
+
     return {
-      x: (width * (1 - zoom)) / 2,
-      y: (height * (1 - zoom)) / 2,
+      x: viewportCenter.x - shellLayoutOrigin.left - (width * zoom) / 2,
+      y: viewportCenter.y - shellLayoutOrigin.top - (height * zoom) / 2,
     };
   }
 
@@ -532,192 +551,40 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     }
   }
 
-  function normalizePressure(pressure) {
-    const nextPressure = Number(pressure);
-
-    if (!Number.isFinite(nextPressure) || nextPressure <= 0) {
-      return 1;
-    }
-
-    return clamp(nextPressure, 0.2, 2);
-  }
-
   function getToolSettings(tool) {
     return tool === "eraser" ? eraserSettings : brushSettings;
   }
 
-  function getPaintForTool(tool, fill = false) {
-    if (tool === "eraser") {
-      return fill ? eraserFillPaint : eraserPaint;
-    }
-
-    return fill ? brushFillPaint : brushPaint;
-  }
-
-  function getEffectiveRadius(settings, pressure) {
-    return Math.max(0.5, settings.radius * normalizePressure(pressure));
-  }
-
-  function getStreamLineAmount(settings) {
-    return clamp01(settings.streamLineAmount ?? settings.smoothing);
-  }
-
-  function getStabilizedPoint(point, state, settings) {
-    const stabilization = clamp01(settings.stabilizationAmount);
-
-    state.inputPoints.push({ ...point });
-
-    if (state.inputPoints.length > 28) {
-      state.inputPoints.shift();
-    }
-
-    if (stabilization <= 0 || state.inputPoints.length < 2) {
-      return point;
-    }
-
-    const previousPoint = state.inputPoints[state.inputPoints.length - 2];
-    const speed = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y);
-    const speedFactor = clamp(speed / 28, 0, 1);
-    const effectiveStabilization = stabilization * (0.35 + speedFactor * 0.65);
-    const windowSize = Math.min(
-      state.inputPoints.length,
-      2 + Math.round(effectiveStabilization * 16),
-    );
-    const points = state.inputPoints.slice(-windowSize);
-    const average = points.reduce(
-      (result, nextPoint) => ({
-        x: result.x + nextPoint.x / points.length,
-        y: result.y + nextPoint.y / points.length,
-      }),
-      { x: 0, y: 0 },
-    );
-
-    return {
-      x: point.x + (average.x - point.x) * effectiveStabilization,
-      y: point.y + (average.y - point.y) * effectiveStabilization,
-    };
-  }
-
-  function getSmoothedPressure(pressure, state, settings) {
-    const streamLinePressure = clamp01(settings.streamLinePressure);
-    const nextPressure = normalizePressure(pressure);
-
-    if (streamLinePressure <= 0) {
-      state.pressure = nextPressure;
-      return nextPressure;
-    }
-
-    const follow = clamp(1 - streamLinePressure * 0.92, 0.08, 1);
-
-    state.pressure += (nextPressure - state.pressure) * follow;
-
-    return state.pressure;
-  }
-
-  function createStrokeState(point, tool, pressure = 1) {
-    const seed =
-      (Date.now() ^
-        Math.round(point.x * 1000) ^
-        Math.round(point.y * 1000) ^
-        (tool === "eraser" ? 0x9e3779b9 : 0x85ebca6b)) >>>
-      0;
-
-    return {
-      distance: 0,
-      inputPoints: [{ ...point }],
-      lastStampPoint: { ...point },
-      pressure: normalizePressure(pressure),
-      seed: seed || 1,
-      smoothedPoint: { ...point },
-      tool,
-    };
-  }
-
-  function nextRandom(state) {
-    state.seed = (Math.imul(state.seed, 1664525) + 1013904223) >>> 0;
-
-    return state.seed / 4294967296;
-  }
-
-  function randomSigned(state) {
-    return nextRandom(state) * 2 - 1;
-  }
-
-  function processStrokeInput(point, tool, pressure = 1) {
-    if (!strokeState || tool !== "brush") {
-      return {
-        point,
-        pressure: normalizePressure(pressure),
-      };
-    }
-
-    const stabilizedPoint = getStabilizedPoint(point, strokeState, brushSettings);
-    const streamLineAmount = getStreamLineAmount(brushSettings);
-    const nextPressure = getSmoothedPressure(pressure, strokeState, brushSettings);
-
-    if (streamLineAmount <= 0) {
-      strokeState.smoothedPoint = { ...stabilizedPoint };
-      return {
-        point: stabilizedPoint,
-        pressure: nextPressure,
-      };
-    }
-
-    const follow = clamp(1 - streamLineAmount * 0.88, 0.08, 1);
-
-    strokeState.smoothedPoint = {
-      x: strokeState.smoothedPoint.x + (stabilizedPoint.x - strokeState.smoothedPoint.x) * follow,
-      y: strokeState.smoothedPoint.y + (stabilizedPoint.y - strokeState.smoothedPoint.y) * follow,
+  function getSmudgeBrushSettings() {
+    const settings = {
+      ...window.CBO.SmudgeBrushes.wetPaint,
+      ...smudgeSettings,
     };
 
     return {
-      point: strokeState.smoothedPoint,
-      pressure: nextPressure,
+      ...settings,
+      radius: clamp(settings.radius, 1, 120),
+      opacity: clamp01(settings.opacity),
+      hardness: clamp01(settings.hardness),
+      spacing: clamp(settings.spacing, 0.01, 0.12),
+      drag: clamp01(settings.drag),
+      pressureAffectsStrength: settings.pressureAffectsStrength !== false,
     };
   }
 
-  function getNextStampStep(settings, radius, state) {
-    const spacing = clamp01(settings.spacing);
-    const spacingJitter = clamp01(settings.spacingJitter);
-    const minStep = Math.max(1, radius * 0.12);
-    const maxStep = Math.max(minStep, radius * 2.6);
-    const baseStep = minStep + (maxStep - minStep) * spacing;
-    const jitterSpan = radius * (0.35 + spacing * 1.6) * spacingJitter;
-
-    return Math.max(minStep, baseStep + randomSigned(state) * jitterSpan);
-  }
-
-  function getFallOffScale(settings, state, radius) {
-    const fallOff = clamp01(settings.fallOff);
-
-    if (fallOff <= 0) {
-      return 1;
+  function getStrokeHandler(tool) {
+    if (tool === "smudge") {
+      syncPixelsFromSurface();
+      smudge.setBrush(getSmudgeBrushSettings());
+      return smudge;
     }
 
-    const fadeDistance = Math.max(radius * 2, radius * (96 - fallOff * 88));
-
-    return clamp(1 - state.distance / fadeDistance, 0, 1);
-  }
-
-  function applyStampJitter(point, tangent, settings, radius, state) {
-    const lateral = clamp(settings.jitterLateral, 0, 2) * radius;
-    const linear = clamp(settings.jitterLinear, 0, 2) * radius;
-
-    if (lateral <= 0 && linear <= 0) {
-      return point;
+    if (tool === "brush" || tool === "eraser") {
+      skiaBrush.setTool(tool);
+      return skiaBrush;
     }
 
-    const lateralOffset = randomSigned(state) * lateral;
-    const linearOffset = randomSigned(state) * linear;
-    const perpendicular = {
-      x: -tangent.y,
-      y: tangent.x,
-    };
-
-    return {
-      x: clamp(point.x + perpendicular.x * lateralOffset + tangent.x * linearOffset, 0, width - 1),
-      y: clamp(point.y + perpendicular.y * lateralOffset + tangent.y * linearOffset, 0, height - 1),
-    };
+    return null;
   }
 
   function toCanvasPoint(event) {
@@ -773,69 +640,157 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     smudge?.setPixels(pixels);
   }
 
-  function drawDab(point, tool, pressure = 1, opacityScale = 1) {
-    const settings = getToolSettings(tool);
-    const paint = getPaintForTool(tool, true);
-    const radius = getEffectiveRadius(settings, pressure);
-    const opacity = clamp01(settings.opacity) * clamp01(opacityScale);
-
-    if (opacity <= 0) {
-      return;
-    }
-
-    if (tool === "brush") {
-      const [red, green, blue] = parseHexColor(window.CBO.selectedColor);
-      paint.setColor(CanvasKit.Color4f(red, green, blue, opacity));
-    } else {
-      paint.setColor(CanvasKit.Color4f(0, 0, 0, opacity));
-    }
-
-    skCanvas.drawCircle(point.x, point.y, radius, paint);
-  }
-
-  function drawStrokeSegment(to, tool, pressure = 1) {
-    if (!strokeState) {
-      return;
-    }
-
-    const settings = getToolSettings(tool);
-    const radius = getEffectiveRadius(settings, pressure);
-    let from = strokeState.lastStampPoint;
-    let deltaX = to.x - from.x;
-    let deltaY = to.y - from.y;
-    let distance = Math.hypot(deltaX, deltaY);
-
-    while (distance > 0) {
-      const step = getNextStampStep(settings, radius, strokeState);
-
-      if (distance < step) {
-        break;
+  function loadImageDataFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+      if (!(blob instanceof Blob)) {
+        reject(new Error("Upload image data is missing"));
+        return;
       }
 
-      const tangent = {
-        x: deltaX / distance,
-        y: deltaY / distance,
-      };
-      const stampPoint = {
-        x: from.x + tangent.x * step,
-        y: from.y + tangent.y * step,
+      const objectUrl = URL.createObjectURL(blob);
+      const image = new Image();
+
+      image.onload = () => {
+        try {
+          const sourceWidth = image.naturalWidth || image.width;
+          const sourceHeight = image.naturalHeight || image.height;
+
+          if (!sourceWidth || !sourceHeight) {
+            reject(new Error("Upload image has no size"));
+            return;
+          }
+
+          const sourceCanvas = document.createElement("canvas");
+          const sourceContext = sourceCanvas.getContext("2d", {
+            willReadFrequently: true,
+          });
+
+          sourceCanvas.width = sourceWidth;
+          sourceCanvas.height = sourceHeight;
+
+          if (!sourceContext) {
+            reject(new Error("Unable to read upload image pixels"));
+            return;
+          }
+
+          sourceContext.clearRect(0, 0, sourceWidth, sourceHeight);
+          sourceContext.drawImage(image, 0, 0);
+          resolve({
+            data: sourceContext.getImageData(0, 0, sourceWidth, sourceHeight).data,
+            height: sourceHeight,
+            width: sourceWidth,
+          });
+        } catch (error) {
+          reject(error);
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
       };
 
-      strokeState.distance += step;
-      drawDab(
-        applyStampJitter(stampPoint, tangent, settings, radius, strokeState),
-        tool,
-        pressure,
-        getFallOffScale(settings, strokeState, radius),
-      );
-      strokeState.lastStampPoint = stampPoint;
-      from = strokeState.lastStampPoint;
-      deltaX = to.x - from.x;
-      deltaY = to.y - from.y;
-      distance = Math.hypot(deltaX, deltaY);
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Unable to load upload image"));
+      };
+
+      image.src = objectUrl;
+    });
+  }
+
+  function blendPixel(sourceData, sourceIndex, destinationIndex) {
+    const sourceAlpha = sourceData[sourceIndex + 3];
+
+    if (sourceAlpha <= 0) {
+      return;
     }
 
-    surface.flush();
+    if (sourceAlpha >= 255) {
+      pixels[destinationIndex] = sourceData[sourceIndex];
+      pixels[destinationIndex + 1] = sourceData[sourceIndex + 1];
+      pixels[destinationIndex + 2] = sourceData[sourceIndex + 2];
+      pixels[destinationIndex + 3] = 255;
+      return;
+    }
+
+    const sourceOpacity = sourceAlpha / 255;
+    const destinationOpacity = pixels[destinationIndex + 3] / 255;
+    const outputOpacity = sourceOpacity + destinationOpacity * (1 - sourceOpacity);
+
+    if (outputOpacity <= 0) {
+      pixels[destinationIndex] = 0;
+      pixels[destinationIndex + 1] = 0;
+      pixels[destinationIndex + 2] = 0;
+      pixels[destinationIndex + 3] = 0;
+      return;
+    }
+
+    const destinationScale = destinationOpacity * (1 - sourceOpacity);
+
+    pixels[destinationIndex] = Math.round(
+      (sourceData[sourceIndex] * sourceOpacity + pixels[destinationIndex] * destinationScale) /
+        outputOpacity,
+    );
+    pixels[destinationIndex + 1] = Math.round(
+      (sourceData[sourceIndex + 1] * sourceOpacity +
+        pixels[destinationIndex + 1] * destinationScale) /
+        outputOpacity,
+    );
+    pixels[destinationIndex + 2] = Math.round(
+      (sourceData[sourceIndex + 2] * sourceOpacity +
+        pixels[destinationIndex + 2] * destinationScale) /
+        outputOpacity,
+    );
+    pixels[destinationIndex + 3] = Math.round(outputOpacity * 255);
+  }
+
+  function compositeImageDataCentered(source) {
+    const sourceWidth = source.width;
+    const sourceHeight = source.height;
+    const sourceData = source.data;
+    const left = Math.round((width - sourceWidth) / 2);
+    const top = Math.round((height - sourceHeight) / 2);
+    const sourceStartX = Math.max(0, -left);
+    const sourceStartY = Math.max(0, -top);
+    const sourceEndX = Math.min(sourceWidth, width - left);
+    const sourceEndY = Math.min(sourceHeight, height - top);
+
+    for (let sourceY = sourceStartY; sourceY < sourceEndY; sourceY += 1) {
+      const destinationY = top + sourceY;
+
+      for (let sourceX = sourceStartX; sourceX < sourceEndX; sourceX += 1) {
+        const destinationX = left + sourceX;
+        const sourceIndex = (sourceY * sourceWidth + sourceX) * 4;
+        const destinationIndex = (destinationY * width + destinationX) * 4;
+
+        blendPixel(sourceData, sourceIndex, destinationIndex);
+      }
+    }
+  }
+
+  async function placeUploadedImageOnCanvas(detail = {}) {
+    if (!renderer) {
+      await canvasReady;
+    }
+
+    if (!renderer) {
+      return;
+    }
+
+    const source = await loadImageDataFromBlob(detail.blob);
+
+    pushHistorySnapshot();
+    compositeImageDataCentered(source);
+    renderer.renderPixels(pixels);
+    smudge?.setPixels(pixels);
+  }
+
+  function queueUploadedImagePlacement(detail = {}) {
+    uploadPlacementQueue = uploadPlacementQueue
+      .then(() => placeUploadedImageOnCanvas(detail))
+      .catch((error) => {
+        console.error("Unable to place uploaded image on canvas", error);
+      });
+
+    return uploadPlacementQueue;
   }
 
   function startStroke(event) {
@@ -861,20 +816,19 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     event.preventDefault();
     activePointerId = event.pointerId;
     activeStrokeTool = activeTool;
-    lastPoint = toCanvasPoint(event);
-    strokeState = createStrokeState(lastPoint, activeStrokeTool, event.pressure);
-    pushHistorySnapshot();
-    shell.setPointerCapture(event.pointerId);
+    activeStrokeHandler = getStrokeHandler(activeStrokeTool);
 
-    if (activeStrokeTool === "smudge") {
-      syncPixelsFromSurface();
-      smudge.setBrush({ ...window.CBO.SmudgeBrushes.wetPaint });
-      smudge.pointerDown(lastPoint.x, lastPoint.y, event.pressure);
+    if (!activeStrokeHandler) {
+      activePointerId = null;
+      activeStrokeTool = "";
       return;
     }
 
-    drawDab(lastPoint, activeStrokeTool, event.pressure);
-    surface.flush();
+    const point = toCanvasPoint(event);
+
+    pushHistorySnapshot();
+    shell.setPointerCapture(event.pointerId);
+    activeStrokeHandler.pointerDown(point.x, point.y, event.pressure);
   }
 
   function moveStroke(event) {
@@ -883,22 +837,14 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
       return;
     }
 
-    if (activePointerId !== event.pointerId || !lastPoint) {
+    if (activePointerId !== event.pointerId || !activeStrokeHandler) {
       return;
     }
 
     event.preventDefault();
     const point = toCanvasPoint(event);
 
-    if (activeStrokeTool === "smudge") {
-      smudge.pointerMove(point.x, point.y, event.pressure);
-      return;
-    }
-
-    const strokeInput = processStrokeInput(point, activeStrokeTool, event.pressure);
-
-    drawStrokeSegment(strokeInput.point, activeStrokeTool, strokeInput.pressure);
-    lastPoint = strokeInput.point;
+    activeStrokeHandler.pointerMove(point.x, point.y, event.pressure);
   }
 
   function endStroke(event) {
@@ -912,12 +858,9 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
 
     const point = toCanvasPoint(event);
 
-    if (activeStrokeTool === "smudge") {
-      smudge.pointerUp(point.x, point.y, event.pressure);
-    } else {
-      const strokeInput = processStrokeInput(point, activeStrokeTool, event.pressure);
+    activeStrokeHandler?.pointerUp(point.x, point.y, event.pressure);
 
-      drawStrokeSegment(strokeInput.point, activeStrokeTool, strokeInput.pressure);
+    if (activeStrokeHandler?.syncPixelsOnEnd) {
       syncPixelsFromSurface();
     }
 
@@ -927,8 +870,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
 
     activePointerId = null;
     activeStrokeTool = "";
-    lastPoint = null;
-    strokeState = null;
+    activeStrokeHandler = null;
   }
 
   function bindCanvasEvents() {
@@ -963,8 +905,35 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     }
   });
 
+  window.addEventListener("cbo:place-uploaded-image", (event) => {
+    queueUploadedImagePlacement(event.detail);
+  });
+
+  window.CBO.placeUploadedImageOnCanvas = queueUploadedImagePlacement;
+
   window.addEventListener("cbo:brush-settings-change", (event) => {
     Object.assign(brushSettings, event.detail?.settings || {});
     brushSettings.streamLineAmount = brushSettings.streamLineAmount ?? brushSettings.smoothing ?? 0;
+  });
+
+  window.addEventListener("cbo:paint-settings-change", (event) => {
+    const settings = event.detail?.settings || {};
+
+    if (event.detail?.tool === "smudge") {
+      Object.assign(smudgeSettings, settings);
+      window.CBO.smudgeSettings = { ...smudgeSettings };
+      return;
+    }
+
+    if (event.detail?.tool === "brush") {
+      Object.assign(brushSettings, settings);
+      brushSettings.streamLineAmount = brushSettings.streamLineAmount ?? brushSettings.smoothing ?? 0;
+      window.CBO.brushSettings = { ...brushSettings };
+      return;
+    }
+
+    if (event.detail?.tool === "eraser") {
+      Object.assign(eraserSettings, settings);
+    }
   });
 };

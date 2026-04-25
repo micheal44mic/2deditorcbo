@@ -2,6 +2,9 @@ window.CBO = window.CBO || {};
 
 window.CBO.initBrushStudio = function initBrushStudio() {
   const editorPage = document.querySelector(".editor-page");
+  const StrokeMath = window.CBO.StrokeMath;
+  const clamp = StrokeMath.clamp;
+  const clamp01 = StrokeMath.clamp01;
   const studioCategories = ["STROKE", "STABILIZATION", "BASIC"];
   const defaultBrushSettings = {
     radius: 18,
@@ -83,14 +86,6 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   let previewSize = { width: 0, height: 0 };
   let previewUserStroke = null;
 
-  function clamp(value, min, max) {
-    return Math.min(max, Math.max(min, Number(value) || 0));
-  }
-
-  function clamp01(value) {
-    return clamp(value, 0, 1);
-  }
-
   function parseHexColor(hexColor) {
     const normalized = String(hexColor || "#ffffff").replace("#", "");
 
@@ -101,166 +96,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     return `#${normalized}`;
   }
 
-  function normalizePressure(pressure) {
-    const nextPressure = Number(pressure);
-
-    if (!Number.isFinite(nextPressure) || nextPressure <= 0) {
-      return 1;
-    }
-
-    return clamp(nextPressure, 0.2, 2);
-  }
-
   function getPreviewRadius(pressure = 1) {
-    return Math.max(0.5, draftBrushSettings.radius * normalizePressure(pressure));
-  }
-
-  function getStreamLineAmount(settings) {
-    return clamp01(settings.streamLineAmount ?? settings.smoothing);
-  }
-
-  function getStabilizedPoint(point, state, settings) {
-    const stabilization = clamp01(settings.stabilizationAmount);
-
-    state.inputPoints.push({ ...point });
-
-    if (state.inputPoints.length > 28) {
-      state.inputPoints.shift();
-    }
-
-    if (stabilization <= 0 || state.inputPoints.length < 2) {
-      return point;
-    }
-
-    const previousPoint = state.inputPoints[state.inputPoints.length - 2];
-    const speed = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y);
-    const speedFactor = clamp(speed / 28, 0, 1);
-    const effectiveStabilization = stabilization * (0.35 + speedFactor * 0.65);
-    const windowSize = Math.min(
-      state.inputPoints.length,
-      2 + Math.round(effectiveStabilization * 16),
-    );
-    const points = state.inputPoints.slice(-windowSize);
-    const average = points.reduce(
-      (result, nextPoint) => ({
-        x: result.x + nextPoint.x / points.length,
-        y: result.y + nextPoint.y / points.length,
-      }),
-      { x: 0, y: 0 },
-    );
-
-    return {
-      x: point.x + (average.x - point.x) * effectiveStabilization,
-      y: point.y + (average.y - point.y) * effectiveStabilization,
-    };
-  }
-
-  function getSmoothedPressure(pressure, state, settings) {
-    const streamLinePressure = clamp01(settings.streamLinePressure);
-    const nextPressure = normalizePressure(pressure);
-
-    if (streamLinePressure <= 0) {
-      state.pressure = nextPressure;
-      return nextPressure;
-    }
-
-    const follow = clamp(1 - streamLinePressure * 0.92, 0.08, 1);
-
-    state.pressure += (nextPressure - state.pressure) * follow;
-
-    return state.pressure;
-  }
-
-  function createPreviewStrokeState(point, seed = Date.now(), pressure = 1) {
-    return {
-      distance: 0,
-      inputPoints: [{ ...point }],
-      lastStampPoint: { ...point },
-      pressure: normalizePressure(pressure),
-      seed: (seed || 1) >>> 0,
-      smoothedPoint: { ...point },
-    };
-  }
-
-  function nextPreviewRandom(state) {
-    state.seed = (Math.imul(state.seed, 1664525) + 1013904223) >>> 0;
-
-    return state.seed / 4294967296;
-  }
-
-  function previewRandomSigned(state) {
-    return nextPreviewRandom(state) * 2 - 1;
-  }
-
-  function getPreviewSmoothedPoint(point) {
-    if (!previewStrokeState) {
-      return point;
-    }
-
-    const smoothedPoint = getStabilizedPoint(point, previewStrokeState, draftBrushSettings);
-    const streamLineAmount = getStreamLineAmount(draftBrushSettings);
-
-    if (streamLineAmount <= 0) {
-      previewStrokeState.smoothedPoint = { ...smoothedPoint };
-      return smoothedPoint;
-    }
-
-    const follow = clamp(1 - streamLineAmount * 0.88, 0.08, 1);
-
-    previewStrokeState.smoothedPoint = {
-      x:
-        previewStrokeState.smoothedPoint.x +
-        (smoothedPoint.x - previewStrokeState.smoothedPoint.x) * follow,
-      y:
-        previewStrokeState.smoothedPoint.y +
-        (smoothedPoint.y - previewStrokeState.smoothedPoint.y) * follow,
-    };
-
-    return previewStrokeState.smoothedPoint;
-  }
-
-  function getNextPreviewStampStep(radius, state) {
-    const spacing = clamp01(draftBrushSettings.spacing);
-    const spacingJitter = clamp01(draftBrushSettings.spacingJitter);
-    const minStep = Math.max(1, radius * 0.12);
-    const maxStep = Math.max(minStep, radius * 2.6);
-    const baseStep = minStep + (maxStep - minStep) * spacing;
-    const jitterSpan = radius * (0.35 + spacing * 1.6) * spacingJitter;
-
-    return Math.max(minStep, baseStep + previewRandomSigned(state) * jitterSpan);
-  }
-
-  function getPreviewFallOffScale(radius) {
-    const fallOff = clamp01(draftBrushSettings.fallOff);
-
-    if (!previewStrokeState || fallOff <= 0) {
-      return 1;
-    }
-
-    const fadeDistance = Math.max(radius * 2, radius * (96 - fallOff * 88));
-
-    return clamp(1 - previewStrokeState.distance / fadeDistance, 0, 1);
-  }
-
-  function applyPreviewJitter(point, tangent, radius, state) {
-    const lateral = clamp(draftBrushSettings.jitterLateral, 0, 2) * radius;
-    const linear = clamp(draftBrushSettings.jitterLinear, 0, 2) * radius;
-
-    if (lateral <= 0 && linear <= 0) {
-      return point;
-    }
-
-    const lateralOffset = previewRandomSigned(state) * lateral;
-    const linearOffset = previewRandomSigned(state) * linear;
-    const perpendicular = {
-      x: -tangent.y,
-      y: tangent.x,
-    };
-
-    return {
-      x: clamp(point.x + perpendicular.x * lateralOffset + tangent.x * linearOffset, 0, previewSize.width),
-      y: clamp(point.y + perpendicular.y * lateralOffset + tangent.y * linearOffset, 0, previewSize.height),
-    };
+    return StrokeMath.getEffectiveRadius(draftBrushSettings, pressure);
   }
 
   function clearPreviewCanvas() {
@@ -292,46 +129,38 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     previewContext.restore();
   }
 
-  function drawPreviewSegment(to, pressure = 1) {
+  function createPreviewStrokeState(point, seed = Date.now(), pressure = 1) {
+    return StrokeMath.createStrokeState(point, {
+      pressure,
+      seed,
+      tool: "brush",
+    });
+  }
+
+  function processPreviewPoint(point, pressure = 1) {
+    return StrokeMath.processStrokeInput(point, previewStrokeState, draftBrushSettings, pressure);
+  }
+
+  function drawPreviewSegment(to, pressure = 1, forceFinalDab = false) {
     if (!previewStrokeState) {
       return;
     }
 
-    const strokePressure = getSmoothedPressure(pressure, previewStrokeState, draftBrushSettings);
-    const radius = getPreviewRadius(strokePressure);
-    let from = previewStrokeState.lastStampPoint;
-    let deltaX = to.x - from.x;
-    let deltaY = to.y - from.y;
-    let distance = Math.hypot(deltaX, deltaY);
-
-    while (distance > 0) {
-      const step = getNextPreviewStampStep(radius, previewStrokeState);
-
-      if (distance < step) {
-        break;
-      }
-
-      const tangent = {
-        x: deltaX / distance,
-        y: deltaY / distance,
-      };
-      const stampPoint = {
-        x: from.x + tangent.x * step,
-        y: from.y + tangent.y * step,
-      };
-
-      previewStrokeState.distance += step;
-      drawPreviewDab(
-        applyPreviewJitter(stampPoint, tangent, radius, previewStrokeState),
-        strokePressure,
-        getPreviewFallOffScale(radius),
-      );
-      previewStrokeState.lastStampPoint = stampPoint;
-      from = previewStrokeState.lastStampPoint;
-      deltaX = to.x - from.x;
-      deltaY = to.y - from.y;
-      distance = Math.hypot(deltaX, deltaY);
-    }
+    StrokeMath.drawStrokeSegment({
+      to,
+      state: previewStrokeState,
+      settings: draftBrushSettings,
+      radius: getPreviewRadius(pressure),
+      pressure,
+      bounds: {
+        minX: 0,
+        minY: 0,
+        maxX: previewSize.width,
+        maxY: previewSize.height,
+      },
+      forceFinalDab,
+      drawDab: drawPreviewDab,
+    });
   }
 
   function toPreviewPoint(event) {
@@ -345,7 +174,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
   function createPreviewPoint(point, pressure = 1) {
     return {
-      pressure: normalizePressure(pressure),
+      pressure: StrokeMath.normalizePressure(pressure),
       x: previewSize.width > 0 ? clamp(point.x / previewSize.width, 0, 1) : 0,
       y: previewSize.height > 0 ? clamp(point.y / previewSize.height, 0, 1) : 0,
     };
@@ -397,7 +226,9 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     drawPreviewDab(startPoint, firstPoint.pressure);
 
     nextPoints.forEach((point) => {
-      drawPreviewSegment(getPreviewSmoothedPoint(restorePreviewPoint(point)), point.pressure);
+      const strokeInput = processPreviewPoint(restorePreviewPoint(point), point.pressure);
+
+      drawPreviewSegment(strokeInput.point, strokeInput.pressure);
     });
 
     previewStrokeState = null;
@@ -435,8 +266,9 @@ window.CBO.initBrushStudio = function initBrushStudio() {
           previewSize.height * 0.52 +
           Math.sin(progress * Math.PI * 2.2) * wave * (1 - progress * 0.15),
       };
+      const strokeInput = processPreviewPoint(rawPoint, 1);
 
-      drawPreviewSegment(getPreviewSmoothedPoint(rawPoint), 1);
+      drawPreviewSegment(strokeInput.point, strokeInput.pressure);
     }
 
     previewStrokeState = null;
@@ -557,9 +389,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     event.preventDefault();
     const point = toPreviewPoint(event);
+    const strokeInput = processPreviewPoint(point, event.pressure);
 
     appendPreviewPoint(point, event.pressure);
-    drawPreviewSegment(getPreviewSmoothedPoint(point), event.pressure);
+    drawPreviewSegment(strokeInput.point, strokeInput.pressure);
   }
 
   function endPreviewStroke(event) {
@@ -569,9 +402,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     event.preventDefault();
     const point = toPreviewPoint(event);
+    const strokeInput = processPreviewPoint(point, event.pressure);
 
     appendPreviewPoint(point, event.pressure);
-    drawPreviewSegment(getPreviewSmoothedPoint(point), event.pressure);
+    drawPreviewSegment(strokeInput.point, strokeInput.pressure, true);
 
     if (previewCanvas?.hasPointerCapture(event.pointerId)) {
       previewCanvas.releasePointerCapture(event.pointerId);
@@ -817,7 +651,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       min: 0,
       max: 100,
       step: 1,
-      value: Math.round(getStreamLineAmount(draftBrushSettings) * 100),
+      value: Math.round(StrokeMath.getStreamLineAmount(draftBrushSettings) * 100),
       unit: "%",
       toSetting: (displayValue) => displayValue / 100,
       toDisplay: (displayValue) => Math.round(displayValue),

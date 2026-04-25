@@ -6,6 +6,7 @@ window.CBO.initDrawer = function initDrawer() {
   const mockupCategories = window.CBO_MOCKUP_CATEGORIES || [];
   const drawerPanel = document.querySelector(".left-drawer");
   const drawerPanelTitle = document.querySelector(".drawer-panel-title");
+  const uploadPanelButton = document.querySelector(".drawer-upload-panel-button");
   const layerActionButtons = document.querySelectorAll(
     ".drawer-copy-layer-button, .drawer-new-folder-button",
   );
@@ -13,9 +14,20 @@ window.CBO.initDrawer = function initDrawer() {
   const searchInput = document.querySelector(".drawer-search input");
   const searchClear = document.querySelector(".drawer-search-clear");
   const previewLimit = 6;
+  const uploadDbName = "cbo-editor-uploads";
+  const uploadDbVersion = 1;
+  const uploadStoreName = "images";
+  const uploadPreviewUrls = new Map();
+  const uploadedImages = [];
   let scrollbarFrame = 0;
   let activePanel = "elements";
   let activeCategory = null;
+  let uploadDbPromise = null;
+  let uploadInput = null;
+  let uploadGrid = null;
+  let uploadUsageValue = null;
+  let uploadUsageFill = null;
+  let uploadStatus = null;
 
   const existingScrollbar = drawerPanel.querySelector(".drawer-custom-scrollbar");
 
@@ -69,6 +81,511 @@ window.CBO.initDrawer = function initDrawer() {
     }
 
     return item;
+  }
+
+  function createUploadPanel() {
+    const panel = document.createElement("section");
+    panel.className = "drawer-upload-panel";
+    panel.setAttribute("aria-label", "Uploaded images");
+
+    const input = document.createElement("input");
+    input.className = "drawer-upload-input";
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.dataset.uploadInput = "";
+
+    const usage = document.createElement("div");
+    usage.className = "drawer-upload-usage";
+
+    const usageLine = document.createElement("div");
+    usageLine.className = "drawer-upload-usage-line";
+
+    const usageLabel = document.createElement("span");
+    usageLabel.className = "drawer-upload-usage-label";
+    usageLabel.textContent = "CACHE";
+
+    const usageValue = document.createElement("span");
+    usageValue.className = "drawer-upload-usage-value";
+    usageValue.dataset.uploadUsageValue = "";
+    usageValue.textContent = "0 GB";
+
+    const usageMeter = document.createElement("div");
+    usageMeter.className = "drawer-upload-usage-meter";
+    usageMeter.setAttribute("aria-hidden", "true");
+
+    const usageFill = document.createElement("div");
+    usageFill.className = "drawer-upload-usage-fill";
+    usageFill.dataset.uploadUsageFill = "";
+
+    usageLine.append(usageLabel, usageValue);
+    usageMeter.append(usageFill);
+    usage.append(usageLine, usageMeter);
+
+    const grid = document.createElement("div");
+    grid.className = "drawer-upload-grid";
+    grid.dataset.uploadGrid = "";
+
+    const leftColumn = document.createElement("div");
+    const rightColumn = document.createElement("div");
+    leftColumn.className = "drawer-upload-column";
+    rightColumn.className = "drawer-upload-column";
+    leftColumn.dataset.uploadColumn = "";
+    rightColumn.dataset.uploadColumn = "";
+    grid.append(leftColumn, rightColumn);
+
+    const status = document.createElement("div");
+    status.className = "drawer-upload-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.dataset.uploadStatus = "";
+
+    panel.append(input, usage, grid, status);
+
+    return panel;
+  }
+
+  function openUploadDb() {
+    if (!("indexedDB" in window)) {
+      return Promise.reject(new Error("IndexedDB is not available"));
+    }
+
+    if (uploadDbPromise) {
+      return uploadDbPromise;
+    }
+
+    uploadDbPromise = new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(uploadDbName, uploadDbVersion);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+
+        if (!db.objectStoreNames.contains(uploadStoreName)) {
+          db.createObjectStore(uploadStoreName, { keyPath: "id" });
+        }
+      };
+
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+
+      request.onerror = () => {
+        uploadDbPromise = null;
+        reject(request.error || new Error("Unable to open upload storage"));
+      };
+
+      request.onblocked = () => {
+        uploadDbPromise = null;
+        reject(new Error("Upload storage is blocked"));
+      };
+    });
+
+    return uploadDbPromise;
+  }
+
+  function getStoredUploadedImages() {
+    return openUploadDb().then(
+      (db) =>
+        new Promise((resolve, reject) => {
+          const transaction = db.transaction(uploadStoreName, "readonly");
+          const request = transaction.objectStore(uploadStoreName).getAll();
+
+          request.onsuccess = () => {
+            resolve(request.result || []);
+          };
+
+          request.onerror = () => {
+            reject(request.error || new Error("Unable to read uploads"));
+          };
+
+          transaction.onerror = () => {
+            reject(transaction.error || new Error("Unable to read uploads"));
+          };
+        }),
+    );
+  }
+
+  function saveUploadedImage(record) {
+    return openUploadDb().then(
+      (db) =>
+        new Promise((resolve, reject) => {
+          const transaction = db.transaction(uploadStoreName, "readwrite");
+
+          transaction.objectStore(uploadStoreName).put(record);
+          transaction.oncomplete = () => {
+            resolve();
+          };
+          transaction.onerror = () => {
+            reject(transaction.error || new Error("Unable to save upload"));
+          };
+        }),
+    );
+  }
+
+  function deleteUploadedImageRecord(id) {
+    return openUploadDb().then(
+      (db) =>
+        new Promise((resolve, reject) => {
+          const transaction = db.transaction(uploadStoreName, "readwrite");
+
+          transaction.objectStore(uploadStoreName).delete(id);
+          transaction.oncomplete = () => {
+            resolve();
+          };
+          transaction.onerror = () => {
+            reject(transaction.error || new Error("Unable to delete upload"));
+          };
+        }),
+    );
+  }
+
+  function isImageFile(file) {
+    return (
+      file?.type?.startsWith("image/") ||
+      /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(file?.name || "")
+    );
+  }
+
+  function createUploadId() {
+    if (window.crypto?.randomUUID) {
+      return window.crypto.randomUUID();
+    }
+
+    return `upload-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function getImageDimensions(file) {
+    return new Promise((resolve) => {
+      const objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+
+      image.onload = () => {
+        const dimensions = {
+          height: image.naturalHeight || image.height || 0,
+          width: image.naturalWidth || image.width || 0,
+        };
+
+        URL.revokeObjectURL(objectUrl);
+        resolve(dimensions);
+      };
+
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve({ height: 0, width: 0 });
+      };
+
+      image.src = objectUrl;
+    });
+  }
+
+  async function createUploadRecord(file) {
+    const dimensions = await getImageDimensions(file);
+
+    return {
+      id: createUploadId(),
+      name: file.name || "Uploaded image",
+      type: file.type || "image/*",
+      size: file.size || 0,
+      createdAt: Date.now(),
+      blob: file,
+      ...dimensions,
+    };
+  }
+
+  function setUploadStatus(message = "") {
+    if (uploadStatus) {
+      uploadStatus.textContent = message;
+    }
+  }
+
+  function getUploadedBytes() {
+    return uploadedImages.reduce(
+      (total, record) => total + (Number(record.size) || Number(record.blob?.size) || 0),
+      0,
+    );
+  }
+
+  function formatGigabytes(bytes) {
+    const gigabytes = Math.max(0, Number(bytes) || 0) / 1024 / 1024 / 1024;
+
+    if (gigabytes === 0) {
+      return "0 GB";
+    }
+
+    if (gigabytes < 1) {
+      return `${gigabytes.toFixed(3)} GB`;
+    }
+
+    if (gigabytes < 10) {
+      return `${gigabytes.toFixed(2)} GB`;
+    }
+
+    return `${Math.round(gigabytes)} GB`;
+  }
+
+  async function updateUploadUsage() {
+    const uploadedBytes = getUploadedBytes();
+    let quotaBytes = 0;
+
+    if (navigator.storage?.estimate) {
+      try {
+        const estimate = await navigator.storage.estimate();
+
+        quotaBytes = Number(estimate.quota) || 0;
+      } catch (error) {
+        console.warn("Unable to estimate upload storage quota", error);
+      }
+    }
+
+    if (uploadUsageValue) {
+      uploadUsageValue.textContent = quotaBytes
+        ? `${formatGigabytes(uploadedBytes)} / ${formatGigabytes(quotaBytes)}`
+        : formatGigabytes(uploadedBytes);
+    }
+
+    if (uploadUsageFill) {
+      const progress = quotaBytes ? Math.min((uploadedBytes / quotaBytes) * 100, 100) : 0;
+      const visualProgress = uploadedBytes > 0 ? Math.max(progress, 2) : 0;
+
+      uploadUsageFill.style.width = `${visualProgress}%`;
+    }
+  }
+
+  function getUploadPreviewUrl(record) {
+    if (uploadPreviewUrls.has(record.id)) {
+      return uploadPreviewUrls.get(record.id);
+    }
+
+    const url = URL.createObjectURL(record.blob);
+
+    uploadPreviewUrls.set(record.id, url);
+
+    return url;
+  }
+
+  function revokeUploadPreviewUrl(id) {
+    const previewUrl = uploadPreviewUrls.get(id);
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      uploadPreviewUrls.delete(id);
+    }
+  }
+
+  function createUploadedImageCard(record) {
+    const card = document.createElement("div");
+    card.className = "drawer-upload-card";
+    card.title = record.name;
+    card.tabIndex = 0;
+    card.dataset.uploadPlace = record.id;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `Place ${record.name || "uploaded image"} on canvas`);
+
+    const image = document.createElement("img");
+    image.className = "drawer-upload-thumb";
+    image.src = getUploadPreviewUrl(record);
+    image.alt = record.name || "Uploaded image";
+    image.loading = "lazy";
+
+    const removeButton = document.createElement("button");
+    removeButton.className = "drawer-upload-remove";
+    removeButton.type = "button";
+    removeButton.dataset.uploadRemove = record.id;
+    removeButton.setAttribute("aria-label", `Remove ${record.name || "uploaded image"}`);
+    removeButton.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </svg>
+    `;
+
+    card.append(image, removeButton);
+
+    return card;
+  }
+
+  function getUploadAspectRatio(record) {
+    return Number(record.width) > 0 && Number(record.height) > 0
+      ? Number(record.width) / Number(record.height)
+      : 1;
+  }
+
+  function getShortestUploadColumn(columns) {
+    return columns.reduce((shortestColumn, column) =>
+      column.dataset.stackHeight < shortestColumn.dataset.stackHeight ? column : shortestColumn,
+    );
+  }
+
+  function placeUploadedImage(id) {
+    const record = uploadedImages.find((uploadedImage) => uploadedImage.id === id);
+
+    if (!record) {
+      return;
+    }
+
+    const detail = {
+      id: record.id,
+      name: record.name,
+      blob: record.blob,
+    };
+
+    if (window.CBO.placeUploadedImageOnCanvas) {
+      window.CBO.placeUploadedImageOnCanvas(detail);
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:place-uploaded-image", {
+        detail,
+      }),
+    );
+  }
+
+  function renderUploadedImages() {
+    if (!uploadGrid) {
+      return;
+    }
+
+    const columns = Array.from(uploadGrid.querySelectorAll("[data-upload-column]"));
+
+    if (columns.length < 2) {
+      return;
+    }
+
+    columns.forEach((column) => {
+      column.dataset.stackHeight = "0";
+      column.replaceChildren();
+    });
+
+    uploadedImages.forEach((record) => {
+      const column = getShortestUploadColumn(columns);
+      const card = createUploadedImageCard(record);
+      const aspectRatio = getUploadAspectRatio(record);
+      const nextStackHeight = Number(column.dataset.stackHeight || "0") + 1 / aspectRatio;
+
+      column.dataset.stackHeight = String(nextStackHeight);
+      column.append(card);
+    });
+    void updateUploadUsage();
+    scheduleCustomScrollbarUpdate();
+  }
+
+  async function loadUploadedImages() {
+    try {
+      const records = await getStoredUploadedImages();
+
+      records.sort((first, second) => second.createdAt - first.createdAt);
+
+      for (const record of records) {
+        if (!record.width || !record.height) {
+          Object.assign(record, await getImageDimensions(record.blob));
+        }
+      }
+
+      uploadedImages.splice(0, uploadedImages.length, ...records);
+      renderUploadedImages();
+    } catch (error) {
+      console.warn("Upload storage unavailable", error);
+    }
+  }
+
+  async function handleUploadFiles() {
+    const files = Array.from(uploadInput?.files || []);
+
+    if (!files.length) {
+      return;
+    }
+
+    const imageFiles = files.filter(isImageFile);
+
+    uploadInput.value = "";
+
+    if (!imageFiles.length) {
+      setUploadStatus("IMAGES ONLY");
+      return;
+    }
+
+    const records = await Promise.all(imageFiles.map(createUploadRecord));
+    let storedPersistently = true;
+
+    for (const record of records) {
+      try {
+        await saveUploadedImage(record);
+      } catch (error) {
+        storedPersistently = false;
+        console.warn("Upload was kept for this session only", error);
+      }
+    }
+
+    uploadedImages.unshift(...records);
+    renderUploadedImages();
+    setUploadStatus(storedPersistently ? "SAVED" : "SESSION ONLY");
+  }
+
+  async function removeUploadedImage(id) {
+    const recordIndex = uploadedImages.findIndex((record) => record.id === id);
+
+    if (recordIndex === -1) {
+      return;
+    }
+
+    uploadedImages.splice(recordIndex, 1);
+    revokeUploadPreviewUrl(id);
+    renderUploadedImages();
+
+    try {
+      await deleteUploadedImageRecord(id);
+      setUploadStatus(uploadedImages.length ? "SAVED" : "");
+    } catch (error) {
+      setUploadStatus("SESSION ONLY");
+      console.warn("Unable to remove stored upload", error);
+    }
+  }
+
+  function bindUploadPanel() {
+    uploadInput = drawerContent.querySelector("[data-upload-input]");
+    uploadGrid = drawerContent.querySelector("[data-upload-grid]");
+    uploadUsageValue = drawerContent.querySelector("[data-upload-usage-value]");
+    uploadUsageFill = drawerContent.querySelector("[data-upload-usage-fill]");
+    uploadStatus = drawerContent.querySelector("[data-upload-status]");
+
+    uploadPanelButton?.addEventListener("click", () => {
+      uploadInput?.click();
+    });
+
+    uploadInput?.addEventListener("change", handleUploadFiles);
+
+    uploadGrid?.addEventListener("click", (event) => {
+      const removeButton = event.target.closest("[data-upload-remove]");
+
+      if (removeButton) {
+        void removeUploadedImage(removeButton.dataset.uploadRemove);
+        return;
+      }
+
+      const uploadCard = event.target.closest("[data-upload-place]");
+
+      if (uploadCard) {
+        placeUploadedImage(uploadCard.dataset.uploadPlace);
+      }
+    });
+
+    uploadGrid?.addEventListener("keydown", (event) => {
+      if (event.target.closest("[data-upload-remove]")) {
+        return;
+      }
+
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+
+      const uploadCard = event.target.closest("[data-upload-place]");
+
+      if (uploadCard) {
+        event.preventDefault();
+        placeUploadedImage(uploadCard.dataset.uploadPlace);
+      }
+    });
   }
 
   function matchesTags(tags, queryTags) {
@@ -188,9 +705,7 @@ window.CBO.initDrawer = function initDrawer() {
     mockupSections.className = "drawer-mockup-sections";
     drawerContent.append(mockupSections);
 
-    const uploadPanel = document.createElement("div");
-    uploadPanel.className = "drawer-upload-panel";
-    drawerContent.append(uploadPanel);
+    drawerContent.append(createUploadPanel());
 
     const layersPanel = document.createElement("div");
     layersPanel.className = "drawer-layers-panel";
@@ -327,7 +842,7 @@ window.CBO.initDrawer = function initDrawer() {
     const isUploadPanel = activePanel === "upload";
     const isLayersPanel = activePanel === "layers";
     drawerPanel.dataset.drawerPanel = activePanel;
-    drawerPanelTitle.textContent = isLayersPanel ? "LAYERS" : "";
+    drawerPanelTitle.textContent = isUploadPanel ? "UPLOAD" : isLayersPanel ? "LAYERS" : "";
     drawerContent.classList.toggle("template-mode", isTemplatePanel);
     drawerContent.classList.toggle("mockup-mode", isMockupPanel);
     drawerContent.classList.toggle("upload-mode", isUploadPanel);
@@ -347,6 +862,8 @@ window.CBO.initDrawer = function initDrawer() {
   };
 
   renderDrawer();
+  bindUploadPanel();
+  void loadUploadedImages();
   updateDrawerPanel();
 
   drawerContent.addEventListener("scroll", scheduleCustomScrollbarUpdate);
@@ -440,5 +957,12 @@ window.CBO.initDrawer = function initDrawer() {
     searchInput.value = "";
     filterDrawerSections();
     drawerContent.scrollTop = 0;
+  });
+
+  window.addEventListener("beforeunload", () => {
+    uploadPreviewUrls.forEach((previewUrl) => {
+      URL.revokeObjectURL(previewUrl);
+    });
+    uploadPreviewUrls.clear();
   });
 };
