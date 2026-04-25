@@ -81,6 +81,8 @@ Metodi pubblici:
 
 Il Brush Studio esiste in `js/brush-studio.js`.
 
+I default del brush sono centralizzati in `js/brush-defaults.js` (`window.CBO.BrushDefaults`) e vanno riusati da toolbar/studio invece di duplicare nuovi campi.
+
 Gia' presente nella UI (slider):
 
 - `radius`

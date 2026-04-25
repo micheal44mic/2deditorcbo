@@ -2,10 +2,8 @@ window.CBO = window.CBO || {};
 
 window.CBO.initTopToolbar = function initTopToolbar() {
   const editorPage = document.querySelector(".editor-page");
-  const defaultBrushSettings = {
-    radius: 18,
-    opacity: 0.92,
-  };
+  const BrushDefaults = window.CBO.BrushDefaults;
+  const defaultBrushSettings = BrushDefaults.settings;
 
   if (!editorPage) {
     return;
@@ -19,10 +17,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   dock.className = "top-toolbar-dock";
   dock.setAttribute("aria-label", "Paint controls");
   dock.dataset.tooltipZone = "";
-  window.CBO.brushSettings = {
-    ...defaultBrushSettings,
-    ...(window.CBO.brushSettings || {}),
-  };
+  window.CBO.brushSettings = BrushDefaults.createSettings(window.CBO.brushSettings);
 
   dock.innerHTML = `
     <div class="brush-quick-controls" data-brush-quick-controls hidden>
@@ -105,10 +100,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   }
 
   function getBrushSettings() {
-    window.CBO.brushSettings = {
-      ...defaultBrushSettings,
-      ...(window.CBO.brushSettings || {}),
-    };
+    window.CBO.brushSettings = BrushDefaults.createSettings(window.CBO.brushSettings);
 
     return window.CBO.brushSettings;
   }

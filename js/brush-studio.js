@@ -3,60 +3,15 @@ window.CBO = window.CBO || {};
 window.CBO.initBrushStudio = function initBrushStudio() {
   const editorPage = document.querySelector(".editor-page");
   const StrokeMath = window.CBO.StrokeMath;
+  const BrushDefaults = window.CBO.BrushDefaults;
   const clamp = StrokeMath.clamp;
   const clamp01 = StrokeMath.clamp01;
-  const defaultShapeAlphaSrc = "./data/brush-shape-alpha.png";
-  const defaultShapeAlphaName = "SHAPE ALPHA";
-  const shapeAlphaExportSize = 512;
+  const defaultShapeAlphaSrc = BrushDefaults.defaultShapeAlphaSrc;
+  const defaultShapeAlphaName = BrushDefaults.defaultShapeAlphaName;
+  const shapeAlphaExportSize = BrushDefaults.shapeAlphaExportSize;
   const studioCategories = ["STROKE", "SHAPE", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
-  const defaultTaperMinDistance = 247;
-  const taperTipRealMin = 0.15;
-  const defaultBrushSettings = {
-    radius: 18,
-    opacity: 0.92,
-    spacing: 0.18,
-    smoothing: 0,
-    streamLineAmount: 0,
-    streamLinePressure: 0,
-    stabilizationAmount: 0,
-    spacingJitter: 0,
-    jitterLateral: 0,
-    jitterLinear: 0,
-    fallOff: 0,
-    taperStart: 0,
-    taperEnd: 0,
-    taperLinkSizes: false,
-    taperSize: 1,
-    taperOpacity: 0,
-    taperPressure: 0,
-    taperMinDistance: defaultTaperMinDistance,
-    taperMinDistanceEnabled: false,
-    taperTip: 0.5,
-    taperTipAnimation: true,
-    shapeAlphaSrc: defaultShapeAlphaSrc,
-    shapeAlphaName: defaultShapeAlphaName,
-    shapeRotation: 0,
-    shapeScatter: 0,
-    shapeCount: 1,
-    shapeCountJitter: 0,
-    shapeRandomized: false,
-    shapeFlipX: false,
-    shapeFlipY: false,
-    stampColorHueJitter: 0,
-    stampColorSaturationJitter: 0,
-    stampColorLightnessJitter: 0,
-    stampColorDarknessJitter: 0,
-    stampColorSecondaryJitter: 0,
-    strokeColorHueJitter: 0,
-    strokeColorSaturationJitter: 0,
-    strokeColorLightnessJitter: 0,
-    strokeColorDarknessJitter: 0,
-    strokeColorSecondaryJitter: 0,
-    wetDilution: 0,
-    wetCharge: 1,
-    wetAttack: 1,
-    wetnessJitter: 0,
-  };
+  const defaultTaperMinDistance = BrushDefaults.defaultTaperMinDistance;
+  const taperTipRealMin = BrushDefaults.taperTipRealMin;
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
     return;
@@ -64,11 +19,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
   const existingBrushSettings = window.CBO.brushSettings || {};
 
-  window.CBO.brushSettings = {
-    ...defaultBrushSettings,
-    ...existingBrushSettings,
-    streamLineAmount: existingBrushSettings.streamLineAmount ?? existingBrushSettings.smoothing ?? 0,
-  };
+  window.CBO.brushSettings = BrushDefaults.createSettings(existingBrushSettings);
 
   editorPage.dataset.brushStudioReady = "true";
   editorPage.insertAdjacentHTML(
@@ -219,12 +170,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   }
 
   function resetDraftBrushSettings() {
-    draftBrushSettings = {
-      ...window.CBO.brushSettings,
-      streamLineAmount: window.CBO.brushSettings.streamLineAmount ?? window.CBO.brushSettings.smoothing ?? 0,
-      shapeAlphaSrc: window.CBO.brushSettings.shapeAlphaSrc || defaultShapeAlphaSrc,
-      shapeAlphaName: window.CBO.brushSettings.shapeAlphaName || defaultShapeAlphaName,
-    };
+    draftBrushSettings = BrushDefaults.createSettings(window.CBO.brushSettings);
   }
 
   function getShapeAlphaSrc() {

@@ -1955,6 +1955,23 @@ void main() {
       this.clearStrokeLayer();
     }
 
+    resetStrokeProgress() {
+      this.currentStroke = [];
+      this.stampsBuffer = [];
+      this.leftoverDistance = 0;
+      this.nextStampDistance = 1;
+      this.strokeDistance = 0;
+      this.strokeStampCount = 0;
+    }
+
+    resetStrokeRuntimeState() {
+      this.resetStrokeProgress();
+      this.strokeDynamicsState = null;
+      this.strokeColorRandomState = null;
+      this.strokeColorState = null;
+      this.strokeWetRandomState = null;
+    }
+
     replayLastStroke() {
       if (!this.lastRecordedStroke || this.lastRecordedStroke.length === 0) {
         return;
@@ -2009,10 +2026,7 @@ void main() {
 
       this.strokeTotalLength = totalLength;
       this.taperSpacingCap = this.getTaperSpacingCap(totalLength);
-      this.leftoverDistance = 0;
-      this.strokeDistance = 0;
-      this.strokeStampCount = 0;
-      this.stampsBuffer = [];
+      this.resetStrokeProgress();
       const startStamp = this.createStamp(startPoint);
 
       startStamp.alphaScale = this.getStampAlphaScale();
@@ -2054,10 +2068,7 @@ void main() {
       const startPoint = this.beginStrokeDynamics(firstSample);
 
       this.isDrawing = true;
-      this.leftoverDistance = 0;
-      this.strokeDistance = 0;
-      this.strokeStampCount = 0;
-      this.stampsBuffer = [];
+      this.resetStrokeProgress();
       const startStamp = this.createStamp(startPoint);
 
       startStamp.alphaScale = this.getStampAlphaScale();
@@ -2089,16 +2100,7 @@ void main() {
 
       this.bakeStroke();
 
-      this.currentStroke = [];
-      this.stampsBuffer = [];
-      this.leftoverDistance = 0;
-      this.nextStampDistance = 1;
-      this.strokeDistance = 0;
-      this.strokeStampCount = 0;
-      this.strokeDynamicsState = null;
-      this.strokeColorRandomState = null;
-      this.strokeColorState = null;
-      this.strokeWetRandomState = null;
+      this.resetStrokeRuntimeState();
       this.isDrawing = false;
     }
 
@@ -2134,10 +2136,7 @@ void main() {
 
       this.isDrawing = true;
       this.activePointerId = event.pointerId;
-      this.leftoverDistance = 0;
-      this.strokeDistance = 0;
-      this.strokeStampCount = 0;
-      this.stampsBuffer = [];
+      this.resetStrokeProgress();
       const startStamp = this.createStamp(point);
 
       startStamp.alphaScale = this.getStampAlphaScale();
@@ -2205,16 +2204,7 @@ void main() {
 
       this.lastRecordedStroke = this.recordedStroke.slice();
       this.recordedStroke = [];
-      this.currentStroke = [];
-      this.stampsBuffer = [];
-      this.leftoverDistance = 0;
-      this.nextStampDistance = 1;
-      this.strokeDistance = 0;
-      this.strokeStampCount = 0;
-      this.strokeDynamicsState = null;
-      this.strokeColorRandomState = null;
-      this.strokeColorState = null;
-      this.strokeWetRandomState = null;
+      this.resetStrokeRuntimeState();
       this.isDrawing = false;
       this.activePointerId = null;
     }
@@ -2235,16 +2225,7 @@ void main() {
 
       this.clearStrokeLayer();
       this.recordedStroke = [];
-      this.currentStroke = [];
-      this.stampsBuffer = [];
-      this.leftoverDistance = 0;
-      this.nextStampDistance = 1;
-      this.strokeDistance = 0;
-      this.strokeStampCount = 0;
-      this.strokeDynamicsState = null;
-      this.strokeColorRandomState = null;
-      this.strokeColorState = null;
-      this.strokeWetRandomState = null;
+      this.resetStrokeRuntimeState();
       this.isDrawing = false;
       this.activePointerId = null;
     }
