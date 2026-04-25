@@ -130,6 +130,7 @@ uniform vec2 u_grainTexSize;
 uniform float u_grainScale;
 uniform mat2 u_grainRotationMat;
 uniform float u_grainDepth;
+uniform int u_grainBlendMode;
 uniform bool u_grainInvert;
 
 in vec2 v_uv;
@@ -138,6 +139,70 @@ in float v_alpha;
 in vec3 v_color;
 
 out vec4 outColor;
+
+const int GRAIN_BLEND_MULTIPLY = 0;
+const int GRAIN_BLEND_DARKEN = 1;
+const int GRAIN_BLEND_LINEAR_BURN = 2;
+const int GRAIN_BLEND_OVERLAY = 3;
+const int GRAIN_BLEND_LIGHTEN = 4;
+const int GRAIN_BLEND_DIFFERENCE = 5;
+
+vec3 blendOverlay(vec3 baseColor, vec3 blendColor) {
+  vec3 low = 2.0 * baseColor * blendColor;
+  vec3 high = 1.0 - 2.0 * (1.0 - baseColor) * (1.0 - blendColor);
+
+  return mix(low, high, step(vec3(0.5), baseColor));
+}
+
+vec3 applyGrainBlendMode(vec3 baseColor, float grain, int blendMode) {
+  vec3 grainColor = vec3(grain);
+
+  if (blendMode == GRAIN_BLEND_DARKEN) {
+    return min(baseColor, grainColor);
+  }
+
+  if (blendMode == GRAIN_BLEND_LINEAR_BURN) {
+    return max(baseColor + grainColor - 1.0, vec3(0.0));
+  }
+
+  if (blendMode == GRAIN_BLEND_OVERLAY) {
+    return blendOverlay(baseColor, grainColor);
+  }
+
+  if (blendMode == GRAIN_BLEND_LIGHTEN) {
+    return max(baseColor, grainColor);
+  }
+
+  if (blendMode == GRAIN_BLEND_DIFFERENCE) {
+    return abs(baseColor - grainColor);
+  }
+
+  return baseColor * grainColor;
+}
+
+float getGrainCoverage(float grain, int blendMode) {
+  if (
+    blendMode == GRAIN_BLEND_MULTIPLY ||
+    blendMode == GRAIN_BLEND_DARKEN ||
+    blendMode == GRAIN_BLEND_LINEAR_BURN
+  ) {
+    return grain;
+  }
+
+  if (blendMode == GRAIN_BLEND_OVERLAY) {
+    return mix(1.0, grain, 0.45);
+  }
+
+  if (blendMode == GRAIN_BLEND_LIGHTEN) {
+    return mix(1.0, grain, 0.12);
+  }
+
+  if (blendMode == GRAIN_BLEND_DIFFERENCE) {
+    return mix(1.0, grain, 0.18);
+  }
+
+  return grain;
+}
 
 void main() {
   float shape = 1.0;
@@ -161,7 +226,8 @@ void main() {
     discard;
   }
 
-  float grainMultiplier = 1.0;
+  vec3 brushColor = v_color;
+  float grainCoverage = 1.0;
 
   if (u_grainEnabled && u_grainScale > 0.0) {
     vec2 rotatedPosition = u_grainRotationMat * v_docPosition;
@@ -175,15 +241,17 @@ void main() {
 
     float depth = clamp(u_grainDepth, 0.0, 1.0);
     float contrast = mix(1.0, 1.75, depth);
-    float contrastedGrain = clamp((grain - 0.5) * contrast + 0.5, 0.0, 1.0);
+    float adjustedGrain = clamp((grain - 0.5) * contrast + 0.5, 0.0, 1.0);
+    vec3 blendedColor = applyGrainBlendMode(v_color, adjustedGrain, u_grainBlendMode);
 
-    grainMultiplier = mix(1.0, contrastedGrain, depth);
+    brushColor = mix(v_color, blendedColor, depth);
+    grainCoverage = mix(1.0, getGrainCoverage(adjustedGrain, u_grainBlendMode), depth);
   }
 
-  float alpha = shape * grainMultiplier * v_alpha * clamp(u_flow, 0.0, 1.0);
+  float alpha = shape * grainCoverage * v_alpha * clamp(u_flow, 0.0, 1.0);
 
   // Output strettamente pre-moltiplicato: necessario per MAX blending coerente.
-  outColor = vec4(v_color * alpha, alpha);
+  outColor = vec4(clamp(brushColor, vec3(0.0), vec3(1.0)) * alpha, alpha);
 }
 `;
 
@@ -241,6 +309,14 @@ void main() {
   };
 
   namespace.ImageCache = ImageCache;
+  const GRAIN_BLEND_MODE_IDS = Object.freeze({
+    multiply: 0,
+    darken: 1,
+    "linear-burn": 2,
+    overlay: 3,
+    lighten: 4,
+    difference: 5,
+  });
   const GRAIN_TEXTURIZED_MIN_TEXTURE_SCALE = Math.max(
     0.001,
     namespace.BrushDefaults?.grainTexturizedMinTextureScale ?? 0.05,
@@ -538,6 +614,7 @@ void main() {
           grainScale: gl.getUniformLocation(program, "u_grainScale"),
           grainRotationMat: gl.getUniformLocation(program, "u_grainRotationMat"),
           grainDepth: gl.getUniformLocation(program, "u_grainDepth"),
+          grainBlendMode: gl.getUniformLocation(program, "u_grainBlendMode"),
           grainInvert: gl.getUniformLocation(program, "u_grainInvert"),
         },
       };
@@ -1932,11 +2009,25 @@ void main() {
     isGrainEnabled() {
       return (
         this.brushState.grainEnabled === true &&
+        this.getGrainMode() === "texturized" &&
         this.grainTextureReady &&
         Boolean(this.grainTexture) &&
         this.getGrainTexturizedScale() > 0 &&
         this.getGrainTexturizedDepth() > 0
       );
+    }
+
+    getGrainMode() {
+      return this.brushState.grainMode === "moving" ? "moving" : "texturized";
+    }
+
+    getGrainBlendModeId() {
+      const mode = String(this.brushState.grainBlendMode || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "-");
+
+      return GRAIN_BLEND_MODE_IDS[mode] ?? GRAIN_BLEND_MODE_IDS.multiply;
     }
 
     textureScaleToTexturizedScale(textureScale) {
@@ -2164,6 +2255,7 @@ void main() {
         gl.uniform1f(this.brushProgramInfo.uniforms.grainScale, this.getGrainScale());
         gl.uniformMatrix2fv(this.brushProgramInfo.uniforms.grainRotationMat, false, rotationMatrix);
         gl.uniform1f(this.brushProgramInfo.uniforms.grainDepth, this.getGrainTexturizedDepth());
+        gl.uniform1i(this.brushProgramInfo.uniforms.grainBlendMode, this.getGrainBlendModeId());
         gl.uniform1i(this.brushProgramInfo.uniforms.grainInvert, this.isGrainInverted() ? 1 : 0);
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, this.grainTexture);

@@ -414,6 +414,15 @@
   opacity: 1;
 }
 
+.brush-studio-grain-blend-word.is-disabled {
+  color: rgba(195, 200, 209, 0.48);
+  cursor: default;
+}
+
+.brush-studio-grain-blend-outline-box.active .brush-studio-grain-blend-word.is-disabled {
+  opacity: 0.42;
+}
+
 .brush-studio-shape-alpha-preview {
   display: grid;
   place-items: center;

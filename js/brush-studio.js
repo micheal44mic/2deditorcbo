@@ -15,6 +15,29 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const studioCategories = ["STROKE", "SHAPE", "GRAIN", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = BrushDefaults.defaultTaperMinDistance;
   const taperTipRealMin = BrushDefaults.taperTipRealMin;
+  const implementedGrainBlendModes = new Set([
+    "multiply",
+    "darken",
+    "linear-burn",
+    "overlay",
+    "lighten",
+    "difference",
+  ]);
+  const grainBlendModeOptions = [
+    { key: "multiply", label: "MULTIPLY" },
+    { key: "darken", label: "DARKEN" },
+    { key: "color-burn", label: "COLOR BURN" },
+    { key: "linear-burn", label: "LINEAR BURN" },
+    { key: "lighten", label: "LIGHTEN" },
+    { key: "color-dodge", label: "COLOR DODGE" },
+    { key: "overlay", label: "OVERLAY" },
+    { key: "hard-mix", label: "HARD MIX" },
+    { key: "difference", label: "DIFFERENCE" },
+    { key: "subtract", label: "SUBTRACT" },
+    { key: "divide", label: "DIVIDE" },
+    { key: "height", label: "HEIGHT" },
+    { key: "linear-height", label: "LINEAR HEIGHT" },
+  ];
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
     return;
@@ -119,6 +142,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   let shapeEditorDraftName = draftBrushSettings.shapeAlphaName || defaultShapeAlphaName;
   let grainEditorDraftSrc = draftBrushSettings.grainTextureSrc || defaultGrainTextureSrc;
   let grainEditorDraftName = draftBrushSettings.grainTextureName || defaultGrainTextureName;
+  const grainAdjustmentUiState = {
+    brightness: 0,
+    contrast: 0,
+  };
   let grainBlendModeScrollIndex = 0;
   let grainBlendModeOpen = false;
   let activeGrainBlendOutline = null;
@@ -226,6 +253,22 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
   function getGrainMode() {
     return draftBrushSettings.grainMode === "moving" ? "moving" : "texturized";
+  }
+
+  function getGrainBlendMode() {
+    const mode = String(draftBrushSettings.grainBlendMode || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+
+    return implementedGrainBlendModes.has(mode) ? mode : "multiply";
+  }
+
+  function getGrainBlendModeIndex() {
+    const mode = getGrainBlendMode();
+    const index = grainBlendModeOptions.findIndex((option) => option.key === mode);
+
+    return index >= 0 ? index : 0;
   }
 
   function createSelectedHeader({ editable = false, onEdit = openShapeEditor } = {}) {
@@ -418,6 +461,51 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     return setting;
   }
 
+  function createGrainSignedPercentSetting({ key, label, value = 0 }) {
+    const setting = document.createElement("div");
+    const header = document.createElement("div");
+    const name = document.createElement("div");
+    const valuePill = document.createElement("span");
+    const slider = document.createElement("input");
+
+    setting.className = "brush-studio-setting";
+    header.className = "brush-studio-setting-header";
+    name.className = "brush-studio-setting-name";
+    valuePill.className = "brush-studio-setting-value";
+    slider.className = "brush-studio-range brush-studio-range-centered";
+    name.textContent = label;
+
+    slider.type = "range";
+    slider.min = "-100";
+    slider.max = "100";
+    slider.step = "1";
+    slider.setAttribute("aria-label", label);
+
+    function setValue(nextValue) {
+      const displayValue = Math.round(clamp(Number(nextValue), -100, 100));
+      const progress = ((displayValue + 100) / 200) * 100;
+      const start = Math.min(50, progress);
+      const end = Math.max(50, progress);
+      const prefix = displayValue > 0 ? "+" : "";
+
+      grainAdjustmentUiState[key] = displayValue;
+      slider.value = String(displayValue);
+      valuePill.textContent = `${prefix}${displayValue}%`;
+      slider.style.setProperty("--brush-studio-range-start", `${start}%`);
+      slider.style.setProperty("--brush-studio-range-end", `${end}%`);
+    }
+
+    slider.addEventListener("input", () => {
+      setValue(slider.value);
+    });
+
+    setValue(value);
+    header.append(name, valuePill);
+    setting.append(header, slider);
+
+    return setting;
+  }
+
   function closeGrainBlendModeControl() {
     if (activeGrainBlendOutline) {
       activeGrainBlendOutline.classList.remove("active");
@@ -436,21 +524,9 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     const hoverLayer = document.createElement("div");
     const fillLayer = document.createElement("div");
     const list = document.createElement("div");
-    const blendModes = [
-      "Multiply",
-      "Darken",
-      "Color Burn",
-      "Linear Burn",
-      "Lighten",
-      "Color Dodge",
-      "Overlay",
-      "Hard Mix",
-      "Difference",
-      "Subtract",
-      "Divide",
-      "Height",
-      "Linear Height",
-    ];
+    const blendModes = grainBlendModeOptions;
+
+    grainBlendModeScrollIndex = getGrainBlendModeIndex();
 
     wrapper.className = "brush-studio-grain-blend-outline";
     label.className = "brush-studio-setting-name";
@@ -462,9 +538,12 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     label.textContent = "BLEND MODE";
     const options = blendModes.map((mode, index) => {
       const option = document.createElement("div");
+      const isImplemented = implementedGrainBlendModes.has(mode.key);
 
       option.className = "brush-studio-grain-blend-word";
-      option.textContent = mode.toUpperCase();
+      option.textContent = mode.label;
+      option.classList.toggle("is-disabled", !isImplemented);
+      option.setAttribute("aria-disabled", String(!isImplemented));
       option.addEventListener("click", (event) => {
         if (!grainBlendModeOpen || activeGrainBlendOutline !== outline) {
           return;
@@ -473,12 +552,18 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         event.preventDefault();
         event.stopPropagation();
 
+        if (!isImplemented) {
+          return;
+        }
+
         if (index === grainBlendModeScrollIndex) {
           closeGrainBlendModeControl();
           return;
         }
 
         grainBlendModeScrollIndex = index;
+        draftBrushSettings.grainBlendMode = mode.key;
+        pushDraftToEngine();
         syncBlendModeUi();
       });
 
@@ -488,12 +573,28 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     list.append(...options);
 
     function syncBlendModeUi() {
+      const selectedMode = getGrainBlendMode();
+
       outline.style.setProperty("--grain-blend-scroll-index", String(grainBlendModeScrollIndex));
       outline.classList.toggle("active", grainBlendModeOpen && activeGrainBlendOutline === outline);
 
       options.forEach((option, index) => {
-        option.classList.toggle("is-selected", index === grainBlendModeScrollIndex);
+        option.classList.toggle("is-selected", blendModes[index].key === selectedMode);
       });
+    }
+
+    function getNextEnabledIndex(currentIndex, direction) {
+      let nextIndex = currentIndex + direction;
+
+      while (nextIndex >= 0 && nextIndex < blendModes.length) {
+        if (implementedGrainBlendModes.has(blendModes[nextIndex].key)) {
+          return nextIndex;
+        }
+
+        nextIndex += direction;
+      }
+
+      return currentIndex;
     }
 
     function setBlendModeOpen(isOpen) {
@@ -533,13 +634,15 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         event.stopPropagation();
 
         const direction = event.deltaY > 0 ? 1 : -1;
-        const nextIndex = clamp(grainBlendModeScrollIndex + direction, 0, blendModes.length - 1);
+        const nextIndex = getNextEnabledIndex(grainBlendModeScrollIndex, direction);
 
         if (nextIndex === grainBlendModeScrollIndex) {
           return;
         }
 
         grainBlendModeScrollIndex = nextIndex;
+        draftBrushSettings.grainBlendMode = blendModes[nextIndex].key;
+        pushDraftToEngine();
         syncBlendModeUi();
       },
       { passive: false },
@@ -764,6 +867,16 @@ window.CBO.initBrushStudio = function initBrushStudio() {
           value: draftBrushSettings.grainTexturizedDepth,
         }),
         createGrainBlendModeControl(),
+        createGrainSignedPercentSetting({
+          key: "brightness",
+          label: "BRIGHTNESS",
+          value: grainAdjustmentUiState.brightness,
+        }),
+        createGrainSignedPercentSetting({
+          key: "contrast",
+          label: "CONTRAST",
+          value: grainAdjustmentUiState.contrast,
+        }),
       );
     } else {
       grainModeContent.append(createSectionLabel("MOVING"));

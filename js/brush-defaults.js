@@ -8,6 +8,15 @@ window.CBO = window.CBO || {};
   const defaultTaperMinDistance = 247;
   const taperTipRealMin = 0.15;
   const grainModeValues = new Set(["moving", "texturized"]);
+  const grainBlendModeValues = Object.freeze([
+    "multiply",
+    "darken",
+    "linear-burn",
+    "overlay",
+    "lighten",
+    "difference",
+  ]);
+  const grainBlendModeValueSet = new Set(grainBlendModeValues);
   const grainTexturizedMinTextureScale = 0.05;
 
   const settings = Object.freeze({
@@ -45,6 +54,7 @@ window.CBO = window.CBO || {};
     grainTextureSrc: defaultGrainTextureSrc,
     grainTextureName: defaultGrainTextureName,
     grainMode: "texturized",
+    grainBlendMode: "multiply",
     grainTexturizedScale: 1,
     grainTexturizedDepth: 1,
     grainScale: 1,
@@ -98,6 +108,15 @@ window.CBO = window.CBO || {};
     return clamp01((Math.log(value) - minLog) / (maxLog - minLog));
   }
 
+  function normalizeGrainBlendMode(value) {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+
+    return grainBlendModeValueSet.has(normalized) ? normalized : "multiply";
+  }
+
   function createSettings(overrides = {}) {
     const nextOverrides = overrides || {};
     const nextSettings = {
@@ -114,6 +133,7 @@ window.CBO = window.CBO || {};
     nextSettings.grainMode = grainModeValues.has(String(nextSettings.grainMode).toLowerCase())
       ? String(nextSettings.grainMode).toLowerCase()
       : "texturized";
+    nextSettings.grainBlendMode = normalizeGrainBlendMode(nextSettings.grainBlendMode);
     nextSettings.grainTexturizedScale = hasOwn(nextOverrides, "grainTexturizedScale")
       ? normalize01(nextOverrides.grainTexturizedScale, settings.grainTexturizedScale)
       : grainTextureScaleToTexturizedScale(nextOverrides.grainScale ?? nextSettings.grainScale);
@@ -130,6 +150,7 @@ window.CBO = window.CBO || {};
     defaultShapeAlphaName,
     defaultShapeAlphaSrc,
     defaultTaperMinDistance,
+    grainBlendModeValues,
     grainTexturizedMinTextureScale,
     grainTextureExportSize: 2048,
     shapeAlphaExportSize: 512,
