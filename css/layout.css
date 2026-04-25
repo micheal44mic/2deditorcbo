@@ -15,8 +15,8 @@
   min-height: 100vh;
   margin: 0 var(--right-panel-width) 0 var(--left-panel-width);
   display: grid;
-  place-items: center;
-  padding: 104px 32px 118px;
+  place-items: stretch;
+  padding: 0;
   overflow: hidden;
   background: #262626;
   transition: margin 180ms ease;

@@ -1,6 +1,11 @@
 window.CBO = window.CBO || {};
 
 (function registerBrushEngine(namespace) {
+  const MIN_ZOOM = 0.05;
+  const MAX_ZOOM = 32;
+  const WHEEL_ZOOM_INTENSITY = 0.0015;
+  const PINCH_ZOOM_INTENSITY = 0.01;
+
   const ARTBOARD_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -39,14 +44,28 @@ precision highp float;
 
 uniform sampler2D u_texture;
 uniform float u_opacity;
+uniform vec2 uDocumentSize;
+uniform float uCameraZoom;
+uniform float u_gridMode;
 
 in vec2 v_uv;
 
 out vec4 outColor;
 
 void main() {
-  // Rispettiamo la pre-moltiplicazione: scalando l'intero vec4 manteniamo coerenti rgb e alpha.
-  outColor = texture(u_texture, v_uv) * u_opacity;
+  if (u_gridMode > 0.5) {
+    // Griglia pixel: una linea bianca sottile su ogni bordo di pixel del documento.
+    vec2 docPx = v_uv * uDocumentSize;
+    vec2 boundaryDistance = abs(fract(docPx - 0.5) - 0.5) / fwidth(docPx);
+    float line = 1.0 - clamp(min(boundaryDistance.x, boundaryDistance.y), 0.0, 1.0);
+    // Fade in tra zoom 6x e 12x: sotto invisibile, sopra piena visibilita'.
+    float zoomFade = smoothstep(6.0, 12.0, uCameraZoom);
+    float alpha = line * zoomFade * 0.35;
+    // Output pre-moltiplicato bianco.
+    outColor = vec4(alpha, alpha, alpha, alpha);
+  } else {
+    outColor = texture(u_texture, v_uv) * u_opacity;
+  }
 }
 `;
 
@@ -155,6 +174,12 @@ void main() {
       this.strokeStampCount = 0;
       this.isDrawing = false;
       this.activePointerId = null;
+      this.isPanning = false;
+      this.activePanPointerId = null;
+      this.panLastViewportX = 0;
+      this.panLastViewportY = 0;
+      this.isSpaceHeld = false;
+      this.userManipulatedCamera = false;
       this.frameRequest = 0;
       this.resizeObserver = null;
       this.isDisposed = false;
@@ -173,8 +198,13 @@ void main() {
       this.handlePointerMove = this.handlePointerMove.bind(this);
       this.handlePointerUp = this.handlePointerUp.bind(this);
       this.handlePointerCancel = this.handlePointerCancel.bind(this);
+      this.handleWheel = this.handleWheel.bind(this);
+      this.handleKeyDown = this.handleKeyDown.bind(this);
+      this.handleKeyUp = this.handleKeyUp.bind(this);
       this.renderLoop = this.renderLoop.bind(this);
 
+      // Misuriamo prima il viewport: serve a calcolare il documento con il giusto aspect ratio.
+      this.resizeViewport();
       this.configureDocumentSize();
       this.programInfo = this.createProgramInfo();
       this.brushProgramInfo = this.createBrushProgramInfo();
@@ -185,11 +215,11 @@ void main() {
       this.createBaseLayerTarget();
       this.createStrokeLayerTarget();
       this.brush = this.createBrushResources();
-      this.resizeViewport();
       this.centerCamera();
       this.observeViewportSize();
       this.bindBrushSettings();
       this.bindPointerEvents();
+      this.bindNavigationEvents();
       this.startRenderLoop();
     }
 
@@ -209,10 +239,27 @@ void main() {
       const gl = this.gl;
       const policyCap = this.isMobileLikeDevice() ? 2048 : 4096;
       const hardwareCap = gl.getParameter(gl.MAX_TEXTURE_SIZE) || policyCap;
-      const side = Math.max(1, Math.min(policyCap, hardwareCap));
+      const cap = Math.max(1, Math.min(policyCap, hardwareCap));
+      const aspect =
+        this.viewportWidth > 0 && this.viewportHeight > 0
+          ? this.viewportWidth / this.viewportHeight
+          : 1;
 
-      this.docWidth = side;
-      this.docHeight = side;
+      let docWidth;
+      let docHeight;
+
+      // Lato lungo al cap VRAM, lato corto derivato dall'aspect del viewport:
+      // il documento riempie l'intera area visibile senza bande nere.
+      if (aspect >= 1) {
+        docWidth = cap;
+        docHeight = Math.max(1, Math.round(cap / aspect));
+      } else {
+        docHeight = cap;
+        docWidth = Math.max(1, Math.round(cap * aspect));
+      }
+
+      this.docWidth = docWidth;
+      this.docHeight = docHeight;
     }
 
     isMobileLikeDevice() {
@@ -252,12 +299,9 @@ void main() {
     }
 
     centerCamera() {
-      const margin = Math.min(96, Math.max(16, Math.min(this.viewportWidth, this.viewportHeight) * 0.08));
-      const availableWidth = Math.max(1, this.viewportWidth - margin * 2);
-      const availableHeight = Math.max(1, this.viewportHeight - margin * 2);
       const zoom = Math.max(
         0.0001,
-        Math.min(availableWidth / this.docWidth, availableHeight / this.docHeight),
+        Math.min(this.viewportWidth / this.docWidth, this.viewportHeight / this.docHeight),
       );
       const artboardWidth = this.docWidth * zoom;
       const artboardHeight = this.docHeight * zoom;
@@ -301,6 +345,7 @@ void main() {
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
+          gridMode: gl.getUniformLocation(program, "u_gridMode"),
         },
       };
     }
@@ -482,8 +527,10 @@ void main() {
       }
 
       gl.bindTexture(gl.TEXTURE_2D, texture);
+      // MAG = NEAREST: zoomando in si vedono i pixel quadrati come in Photoshop / Procreate.
+      // MIN = LINEAR: zoom out resta liscio senza moir\u00e9.
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(
@@ -543,8 +590,9 @@ void main() {
       }
 
       gl.bindTexture(gl.TEXTURE_2D, texture);
+      // Stesso schema del baseFBO: pixel netti in zoom in, smooth in zoom out.
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(
@@ -648,7 +696,7 @@ void main() {
     }
 
     handleResize() {
-      if (this.resizeViewport()) {
+      if (this.resizeViewport() && !this.userManipulatedCamera) {
         this.centerCamera();
       }
     }
@@ -667,6 +715,131 @@ void main() {
       this.canvas.addEventListener("pointermove", this.handlePointerMove);
       this.canvas.addEventListener("pointerup", this.handlePointerUp);
       this.canvas.addEventListener("pointercancel", this.handlePointerCancel);
+    }
+
+    bindNavigationEvents() {
+      this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
+      window.addEventListener("keydown", this.handleKeyDown);
+      window.addEventListener("keyup", this.handleKeyUp);
+    }
+
+    handleWheel(event) {
+      event.preventDefault();
+
+      let deltaY = event.deltaY;
+
+      if (event.deltaMode === 1) {
+        deltaY *= 16;
+      } else if (event.deltaMode === 2) {
+        deltaY *= window.innerHeight || 800;
+      }
+
+      const intensity = event.ctrlKey ? PINCH_ZOOM_INTENSITY : WHEEL_ZOOM_INTENSITY;
+      const factor = Math.exp(-deltaY * intensity);
+
+      this.zoomAtClient(event.clientX, event.clientY, factor);
+    }
+
+    zoomAtClient(clientX, clientY, factor) {
+      if (!Number.isFinite(factor) || factor <= 0) {
+        return;
+      }
+
+      const rect = this.canvas.getBoundingClientRect();
+      const cursorViewportX = (clientX - rect.left) * this.dpr;
+      const cursorViewportY = (clientY - rect.top) * this.dpr;
+      const oldZoom = this.camera.zoom;
+      const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom * factor));
+
+      if (newZoom === oldZoom) {
+        return;
+      }
+
+      // Mantieni fermo il punto del documento sotto il cursore (anchor zoom).
+      const docX = (cursorViewportX - this.camera.x) / oldZoom;
+      const docY = (cursorViewportY - this.camera.y) / oldZoom;
+
+      this.camera.zoom = newZoom;
+      this.camera.x = cursorViewportX - docX * newZoom;
+      this.camera.y = cursorViewportY - docY * newZoom;
+      this.userManipulatedCamera = true;
+    }
+
+    beginPan(event) {
+      this.isPanning = true;
+      this.activePanPointerId = event.pointerId;
+      this.panLastViewportX = event.clientX * this.dpr;
+      this.panLastViewportY = event.clientY * this.dpr;
+
+      try {
+        this.canvas.setPointerCapture(event.pointerId);
+      } catch (error) {
+        // Alcuni browser rifiutano la capture su pointer non principali; il pan funziona comunque.
+      }
+
+      this.updateCursor();
+    }
+
+    updatePan(event) {
+      const currentX = event.clientX * this.dpr;
+      const currentY = event.clientY * this.dpr;
+
+      this.camera.x += currentX - this.panLastViewportX;
+      this.camera.y += currentY - this.panLastViewportY;
+      this.panLastViewportX = currentX;
+      this.panLastViewportY = currentY;
+      this.userManipulatedCamera = true;
+    }
+
+    endPan(event) {
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+
+      this.isPanning = false;
+      this.activePanPointerId = null;
+      this.updateCursor();
+    }
+
+    handleKeyDown(event) {
+      if (event.code !== "Space" || this.isSpaceHeld || this.isInputFocused()) {
+        return;
+      }
+
+      this.isSpaceHeld = true;
+      event.preventDefault();
+      this.updateCursor();
+    }
+
+    handleKeyUp(event) {
+      if (event.code !== "Space" || !this.isSpaceHeld) {
+        return;
+      }
+
+      this.isSpaceHeld = false;
+      this.updateCursor();
+    }
+
+    isInputFocused() {
+      const element = document.activeElement;
+
+      if (!element || element === document.body) {
+        return false;
+      }
+
+      const tag = element.tagName;
+
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || element.isContentEditable === true;
+    }
+
+    updateCursor() {
+      if (this.isPanning) {
+        this.canvas.style.cursor = "grabbing";
+      } else if (this.isSpaceHeld) {
+        this.canvas.style.cursor = "grab";
+      } else {
+        this.canvas.style.cursor = "";
+      }
     }
 
     screenToDocumentSpace(clientX, clientY) {
@@ -946,7 +1119,19 @@ void main() {
     }
 
     handlePointerDown(event) {
-      if (event.button !== 0 || this.isDrawing) {
+      const isPanTrigger = event.button === 1 || (event.button === 0 && this.isSpaceHeld);
+
+      if (isPanTrigger) {
+        if (this.isDrawing || this.isPanning) {
+          return;
+        }
+
+        event.preventDefault();
+        this.beginPan(event);
+        return;
+      }
+
+      if (event.button !== 0 || this.isDrawing || this.isPanning) {
         return;
       }
 
@@ -963,6 +1148,12 @@ void main() {
     }
 
     handlePointerMove(event) {
+      if (this.isPanning && this.activePanPointerId === event.pointerId) {
+        event.preventDefault();
+        this.updatePan(event);
+        return;
+      }
+
       if (!this.isDrawing || this.activePointerId !== event.pointerId) {
         return;
       }
@@ -973,6 +1164,12 @@ void main() {
     }
 
     handlePointerUp(event) {
+      if (this.isPanning && this.activePanPointerId === event.pointerId) {
+        event.preventDefault();
+        this.endPan(event);
+        return;
+      }
+
       if (!this.isDrawing || this.activePointerId !== event.pointerId) {
         return;
       }
@@ -1001,6 +1198,11 @@ void main() {
     }
 
     handlePointerCancel(event) {
+      if (this.isPanning && this.activePanPointerId === event.pointerId) {
+        this.endPan(event);
+        return;
+      }
+
       if (!this.isDrawing || this.activePointerId !== event.pointerId) {
         return;
       }
@@ -1029,7 +1231,7 @@ void main() {
         return;
       }
 
-      if (this.resizeViewport()) {
+      if (this.resizeViewport() && !this.userManipulatedCamera) {
         this.centerCamera();
       }
 
@@ -1060,6 +1262,7 @@ void main() {
       gl.activeTexture(gl.TEXTURE0);
 
       // Pass 1: livello base consolidato a piena opacità.
+      gl.uniform1f(uniforms.gridMode, 0.0);
       gl.bindTexture(gl.TEXTURE_2D, this.baseTexture);
       gl.uniform1f(uniforms.opacity, 1.0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -1070,6 +1273,10 @@ void main() {
         gl.uniform1f(uniforms.opacity, this.getOpacity01());
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
+
+      // Pass 3: griglia pixel sopra tutto. Lo shader la attiva solo a zoom alto.
+      gl.uniform1f(uniforms.gridMode, 1.0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
@@ -1094,6 +1301,10 @@ void main() {
       this.canvas.removeEventListener("pointermove", this.handlePointerMove);
       this.canvas.removeEventListener("pointerup", this.handlePointerUp);
       this.canvas.removeEventListener("pointercancel", this.handlePointerCancel);
+      this.canvas.removeEventListener("wheel", this.handleWheel);
+      window.removeEventListener("keydown", this.handleKeyDown);
+      window.removeEventListener("keyup", this.handleKeyUp);
+      this.canvas.style.cursor = "";
 
       if (this.quad) {
         gl.deleteBuffer(this.quad.buffer);
