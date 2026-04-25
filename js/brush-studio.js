@@ -316,34 +316,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   }
 
   function ensurePreviewCanvas() {
-    if (!previewPad || previewCanvas) {
-      return;
-    }
-
-    previewCanvas = document.createElement("canvas");
-    previewCanvas.className = "brush-studio-preview-canvas";
-    previewCanvas.setAttribute("aria-label", "Brush preview drawing pad");
-    previewCanvas.setAttribute("data-brush-preview-canvas", "");
-    previewContext = previewCanvas.getContext("2d", {
-      alpha: true,
-      desynchronized: true,
-    });
-
-    if (!previewContext) {
-      previewCanvas = null;
-      return;
-    }
-
-    previewPad.append(previewCanvas);
-    previewCanvas.addEventListener("pointerdown", startPreviewStroke);
-    previewCanvas.addEventListener("pointermove", movePreviewStroke);
-    previewCanvas.addEventListener("pointerup", endPreviewStroke);
-    previewCanvas.addEventListener("pointercancel", endPreviewStroke);
-    previewCanvas.addEventListener("lostpointercapture", endPreviewStroke);
-    previewResizeObserver = new ResizeObserver(resizePreviewCanvas);
-    previewResizeObserver.observe(previewPad);
-    resizePreviewCanvas();
-    queuePreviewSample();
+    previewPad?.replaceChildren();
   }
 
   function destroyPreviewCanvas() {
