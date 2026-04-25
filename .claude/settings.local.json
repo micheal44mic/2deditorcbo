@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node --check \"C:/Users/michi/Desktop/editor 2d cbos - aggiunti brush/js/brush-engine.js\")"
+      "Bash(node --check \"C:/Users/michi/Desktop/editor 2d cbos - aggiunti brush/js/brush-engine.js\")",
+      "Bash(node --check \"C:/Users/michi/Desktop/editor 2d cbos - aggiunti brush/js/color-picker.js\")"
     ]
   }
 }

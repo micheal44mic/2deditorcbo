@@ -799,14 +799,29 @@ void main() {
       };
     }
 
-    getStampSpacing() {
-      const size = Number(this.brushState.size || 20);
-      const spacingPercent = Number(this.brushState.spacing || 10);
-      const safeSize = Number.isFinite(size) && size > 0 ? size : 20;
-      const safeSpacingPercent =
-        Number.isFinite(spacingPercent) && spacingPercent > 0 ? spacingPercent : 10;
+    getBrushSize() {
+      const radius = Number(this.brushState.radius);
 
-      return Math.max(1, safeSize * (safeSpacingPercent / 100));
+      if (Number.isFinite(radius) && radius > 0) {
+        return radius * 2;
+      }
+
+      const size = Number(this.brushState.size);
+
+      if (Number.isFinite(size) && size > 0) {
+        return size;
+      }
+
+      return 40;
+    }
+
+    getStampSpacing() {
+      const brushSize = this.getBrushSize();
+      const spacingFraction = Number(this.brushState.spacing);
+      const safeSpacing =
+        Number.isFinite(spacingFraction) && spacingFraction > 0 ? spacingFraction : 0.1;
+
+      return Math.max(1, brushSize * safeSpacing);
     }
 
     processStamps() {
@@ -854,8 +869,7 @@ void main() {
       const gl = this.gl;
       const stampCount = this.stampsBuffer.length;
       const instanceData = new Float32Array(stampCount * 3);
-      const size = Number(this.brushState.size || 20);
-      const brushSize = Number.isFinite(size) && size > 0 ? size : 20;
+      const brushSize = this.getBrushSize();
       const color = this.parseColorToRgb01(this.brushState.color);
 
       for (let index = 0; index < stampCount; index += 1) {

@@ -224,6 +224,12 @@ window.CBO.initColorPicker = function initColorPicker() {
     window.CBO.activeColorSlot = activeSlot;
     window.CBO.selectedColor = selectedColor;
     window.CBO.selectedColors = { ...slotColors };
+    window.CBO.brushSettings = window.CBO.brushSettings || {};
+
+    if (window.CBO.brushSettings.color !== selectedColor) {
+      window.CBO.brushSettings.color = selectedColor;
+      window.dispatchEvent(new CustomEvent("cbo:brush-settings-change"));
+    }
 
     slotButtons.forEach((slotButton) => {
       const isActive = slotButton.dataset.colorSlot === activeSlot;
