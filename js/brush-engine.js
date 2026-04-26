@@ -577,6 +577,7 @@ void main() {
       this.nextStampDistance = 1;
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
+      this.lastStrokeTangent = null;
       this.strokeDynamicsState = null;
       this.strokeRandomState = { seed: 1 };
       this.strokeColorRandomState = null;
@@ -1669,6 +1670,14 @@ void main() {
       return nextSeed / 4294967296;
     }
 
+    createStableStrokeUnit(salt) {
+      return this.createSeededUnit(((this.strokeInitialSeed || 1) ^ (salt || 0)) >>> 0);
+    }
+
+    createStableStrokeSigned(salt) {
+      return this.createStableStrokeUnit(salt) * 2 - 1;
+    }
+
     createStrokeSeed(point) {
       return (
         Date.now() ^
@@ -1811,11 +1820,18 @@ void main() {
     }
 
     getPrimaryColorRgb() {
-      return this.parseColorToRgb01(this.brushState?.color ?? namespace.selectedColor ?? "#000000");
+      return this.parseColorToRgb01(
+        this.brushState?.color ??
+          namespace.selectedColors?.primary ??
+          namespace.selectedColor ??
+          "#000000",
+      );
     }
 
     getSecondaryColorRgb() {
-      return this.parseColorToRgb01(namespace.selectedColors?.secondary ?? this.brushState?.secondaryColor ?? "#000000");
+      return this.parseColorToRgb01(
+        this.brushState?.secondaryColor ?? namespace.selectedColors?.secondary ?? "#000000",
+      );
     }
 
     nextColorRandom() {
@@ -2441,12 +2457,18 @@ void main() {
       return this.getFallOffScale() * this.getWetMixAlphaScale();
     }
 
-    clampStampToDocument(stamp) {
-      return {
-        ...stamp,
-        x: this.clamp(stamp.x, 0, this.docWidth),
-        y: this.clamp(stamp.y, 0, this.docHeight),
-      };
+    isStampCompletelyOutsideDocument(stamp) {
+      const pressure = this.clamp(stamp.pressure ?? 1, 0, 1);
+      const sizeFactor = this.lerp(this.getMinSizeRatio(), 1, pressure);
+      const scale = Math.max(stamp.sizeScale ?? 1, 0);
+      const halfExtent = this.getBrushSize() * sizeFactor * scale * Math.SQRT1_2 + 2;
+
+      return (
+        stamp.x + halfExtent < 0 ||
+        stamp.x - halfExtent > this.docWidth ||
+        stamp.y + halfExtent < 0 ||
+        stamp.y - halfExtent > this.docHeight
+      );
     }
 
     applyStampJitter(stamp, tangent) {
@@ -2455,7 +2477,7 @@ void main() {
       const linear = this.clamp(this.brushState.jitterLinear, 0, 2) * radius;
 
       if (lateral <= 0 && linear <= 0) {
-        return this.clampStampToDocument(stamp);
+        return stamp;
       }
 
       const lateralOffset = this.randomSigned() * lateral;
@@ -2465,11 +2487,11 @@ void main() {
         y: tangent.x,
       };
 
-      return this.clampStampToDocument({
+      return {
         ...stamp,
         x: stamp.x + perpendicular.x * lateralOffset + tangent.x * linearOffset,
         y: stamp.y + perpendicular.y * lateralOffset + tangent.y * linearOffset,
-      });
+      };
     }
 
     getShapeRotation() {
@@ -2637,7 +2659,7 @@ void main() {
       return this.brushState.grainInvert === true;
     }
 
-    getEffectiveShapeCount() {
+    getEffectiveShapeCount(randomUnit = null) {
       const count = this.getShapeCount();
       const jitter = this.getShapeCountJitter();
 
@@ -2651,27 +2673,69 @@ void main() {
         return count;
       }
 
-      return minCount + Math.floor(this.nextRandom() * (count - minCount + 1));
+      const unit = typeof randomUnit === "function" ? randomUnit() : this.nextRandom();
+
+      return minCount + Math.floor(unit * (count - minCount + 1));
     }
 
     getShapeDirectionalRotation(tangent) {
       const rotationFollow = this.getShapeRotation();
 
-      if (rotationFollow === 0 || !tangent || (tangent.x === 0 && tangent.y === 0)) {
+      if (rotationFollow === 0 || !this.hasUsableShapeTangent(tangent)) {
         return this.strokeShapeRotation;
       }
 
       return this.strokeShapeRotation + Math.atan2(tangent.y, tangent.x) * rotationFollow;
     }
 
-    getShapeScatterRotation() {
+    hasUsableShapeTangent(tangent) {
+      return Boolean(tangent && (tangent.x !== 0 || tangent.y !== 0));
+    }
+
+    getPointTangent(from, to) {
+      if (!from || !to) {
+        return null;
+      }
+
+      const distance = Math.hypot(to.x - from.x, to.y - from.y);
+
+      if (distance <= 0) {
+        return null;
+      }
+
+      return {
+        x: (to.x - from.x) / distance,
+        y: (to.y - from.y) / distance,
+      };
+    }
+
+    applyPendingShapeRotation(tangent) {
+      if (!this.hasUsableShapeTangent(tangent)) {
+        return;
+      }
+
+      const directionalRotation = this.getShapeDirectionalRotation(tangent);
+
+      this.stampsBuffer.forEach((stamp) => {
+        if (stamp.needsShapeRotationTangent !== true) {
+          return;
+        }
+
+        stamp.rotation = directionalRotation + (stamp.shapeScatterRotation ?? 0);
+        stamp.needsShapeRotationTangent = false;
+      });
+    }
+
+    getShapeScatterRotation(randomSignedValue = null) {
       const scatter = this.getShapeScatter();
 
       if (scatter <= 0) {
         return 0;
       }
 
-      return this.randomSigned() * Math.PI * scatter;
+      const signedValue = Number.isFinite(randomSignedValue) ? randomSignedValue : this.randomSigned();
+
+      return signedValue * Math.PI * scatter * 0.5;
     }
 
     getGrainMovingDirectionalRotation(tangent) {
@@ -2712,11 +2776,36 @@ void main() {
     }
 
     pushShapeStamps(baseStamp, tangent) {
-      const effectiveCount = this.getEffectiveShapeCount();
+      const isFirstStrokeShape = this.strokeStampCount === 0 && this.stampsBuffer.length === 0 && this.strokeDistance === 0;
+      const effectiveCount = this.getEffectiveShapeCount(
+        isFirstStrokeShape ? () => this.createStableStrokeUnit(0x51f15eed) : null,
+      );
+      const hasDirectionalTangent = this.hasUsableShapeTangent(tangent);
+      const shouldUpdateWhenTangentArrives = this.getShapeRotation() !== 0 && !hasDirectionalTangent;
       const directionalRotation = this.getShapeDirectionalRotation(tangent);
+      const getScatterRotation = (index) => {
+        if (!isFirstStrokeShape) {
+          return this.getShapeScatterRotation();
+        }
+
+        return this.getShapeScatterRotation(
+          this.createStableStrokeSigned((0x5ca77e12 + Math.imul(index + 1, 0x9e3779b1)) >>> 0),
+        );
+      };
 
       if (effectiveCount === 1) {
-        baseStamp.rotation = directionalRotation + this.getShapeScatterRotation();
+        const scatterRotation = getScatterRotation(0);
+
+        baseStamp.rotation = directionalRotation + scatterRotation;
+        if (shouldUpdateWhenTangentArrives) {
+          baseStamp.needsShapeRotationTangent = true;
+          baseStamp.shapeScatterRotation = scatterRotation;
+        }
+
+        if (this.isStampCompletelyOutsideDocument(baseStamp)) {
+          return;
+        }
+
         this.applyMovingGrainToStamp(baseStamp, tangent);
         baseStamp.colorRgb = this.getNextStampColorRgb();
         this.stampsBuffer.push(baseStamp);
@@ -2724,10 +2813,20 @@ void main() {
       }
 
       for (let index = 0; index < effectiveCount; index += 1) {
+        const scatterRotation = getScatterRotation(index);
         const stamp = {
           ...baseStamp,
-          rotation: directionalRotation + this.getShapeScatterRotation(),
+          rotation: directionalRotation + scatterRotation,
         };
+
+        if (shouldUpdateWhenTangentArrives) {
+          stamp.needsShapeRotationTangent = true;
+          stamp.shapeScatterRotation = scatterRotation;
+        }
+
+        if (this.isStampCompletelyOutsideDocument(stamp)) {
+          continue;
+        }
 
         this.applyMovingGrainToStamp(stamp, tangent);
         stamp.colorRgb = this.getNextStampColorRgb();
@@ -2742,6 +2841,14 @@ void main() {
 
       const [p0, p1, p2, p3] = this.currentStroke;
       const segmentDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+      if (segmentDistance <= 0) {
+        this.applyPendingShapeRotation(this.getPointTangent(p2, p3));
+        this.currentStroke.shift();
+        this.flushStamps();
+        return;
+      }
+
       const sampleCount = Math.max(8, Math.min(128, Math.ceil(segmentDistance / 4)));
       let previousPoint = this.catmullRom(p0, p1, p2, p3, 0);
 
@@ -2751,6 +2858,13 @@ void main() {
         const stepDistance = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y);
 
         if (stepDistance > 0) {
+          const tangent = {
+            x: (point.x - previousPoint.x) / stepDistance,
+            y: (point.y - previousPoint.y) / stepDistance,
+          };
+
+          this.lastStrokeTangent = tangent;
+          this.applyPendingShapeRotation(tangent);
           this.leftoverDistance += stepDistance;
 
           while (this.leftoverDistance >= this.nextStampDistance) {
@@ -2758,10 +2872,6 @@ void main() {
             const overshoot = this.leftoverDistance - stampDistance;
             const distanceFromPrevious = stepDistance - overshoot;
             const stampT = Math.max(0, Math.min(1, distanceFromPrevious / stepDistance));
-            const tangent = {
-              x: (point.x - previousPoint.x) / stepDistance,
-              y: (point.y - previousPoint.y) / stepDistance,
-            };
             const stamp = this.applyStampJitter(this.lerpStamp(previousPoint, point, stampT), tangent);
 
             this.strokeDistance += stampDistance;
@@ -3027,12 +3137,12 @@ void main() {
 
       this.strokeDistance = this.clamp(distanceFromStart, 0, this.strokeTotalLength);
 
-      const stamp = this.clampStampToDocument(this.createStamp(point));
+      const stamp = this.createStamp(point);
 
       stamp.alphaScale = this.getStampAlphaScale();
       stamp.sizeScale = 1;
       this.applyTaperToStamp(stamp);
-      this.pushShapeStamps(stamp, null);
+      this.pushShapeStamps(stamp, this.lastStrokeTangent);
     }
 
     regenerateStrokeWithTaper(rawSamples, totalLength) {

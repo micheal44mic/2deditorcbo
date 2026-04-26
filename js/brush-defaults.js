@@ -194,6 +194,7 @@ window.CBO = window.CBO || {};
     nextSettings.burntEdgesMode = normalizeBurntEdgesMode(nextSettings.burntEdgesMode);
     nextSettings.alphaThresholdEnabled = nextSettings.alphaThresholdEnabled === true;
     nextSettings.alphaThreshold = normalize01(nextSettings.alphaThreshold, settings.alphaThreshold);
+    nextSettings.shapeRotation = normalizeSigned(nextSettings.shapeRotation, settings.shapeRotation);
     nextSettings.grainBrightness = normalizeSigned(nextSettings.grainBrightness, settings.grainBrightness);
     nextSettings.grainContrast = normalizeSigned(nextSettings.grainContrast, settings.grainContrast);
     nextSettings.grainTexturizedScale = hasOwn(nextOverrides, "grainTexturizedScale")

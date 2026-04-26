@@ -550,7 +550,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       setValue(slider.value);
     });
 
-    setValue(value);
+    setValue(Number.isFinite(Number(value)) ? value : 0);
     header.append(name, valuePill);
     setting.append(header, slider);
 
@@ -738,16 +738,22 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       { label: "AZIMUTH", active: false, disabled: true },
       { label: "AZIMUTH AND BARREL ROLL", active: false, disabled: true },
     ];
-    const rotationSetting = createRangeSetting({
+    const shapeRotation = Number(draftBrushSettings.shapeRotation);
+    const rotationSetting = createGrainSignedPercentSetting({
       key: "shapeRotation",
       label: "ROTATION",
-      min: -100,
-      max: 100,
-      step: 1,
-      value: Math.round(clamp(draftBrushSettings.shapeRotation, -1, 1) * 100),
-      unit: "%",
-      toSetting: (displayValue) => displayValue / 100,
-      toDisplay: (displayValue) => Math.round(displayValue),
+      value: Math.round(clamp(Number.isFinite(shapeRotation) ? shapeRotation : 0, -1, 1) * 100),
+      formatDisplay: (displayValue) => {
+        if (displayValue === -100) {
+          return "INVERSE";
+        }
+
+        if (displayValue === 0) {
+          return "LOCKED";
+        }
+
+        return displayValue === 100 ? "FOLLOW STROKE" : `${displayValue > 0 ? "+" : ""}${displayValue}%`;
+      },
     });
     const randomizedToggle = createToggleSetting({
       key: "shapeRandomized",

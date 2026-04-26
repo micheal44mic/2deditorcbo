@@ -15,8 +15,8 @@ window.CBO.initColorPicker = function initColorPicker() {
     v: 1,
   };
   const slotColors = {
-    primary: "#FFFFFF",
-    secondary: "#000000",
+    primary: getInitialSlotColor("primary", "#FFFFFF"),
+    secondary: getInitialSlotColor("secondary", "#000000"),
   };
   const presets = [
     "#FFFFFF",
@@ -44,7 +44,7 @@ window.CBO.initColorPicker = function initColorPicker() {
     "#FCA5A5",
     "#FDE68A",
   ];
-  let activeSlot = "primary";
+  let activeSlot = window.CBO.activeColorSlot === "secondary" ? "secondary" : "primary";
 
   const popover = document.createElement("div");
   popover.className = "color-picker-popover";
@@ -101,7 +101,7 @@ window.CBO.initColorPicker = function initColorPicker() {
   }
 
   function normalizeHexInput(value) {
-    const trimmed = value.trim();
+    const trimmed = String(value || "").trim();
     const hex = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
 
     if (/^[0-9a-fA-F]{3}$/.test(hex)) {
@@ -117,6 +117,16 @@ window.CBO.initColorPicker = function initColorPicker() {
     }
 
     return `#${hex.toUpperCase()}`;
+  }
+
+  function getInitialSlotColor(slot, fallback) {
+    const settings = window.CBO.brushSettings || {};
+    const selectedColors = window.CBO.selectedColors || {};
+    const candidate = slot === "primary"
+      ? selectedColors.primary || settings.color || window.CBO.selectedColor
+      : selectedColors.secondary || settings.secondaryColor;
+
+    return normalizeHexInput(candidate || fallback) || fallback;
   }
 
   function hsvToRgb(hue, saturation, value) {
@@ -215,10 +225,13 @@ window.CBO.initColorPicker = function initColorPicker() {
 
   function syncColorUi() {
     const selectedColor = slotColors[activeSlot];
+    const primaryColor = slotColors.primary;
+    const secondaryColor = slotColors.secondary;
+    let didSettingsChange = false;
 
     popover.style.setProperty("--picker-hue", state.h);
-    popover.style.setProperty("--primary-color", slotColors.primary);
-    popover.style.setProperty("--secondary-color", slotColors.secondary);
+    popover.style.setProperty("--primary-color", primaryColor);
+    popover.style.setProperty("--secondary-color", secondaryColor);
     swatch.style.setProperty("--selected-color", selectedColor);
     hexInput.value = selectedColor;
     window.CBO.activeColorSlot = activeSlot;
@@ -226,9 +239,26 @@ window.CBO.initColorPicker = function initColorPicker() {
     window.CBO.selectedColors = { ...slotColors };
     window.CBO.brushSettings = window.CBO.brushSettings || {};
 
-    if (window.CBO.brushSettings.color !== selectedColor) {
-      window.CBO.brushSettings.color = selectedColor;
-      window.dispatchEvent(new CustomEvent("cbo:brush-settings-change"));
+    if (window.CBO.brushSettings.color !== primaryColor) {
+      window.CBO.brushSettings.color = primaryColor;
+      didSettingsChange = true;
+    }
+
+    if (window.CBO.brushSettings.secondaryColor !== secondaryColor) {
+      window.CBO.brushSettings.secondaryColor = secondaryColor;
+      didSettingsChange = true;
+    }
+
+    if (didSettingsChange) {
+      window.dispatchEvent(
+        new CustomEvent("cbo:brush-settings-change", {
+          detail: {
+            source: "color-picker",
+            persistBrushPreset: false,
+            settings: { ...window.CBO.brushSettings },
+          },
+        }),
+      );
     }
 
     slotButtons.forEach((slotButton) => {
@@ -439,5 +469,6 @@ window.CBO.initColorPicker = function initColorPicker() {
     }
   });
 
+  setStateFromHex(slotColors[activeSlot]);
   syncColorUi();
 };
