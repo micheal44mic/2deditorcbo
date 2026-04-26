@@ -8,6 +8,9 @@ window.CBO = window.CBO || {};
   const pendingKeys = new WeakMap();
   const maxDpr = 2;
   const previewColor = { r: 223, g: 227, b: 234 };
+  const previewColorHex = "#dfe3ea";
+  const previewFixedRadius = 30;
+  const thumbnailInternalSize = { width: 188, height: 52 };
   const renderingModeFlowScale = Object.freeze({
     "light-glaze": 1,
     "uniform-glaze": 1,
@@ -17,10 +20,17 @@ window.CBO = window.CBO || {};
     "intense-blending": 1.75,
   });
   let frameId = 0;
+  let isProcessingQueue = false;
+  let thumbnailRenderer = null;
+  let thumbnailRendererUnavailable = false;
+  let thumbnailBrushSettings = {};
 
   const hashKeys = [
+    "color",
+    "secondaryColor",
     "radius",
     "opacity",
+    "minSizeRatio",
     "renderingMode",
     "flow",
     "hardness",
@@ -49,9 +59,14 @@ window.CBO = window.CBO || {};
     "shapeRandomized",
     "shapeFlipX",
     "shapeFlipY",
+    "shapeAlphaSrc",
+    "shapeAlphaName",
     "grainEnabled",
+    "grainTextureSrc",
+    "grainTextureName",
     "grainMode",
     "grainBlendMode",
+    "grainRotation",
     "grainBrightness",
     "grainContrast",
     "grainTexturizedScale",
@@ -63,7 +78,16 @@ window.CBO = window.CBO || {};
     "grainMovingDepth",
     "grainMovingDepthMinimum",
     "grainMovingDepthJitter",
+    "grainMovingOffsetJitter",
     "grainInvert",
+    "wetDilution",
+    "wetCharge",
+    "wetAttack",
+    "wetnessJitter",
+    "streamLineAmount",
+    "streamLinePressure",
+    "stabilizationAmount",
+    "smoothing",
     "stampColorHueJitter",
     "stampColorSaturationJitter",
     "stampColorLightnessJitter",
@@ -171,26 +195,38 @@ window.CBO = window.CBO || {};
     scheduleQueue();
   }
 
-  function processQueue() {
+  async function processQueue() {
     frameId = 0;
 
-    let rendered = 0;
-    while (queue.length > 0 && rendered < 3) {
-      const job = queue.shift();
+    if (isProcessingQueue) {
+      return;
+    }
 
-      if (!job.canvas.isConnected || pendingKeys.get(job.canvas) !== job.key) {
-        continue;
+    isProcessingQueue = true;
+
+    try {
+      let rendered = 0;
+      while (queue.length > 0 && rendered < 2) {
+        const job = queue.shift();
+
+        if (!job.canvas.isConnected || pendingKeys.get(job.canvas) !== job.key) {
+          continue;
+        }
+
+        try {
+          await renderQueuedJob(job);
+        } catch (error) {
+          const fallback = renderToCanvas(job.settings, job.size);
+
+          cache.set(job.key, fallback);
+          if (job.canvas.isConnected && pendingKeys.get(job.canvas) === job.key) {
+            drawCached(job.canvas, fallback, job.size);
+          }
+        }
+        rendered += 1;
       }
-
-      let cached = cache.get(job.key);
-
-      if (!cached) {
-        cached = renderToCanvas(job.settings, job.size);
-        cache.set(job.key, cached);
-      }
-
-      drawCached(job.canvas, cached, job.size);
-      rendered += 1;
+    } finally {
+      isProcessingQueue = false;
     }
 
     if (queue.length > 0) {
@@ -198,9 +234,158 @@ window.CBO = window.CBO || {};
     }
   }
 
+  async function renderQueuedJob(job) {
+    let cached = cache.get(job.key);
+
+    if (!cached) {
+      cached = await renderToCanvasWithBestRenderer(job.settings, job.size);
+      cache.set(job.key, cached);
+    }
+
+    if (!job.canvas.isConnected || pendingKeys.get(job.canvas) !== job.key) {
+      return;
+    }
+
+    drawCached(job.canvas, cached, job.size);
+  }
+
+  function getThumbnailRenderer() {
+    if (thumbnailRendererUnavailable || !namespace.BrushEngine || !document.body) {
+      return null;
+    }
+
+    if (thumbnailRenderer) {
+      return thumbnailRenderer;
+    }
+
+    const host = document.createElement("div");
+    const canvas = document.createElement("canvas");
+
+    host.setAttribute("aria-hidden", "true");
+    host.style.position = "fixed";
+    host.style.left = "-10000px";
+    host.style.top = "-10000px";
+    host.style.width = `${thumbnailInternalSize.width}px`;
+    host.style.height = `${thumbnailInternalSize.height}px`;
+    host.style.opacity = "0";
+    host.style.pointerEvents = "none";
+    host.style.overflow = "hidden";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    host.appendChild(canvas);
+    document.body.appendChild(host);
+
+    try {
+      const engine = new namespace.BrushEngine(canvas, {
+        getSettings: () => thumbnailBrushSettings,
+        transparentBackground: true,
+        singleStrokeMode: true,
+        disableInput: true,
+        disableNavigation: true,
+        manualRender: true,
+        documentSizeCap: 512,
+      });
+
+      thumbnailRenderer = { canvas, engine, host };
+      return thumbnailRenderer;
+    } catch (error) {
+      host.remove();
+      thumbnailRendererUnavailable = true;
+      return null;
+    }
+  }
+
+  function getPreviewEngineSettings(settings) {
+    const normalizedSettings = normalizeSettings({
+      ...settings,
+      color: previewColorHex,
+      secondaryColor: previewColorHex,
+      opacity: 1,
+      radius: previewFixedRadius,
+      size: previewFixedRadius,
+    });
+
+    return normalizedSettings;
+  }
+
+  function createSyntheticStrokeSamples(engine, settings) {
+    const width = Math.max(1, engine.docWidth || 512);
+    const height = Math.max(1, engine.docHeight || 142);
+    const radius = Math.max(1, Number(settings.radius) || Number(settings.size) * 0.5 || 20);
+    const margin = Math.min(width * 0.24, Math.max(width * 0.08, radius * 1.2));
+    const startX = margin;
+    const endX = Math.max(startX + 1, width - margin);
+    const sampleCount = 44;
+    const samples = [];
+
+    for (let index = 0; index <= sampleCount; index += 1) {
+      const t = index / sampleCount;
+      const x = startX + (endX - startX) * t;
+      const y =
+        height * 0.56 -
+        Math.sin(t * Math.PI) * height * 0.12 +
+        Math.sin(t * Math.PI * 2.1) * height * 0.035;
+
+      samples.push({
+        x,
+        y,
+        pressure: 1,
+        tiltX: 0,
+        tiltY: 0,
+        time: index * 16,
+        strokeSeed: 0x2dcb05,
+      });
+    }
+
+    return samples;
+  }
+
+  async function renderWebglPreview(settings, size) {
+    const renderer = getThumbnailRenderer();
+
+    if (!renderer?.engine?.renderSyntheticStroke) {
+      return null;
+    }
+
+    const output = document.createElement("canvas");
+    const context = output.getContext("2d", { alpha: true });
+    const engineSettings = getPreviewEngineSettings(settings);
+
+    output.width = Math.max(1, Math.round(size.width * size.dpr));
+    output.height = Math.max(1, Math.round(size.height * size.dpr));
+
+    if (!context) {
+      return null;
+    }
+
+    thumbnailBrushSettings = engineSettings;
+    renderer.engine.setBrushState(engineSettings);
+    await renderer.engine.waitForBrushAssets?.(engineSettings);
+    const samples = createSyntheticStrokeSamples(renderer.engine, engineSettings);
+
+    renderer.engine.renderSyntheticStroke(samples);
+    context.clearRect(0, 0, output.width, output.height);
+    context.drawImage(renderer.canvas, 0, 0, output.width, output.height);
+
+    return output;
+  }
+
+  async function renderToCanvasWithBestRenderer(settings, size) {
+    try {
+      const webglCanvas = await renderWebglPreview(settings, size);
+
+      if (webglCanvas) {
+        return webglCanvas;
+      }
+    } catch (error) {
+      thumbnailRendererUnavailable = true;
+    }
+
+    return renderToCanvas(settings, size);
+  }
+
   function getPreviewRadius(settings, height) {
-    const radius = Math.max(1, Number(settings.radius) || 18);
-    const normalized = Math.sqrt(clamp(radius, 1, 120) / 120);
+    const normalized = Math.sqrt(clamp(previewFixedRadius, 1, 120) / 120);
 
     return lerp(Math.max(3.5, height * 0.09), height * 0.34, normalized);
   }
@@ -213,9 +398,7 @@ window.CBO = window.CBO || {};
   }
 
   function getPressure(t) {
-    const swell = Math.sin(t * Math.PI);
-
-    return clamp(0.34 + swell * 0.66 - t * 0.08, 0.24, 1);
+    return 1;
   }
 
   function getPathLength(width, height) {

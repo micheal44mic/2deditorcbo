@@ -524,6 +524,8 @@ void main() {
         transparentBackground: options.transparentBackground === true,
         singleStrokeMode: options.singleStrokeMode === true,
         disableNavigation: options.disableNavigation === true,
+        disableInput: options.disableInput === true,
+        manualRender: options.manualRender === true,
         respectActiveTool: options.respectActiveTool === true
           ? true
           : options.respectActiveTool === false
@@ -631,9 +633,13 @@ void main() {
       this.observeViewportSize();
       this.bindBrushSettings();
       this.bindToolState();
-      this.bindPointerEvents();
-      this.bindNavigationEvents();
-      this.startRenderLoop();
+      if (!this.options.disableInput) {
+        this.bindPointerEvents();
+        this.bindNavigationEvents();
+      }
+      if (!this.options.manualRender) {
+        this.startRenderLoop();
+      }
     }
 
     configureGlState() {
@@ -1271,21 +1277,20 @@ void main() {
       }
 
       const requestId = this.shapeTextureRequestId;
-      const image = new Image();
 
-      image.onload = () => {
-        if (this.isDisposed || requestId !== this.shapeTextureRequestId) {
-          return;
-        }
+      ImageCache.load(source)
+        .then((image) => {
+          if (this.isDisposed || requestId !== this.shapeTextureRequestId) {
+            return;
+          }
 
-        this.uploadShapeTexture(image);
-      };
-      image.onerror = () => {
-        if (requestId === this.shapeTextureRequestId) {
-          this.shapeTextureReady = false;
-        }
-      };
-      image.src = source;
+          this.uploadShapeTexture(image);
+        })
+        .catch(() => {
+          if (requestId === this.shapeTextureRequestId) {
+            this.shapeTextureReady = false;
+          }
+        });
     }
 
     uploadShapeTexture(image) {
@@ -1355,6 +1360,22 @@ void main() {
             this.grainTextureReady = false;
           }
         });
+    }
+
+    waitForBrushAssets(settings = this.brushState) {
+      const pending = [];
+      const shapeSource = typeof settings?.shapeAlphaSrc === "string" ? settings.shapeAlphaSrc.trim() : "";
+      const grainSource = typeof settings?.grainTextureSrc === "string" ? settings.grainTextureSrc.trim() : "";
+
+      if (shapeSource) {
+        pending.push(ImageCache.load(shapeSource).catch(() => null));
+      }
+
+      if (settings?.grainEnabled === true && grainSource) {
+        pending.push(ImageCache.load(grainSource).catch(() => null));
+      }
+
+      return Promise.all(pending).then(() => undefined);
     }
 
     uploadGrainTexture(image) {
@@ -2983,6 +3004,19 @@ void main() {
 
       this.resetStrokeRuntimeState();
       this.isDrawing = false;
+
+      if (this.options.manualRender) {
+        this.draw();
+      }
+    }
+
+    renderSyntheticStroke(rawSamples) {
+      if (!Array.isArray(rawSamples) || rawSamples.length === 0) {
+        return;
+      }
+
+      this.lastRecordedStroke = rawSamples.map((sample) => ({ ...sample }));
+      this.replayStroke(this.lastRecordedStroke);
     }
 
     handlePointerDown(event) {
@@ -3140,7 +3174,11 @@ void main() {
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, this.viewportWidth, this.viewportHeight);
-      gl.clearColor(0.15, 0.15, 0.15, 1.0);
+      if (this.options.transparentBackground) {
+        gl.clearColor(0, 0, 0, 0);
+      } else {
+        gl.clearColor(0.15, 0.15, 0.15, 1.0);
+      }
       gl.clear(gl.COLOR_BUFFER_BIT);
 
       gl.enable(gl.BLEND);
@@ -3193,11 +3231,13 @@ void main() {
       window.removeEventListener("cbo:tool-change", this.handleToolChange);
       this.resizeObserver?.disconnect();
       this.resizeObserver = null;
-      this.canvas.removeEventListener("pointerdown", this.handlePointerDown);
-      this.canvas.removeEventListener("pointermove", this.handlePointerMove);
-      this.canvas.removeEventListener("pointerup", this.handlePointerUp);
-      this.canvas.removeEventListener("pointercancel", this.handlePointerCancel);
-      this.canvas.removeEventListener("wheel", this.handleWheel);
+      if (!this.options.disableInput) {
+        this.canvas.removeEventListener("pointerdown", this.handlePointerDown);
+        this.canvas.removeEventListener("pointermove", this.handlePointerMove);
+        this.canvas.removeEventListener("pointerup", this.handlePointerUp);
+        this.canvas.removeEventListener("pointercancel", this.handlePointerCancel);
+        this.canvas.removeEventListener("wheel", this.handleWheel);
+      }
       window.removeEventListener("keydown", this.handleKeyDown);
       window.removeEventListener("keyup", this.handleKeyUp);
       this.canvas.style.cursor = "";

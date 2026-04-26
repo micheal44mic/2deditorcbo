@@ -171,8 +171,17 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     }
 
     BrushPreview.invalidate?.(brushId);
+
+    if (!brushPopout || brushPopout.hidden) {
+      return;
+    }
+
     document.querySelectorAll("[data-brush-preview-id]").forEach((canvas) => {
       if (canvas.dataset.brushPreviewId !== brushId) {
+        return;
+      }
+
+      if (canvas.dataset.brushPreviewVariant !== "gallery") {
         return;
       }
 
@@ -190,8 +199,11 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     selectedPackageIndex = packageIndex;
     selectedBrushId = brushId;
     applyBrushPreset(brushId);
-    renderSidebarBrushes();
-    renderPackageItems();
+    renderSidebarPackages();
+
+    if (brushPopout && !brushPopout.hidden && !closePopout) {
+      renderPackageItems();
+    }
 
     if (closePopout) {
       closeBrushPopout();
@@ -210,6 +222,8 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     window.dispatchEvent(
       new CustomEvent("cbo:brush-settings-change", {
         detail: {
+          source: "brush-preset",
+          persistBrushPreset: false,
           brushId,
           brushName: getBrushName(brushId),
           settings: { ...window.CBO.brushSettings },
@@ -219,7 +233,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   }
 
   function syncSelectedBrushSettings(event) {
-    if (!selectedBrushId) {
+    if (!selectedBrushId || event.detail?.persistBrushPreset !== true) {
       return;
     }
 
@@ -230,37 +244,35 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     refreshBrushPreviews(selectedBrushId);
   }
 
-  function renderSidebarBrushes() {
+  function renderSidebarPackages() {
     if (!sidebarBrushList) {
       return;
     }
 
-    const selectedPackage = getSelectedPackage();
-
     sidebarBrushList.replaceChildren(
-      ...(selectedPackage?.brushIds || []).map((brushId) => {
-        const brushButton = document.createElement("button");
-        const brushNameLabel = document.createElement("span");
-        const previewCanvas = document.createElement("canvas");
-        const isActive = brushId === selectedBrushId;
+      ...brushPackages.map((brushPackage, packageIndex) => {
+        const packageButton = document.createElement("button");
+        const packageNameLabel = document.createElement("span");
+        const packageCountLabel = document.createElement("span");
+        const brushCount = brushPackage.brushIds.length;
+        const isActive = packageIndex === selectedPackageIndex;
 
-        brushButton.className = "brushes-panel-card";
-        brushButton.type = "button";
-        brushButton.setAttribute("aria-label", `${getBrushName(brushId)} brush`);
-        brushButton.setAttribute("aria-pressed", String(isActive));
-        brushButton.classList.toggle("active", isActive);
-        brushNameLabel.className = "brushes-panel-card-name";
-        brushNameLabel.textContent = getBrushName(brushId);
-        previewCanvas.className = "brush-preview-canvas";
-        previewCanvas.dataset.brushPreviewId = brushId;
-        previewCanvas.dataset.brushPreviewVariant = "sidebar";
-        brushButton.append(brushNameLabel, previewCanvas);
-        queueBrushPreview(previewCanvas, brushId, "sidebar");
-        brushButton.addEventListener("click", () => {
-          selectBrush(selectedPackageIndex, brushId);
+        packageButton.className = "brushes-panel-card brushes-panel-package-card";
+        packageButton.type = "button";
+        packageButton.setAttribute("aria-label", `${brushPackage.name} brush pack`);
+        packageButton.setAttribute("aria-pressed", String(isActive));
+        packageButton.classList.toggle("active", isActive);
+        packageNameLabel.className = "brushes-panel-package-name";
+        packageNameLabel.textContent = brushPackage.name;
+        packageCountLabel.className = "brushes-panel-package-count";
+        packageCountLabel.textContent = `${brushCount} ${brushCount === 1 ? "BRUSH" : "BRUSHES"}`;
+        packageButton.append(packageNameLabel, packageCountLabel);
+        packageButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openPackageBrushes(packageIndex);
         });
 
-        return brushButton;
+        return packageButton;
       }),
     );
 
@@ -309,7 +321,11 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
         deleteButton.innerHTML = deleteIcon;
         brushSelectButton.append(brushNameLabel, previewCanvas);
         brushCard.append(brushSelectButton, copyButton, deleteButton);
-        queueBrushPreview(previewCanvas, brushId, "gallery");
+
+        if (brushPopout && !brushPopout.hidden) {
+          queueBrushPreview(previewCanvas, brushId, "gallery");
+        }
+
         brushSelectButton.addEventListener("click", () => {
           selectBrush(activePackageIndex, brushId, { closePopout: true });
         });
@@ -375,6 +391,21 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     renderPackageItems();
   }
 
+  function openPackageBrushes(packageIndex) {
+    if (!brushPopout) {
+      return;
+    }
+
+    const nextPackageIndex = Number.isInteger(packageIndex) ? packageIndex : selectedPackageIndex;
+
+    brushPopout.hidden = false;
+    renderPackages();
+    setActivePackage(nextPackageIndex);
+    brushPopoutButtons.forEach((button) => {
+      button.setAttribute("aria-expanded", "true");
+    });
+  }
+
   function createBrushFromGallery() {
     const activePackage = brushPackages[activePackageIndex] || brushPackages[0];
     const createdBrush = BrushLibrary.createBrush(activePackage?.id);
@@ -429,7 +460,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       return;
     }
 
-    renderSidebarBrushes();
+    renderSidebarPackages();
     renderPackageItems();
   }
 
@@ -440,30 +471,24 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
 
     closeDeleteDialog();
     brushPopout.hidden = true;
+    packageItems?.replaceChildren();
     brushPopoutButtons.forEach((button) => {
       button.setAttribute("aria-expanded", "false");
     });
   }
 
-  function openBrushPopout() {
-    if (!brushPopout) {
-      return;
-    }
-
-    setActivePackage(selectedPackageIndex);
-    brushPopout.hidden = false;
-    brushPopoutButtons.forEach((button) => {
-      button.setAttribute("aria-expanded", "true");
-    });
+  function openBrushPopout(packageIndex = selectedPackageIndex) {
+    openPackageBrushes(packageIndex);
   }
 
   renderPackages();
-  renderPackageItems();
-  renderSidebarBrushes();
+  renderSidebarPackages();
   applyBrushPreset(selectedBrushId);
 
   brushPopoutButtons.forEach((button) => {
-    button.addEventListener("click", openBrushPopout);
+    button.addEventListener("click", () => {
+      openBrushPopout(selectedPackageIndex);
+    });
   });
 
   createBrushButton?.addEventListener("click", createBrushFromGallery);

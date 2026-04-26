@@ -234,6 +234,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     window.dispatchEvent(
       new CustomEvent("cbo:brush-settings-change", {
         detail: {
+          source: "brush-studio",
+          persistBrushPreset: true,
           settings: { ...window.CBO.brushSettings },
         },
       }),
@@ -2186,5 +2188,4 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   grainCancelButton?.addEventListener("click", closeGrainEditor);
   grainAcceptButton?.addEventListener("click", acceptGrainEditor);
 
-  renderStudioContent();
 };

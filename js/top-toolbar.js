@@ -144,6 +144,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     window.dispatchEvent(
       new CustomEvent("cbo:brush-settings-change", {
         detail: {
+          source: "quick-controls",
+          persistBrushPreset: false,
           settings: { ...getBrushSettings() },
         },
       }),
