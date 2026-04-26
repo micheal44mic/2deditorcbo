@@ -10,6 +10,13 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       <path d="M12 5v14" />
     </svg>
   `;
+  const downloadIcon = `
+    <svg class="brushes-gallery-action-icon lucide lucide-download-icon lucide-download" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 15V3" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    </svg>
+  `;
   const copyIcon = `
     <svg class="brushes-gallery-action-icon brushes-gallery-copy-icon lucide lucide-copy-icon lucide-copy" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
@@ -81,6 +88,9 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
             <h2>BRUSH GALLERY</h2>
           </div>
           <div class="brushes-gallery-popout-actions">
+            <button class="brushes-gallery-icon-button brushes-gallery-export-button" type="button" aria-label="EXPORT BRUSH PRESETS" data-brush-export>
+              ${downloadIcon}
+            </button>
             <button class="brushes-gallery-icon-button brushes-gallery-create-button" type="button" aria-label="CREATE BRUSH" data-brush-create>
               ${plusIcon}
             </button>
@@ -119,6 +129,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   const sidebarBrushList = panel.querySelector("[data-sidebar-brush-list]");
   const packageList = brushPopout?.querySelector("[data-brush-packages]");
   const packageItems = brushPopout?.querySelector("[data-brush-package-items]");
+  const exportBrushesButton = brushPopout?.querySelector("[data-brush-export]");
   const createBrushButton = brushPopout?.querySelector("[data-brush-create]");
   const closeButton = brushPopout?.querySelector("[data-brush-popout-close]");
   const deleteDialog = brushPopout?.querySelector("[data-brush-delete-dialog]");
@@ -143,6 +154,62 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     const brushPackage = BrushLibrary.findPackageByBrushId(brushId);
 
     return (brushPackage?.brushIds.length || 0) > 1;
+  }
+
+  function createBrushPresetExportPayload() {
+    const exportedBrushes = [];
+
+    brushPackages.forEach((brushPackage) => {
+      brushPackage.brushIds.forEach((brushId) => {
+        const brush = BrushLibrary.getBrush(brushId);
+        const settings = BrushLibrary.getSettings(brushId);
+
+        if (!brush || !settings) {
+          return;
+        }
+
+        exportedBrushes.push({
+          id: brush.id,
+          name: brush.name,
+          packageId: brushPackage.id,
+          settings: BrushDefaults.createSettings(settings),
+        });
+      });
+    });
+
+    return {
+      format: "cbo-brush-presets",
+      formatVersion: 1,
+      exportedAt: new Date().toISOString(),
+      selectedBrushId,
+      selectedPackageId: getSelectedPackage()?.id || null,
+      packages: brushPackages.map((brushPackage) => ({
+        id: brushPackage.id,
+        name: brushPackage.name,
+        brushIds: [...brushPackage.brushIds],
+      })),
+      brushes: exportedBrushes,
+    };
+  }
+
+  function downloadBrushPresetExport() {
+    const payload = createBrushPresetExportPayload();
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `cbo-brush-presets-${timestamp}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
   }
 
   function renderBrushPreview(canvas, brushId, variant) {
@@ -491,6 +558,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     });
   });
 
+  exportBrushesButton?.addEventListener("click", downloadBrushPresetExport);
   createBrushButton?.addEventListener("click", createBrushFromGallery);
   closeButton?.addEventListener("click", closeBrushPopout);
   deleteCancelButton?.addEventListener("click", closeDeleteDialog);

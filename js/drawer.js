@@ -305,22 +305,32 @@ window.CBO.initDrawer = function initDrawer() {
     );
   }
 
-  function formatGigabytes(bytes) {
-    const gigabytes = Math.max(0, Number(bytes) || 0) / 1024 / 1024 / 1024;
+  function formatStorageBytes(bytes) {
+    const safeBytes = Math.max(0, Number(bytes) || 0);
 
-    if (gigabytes === 0) {
-      return "0 GB";
+    if (safeBytes === 0) {
+      return "0 B";
     }
 
-    if (gigabytes < 1) {
-      return `${gigabytes.toFixed(3)} GB`;
+    if (safeBytes < 1024) {
+      return `${Math.round(safeBytes)} B`;
     }
 
-    if (gigabytes < 10) {
-      return `${gigabytes.toFixed(2)} GB`;
+    const kilobytes = safeBytes / 1024;
+
+    if (kilobytes < 1024) {
+      return `${kilobytes < 10 ? kilobytes.toFixed(1) : Math.round(kilobytes)} KB`;
     }
 
-    return `${Math.round(gigabytes)} GB`;
+    const megabytes = kilobytes / 1024;
+
+    if (megabytes < 1024) {
+      return `${megabytes < 10 ? megabytes.toFixed(1) : Math.round(megabytes)} MB`;
+    }
+
+    const gigabytes = megabytes / 1024;
+
+    return `${gigabytes < 10 ? gigabytes.toFixed(2) : Math.round(gigabytes)} GB`;
   }
 
   async function updateUploadUsage() {
@@ -339,8 +349,8 @@ window.CBO.initDrawer = function initDrawer() {
 
     if (uploadUsageValue) {
       uploadUsageValue.textContent = quotaBytes
-        ? `${formatGigabytes(uploadedBytes)} / ${formatGigabytes(quotaBytes)}`
-        : formatGigabytes(uploadedBytes);
+        ? `${formatStorageBytes(uploadedBytes)} / ${formatStorageBytes(quotaBytes)}`
+        : formatStorageBytes(uploadedBytes);
     }
 
     if (uploadUsageFill) {

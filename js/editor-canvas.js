@@ -1,5 +1,25 @@
 window.CBO = window.CBO || {};
 
+window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanvas(detail = {}) {
+  const engine = window.CBO.brushEngine;
+
+  if (!engine?.placeImageBlob || !detail.blob) {
+    return;
+  }
+
+  try {
+    await engine.placeImageBlob(detail.blob, {
+      name: detail.name || "Uploaded image",
+    });
+  } catch (error) {
+    console.warn("Impossibile inserire l'immagine caricata nel canvas.", error);
+  }
+};
+
+window.addEventListener("cbo:place-uploaded-image", (event) => {
+  void window.CBO.placeUploadedImageOnCanvas(event.detail);
+});
+
 window.CBO.initEditorCanvas = function initEditorCanvas() {
   const stage = document.querySelector(".editor-stage");
 
