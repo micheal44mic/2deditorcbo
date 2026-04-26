@@ -1819,15 +1819,21 @@ void main() {
       }
 
       if (amounts.saturation > 0) {
-        hsl.s = this.lerp(hsl.s, this.nextColorRandom(), amounts.saturation);
+        hsl.s += this.randomColorSigned() * amounts.saturation;
       }
 
-      if (amounts.lightness > 0) {
-        hsl.l = this.lerp(hsl.l, 1, this.nextColorRandom() * amounts.lightness);
-      }
+      if (amounts.lightness > 0 || amounts.darkness > 0) {
+        let lumaShift = 0;
 
-      if (amounts.darkness > 0) {
-        hsl.l = this.lerp(hsl.l, 0, this.nextColorRandom() * amounts.darkness);
+        if (amounts.lightness > 0) {
+          lumaShift += this.nextColorRandom() * amounts.lightness;
+        }
+
+        if (amounts.darkness > 0) {
+          lumaShift -= this.nextColorRandom() * amounts.darkness;
+        }
+
+        hsl.l += lumaShift;
       }
 
       hsl.s = this.clamp01(hsl.s);
@@ -1835,11 +1841,11 @@ void main() {
 
       const rgb = this.hslToRgb(hsl);
 
-      if (amounts.secondary <= 0) {
-        return rgb;
+      if (amounts.secondary > 0) {
+        return this.mixRgb(rgb, secondaryRgb, this.nextColorRandom() * amounts.secondary);
       }
 
-      return this.mixRgb(rgb, secondaryRgb, this.nextColorRandom() * amounts.secondary);
+      return rgb;
     }
 
     initializeStrokeColorDynamics(seed) {
@@ -2152,26 +2158,25 @@ void main() {
       const charge = this.clamp01(this.brushState.wetCharge ?? 1);
       const attack = this.clamp01(this.brushState.wetAttack ?? 1);
       const jitter = this.clamp01(this.brushState.wetnessJitter);
-      const disabledThreshold = 0.001;
-      const dilutionScale = this.lerp(1, 0.18, dilution);
-      const attackScale = attack <= disabledThreshold ? 1 : this.lerp(0.12, 1, attack);
+      const dilutionScale = this.lerp(1, 0.05, dilution);
+      const attackScale = this.lerp(0.05, 1, attack);
       let chargeScale = 1;
 
       if (charge < 1) {
         const radius = Math.max(0.5, this.getStrokeChargeRadius());
         const safeCharge = Math.max(charge, 0.01);
-        const tailLoad = 0.18;
+        const initialLoad = this.lerp(0.2, 1, safeCharge);
         const depletionDistance = radius * this.lerp(5, 120, safeCharge);
         const depletion = this.clamp01(this.strokeDistance / depletionDistance);
         const easedDepletion = depletion * depletion * (3 - 2 * depletion);
 
-        chargeScale = this.lerp(1, tailLoad, easedDepletion);
+        chargeScale = this.lerp(initialLoad, 0, easedDepletion);
       }
 
       let alpha = dilutionScale * attackScale * chargeScale;
 
       if (jitter > 0) {
-        alpha *= this.lerp(1 - jitter * 0.55, 1 + jitter * 0.35, this.nextWetRandom());
+        alpha *= this.lerp(1 - jitter * 0.4, 1 + jitter * 0.4, this.nextWetRandom());
       }
 
       return this.clamp01(alpha);
@@ -2465,14 +2470,8 @@ void main() {
 
       for (let index = 0; index < effectiveCount; index += 1) {
         const stamp = {
-          x: baseStamp.x,
-          y: baseStamp.y,
-          pressure: baseStamp.pressure,
-          alphaScale: baseStamp.alphaScale,
-          sizeScale: baseStamp.sizeScale,
+          ...baseStamp,
           rotation: directionalRotation + this.getShapeScatterRotation(),
-          tiltX: baseStamp.tiltX,
-          tiltY: baseStamp.tiltY,
         };
 
         this.applyMovingGrainToStamp(stamp, tangent);
@@ -2565,9 +2564,9 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
       gl.viewport(0, 0, this.docWidth, this.docHeight);
       gl.enable(gl.BLEND);
-      // MAX blending: l'alpha del tratto raggiunge un plateau e non si auto-accumula sui ripassi.
-      gl.blendEquation(gl.MAX);
-      gl.blendFunc(gl.ONE, gl.ONE);
+      // RGB usa SrcOver pre-moltiplicato; alpha resta MAX per limitare il self-overlap dei soft brush.
+      gl.blendEquationSeparate(gl.FUNC_ADD, gl.MAX);
+      gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
 
       gl.useProgram(this.brushProgramInfo.program);
       gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, this.docWidth, this.docHeight);
