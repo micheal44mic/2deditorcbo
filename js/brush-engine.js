@@ -5,6 +5,14 @@ window.CBO = window.CBO || {};
   const MAX_ZOOM = 32;
   const WHEEL_ZOOM_INTENSITY = 0.0015;
   const PINCH_ZOOM_INTENSITY = 0.01;
+  const RENDERING_MODE_PRESETS = Object.freeze({
+    "light-glaze": { flowScale: 1 },
+    "uniform-glaze": { flowScale: 1 },
+    "intense-glaze": { flowScale: 1.2 },
+    "heavy-glaze": { flowScale: 1.4 },
+    "uniform-blending": { flowScale: 1.55 },
+    "intense-blending": { flowScale: 1.75 },
+  });
 
   const ARTBOARD_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
@@ -141,6 +149,9 @@ precision highp float;
 
 uniform float u_flow;
 uniform float u_hardness;
+uniform float u_wetEdges;
+uniform bool u_alphaThresholdEnabled;
+uniform float u_alphaThreshold;
 uniform sampler2D u_shapeTexture;
 uniform float u_useShapeTexture;
 uniform bool u_grainEnabled;
@@ -180,6 +191,14 @@ const int GRAIN_BLEND_LIGHTEN = 4;
 const int GRAIN_BLEND_DIFFERENCE = 5;
 const int GRAIN_MODE_TEXTURIZED = 0;
 const int GRAIN_MODE_MOVING = 1;
+
+float applyFlowCoverageCurve(float coverage, float flow) {
+  float safeCoverage = clamp(coverage, 0.0, 1.0);
+  float safeFlow = clamp(flow, 0.0, 1.0);
+  float edgePower = mix(2.35, 1.0, safeFlow);
+
+  return pow(safeCoverage, edgePower);
+}
 
 vec3 blendOverlay(vec3 baseColor, vec3 blendColor) {
   vec3 low = 2.0 * baseColor * blendColor;
@@ -335,7 +354,29 @@ void main() {
     applyGrainSample(grainUv, depth, brushColor, grainCoverage);
   }
 
-  float alpha = shape * grainCoverage * v_alpha * clamp(u_flow, 0.0, 1.0);
+  float flow = clamp(u_flow, 0.0, 2.0);
+  float coverage = shape * grainCoverage;
+  float wetEdges = clamp(u_wetEdges, 0.0, 1.0);
+
+  if (wetEdges > 0.0) {
+    float edgeDilution = mix(1.0, mix(0.84, 1.0, smoothstep(0.25, 0.95, shape)), wetEdges);
+
+    coverage *= edgeDilution;
+  }
+
+  if (flow < 1.0) {
+    coverage = applyFlowCoverageCurve(coverage, flow);
+  }
+
+  if (u_alphaThresholdEnabled) {
+    if (coverage < clamp(u_alphaThreshold, 0.0, 1.0)) {
+      discard;
+    }
+
+    coverage = 1.0;
+  }
+
+  float alpha = clamp(coverage * v_alpha * flow, 0.0, 1.0);
 
   // Output strettamente pre-moltiplicato: necessario per MAX blending coerente.
   outColor = vec4(clamp(brushColor, vec3(0.0), vec3(1.0)) * alpha, alpha);
@@ -695,6 +736,9 @@ void main() {
           shapeFlip: gl.getUniformLocation(program, "u_shapeFlip"),
           flow: gl.getUniformLocation(program, "u_flow"),
           hardness: gl.getUniformLocation(program, "u_hardness"),
+          wetEdges: gl.getUniformLocation(program, "u_wetEdges"),
+          alphaThresholdEnabled: gl.getUniformLocation(program, "u_alphaThresholdEnabled"),
+          alphaThreshold: gl.getUniformLocation(program, "u_alphaThreshold"),
           shapeTexture: gl.getUniformLocation(program, "u_shapeTexture"),
           useShapeTexture: gl.getUniformLocation(program, "u_useShapeTexture"),
           grainEnabled: gl.getUniformLocation(program, "u_grainEnabled"),
@@ -1843,14 +1887,46 @@ void main() {
       return Math.max(0, Math.min(1, value));
     }
 
+    getRenderingModePreset() {
+      const mode = String(this.brushState.renderingMode || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "-");
+
+      return RENDERING_MODE_PRESETS[mode] || RENDERING_MODE_PRESETS["light-glaze"];
+    }
+
     getFlow() {
-      const value = Number(this.brushState.flow);
+      const value = Number(this.brushState.flow ?? 1.0);
+      const userFlow = Number.isFinite(value) ? this.clamp(value, 0, 1) : 1.0;
+      const preset = this.getRenderingModePreset();
 
-      if (!Number.isFinite(value)) {
-        return 1.0;
-      }
+      return this.clamp(userFlow * preset.flowScale, 0, 2);
+    }
 
-      return Math.max(0, Math.min(1, value));
+    getWetEdges() {
+      const value = Number(this.brushState.wetEdges);
+
+      return Number.isFinite(value) ? this.clamp(value, 0, 1) : 0;
+    }
+
+    getWetEdgeBrushScale() {
+      // V2: quando arriva il post-process stroke-FBO, Wet Edges puo' spostarsi sul perimetro reale del tratto.
+      return 1 + this.getWetEdges() * 0.12;
+    }
+
+    getEffectiveHardness() {
+      return this.clamp(this.getHardness() * (1 - this.getWetEdges() * 0.45), 0, 1);
+    }
+
+    isAlphaThresholdEnabled() {
+      return this.brushState.alphaThresholdEnabled === true;
+    }
+
+    getAlphaThreshold() {
+      const value = Number(this.brushState.alphaThreshold);
+
+      return Number.isFinite(value) ? this.clamp(value, 0, 1) : 0.5;
     }
 
     getHardness() {
@@ -2441,7 +2517,7 @@ void main() {
       const stampCount = this.stampsBuffer.length;
       // 14 float per istanza: base dab + colore + dati grain Moving.
       const instanceData = new Float32Array(stampCount * 14);
-      const brushSize = this.getBrushSize();
+      const brushSize = this.getBrushSize() * this.getWetEdgeBrushScale();
       const fallbackColor = this.getCurrentStrokeColorRgb();
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
       const useGrainTexture = this.isGrainEnabled();
@@ -2480,7 +2556,10 @@ void main() {
       gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
       gl.uniform2f(this.brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
       gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
-      gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getHardness());
+      gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getEffectiveHardness());
+      gl.uniform1f(this.brushProgramInfo.uniforms.wetEdges, this.getWetEdges());
+      gl.uniform1i(this.brushProgramInfo.uniforms.alphaThresholdEnabled, this.isAlphaThresholdEnabled() ? 1 : 0);
+      gl.uniform1f(this.brushProgramInfo.uniforms.alphaThreshold, this.getAlphaThreshold());
       gl.uniform1f(this.brushProgramInfo.uniforms.useShapeTexture, useShapeTexture);
       gl.uniform1i(this.brushProgramInfo.uniforms.shapeTexture, 1);
       gl.activeTexture(gl.TEXTURE1);

@@ -188,6 +188,41 @@
   margin-top: 8px;
 }
 
+.brush-studio-select-setting {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 10px;
+}
+
+.brush-studio-select {
+  width: 100%;
+  height: 34px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 1px solid rgba(223, 227, 234, 0.22);
+  border-radius: 8px;
+  background: #2c303a;
+  color: #dfe3ea;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  outline: 0;
+  text-transform: uppercase;
+}
+
+.brush-studio-select:hover,
+.brush-studio-select:focus-visible {
+  background: #3a3f4b;
+  color: #ffffff;
+}
+
+.brush-studio-select option {
+  background: #181a1f;
+  color: #dfe3ea;
+}
+
 .brush-studio-setting-name,
 .brush-studio-setting-value {
   color: #dfe3ea;
@@ -497,6 +532,19 @@
   max-width: none;
   max-height: none;
   object-fit: cover;
+}
+
+.brush-studio-shape-alpha-card.grain-disabled .brush-studio-grain-texture-preview {
+  background: #181a1f;
+}
+
+.brush-studio-shape-alpha-card.grain-disabled .brush-studio-grain-texture-preview::after {
+  content: "NONE";
+  color: rgba(195, 200, 209, 0.5);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
 }
 
 .brush-studio-shape-input-style {

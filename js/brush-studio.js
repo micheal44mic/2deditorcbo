@@ -12,7 +12,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const defaultGrainTextureName = BrushDefaults.defaultGrainTextureName;
   const shapeAlphaExportSize = BrushDefaults.shapeAlphaExportSize;
   const grainTextureExportSize = BrushDefaults.grainTextureExportSize;
-  const studioCategories = ["STROKE", "SHAPE", "GRAIN", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
+  const studioCategories = ["STROKE", "SHAPE", "GRAIN", "RENDERING", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = BrushDefaults.defaultTaperMinDistance;
   const taperTipRealMin = BrushDefaults.taperTipRealMin;
   const implementedGrainBlendModes = new Set([
@@ -37,6 +37,14 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     { key: "divide", label: "DIVIDE" },
     { key: "height", label: "HEIGHT" },
     { key: "linear-height", label: "LINEAR HEIGHT" },
+  ];
+  const renderingModeOptions = [
+    { key: "light-glaze", label: "LIGHT GLAZE" },
+    { key: "uniform-glaze", label: "UNIFORM GLAZE" },
+    { key: "intense-glaze", label: "INTENSE GLAZE" },
+    { key: "heavy-glaze", label: "HEAVY GLAZE" },
+    { key: "uniform-blending", label: "UNIFORM BLENDING" },
+    { key: "intense-blending", label: "INTENSE BLENDING" },
   ];
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
@@ -413,6 +421,39 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       toSetting: (displayValue) => displayValue / 100,
       toDisplay: (displayValue) => Math.round(displayValue),
     });
+  }
+
+  function createSelectSetting({ key, label, options }) {
+    const wrapper = document.createElement("label");
+    const name = document.createElement("span");
+    const select = document.createElement("select");
+    const fallbackValue = options[0]?.key || "";
+    const currentValue = String(draftBrushSettings[key] || fallbackValue);
+
+    wrapper.className = "brush-studio-select-setting";
+    name.className = "brush-studio-setting-name";
+    select.className = "brush-studio-select";
+    name.textContent = label;
+    select.setAttribute("aria-label", label);
+
+    options.forEach((option) => {
+      const optionElement = document.createElement("option");
+
+      optionElement.value = option.key;
+      optionElement.textContent = option.label;
+      select.append(optionElement);
+    });
+
+    select.value = options.some((option) => option.key === currentValue) ? currentValue : fallbackValue;
+    draftBrushSettings[key] = select.value;
+    select.addEventListener("change", () => {
+      draftBrushSettings[key] = select.value;
+      pushDraftToEngine();
+    });
+
+    wrapper.append(name, select);
+
+    return wrapper;
   }
 
   function createGrainPercentSetting({ key, label, value = 1, noneAtZero = false, formatDisplay = null }) {
@@ -811,7 +852,15 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       return;
     }
 
+    const isGrainEnabled = draftBrushSettings.grainEnabled !== false;
     const selectedHeader = createSelectedHeader({ editable: true, onEdit: openGrainEditor });
+    const enabledToggle = createToggleSetting({
+      key: "grainEnabled",
+      label: "GRAIN ENABLED",
+      onChange: () => {
+        renderGrainSettings();
+      },
+    });
     const grainButton = document.createElement("button");
     const grainHeader = document.createElement("div");
     const grainLabel = document.createElement("span");
@@ -834,14 +883,17 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     grainLabel.className = "brush-studio-setting-name";
     grainLabel.textContent = "TEXTURE";
     grainName.className = "brush-studio-shape-alpha-name";
-    grainName.textContent = getGrainTextureName();
+    grainName.textContent = isGrainEnabled ? getGrainTextureName() : "NONE";
     grainPreview.className = "brush-studio-shape-alpha-preview brush-studio-grain-texture-preview";
     grainImage.className = "brush-studio-shape-alpha-image brush-studio-grain-texture-image";
     grainImage.alt = "Grain texture";
     grainImage.src = getGrainTextureSrc();
+    grainButton.classList.toggle("grain-disabled", !isGrainEnabled);
 
     grainHeader.append(grainLabel, grainName);
-    grainPreview.append(grainImage);
+    if (isGrainEnabled) {
+      grainPreview.append(grainImage);
+    }
     grainButton.append(grainHeader, grainPreview);
     grainModeSelector.className = "brush-studio-grain-mode-selector";
     grainModeSelector.append(
@@ -982,7 +1034,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       );
     }
 
-    settingsPanel.replaceChildren(selectedHeader, grainButton, grainModeSelector, grainModeContent);
+    settingsPanel.replaceChildren(selectedHeader, enabledToggle, grainButton, grainModeSelector, grainModeContent);
   }
 
   function openShapeEditor() {
@@ -1527,6 +1579,42 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
+  function renderRenderingSettings() {
+    if (!settingsPanel) {
+      return;
+    }
+
+    const selectedName = document.createElement("div");
+    const modeSetting = createSelectSetting({
+      key: "renderingMode",
+      label: "MODE",
+      options: renderingModeOptions,
+    });
+    const flowSetting = createPercentSetting("flow", "FLOW");
+    const wetEdgesSetting = createPercentSetting("wetEdges", "WET EDGES");
+    const thresholdAmountSetting = createPercentSetting("alphaThreshold", "THRESHOLD AMOUNT");
+    const thresholdToggle = createToggleSetting({
+      key: "alphaThresholdEnabled",
+      label: "ALPHA THRESHOLD",
+      onChange: (isActive) => {
+        thresholdAmountSetting.setDisabled?.(!isActive);
+      },
+    });
+
+    selectedName.className = "brush-studio-selected-name";
+    selectedName.textContent = selectedCategory;
+    thresholdAmountSetting.setDisabled?.(draftBrushSettings.alphaThresholdEnabled !== true);
+
+    settingsPanel.replaceChildren(
+      selectedName,
+      modeSetting,
+      flowSetting,
+      wetEdgesSetting,
+      thresholdToggle,
+      thresholdAmountSetting,
+    );
+  }
+
   function renderWetMixSettings() {
     if (!settingsPanel) {
       return;
@@ -1960,6 +2048,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     if (selectedCategory === "GRAIN") {
       renderGrainSettings();
+      return;
+    }
+
+    if (selectedCategory === "RENDERING") {
+      renderRenderingSettings();
       return;
     }
 

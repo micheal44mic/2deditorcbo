@@ -17,11 +17,25 @@ window.CBO = window.CBO || {};
     "difference",
   ]);
   const grainBlendModeValueSet = new Set(grainBlendModeValues);
+  const renderingModeValues = Object.freeze([
+    "light-glaze",
+    "uniform-glaze",
+    "intense-glaze",
+    "heavy-glaze",
+    "uniform-blending",
+    "intense-blending",
+  ]);
+  const renderingModeValueSet = new Set(renderingModeValues);
   const grainTexturizedMinTextureScale = 0.05;
 
   const settings = Object.freeze({
     radius: 18,
     opacity: 0.92,
+    renderingMode: "light-glaze",
+    flow: 1,
+    wetEdges: 0,
+    alphaThresholdEnabled: false,
+    alphaThreshold: 0.5,
     spacing: 0.18,
     smoothing: 0,
     streamLineAmount: 0,
@@ -133,6 +147,15 @@ window.CBO = window.CBO || {};
     return grainBlendModeValueSet.has(normalized) ? normalized : "multiply";
   }
 
+  function normalizeRenderingMode(value) {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+
+    return renderingModeValueSet.has(normalized) ? normalized : settings.renderingMode;
+  }
+
   function createSettings(overrides = {}) {
     const nextOverrides = overrides || {};
     const nextSettings = {
@@ -144,12 +167,18 @@ window.CBO = window.CBO || {};
       nextOverrides.streamLineAmount ?? nextOverrides.smoothing ?? nextSettings.streamLineAmount;
     nextSettings.shapeAlphaSrc = nextSettings.shapeAlphaSrc || defaultShapeAlphaSrc;
     nextSettings.shapeAlphaName = nextSettings.shapeAlphaName || defaultShapeAlphaName;
+    nextSettings.grainEnabled = nextSettings.grainEnabled !== false;
     nextSettings.grainTextureSrc = nextSettings.grainTextureSrc || defaultGrainTextureSrc;
     nextSettings.grainTextureName = nextSettings.grainTextureName || defaultGrainTextureName;
     nextSettings.grainMode = grainModeValues.has(String(nextSettings.grainMode).toLowerCase())
       ? String(nextSettings.grainMode).toLowerCase()
       : "texturized";
     nextSettings.grainBlendMode = normalizeGrainBlendMode(nextSettings.grainBlendMode);
+    nextSettings.renderingMode = normalizeRenderingMode(nextSettings.renderingMode);
+    nextSettings.flow = normalize01(nextSettings.flow, settings.flow);
+    nextSettings.wetEdges = normalize01(nextSettings.wetEdges, settings.wetEdges);
+    nextSettings.alphaThresholdEnabled = nextSettings.alphaThresholdEnabled === true;
+    nextSettings.alphaThreshold = normalize01(nextSettings.alphaThreshold, settings.alphaThreshold);
     nextSettings.grainBrightness = normalizeSigned(nextSettings.grainBrightness, settings.grainBrightness);
     nextSettings.grainContrast = normalizeSigned(nextSettings.grainContrast, settings.grainContrast);
     nextSettings.grainTexturizedScale = hasOwn(nextOverrides, "grainTexturizedScale")
@@ -183,6 +212,7 @@ window.CBO = window.CBO || {};
     defaultShapeAlphaSrc,
     defaultTaperMinDistance,
     grainBlendModeValues,
+    renderingModeValues,
     grainTexturizedMinTextureScale,
     grainTextureExportSize: 2048,
     shapeAlphaExportSize: 512,
