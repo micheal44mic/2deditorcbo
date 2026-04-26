@@ -2,6 +2,7 @@ window.CBO = window.CBO || {};
 
 window.CBO.initLayersPanel = function initLayersPanel() {
   const panel = document.querySelector(".drawer-layers-panel");
+  const addLayerButton = document.querySelector(".drawer-new-layer-button");
   const copyLayerButton = document.querySelector(".drawer-copy-layer-button");
   const addGroupButton = document.querySelector(".drawer-new-folder-button");
 
@@ -16,6 +17,12 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   let focusedLayer = null;
   let dragState = null;
   let suppressNextClick = false;
+  let isRenderingLayerModel = false;
+  let isSyncingLayerModelFromDom = false;
+  const layerModel = window.CBO.documentLayerModel ||
+    (window.CBO.DocumentLayerModel ? new window.CBO.DocumentLayerModel() : null);
+
+  window.CBO.documentLayerModel = layerModel;
 
   function getLayerRows() {
     return Array.from(panel.querySelectorAll("[data-layer-row]"));
@@ -47,6 +54,14 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return row.dataset.layerType === "group";
   }
 
+  function isBackgroundRow(row) {
+    return row?.dataset.layerType === "background" || row?.dataset.layerId === "background";
+  }
+
+  function getLayerId(row) {
+    return row?.dataset.layerId || "";
+  }
+
   function isInsideCollapsedGroup(row) {
     let entry = getLayerEntry(row);
 
@@ -75,7 +90,6 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   function setLayerSelected(row, isSelected) {
     const shouldSelect = isSelected && !isLayerLocked(row);
 
-    row.classList.remove("active");
     row.classList.toggle("selected", shouldSelect);
     row.setAttribute("aria-selected", String(shouldSelect));
   }
@@ -90,6 +104,18 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     getDescendantRows(row).forEach((childRow) => setLayerSelected(childRow, isSelected));
   }
 
+  function getActiveLayerRow() {
+    return getLayerRows().find((row) => getLayerId(row) === layerModel?.activeLayerId) || null;
+  }
+
+  function syncActiveLayerUi() {
+    const activeRow = getActiveLayerRow();
+
+    getLayerRows().forEach((layerRow) => {
+      layerRow.classList.toggle("active", layerRow === activeRow);
+    });
+  }
+
   function setFocusedLayer(row) {
     const unlockedRow = row && !isLayerLocked(row) ? row : null;
 
@@ -97,12 +123,20 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       layerRow.classList.toggle("selection-focus", layerRow === unlockedRow);
     });
     focusedLayer = unlockedRow;
+
+    if (layerModel && unlockedRow && !isGroupRow(unlockedRow)) {
+      layerModel.setActiveLayer(getLayerId(unlockedRow), { source: "layers-panel-selection" });
+    }
+
+    syncActiveLayerUi();
   }
 
   function clearLayerSelection() {
     getLayerRows().forEach((row) => setLayerSelected(row, false));
+    getLayerRows().forEach((row) => row.classList.remove("selection-focus"));
     rangeAnchor = null;
-    setFocusedLayer(null);
+    focusedLayer = null;
+    syncActiveLayerUi();
   }
 
   function finishLayerRename(name, shouldCommit) {
@@ -117,6 +151,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     name.removeAttribute("spellcheck");
     delete name.dataset.renameOriginal;
     row?.classList.remove("renaming");
+    syncLayerModelFromDom("rename");
   }
 
   function beginLayerRename(row) {
@@ -198,6 +233,58 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return selectedRows.includes(focusedLayer) ? focusedLayer : selectedRows[0];
   }
 
+  function serializeLayerEntry(entry) {
+    const row = entry.querySelector(":scope > [data-layer-row]");
+    const type = row?.dataset.layerType || entry.dataset.layerType || "layer";
+    const isBackground = type === "background";
+    const serialized = {
+      id: getLayerId(row) || layerModel?.createId(type) || `${type}-${Date.now().toString(36)}`,
+      type,
+      name: isBackground
+        ? "Background"
+        : row?.querySelector(":scope .layer-name")?.textContent.trim() || (type === "group" ? "Group" : "Layer"),
+      visible: !row?.classList.contains("hidden-layer"),
+      locked: isBackground || row?.classList.contains("locked") === true,
+      opacity: 1,
+    };
+
+    if (type === "group") {
+      const children = getLayerChildren(entry);
+
+      serialized.children = children
+        ? Array.from(children.children)
+            .filter((childEntry) => childEntry.matches("[data-layer-entry]"))
+            .map(serializeLayerEntry)
+        : [];
+    }
+
+    return serialized;
+  }
+
+  function syncLayerModelFromDom(source = "layers-panel") {
+    if (!layerModel) {
+      return;
+    }
+
+    isSyncingLayerModelFromDom = true;
+
+    try {
+      const rootList = panel.querySelector(".layers-list");
+      const entries = Array.from(rootList.children)
+        .filter((entry) => entry.matches("[data-layer-entry]"))
+        .map(serializeLayerEntry);
+      const activeLayerId = getLayerId(focusedLayer) || getLayerId(getFirstSelectedLayer());
+
+      layerModel.setEntries(entries, { source });
+
+      if (activeLayerId) {
+        layerModel.setActiveLayer(activeLayerId, { source });
+      }
+    } finally {
+      isSyncingLayerModelFromDom = false;
+    }
+  }
+
   function insertLayerEntry(entry) {
     const rootList = panel.querySelector(".layers-list");
     const activeRow = getInsertTarget(rootList);
@@ -209,14 +296,23 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       rootList.prepend(entry);
     }
 
-    updateLayerDepths();
-    selectOnlyLayer(entry.querySelector("[data-layer-row]"));
+    isSyncingLayerModelFromDom = true;
+
+    try {
+      updateLayerDepths();
+      selectOnlyLayer(entry.querySelector("[data-layer-row]"));
+      syncLayerModelFromDom("insert");
+    } finally {
+      isSyncingLayerModelFromDom = false;
+    }
+
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
   }
 
   function insertLayerEntryAfter(entry, targetEntry) {
     targetEntry.parentElement.insertBefore(entry, targetEntry.nextElementSibling);
     updateLayerDepths();
+    syncLayerModelFromDom("insert-after");
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
   }
 
@@ -241,7 +337,25 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       `;
     }
 
-    if (type === "vector") {
+    if (type === "image") {
+      return `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-image-icon lucide-image">
+          <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+          <circle cx="9" cy="9" r="2" />
+          <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+        </svg>
+      `;
+    }
+
+    if (type === "background") {
+      return `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+        </svg>
+      `;
+    }
+
+    if (type === "vector" || type === "svg") {
       return `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z" />
@@ -305,19 +419,38 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     `;
   }
 
-  function createLayerEntry(layerName, type = "layer") {
+  function applyLayerState(row, state = {}) {
+    const lockButton = row.querySelector("[data-layer-lock]");
+    const visibilityButton = row.querySelector("[data-layer-visibility]");
+    const isBackground = isBackgroundRow(row);
+    const isLocked = isBackground || state.locked === true;
+    const isHidden = state.visible === false;
+
+    row.classList.toggle("locked", isLocked);
+    row.classList.toggle("hidden-layer", isHidden);
+    lockButton?.setAttribute("aria-pressed", String(isLocked));
+    lockButton?.setAttribute("aria-label", isBackground ? "Background locked" : isLocked ? "Unlock layer" : "Lock layer");
+    lockButton?.toggleAttribute("disabled", isBackground);
+    visibilityButton?.setAttribute("aria-pressed", String(!isHidden));
+    visibilityButton?.setAttribute("aria-label", isHidden ? "Show layer" : "Hide layer");
+  }
+
+  function createLayerEntry(layerName, type = "layer", id = "", state = {}) {
     const entry = document.createElement("div");
     const row = document.createElement("div");
+    const layerId = id || layerModel?.createId(type) || `${type}-${Date.now().toString(36)}`;
 
     // TODO: when canvas objects are wired to the layers panel, pass "text" or "vector"
     // here so text layers and vector layers use their dedicated icons.
     entry.className = `layer-entry ${type === "group" ? "layer-group-entry" : ""}`;
     entry.dataset.layerEntry = "";
+    entry.dataset.layerId = layerId;
     entry.dataset.layerType = type;
     row.className = `layer-row ${type === "group" ? "layer-group-row" : ""}`;
     row.role = "option";
     row.tabIndex = 0;
     row.dataset.layerRow = "";
+    row.dataset.layerId = layerId;
     row.dataset.layerType = type;
     row.innerHTML = `
       <div class="layer-info">
@@ -331,6 +464,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     `;
 
     entry.append(row);
+    applyLayerState(row, state);
 
     if (type === "group") {
       const children = document.createElement("div");
@@ -340,6 +474,46 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
 
     return entry;
+  }
+
+  function createLayerEntryFromModel(entry) {
+    const layerEntry = createLayerEntry(entry.name, entry.type, entry.id, entry);
+
+    if (entry.type === "group") {
+      const children = getLayerChildren(layerEntry);
+
+      (entry.children || []).forEach((childEntry) => {
+        children.append(createLayerEntryFromModel(childEntry));
+      });
+    }
+
+    return layerEntry;
+  }
+
+  function renderLayerModel() {
+    const rootList = panel.querySelector(".layers-list");
+    const entries = layerModel?.getEntries?.() || [];
+
+    isRenderingLayerModel = true;
+
+    try {
+      rootList.replaceChildren(...entries.map(createLayerEntryFromModel));
+      updateLayerDepths();
+
+      const activeRow =
+        layerModel?.activeLayerId &&
+        getLayerRows().find((row) => getLayerId(row) === layerModel.activeLayerId);
+
+      if (activeRow) {
+        selectOnlyLayer(activeRow);
+      } else {
+        clearLayerSelection();
+      }
+
+      syncActiveLayerUi();
+    } finally {
+      isRenderingLayerModel = false;
+    }
   }
 
   function syncCopiedRowState(sourceRow, copiedRow) {
@@ -399,6 +573,35 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
         return !selectedParent || !isEntrySelected(selectedParent);
       });
+  }
+
+  function isContentLayerRow(row) {
+    return Boolean(row && !isGroupRow(row) && !isBackgroundRow(row));
+  }
+
+  function isPaintLayerRow(row) {
+    return row?.dataset.layerType === "paint";
+  }
+
+  function getContentLayerRows() {
+    return getLayerRows().filter(isContentLayerRow);
+  }
+
+  function getContentLayerRowsInside(entries) {
+    const rows = entries.flatMap((entry) =>
+      Array.from(entry.querySelectorAll("[data-layer-row]")).filter(isContentLayerRow),
+    );
+
+    return Array.from(new Set(rows));
+  }
+
+  function clearLayerContents(rows) {
+    const renderer = window.CBO.documentRenderer;
+    const layerIds = Array.from(new Set(rows.map(getLayerId).filter(Boolean)));
+
+    layerIds.forEach((layerId) => {
+      renderer?.clearLayer?.(layerId);
+    });
   }
 
   function selectOnlyLayer(row) {
@@ -465,6 +668,20 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     selectOnlyLayer(row);
   }
 
+  function getNextNewLayerName() {
+    const newLayerCount = layerModel
+      ?.flattenTopToBottom?.()
+      .filter((entry) => entry.type === "paint" && /^New Layer(?: \d+)?$/.test(entry.name || "")).length || 0;
+
+    return newLayerCount === 0 ? "New Layer" : `New Layer ${newLayerCount + 1}`;
+  }
+
+  function addPaintLayer() {
+    const layerEntry = createLayerEntry(getNextNewLayerName(), "paint");
+
+    insertLayerEntry(layerEntry);
+  }
+
   function addGroup() {
     groupCount += 1;
 
@@ -488,6 +705,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     setLayerBranchSelected(groupRow, true);
     rangeAnchor = groupRow;
     setFocusedLayer(groupRow);
+    syncLayerModelFromDom("group-selection");
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
   }
 
@@ -512,6 +730,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     copiedRows.forEach((row) => setLayerBranchSelected(row, true));
     rangeAnchor = copiedRows[0] || null;
     setFocusedLayer(copiedRows[0] || null);
+    syncLayerModelFromDom("copy");
   }
 
   function deleteSelectedLayers() {
@@ -521,9 +740,32 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
+    const selectedContentRows = getContentLayerRowsInside(selectedEntries);
+    const remainingContentRows = getContentLayerRows().filter((row) =>
+      !selectedEntries.some((entry) => entry.contains(row)),
+    );
+    const isDeletingAllContent = selectedContentRows.length > 0 && remainingContentRows.length === 0;
+    const isDirectLastPaintLayer =
+      isDeletingAllContent &&
+      selectedEntries.length === 1 &&
+      selectedContentRows.length === 1 &&
+      isPaintLayerRow(selectedContentRows[0]) &&
+      getLayerEntry(selectedContentRows[0]) === selectedEntries[0];
+
+    if (isDirectLastPaintLayer) {
+      clearLayerContents(selectedContentRows);
+      return;
+    }
+
     selectedEntries.forEach((entry) => entry.remove());
     clearLayerSelection();
     updateLayerDepths();
+    syncLayerModelFromDom("delete");
+
+    if (isDeletingAllContent) {
+      layerModel?.ensureActivePaintLayer?.({ source: "delete-last-content-layer" });
+    }
+
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
   }
 
@@ -574,6 +816,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const sourceEntries = dragState?.sourceEntries || [];
 
     if (!sourceEntries.length || !intent || !intent.targetEntry) {
+      return false;
+    }
+
+    if (intent.type === "after" && isBackgroundRow(intent.targetRow)) {
       return false;
     }
 
@@ -633,6 +879,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
 
     updateLayerDepths();
+    syncLayerModelFromDom("reorder");
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
   }
 
@@ -711,11 +958,17 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     <div class="layers-list" role="listbox" aria-label="Layers" aria-multiselectable="true"></div>
   `;
 
-  const firstLayer = createLayerEntry("Layer");
-  panel.querySelector(".layers-list").append(firstLayer);
-  updateLayerDepths();
-  selectOnlyLayer(firstLayer.querySelector("[data-layer-row]"));
+  layerModel?.addEventListener?.("change", () => {
+    if (isRenderingLayerModel || isSyncingLayerModelFromDom) {
+      return;
+    }
 
+    renderLayerModel();
+  });
+
+  renderLayerModel();
+
+  addLayerButton?.addEventListener("click", addPaintLayer);
   copyLayerButton?.addEventListener("click", copySelectedLayers);
   addGroupButton?.addEventListener("click", addGroup);
 
@@ -734,23 +987,6 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
     event.preventDefault();
     deleteSelectedLayers();
-  });
-
-  document.addEventListener("click", (event) => {
-    const target = event.target;
-
-    if (!(target instanceof Element)) {
-      return;
-    }
-
-    if (
-      panel.contains(target) ||
-      target.closest(".drawer-copy-layer-button, .drawer-new-folder-button")
-    ) {
-      return;
-    }
-
-    clearLayerSelection();
   });
 
   panel.addEventListener("pointerdown", (event) => {
@@ -864,6 +1100,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
 
     if (lockButton) {
+      if (isBackgroundRow(row)) {
+        return;
+      }
+
       const isLocked = row.classList.toggle("locked");
 
       if (isLocked) {
@@ -874,6 +1114,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
       lockButton.setAttribute("aria-pressed", String(isLocked));
       lockButton.setAttribute("aria-label", isLocked ? "Unlock layer" : "Lock layer");
+      syncLayerModelFromDom("lock");
       return;
     }
 
@@ -881,6 +1122,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       const isHidden = row.classList.toggle("hidden-layer");
       visibilityButton.setAttribute("aria-pressed", String(!isHidden));
       visibilityButton.setAttribute("aria-label", isHidden ? "Show layer" : "Hide layer");
+      syncLayerModelFromDom("visibility");
       return;
     }
 

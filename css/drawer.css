@@ -47,6 +47,7 @@
   display: inline-flex;
 }
 
+.left-drawer[data-drawer-panel="upload"] .drawer-new-layer-button,
 .left-drawer[data-drawer-panel="upload"] .drawer-copy-layer-button,
 .left-drawer[data-drawer-panel="upload"] .drawer-new-folder-button {
   display: none;

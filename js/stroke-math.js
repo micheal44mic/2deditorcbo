@@ -20,7 +20,7 @@ window.CBO = window.CBO || {};
   }
 
   function getEffectiveRadius(settings, pressure) {
-    return Math.max(0.5, Number(settings?.radius || 0) * normalizePressure(pressure));
+    return Math.max(0.5, Number(settings?.radius || 0) * 0.5 * normalizePressure(pressure));
   }
 
   function getStreamLineAmount(settings) {

@@ -250,7 +250,7 @@ window.CBO = window.CBO || {};
   }
 
   function getThumbnailRenderer() {
-    if (thumbnailRendererUnavailable || !namespace.BrushEngine || !document.body) {
+    if (thumbnailRendererUnavailable || !namespace.BrushEngine || !namespace.DocumentRenderer || !document.body) {
       return null;
     }
 
@@ -275,8 +275,28 @@ window.CBO = window.CBO || {};
     host.appendChild(canvas);
     document.body.appendChild(host);
 
+    let documentRenderer = null;
+
     try {
+      const gl = namespace.DocumentRenderer.createContext(canvas);
+
+      if (!gl) {
+        throw new Error("WebGL2 non disponibile per il renderer thumbnail.");
+      }
+
+      const viewport = namespace.DocumentRenderer.resizeCanvasViewport(canvas, gl);
+
+      documentRenderer = new namespace.DocumentRenderer({
+        gl,
+        viewportWidth: viewport.width,
+        viewportHeight: viewport.height,
+        transparentBackground: true,
+        documentSizeCap: 512,
+      });
+
       const engine = new namespace.BrushEngine(canvas, {
+        gl,
+        documentRenderer,
         getSettings: () => thumbnailBrushSettings,
         transparentBackground: true,
         singleStrokeMode: true,
@@ -286,9 +306,10 @@ window.CBO = window.CBO || {};
         documentSizeCap: 512,
       });
 
-      thumbnailRenderer = { canvas, engine, host };
+      thumbnailRenderer = { canvas, documentRenderer, engine, host };
       return thumbnailRenderer;
     } catch (error) {
+      documentRenderer?.dispose?.();
       host.remove();
       thumbnailRendererUnavailable = true;
       return null;
@@ -309,8 +330,9 @@ window.CBO = window.CBO || {};
   }
 
   function createSyntheticStrokeSamples(engine, settings) {
-    const width = Math.max(1, engine.docWidth || 512);
-    const height = Math.max(1, engine.docHeight || 142);
+    const target = engine.getPaintTarget?.();
+    const width = Math.max(1, target?.width || 512);
+    const height = Math.max(1, target?.height || 142);
     const radius = Math.max(1, Number(settings.radius) || Number(settings.size) * 0.5 || 20);
     const margin = Math.min(width * 0.24, Math.max(width * 0.08, radius * 1.2));
     const startX = margin;

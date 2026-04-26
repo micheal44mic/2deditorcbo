@@ -159,6 +159,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   let grainBlendModeOpen = false;
   let activeGrainBlendOutline = null;
   let previewCanvas = null;
+  let previewDocumentRenderer = null;
   let previewEngine = null;
   let replayFrame = 0;
 
@@ -184,7 +185,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   }
 
   function ensurePreviewCanvas() {
-    if (!previewPad || !window.CBO.BrushEngine) {
+    if (!previewPad || !window.CBO.BrushEngine || !window.CBO.DocumentRenderer) {
       return;
     }
 
@@ -198,13 +199,40 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     previewCanvas.className = "brush-studio-preview-canvas";
     previewPad.appendChild(previewCanvas);
 
-    previewEngine = new window.CBO.BrushEngine(previewCanvas, {
-      getSettings: () => draftBrushSettings,
-      transparentBackground: true,
-      singleStrokeMode: true,
-      disableNavigation: true,
-      documentSizeCap: 2048,
-    });
+    const gl = window.CBO.DocumentRenderer.createContext(previewCanvas);
+
+    if (!gl) {
+      previewCanvas.remove();
+      previewCanvas = null;
+      return;
+    }
+
+    try {
+      const viewport = window.CBO.DocumentRenderer.resizeCanvasViewport(previewCanvas, gl);
+
+      previewDocumentRenderer = new window.CBO.DocumentRenderer({
+        gl,
+        viewportWidth: viewport.width,
+        viewportHeight: viewport.height,
+        transparentBackground: true,
+        documentSizeCap: 2048,
+      });
+      previewEngine = new window.CBO.BrushEngine(previewCanvas, {
+        gl,
+        documentRenderer: previewDocumentRenderer,
+        getSettings: () => draftBrushSettings,
+        transparentBackground: true,
+        singleStrokeMode: true,
+        disableNavigation: true,
+        documentSizeCap: 2048,
+      });
+    } catch (error) {
+      previewDocumentRenderer?.dispose?.();
+      previewDocumentRenderer = null;
+      previewCanvas.remove();
+      previewCanvas = null;
+      throw error;
+    }
 
     // Hook di test (read-only): permette di ispezionare lo stato dell'engine
     // dalla console o da test E2E senza richiedere setter pubblici dedicati.
@@ -219,6 +247,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     previewEngine?.dispose?.();
     previewEngine = null;
+    previewDocumentRenderer?.dispose?.();
+    previewDocumentRenderer = null;
     previewCanvas?.remove();
     previewCanvas = null;
     previewPad?.replaceChildren();

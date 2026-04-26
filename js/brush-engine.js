@@ -15,69 +15,6 @@ window.CBO = window.CBO || {};
   });
   const COLOR_GOLDEN_RATIO = 0.618033988749895;
 
-  const ARTBOARD_VERTEX_SHADER_SOURCE = `#version 300 es
-precision highp float;
-
-layout(location = 0) in vec2 aUnitCorner;
-
-uniform vec2 uViewportSize;
-uniform vec2 uDocumentSize;
-uniform vec2 uCameraPosition;
-uniform float uCameraZoom;
-
-out vec2 v_uv;
-
-void main() {
-  // aUnitCorner contiene i quattro angoli del documento in spazio normalizzato [0..1].
-  // Moltiplicando per uDocumentSize otteniamo coordinate in pixel reali del documento.
-  vec2 documentPixel = aUnitCorner * uDocumentSize;
-
-  // La camera conserva l'angolo alto-sinistro del documento in pixel fisici del viewport.
-  // Lo zoom scala i pixel del documento prima di proiettarli sul canvas-monitor.
-  vec2 viewportPixel = uCameraPosition + documentPixel * uCameraZoom;
-
-  // WebGL usa clip space [-1..1] con asse Y positivo verso l'alto.
-  // Il DOM usa pixel con origine in alto a sinistra: per questo invertiamo l'asse Y.
-  vec2 clipPosition = vec2(
-    (viewportPixel.x / uViewportSize.x) * 2.0 - 1.0,
-    1.0 - (viewportPixel.y / uViewportSize.y) * 2.0
-  );
-
-  v_uv = vec2(aUnitCorner.x, 1.0 - aUnitCorner.y);
-  gl_Position = vec4(clipPosition, 0.0, 1.0);
-}
-`;
-
-  const ARTBOARD_FRAGMENT_SHADER_SOURCE = `#version 300 es
-precision highp float;
-
-uniform sampler2D u_texture;
-uniform float u_opacity;
-uniform vec2 uDocumentSize;
-uniform float uCameraZoom;
-uniform float u_gridMode;
-
-in vec2 v_uv;
-
-out vec4 outColor;
-
-void main() {
-  if (u_gridMode > 0.5) {
-    // Griglia pixel: una linea bianca sottile su ogni bordo di pixel del documento.
-    vec2 docPx = v_uv * uDocumentSize;
-    vec2 boundaryDistance = abs(fract(docPx - 0.5) - 0.5) / fwidth(docPx);
-    float line = 1.0 - clamp(min(boundaryDistance.x, boundaryDistance.y), 0.0, 1.0);
-    // Fade in tra zoom 6x e 12x: sotto invisibile, sopra piena visibilita'.
-    float zoomFade = smoothstep(6.0, 12.0, uCameraZoom);
-    float alpha = line * zoomFade * 0.35;
-    // Output pre-moltiplicato bianco.
-    outColor = vec4(alpha, alpha, alpha, alpha);
-  } else {
-    outColor = texture(u_texture, v_uv) * u_opacity;
-  }
-}
-`;
-
   const BRUSH_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -468,42 +405,6 @@ void main() {
 }
 `;
 
-  const PLACE_IMAGE_VERTEX_SHADER_SOURCE = `#version 300 es
-precision highp float;
-
-layout(location = 0) in vec2 a_corner;
-
-uniform vec2 u_docResolution;
-uniform vec4 u_destinationRect;
-
-out vec2 v_uv;
-
-void main() {
-  vec2 documentPosition = u_destinationRect.xy + a_corner * u_destinationRect.zw;
-  vec2 clipPosition = (documentPosition / u_docResolution) * 2.0 - 1.0;
-
-  clipPosition.y *= -1.0;
-  v_uv = a_corner;
-  gl_Position = vec4(clipPosition, 0.0, 1.0);
-}
-`;
-
-  const PLACE_IMAGE_FRAGMENT_SHADER_SOURCE = `#version 300 es
-precision highp float;
-
-uniform sampler2D u_texture;
-
-in vec2 v_uv;
-
-out vec4 outColor;
-
-void main() {
-  vec4 color = texture(u_texture, v_uv);
-
-  outColor = vec4(color.rgb * color.a, color.a);
-}
-`;
-
   const STROKE_BUILDUP_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -590,19 +491,21 @@ void main() {
           ? Math.floor(options.documentSizeCap)
           : null,
       };
-      this.gl = canvas.getContext("webgl2", {
-        alpha: true,
-        antialias: false,
-        premultipliedAlpha: true,
-      });
+      this.gl = options.gl;
 
       if (!this.gl) {
-        throw new Error("WebGL2 non disponibile: impossibile inizializzare BrushEngine.");
+        throw new Error("BrushEngine richiede un contesto WebGL2 gia' inizializzato.");
+      }
+
+      if (this.gl.canvas !== canvas) {
+        throw new Error("Il contesto WebGL2 passato a BrushEngine deve appartenere al canvas del brush.");
+      }
+
+      if (!options.documentRenderer?.getPaintTarget) {
+        throw new Error("BrushEngine richiede un DocumentRenderer gia' inizializzato.");
       }
 
       this.camera = { x: 0, y: 0, zoom: 1 };
-      this.docWidth = 1;
-      this.docHeight = 1;
       this.dpr = 1;
       this.viewportWidth = 1;
       this.viewportHeight = 1;
@@ -640,8 +543,7 @@ void main() {
       this.resizeObserver = null;
       this.isDisposed = false;
       this.isBrushToolActive = this.getInitialBrushToolActive();
-      this.baseTexture = null;
-      this.baseFBO = null;
+      this.documentRenderer = options.documentRenderer;
       this.strokeTexture = null;
       this.strokeFBO = null;
       this.strokePlateauTexture = null;
@@ -650,7 +552,6 @@ void main() {
       this.strokeAccumFBO = null;
       this.brushProgramInfo = null;
       this.compositeProgramInfo = null;
-      this.placedImageProgramInfo = null;
       this.strokeBuildupProgramInfo = null;
       this.brush = null;
       this.shapeTexture = null;
@@ -679,16 +580,11 @@ void main() {
 
       // Misuriamo prima il viewport: serve a calcolare il documento con il giusto aspect ratio.
       this.resizeViewport();
-      this.configureDocumentSize();
-      this.programInfo = this.createProgramInfo();
       this.brushProgramInfo = this.createBrushProgramInfo();
       this.compositeProgramInfo = this.createCompositeProgramInfo();
-      this.placedImageProgramInfo = this.createPlacedImageProgramInfo();
       this.strokeBuildupProgramInfo = this.createStrokeBuildupProgramInfo();
-      this.quad = this.createArtboardQuad();
       this.fullscreenQuad = this.createFullscreenQuad();
       this.configureGlState();
-      this.createBaseLayerTarget();
       this.createStrokeLayerTarget();
       this.brush = this.createBrushResources();
       this.syncShapeTextureFromState();
@@ -718,44 +614,6 @@ void main() {
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     }
 
-    configureDocumentSize() {
-      const gl = this.gl;
-      const policyCap = this.isMobileLikeDevice() ? 2048 : 4096;
-      const hardwareCap = gl.getParameter(gl.MAX_TEXTURE_SIZE) || policyCap;
-      const optionCap = this.options.documentSizeCap;
-      const effectiveCap = optionCap ? Math.min(policyCap, optionCap) : policyCap;
-      const cap = Math.max(1, Math.min(effectiveCap, hardwareCap));
-      const aspect =
-        this.viewportWidth > 0 && this.viewportHeight > 0
-          ? this.viewportWidth / this.viewportHeight
-          : 1;
-
-      let docWidth;
-      let docHeight;
-
-      // Lato lungo al cap VRAM, lato corto derivato dall'aspect del viewport:
-      // il documento riempie l'intera area visibile senza bande nere.
-      if (aspect >= 1) {
-        docWidth = cap;
-        docHeight = Math.max(1, Math.round(cap / aspect));
-      } else {
-        docHeight = cap;
-        docWidth = Math.max(1, Math.round(cap * aspect));
-      }
-
-      this.docWidth = docWidth;
-      this.docHeight = docHeight;
-    }
-
-    isMobileLikeDevice() {
-      const hasTouch = navigator.maxTouchPoints > 0;
-      const hasCoarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches || false;
-      const userAgent = navigator.userAgent || "";
-      const hasMobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
-
-      return hasTouch || hasCoarsePointer || hasMobileUserAgent;
-    }
-
     resizeViewport() {
       const gl = this.gl;
       const rect = this.canvas.getBoundingClientRect();
@@ -767,6 +625,8 @@ void main() {
       const didResize =
         this.canvas.width !== nextWidth ||
         this.canvas.height !== nextHeight ||
+        this.viewportWidth !== nextWidth ||
+        this.viewportHeight !== nextHeight ||
         this.dpr !== nextDpr;
 
       if (!didResize) {
@@ -783,56 +643,34 @@ void main() {
       return true;
     }
 
+    getPaintTarget() {
+      const target = this.documentRenderer?.getPaintTarget?.();
+
+      if (
+        !target ||
+        !target.framebuffer ||
+        !target.texture ||
+        !Number.isFinite(target.width) ||
+        !Number.isFinite(target.height)
+      ) {
+        throw new Error("BrushEngine richiede un target documento valido.");
+      }
+
+      return target;
+    }
+
     centerCamera() {
+      const target = this.getPaintTarget();
       const zoom = Math.max(
         0.0001,
-        Math.min(this.viewportWidth / this.docWidth, this.viewportHeight / this.docHeight),
+        Math.min(this.viewportWidth / target.width, this.viewportHeight / target.height),
       );
-      const artboardWidth = this.docWidth * zoom;
-      const artboardHeight = this.docHeight * zoom;
+      const artboardWidth = target.width * zoom;
+      const artboardHeight = target.height * zoom;
 
       this.camera.zoom = zoom;
       this.camera.x = (this.viewportWidth - artboardWidth) * 0.5;
       this.camera.y = (this.viewportHeight - artboardHeight) * 0.5;
-    }
-
-    createProgramInfo() {
-      const gl = this.gl;
-      const vertexShader = this.compileShader(gl.VERTEX_SHADER, ARTBOARD_VERTEX_SHADER_SOURCE);
-      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, ARTBOARD_FRAGMENT_SHADER_SOURCE);
-      const program = gl.createProgram();
-
-      if (!program) {
-        gl.deleteShader(vertexShader);
-        gl.deleteShader(fragmentShader);
-        throw new Error("Impossibile creare il programma shader WebGL2.");
-      }
-
-      gl.attachShader(program, vertexShader);
-      gl.attachShader(program, fragmentShader);
-      gl.linkProgram(program);
-      gl.deleteShader(vertexShader);
-      gl.deleteShader(fragmentShader);
-
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma.";
-
-        gl.deleteProgram(program);
-        throw new Error(info);
-      }
-
-      return {
-        program,
-        uniforms: {
-          cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
-          cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
-          documentSize: gl.getUniformLocation(program, "uDocumentSize"),
-          texture: gl.getUniformLocation(program, "u_texture"),
-          viewportSize: gl.getUniformLocation(program, "uViewportSize"),
-          opacity: gl.getUniformLocation(program, "u_opacity"),
-          gridMode: gl.getUniformLocation(program, "u_gridMode"),
-        },
-      };
     }
 
     createBrushProgramInfo() {
@@ -928,42 +766,6 @@ void main() {
       };
     }
 
-    createPlacedImageProgramInfo() {
-      const gl = this.gl;
-      const vertexShader = this.compileShader(gl.VERTEX_SHADER, PLACE_IMAGE_VERTEX_SHADER_SOURCE);
-      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, PLACE_IMAGE_FRAGMENT_SHADER_SOURCE);
-      const program = gl.createProgram();
-
-      if (!program) {
-        gl.deleteShader(vertexShader);
-        gl.deleteShader(fragmentShader);
-        throw new Error("Impossibile creare il programma image placement WebGL2.");
-      }
-
-      gl.attachShader(program, vertexShader);
-      gl.attachShader(program, fragmentShader);
-      gl.linkProgram(program);
-      gl.deleteShader(vertexShader);
-      gl.deleteShader(fragmentShader);
-
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        const info =
-          gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma image placement.";
-
-        gl.deleteProgram(program);
-        throw new Error(info);
-      }
-
-      return {
-        program,
-        uniforms: {
-          destinationRect: gl.getUniformLocation(program, "u_destinationRect"),
-          docResolution: gl.getUniformLocation(program, "u_docResolution"),
-          texture: gl.getUniformLocation(program, "u_texture"),
-        },
-      };
-    }
-
     createStrokeBuildupProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, COMPOSITE_VERTEX_SHADER_SOURCE);
@@ -1020,40 +822,6 @@ void main() {
       return shader;
     }
 
-    createArtboardQuad() {
-      const gl = this.gl;
-      const vao = gl.createVertexArray();
-      const buffer = gl.createBuffer();
-      const vertices = new Float32Array([
-        0, 0,
-        1, 0,
-        0, 1,
-        1, 1,
-      ]);
-
-      if (!vao || !buffer) {
-        if (buffer) {
-          gl.deleteBuffer(buffer);
-        }
-
-        if (vao) {
-          gl.deleteVertexArray(vao);
-        }
-
-        throw new Error("Impossibile creare le risorse GPU per l'artboard.");
-      }
-
-      gl.bindVertexArray(vao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, null);
-      gl.bindVertexArray(null);
-
-      return { vao, buffer };
-    }
-
     createFullscreenQuad() {
       const gl = this.gl;
       const vao = gl.createVertexArray();
@@ -1089,76 +857,9 @@ void main() {
       return { vao, buffer };
     }
 
-    createBaseLayerTarget() {
-      const gl = this.gl;
-      const texture = gl.createTexture();
-      const framebuffer = gl.createFramebuffer();
-
-      if (!texture || !framebuffer) {
-        if (texture) {
-          gl.deleteTexture(texture);
-        }
-
-        if (framebuffer) {
-          gl.deleteFramebuffer(framebuffer);
-        }
-
-        throw new Error("Impossibile creare il documento FBO in VRAM.");
-      }
-
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      // MAG = NEAREST: zoomando in si vedono i pixel quadrati come in Photoshop / Procreate.
-      // MIN = LINEAR: zoom out resta liscio senza moir\u00e9.
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        this.docWidth,
-        this.docHeight,
-        0,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        null,
-      );
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-      gl.framebufferTexture2D(
-        gl.FRAMEBUFFER,
-        gl.COLOR_ATTACHMENT0,
-        gl.TEXTURE_2D,
-        texture,
-        0,
-      );
-
-      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-        gl.deleteFramebuffer(framebuffer);
-        gl.deleteTexture(texture);
-        throw new Error("Documento FBO incompleto: impossibile inizializzare la tela.");
-      }
-
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
-      // Sfondo trasparente per la modalità preview, bianco solido per il canvas principale.
-      if (this.options.transparentBackground) {
-        gl.clearColor(0, 0, 0, 0);
-      } else {
-        gl.clearColor(1.0, 1.0, 1.0, 1.0);
-      }
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-
-      this.baseTexture = texture;
-      this.baseFBO = framebuffer;
-    }
-
     createTransparentRenderTarget(label) {
       const gl = this.gl;
+      const documentTarget = this.getPaintTarget();
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
       const targetLabel = label || "Render target";
@@ -1176,7 +877,7 @@ void main() {
       }
 
       gl.bindTexture(gl.TEXTURE_2D, texture);
-      // Stesso schema del baseFBO: pixel netti in zoom in, smooth in zoom out.
+      // Stesso schema del documento raster: pixel netti in zoom in, smooth in zoom out.
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -1185,8 +886,8 @@ void main() {
         gl.TEXTURE_2D,
         0,
         gl.RGBA,
-        this.docWidth,
-        this.docHeight,
+        documentTarget.width,
+        documentTarget.height,
         0,
         gl.RGBA,
         gl.UNSIGNED_BYTE,
@@ -1210,7 +911,7 @@ void main() {
         throw new Error(`${targetLabel} incompleto: impossibile inizializzare il livello tratto.`);
       }
 
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
+      gl.viewport(0, 0, documentTarget.width, documentTarget.height);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1576,123 +1277,6 @@ void main() {
       }
     }
 
-    async placeImageBlob(blob, options = {}) {
-      if (!(blob instanceof Blob)) {
-        throw new TypeError("placeImageBlob richiede un Blob immagine.");
-      }
-
-      const decodedImage = await this.decodeImageBlob(blob);
-
-      try {
-        this.placeRasterImage(decodedImage.source, options);
-      } finally {
-        decodedImage.close?.();
-      }
-    }
-
-    async decodeImageBlob(blob) {
-      if (window.createImageBitmap) {
-        try {
-          const bitmap = await window.createImageBitmap(blob);
-
-          return {
-            source: bitmap,
-            close: () => bitmap.close?.(),
-          };
-        } catch (error) {
-          console.warn("createImageBitmap non disponibile per questo upload, uso fallback HTMLImage.", error);
-        }
-      }
-
-      return new Promise((resolve, reject) => {
-        const objectUrl = URL.createObjectURL(blob);
-        const image = new Image();
-
-        image.onload = () => {
-          resolve({
-            source: image,
-            close: () => URL.revokeObjectURL(objectUrl),
-          });
-        };
-
-        image.onerror = () => {
-          URL.revokeObjectURL(objectUrl);
-          reject(new Error("Impossibile decodificare l'immagine caricata."));
-        };
-
-        image.src = objectUrl;
-      });
-    }
-
-    getRasterSourceSize(source) {
-      return {
-        width: Math.max(1, Math.round(source.naturalWidth || source.videoWidth || source.width || 1)),
-        height: Math.max(1, Math.round(source.naturalHeight || source.videoHeight || source.height || 1)),
-      };
-    }
-
-    createRasterImageTexture(source) {
-      const gl = this.gl;
-      const texture = gl.createTexture();
-
-      if (!texture) {
-        throw new Error("Impossibile creare la texture dell'immagine caricata.");
-      }
-
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-
-      return texture;
-    }
-
-    placeRasterImage(source, options = {}) {
-      if (this.isDisposed) {
-        return;
-      }
-
-      const gl = this.gl;
-      const { width, height } = this.getRasterSourceSize(source);
-      const x = Number.isFinite(options.x) ? options.x : Math.round((this.docWidth - width) * 0.5);
-      const y = Number.isFinite(options.y) ? options.y : Math.round((this.docHeight - height) * 0.5);
-      const texture = this.createRasterImageTexture(source);
-      const { program, uniforms } = this.placedImageProgramInfo;
-
-      try {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.baseFBO);
-        gl.viewport(0, 0, this.docWidth, this.docHeight);
-        gl.enable(gl.BLEND);
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-
-        gl.useProgram(program);
-        gl.uniform2f(uniforms.docResolution, this.docWidth, this.docHeight);
-        gl.uniform4f(uniforms.destinationRect, x, y, width, height);
-        gl.uniform1i(uniforms.texture, 0);
-
-        gl.bindVertexArray(this.quad.vao);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      } finally {
-        gl.bindVertexArray(null);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-        gl.useProgram(null);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.deleteTexture(texture);
-      }
-
-      if (this.options.manualRender) {
-        this.draw();
-      }
-    }
-
     bindPointerEvents() {
       this.canvas.style.touchAction = "none";
       this.canvas.addEventListener("pointerdown", this.handlePointerDown);
@@ -1853,6 +1437,17 @@ void main() {
         tiltY: isMouse ? 0 : event.tiltY,
         time: performance.now(),
       };
+    }
+
+    isDocumentPointInside(point) {
+      const target = this.getPaintTarget();
+
+      return (
+        point.docX >= 0 &&
+        point.docY >= 0 &&
+        point.docX <= target.width &&
+        point.docY <= target.height
+      );
     }
 
     createSeededUnit(seed) {
@@ -2527,24 +2122,28 @@ void main() {
       return (taperStart > 0 || taperEnd > 0) && (taperSize > 0 || taperOpacity > 0 || taperPressure > 0);
     }
 
-    getBaseBrushRadius() {
-      const radius = Number(this.brushState.radius);
+    getBaseBrushSize() {
+      const sizeFromRadiusSetting = Number(this.brushState.radius);
 
-      if (Number.isFinite(radius) && radius > 0) {
-        return radius;
+      if (Number.isFinite(sizeFromRadiusSetting) && sizeFromRadiusSetting > 0) {
+        return sizeFromRadiusSetting;
       }
 
       const size = Number(this.brushState.size);
 
       if (Number.isFinite(size) && size > 0) {
-        return size * 0.5;
+        return size;
       }
 
       return 20;
     }
 
+    getBaseBrushRadius() {
+      return Math.max(0.5, this.getBaseBrushSize() * 0.5);
+    }
+
     getBrushSize() {
-      return this.getBaseBrushRadius() * 2;
+      return this.getBaseBrushSize();
     }
 
     getStrokeChargeRadius() {
@@ -2649,6 +2248,7 @@ void main() {
     }
 
     isStampCompletelyOutsideDocument(stamp) {
+      const target = this.getPaintTarget();
       const pressure = this.clamp(stamp.pressure ?? 1, 0, 1);
       const sizeFactor = this.lerp(this.getMinSizeRatio(), 1, pressure);
       const scale = Math.max(stamp.sizeScale ?? 1, 0);
@@ -2656,9 +2256,9 @@ void main() {
 
       return (
         stamp.x + halfExtent < 0 ||
-        stamp.x - halfExtent > this.docWidth ||
+        stamp.x - halfExtent > target.width ||
         stamp.y + halfExtent < 0 ||
-        stamp.y - halfExtent > this.docHeight
+        stamp.y - halfExtent > target.height
       );
     }
 
@@ -3088,6 +2688,7 @@ void main() {
       }
 
       const gl = this.gl;
+      const target = this.getPaintTarget();
       const stampCount = this.stampsBuffer.length;
       // 14 float per istanza: base dab + colore + dati grain Moving.
       const instanceData = new Float32Array(stampCount * 14);
@@ -3119,7 +2720,7 @@ void main() {
       }
 
       gl.useProgram(this.brushProgramInfo.program);
-      gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, this.docWidth, this.docHeight);
+      gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, target.width, target.height);
       gl.uniform1f(this.brushProgramInfo.uniforms.brushSize, brushSize);
       gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
       gl.uniform2f(this.brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
@@ -3167,7 +2768,7 @@ void main() {
       gl.bufferData(gl.ARRAY_BUFFER, instanceData, gl.DYNAMIC_DRAW);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokePlateauFBO);
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
+      gl.viewport(0, 0, target.width, target.height);
       gl.enable(gl.BLEND);
       // Plateau reale: Light Glaze non somma ne' opacità ne' colore nello stesso stroke.
       gl.blendEquation(gl.MAX);
@@ -3175,7 +2776,7 @@ void main() {
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeAccumFBO);
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
+      gl.viewport(0, 0, target.width, target.height);
       gl.enable(gl.BLEND);
       // Accumulo pieno: gli stamp dello stesso tratto si stratificano con SrcOver pre-moltiplicato.
       gl.blendEquation(gl.FUNC_ADD);
@@ -3201,10 +2802,11 @@ void main() {
 
     composeStrokeBuildUp() {
       const gl = this.gl;
+      const target = this.getPaintTarget();
       const { program, uniforms } = this.strokeBuildupProgramInfo;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
+      gl.viewport(0, 0, target.width, target.height);
       gl.disable(gl.BLEND);
 
       gl.useProgram(program);
@@ -3233,10 +2835,11 @@ void main() {
 
     bakeStroke() {
       const gl = this.gl;
+      const target = this.getPaintTarget();
       const { program, uniforms } = this.compositeProgramInfo;
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.baseFBO);
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -3258,6 +2861,7 @@ void main() {
 
     clearStrokeLayer() {
       const gl = this.gl;
+      const target = this.getPaintTarget();
       const framebuffers = [this.strokeFBO, this.strokePlateauFBO, this.strokeAccumFBO];
 
       for (const framebuffer of framebuffers) {
@@ -3266,7 +2870,7 @@ void main() {
         }
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-        gl.viewport(0, 0, this.docWidth, this.docHeight);
+        gl.viewport(0, 0, target.width, target.height);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
       }
@@ -3275,21 +2879,7 @@ void main() {
     }
 
     clearAllLayers() {
-      const gl = this.gl;
-
-      // Base layer: bianco solido o trasparente in base alla modalità.
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.baseFBO);
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
-
-      if (this.options.transparentBackground) {
-        gl.clearColor(0, 0, 0, 0);
-      } else {
-        gl.clearColor(1.0, 1.0, 1.0, 1.0);
-      }
-
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
+      this.documentRenderer?.clear();
       this.clearStrokeLayer();
     }
 
@@ -3476,11 +3066,20 @@ void main() {
         return;
       }
 
+      const documentPoint = this.screenToDocumentSpace(event.clientX, event.clientY);
+
+      if (!this.isDocumentPointInside(documentPoint)) {
+        event.preventDefault();
+        this.documentRenderer?.clearActiveLayer?.({ source: "canvas-empty-click" });
+        return;
+      }
+
       if (!this.canStartBrushStroke()) {
         return;
       }
 
       event.preventDefault();
+      this.documentRenderer?.ensurePaintLayerForBrush?.();
 
       // Modalità preview: ogni nuovo tratto resetta la canvas (utile nella drawing pad).
       if (this.options.singleStrokeMode) {
@@ -3609,52 +3208,15 @@ void main() {
     }
 
     draw() {
-      const gl = this.gl;
-      const { program, uniforms } = this.programInfo;
+      const target = this.getPaintTarget();
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, this.viewportWidth, this.viewportHeight);
-      if (this.options.transparentBackground) {
-        gl.clearColor(0, 0, 0, 0);
-      } else {
-        gl.clearColor(0.15, 0.15, 0.15, 1.0);
-      }
-      gl.clear(gl.COLOR_BUFFER_BIT);
-
-      gl.enable(gl.BLEND);
-      gl.blendEquation(gl.FUNC_ADD);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-
-      gl.useProgram(program);
-      gl.uniform2f(uniforms.viewportSize, this.viewportWidth, this.viewportHeight);
-      gl.uniform2f(uniforms.documentSize, this.docWidth, this.docHeight);
-      gl.uniform2f(uniforms.cameraPosition, this.camera.x, this.camera.y);
-      gl.uniform1f(uniforms.cameraZoom, this.camera.zoom);
-      gl.uniform1i(uniforms.texture, 0);
-      gl.bindVertexArray(this.quad.vao);
-      gl.activeTexture(gl.TEXTURE0);
-
-      // Pass 1: livello base consolidato a piena opacità.
-      gl.uniform1f(uniforms.gridMode, 0.0);
-      gl.bindTexture(gl.TEXTURE_2D, this.baseTexture);
-      gl.uniform1f(uniforms.opacity, 1.0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-      // Pass 2: livello tratto attivo. L'opacità brush è già dentro i singoli stamp,
-      // così i mode Blending possono accumularla nello stesso stroke.
-      if (this.isDrawing) {
-        gl.bindTexture(gl.TEXTURE_2D, this.strokeTexture);
-        gl.uniform1f(uniforms.opacity, 1.0);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      }
-
-      // Pass 3: griglia pixel sopra tutto. Lo shader la attiva solo a zoom alto.
-      gl.uniform1f(uniforms.gridMode, 1.0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-      gl.bindVertexArray(null);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      gl.useProgram(null);
+      this.documentRenderer.drawToCanvas({
+        activeStrokeLayerId: target.layerId,
+        activeStrokeTexture: this.isDrawing ? this.strokeTexture : null,
+        camera: this.camera,
+        viewportWidth: this.viewportWidth,
+        viewportHeight: this.viewportHeight,
+      });
     }
 
     dispose() {
@@ -3683,12 +3245,6 @@ void main() {
       window.removeEventListener("keyup", this.handleKeyUp);
       this.canvas.style.cursor = "";
 
-      if (this.quad) {
-        gl.deleteBuffer(this.quad.buffer);
-        gl.deleteVertexArray(this.quad.vao);
-        this.quad = null;
-      }
-
       if (this.fullscreenQuad) {
         gl.deleteBuffer(this.fullscreenQuad.buffer);
         gl.deleteVertexArray(this.fullscreenQuad.vao);
@@ -3702,15 +3258,7 @@ void main() {
         this.brush = null;
       }
 
-      if (this.baseFBO) {
-        gl.deleteFramebuffer(this.baseFBO);
-        this.baseFBO = null;
-      }
-
-      if (this.baseTexture) {
-        gl.deleteTexture(this.baseTexture);
-        this.baseTexture = null;
-      }
+      this.documentRenderer = null;
 
       if (this.strokeFBO) {
         gl.deleteFramebuffer(this.strokeFBO);
@@ -3757,11 +3305,6 @@ void main() {
         this.compositeProgramInfo = null;
       }
 
-      if (this.placedImageProgramInfo?.program) {
-        gl.deleteProgram(this.placedImageProgramInfo.program);
-        this.placedImageProgramInfo = null;
-      }
-
       if (this.strokeBuildupProgramInfo?.program) {
         gl.deleteProgram(this.strokeBuildupProgramInfo.program);
         this.strokeBuildupProgramInfo = null;
@@ -3772,10 +3315,6 @@ void main() {
         this.brushProgramInfo = null;
       }
 
-      if (this.programInfo?.program) {
-        gl.deleteProgram(this.programInfo.program);
-        this.programInfo = null;
-      }
     }
   }
 
