@@ -141,6 +141,7 @@
   position: absolute;
   top: 6px;
   left: 6px;
+  z-index: 1;
   max-width: calc(100% - 12px);
   padding: 4px 6px;
   overflow: hidden;
@@ -153,6 +154,21 @@
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.brush-preview-canvas {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.brushes-panel-card .brush-preview-canvas {
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  width: calc(100% - 16px);
+  height: 42px;
 }
 
 .brushes-gallery-popout {
@@ -219,10 +235,46 @@
   color: #c3c8d1;
 }
 
+.brushes-gallery-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #c3c8d1;
+}
+
+.brushes-gallery-icon-button:hover,
+.brushes-gallery-icon-button:focus-visible,
 .brushes-gallery-close-button:hover,
 .brushes-gallery-close-button:focus-visible {
   background: rgb(44, 48, 58);
   color: #ffffff;
+}
+
+.brushes-gallery-action-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.brushes-gallery-action-icon path,
+.brushes-gallery-action-icon rect {
+  fill: none;
+  stroke: currentColor;
+}
+
+.brushes-gallery-copy-icon,
+.brushes-gallery-delete-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .brushes-gallery-close-icon {
@@ -317,15 +369,29 @@
 }
 
 .brushes-gallery-brush {
+  overflow: hidden;
+}
+
+.brushes-gallery-brush-select {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   padding: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
   text-align: left;
 }
 
 .brushes-gallery-item-name {
-  max-width: calc(100% - 12px);
+  position: relative;
+  z-index: 1;
+  max-width: calc(100% - 74px);
   padding: 4px 6px;
   overflow: hidden;
   border-radius: 4px;
@@ -339,11 +405,147 @@
   white-space: nowrap;
 }
 
+.brushes-gallery-brush-select .brush-preview-canvas {
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: calc(100% - 16px);
+  height: 52px;
+}
+
+.brushes-gallery-copy-button,
+.brushes-gallery-delete-button {
+  position: absolute;
+  top: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: #181a1f;
+  color: #c3c8d1;
+}
+
+.brushes-gallery-copy-button {
+  right: 36px;
+}
+
+.brushes-gallery-delete-button {
+  right: 6px;
+}
+
+.brushes-gallery-copy-button:hover,
+.brushes-gallery-copy-button:focus-visible,
+.brushes-gallery-delete-button:hover,
+.brushes-gallery-delete-button:focus-visible {
+  background: #4a5060;
+  color: #ffffff;
+}
+
+.brushes-gallery-delete-button:disabled {
+  opacity: 0.34;
+}
+
+.brushes-gallery-delete-button:disabled:hover {
+  background: #181a1f;
+  color: #c3c8d1;
+}
+
+.brushes-gallery-delete-dialog {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  border-radius: 8px 0 0 8px;
+  background: rgba(24, 26, 31, 0.72);
+}
+
+.brushes-gallery-delete-dialog[hidden] {
+  display: none;
+}
+
+.brushes-gallery-delete-card {
+  display: grid;
+  gap: 12px;
+  width: min(260px, 100%);
+  padding: 14px;
+  border: 1px solid rgba(223, 227, 234, 0.32);
+  border-radius: 8px;
+  background: #181a1f;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.16);
+}
+
+.brushes-gallery-delete-card h3,
+.brushes-gallery-delete-card p {
+  margin: 0;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.brushes-gallery-delete-card h3 {
+  color: #dfe3ea;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.brushes-gallery-delete-card p {
+  overflow: hidden;
+  color: #c3c8d1;
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brushes-gallery-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.brushes-gallery-delete-cancel,
+.brushes-gallery-delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: #2c303a;
+  color: #c3c8d1;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.brushes-gallery-delete-cancel:hover,
+.brushes-gallery-delete-cancel:focus-visible,
+.brushes-gallery-delete-confirm:hover,
+.brushes-gallery-delete-confirm:focus-visible {
+  background: #3a3f4b;
+  color: #ffffff;
+}
+
+.brushes-gallery-delete-confirm {
+  color: #ffffff;
+}
+
 .brushes-gallery-package:hover,
 .brushes-gallery-package:focus-visible,
 .brushes-gallery-package.active,
 .brushes-gallery-brush:hover,
-.brushes-gallery-brush:focus-visible {
+.brushes-gallery-brush:focus-within,
+.brushes-gallery-brush.active {
   background: #3a3f4b;
   color: #ffffff;
 }

@@ -1,3 +1,11 @@
+document.addEventListener(
+  "contextmenu",
+  (event) => {
+    event.preventDefault();
+  },
+  { capture: true },
+);
+
 document.addEventListener("DOMContentLoaded", () => {
   window.CBO.initSidebar();
   window.CBO.initDrawer();

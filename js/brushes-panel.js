@@ -1,25 +1,42 @@
 window.CBO = window.CBO || {};
 
 window.CBO.initBrushesPanel = function initBrushesPanel() {
-  // Temporary demo data. Replace this array with the real brush packages later:
-  // each package controls the popout list and the sidebar brushes shown after selection.
-  const brushPackages = [
-    {
-      name: "ESSENTIAL PACK",
-      brushes: ["SOFT", "INK"],
-    },
-    {
-      name: "SKETCH PACK",
-      brushes: ["PENCIL", "MARKER"],
-    },
-  ];
+  const BrushLibrary = window.CBO.BrushLibrary;
+  const BrushDefaults = window.CBO.BrushDefaults;
+  const BrushPreview = window.CBO.BrushPreview;
+  const plusIcon = `
+    <svg class="brushes-gallery-action-icon lucide lucide-plus-icon lucide-plus" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </svg>
+  `;
+  const copyIcon = `
+    <svg class="brushes-gallery-action-icon brushes-gallery-copy-icon lucide lucide-copy-icon lucide-copy" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+  `;
+  const deleteIcon = `
+    <svg class="brushes-gallery-action-icon brushes-gallery-delete-icon lucide lucide-trash-2-icon lucide-trash-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4c0-1 .8-2 2-2h4c1.2 0 2 .8 2 2v2" />
+      <path d="M19 6 18 20c-.1 1.1-.9 2-2 2H8c-1.1 0-1.9-.9-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  `;
   const editorPage = document.querySelector(".editor-page");
   const panel = document.querySelector(".right-panel");
   const content = panel?.querySelector(".right-sidebar-content");
 
-  if (!editorPage || !panel || !content || panel.dataset.brushesPanelReady === "true") {
+  if (!BrushLibrary || !BrushDefaults || !editorPage || !panel || !content || panel.dataset.brushesPanelReady === "true") {
     return;
   }
+
+  const brushPackages = BrushLibrary.getPackages();
+  let activePackageIndex = 0;
+  let selectedPackageIndex = 0;
+  let selectedBrushId = brushPackages[selectedPackageIndex]?.brushIds[0] || "";
 
   panel.dataset.brushesPanelReady = "true";
   content.insertAdjacentHTML(
@@ -64,6 +81,9 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
             <h2>BRUSH GALLERY</h2>
           </div>
           <div class="brushes-gallery-popout-actions">
+            <button class="brushes-gallery-icon-button brushes-gallery-create-button" type="button" aria-label="CREATE BRUSH" data-brush-create>
+              ${plusIcon}
+            </button>
             <button class="brushes-gallery-studio-button" type="button">BRUSH STUDIO</button>
             <button class="brushes-gallery-close-button" type="button" aria-label="Close brush gallery" data-brush-popout-close>
               <svg class="brushes-gallery-close-icon lucide lucide-x-icon lucide-x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -77,6 +97,16 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
           <div class="brushes-gallery-packages" aria-label="Brush packages" data-brush-packages></div>
           <div class="brushes-gallery-brushes" aria-label="Brushes" data-brush-package-items></div>
         </div>
+        <div class="brushes-gallery-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="brushes-gallery-delete-title" data-brush-delete-dialog hidden>
+          <div class="brushes-gallery-delete-card">
+            <h3 id="brushes-gallery-delete-title">DELETE BRUSH?</h3>
+            <p><span data-brush-delete-name></span></p>
+            <div class="brushes-gallery-delete-actions">
+              <button class="brushes-gallery-delete-cancel" type="button" data-brush-delete-cancel>CANCEL</button>
+              <button class="brushes-gallery-delete-confirm" type="button" data-brush-delete-confirm>DELETE</button>
+            </div>
+          </div>
+        </div>
       </aside>
     `,
   );
@@ -89,37 +119,145 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   const sidebarBrushList = panel.querySelector("[data-sidebar-brush-list]");
   const packageList = brushPopout?.querySelector("[data-brush-packages]");
   const packageItems = brushPopout?.querySelector("[data-brush-package-items]");
+  const createBrushButton = brushPopout?.querySelector("[data-brush-create]");
   const closeButton = brushPopout?.querySelector("[data-brush-popout-close]");
-  let activePackageIndex = 0;
-  let selectedPackageIndex = 0;
-  let selectedBrushName = brushPackages[selectedPackageIndex].brushes[0];
+  const deleteDialog = brushPopout?.querySelector("[data-brush-delete-dialog]");
+  const deleteBrushName = brushPopout?.querySelector("[data-brush-delete-name]");
+  const deleteCancelButton = brushPopout?.querySelector("[data-brush-delete-cancel]");
+  const deleteConfirmButton = brushPopout?.querySelector("[data-brush-delete-confirm]");
+  let pendingDeleteBrushId = "";
 
-  // Sidebar shows the brushes from the selected package. SEE MORE stays outside this
-  // scrollable list, so it remains visible while only the brush cards scroll.
+  function getBrushName(brushId) {
+    return BrushLibrary.getBrush(brushId)?.name || "BRUSH";
+  }
+
+  function getSelectedPackage() {
+    return brushPackages[selectedPackageIndex] || brushPackages[0] || null;
+  }
+
+  function getPackageIndexById(packageId) {
+    return brushPackages.findIndex((brushPackage) => brushPackage.id === packageId);
+  }
+
+  function canDeleteBrush(brushId) {
+    const brushPackage = BrushLibrary.findPackageByBrushId(brushId);
+
+    return (brushPackage?.brushIds.length || 0) > 1;
+  }
+
+  function renderBrushPreview(canvas, brushId, variant) {
+    if (!BrushPreview?.render || !canvas) {
+      return;
+    }
+
+    const settings = BrushLibrary.getSettings(brushId);
+
+    if (!settings) {
+      return;
+    }
+
+    BrushPreview.render(canvas, brushId, settings, { variant });
+  }
+
+  function queueBrushPreview(canvas, brushId, variant) {
+    window.requestAnimationFrame(() => {
+      renderBrushPreview(canvas, brushId, variant);
+    });
+  }
+
+  function refreshBrushPreviews(brushId) {
+    if (!BrushPreview?.render || !brushId) {
+      return;
+    }
+
+    BrushPreview.invalidate?.(brushId);
+    document.querySelectorAll("[data-brush-preview-id]").forEach((canvas) => {
+      if (canvas.dataset.brushPreviewId !== brushId) {
+        return;
+      }
+
+      renderBrushPreview(canvas, brushId, canvas.dataset.brushPreviewVariant || "gallery");
+    });
+  }
+
+  function selectBrush(packageIndex, brushId, { closePopout = false } = {}) {
+    const nextPackage = brushPackages[packageIndex];
+
+    if (!nextPackage || !BrushLibrary.getBrush(brushId)) {
+      return;
+    }
+
+    selectedPackageIndex = packageIndex;
+    selectedBrushId = brushId;
+    applyBrushPreset(brushId);
+    renderSidebarBrushes();
+    renderPackageItems();
+
+    if (closePopout) {
+      closeBrushPopout();
+    }
+  }
+
+  function applyBrushPreset(brushId) {
+    const settings = BrushLibrary.getSettings(brushId);
+
+    if (!settings) {
+      return;
+    }
+
+    window.CBO.brushSettings = BrushDefaults.createSettings(settings);
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:brush-settings-change", {
+        detail: {
+          brushId,
+          brushName: getBrushName(brushId),
+          settings: { ...window.CBO.brushSettings },
+        },
+      }),
+    );
+  }
+
+  function syncSelectedBrushSettings(event) {
+    if (!selectedBrushId) {
+      return;
+    }
+
+    BrushLibrary.updateBrushSettings(
+      selectedBrushId,
+      event.detail?.settings || window.CBO.brushSettings,
+    );
+    refreshBrushPreviews(selectedBrushId);
+  }
+
   function renderSidebarBrushes() {
     if (!sidebarBrushList) {
       return;
     }
 
-    const selectedPackage = brushPackages[selectedPackageIndex];
+    const selectedPackage = getSelectedPackage();
 
     sidebarBrushList.replaceChildren(
-      ...selectedPackage.brushes.map((brushName) => {
+      ...(selectedPackage?.brushIds || []).map((brushId) => {
         const brushButton = document.createElement("button");
         const brushNameLabel = document.createElement("span");
-        const isActive = brushName === selectedBrushName;
+        const previewCanvas = document.createElement("canvas");
+        const isActive = brushId === selectedBrushId;
 
         brushButton.className = "brushes-panel-card";
         brushButton.type = "button";
-        brushButton.setAttribute("aria-label", `${brushName} brush`);
+        brushButton.setAttribute("aria-label", `${getBrushName(brushId)} brush`);
         brushButton.setAttribute("aria-pressed", String(isActive));
         brushButton.classList.toggle("active", isActive);
         brushNameLabel.className = "brushes-panel-card-name";
-        brushNameLabel.textContent = brushName;
-        brushButton.append(brushNameLabel);
+        brushNameLabel.textContent = getBrushName(brushId);
+        previewCanvas.className = "brush-preview-canvas";
+        previewCanvas.dataset.brushPreviewId = brushId;
+        previewCanvas.dataset.brushPreviewVariant = "sidebar";
+        brushButton.append(brushNameLabel, previewCanvas);
+        queueBrushPreview(previewCanvas, brushId, "sidebar");
         brushButton.addEventListener("click", () => {
-          selectedBrushName = brushName;
-          renderSidebarBrushes();
+          selectBrush(selectedPackageIndex, brushId);
         });
 
         return brushButton;
@@ -131,8 +269,6 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     });
   }
 
-  // Popout right column changes when a package is selected on the left.
-  // Selecting a brush commits that package to the sidebar and closes the popout.
   function renderPackageItems() {
     if (!packageItems) {
       return;
@@ -141,41 +277,73 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     const activePackage = brushPackages[activePackageIndex];
 
     packageItems.replaceChildren(
-      ...activePackage.brushes.map((brushName) => {
-        const brushButton = document.createElement("button");
+      ...(activePackage?.brushIds || []).map((brushId) => {
+        const brushCard = document.createElement("div");
+        const brushSelectButton = document.createElement("button");
         const brushNameLabel = document.createElement("span");
+        const previewCanvas = document.createElement("canvas");
+        const copyButton = document.createElement("button");
+        const deleteButton = document.createElement("button");
+        const isActive = brushId === selectedBrushId;
+        const isDeletable = canDeleteBrush(brushId);
 
-        brushButton.className = "brushes-gallery-brush";
-        brushButton.type = "button";
+        brushCard.className = "brushes-gallery-brush";
+        brushCard.classList.toggle("active", isActive);
+        brushSelectButton.className = "brushes-gallery-brush-select";
+        brushSelectButton.type = "button";
+        brushSelectButton.setAttribute("aria-label", `${getBrushName(brushId)} brush`);
+        brushSelectButton.setAttribute("aria-pressed", String(isActive));
         brushNameLabel.className = "brushes-gallery-item-name";
-        brushNameLabel.textContent = brushName;
-        brushButton.append(brushNameLabel);
-        brushButton.addEventListener("click", () => {
-          selectedPackageIndex = activePackageIndex;
-          selectedBrushName = brushName;
-          renderSidebarBrushes();
-          closeBrushPopout();
+        brushNameLabel.textContent = getBrushName(brushId);
+        previewCanvas.className = "brush-preview-canvas";
+        previewCanvas.dataset.brushPreviewId = brushId;
+        previewCanvas.dataset.brushPreviewVariant = "gallery";
+        copyButton.className = "brushes-gallery-copy-button";
+        copyButton.type = "button";
+        copyButton.setAttribute("aria-label", `Duplicate ${getBrushName(brushId)} brush`);
+        copyButton.innerHTML = copyIcon;
+        deleteButton.className = "brushes-gallery-delete-button";
+        deleteButton.type = "button";
+        deleteButton.disabled = !isDeletable;
+        deleteButton.setAttribute("aria-label", `Delete ${getBrushName(brushId)} brush`);
+        deleteButton.innerHTML = deleteIcon;
+        brushSelectButton.append(brushNameLabel, previewCanvas);
+        brushCard.append(brushSelectButton, copyButton, deleteButton);
+        queueBrushPreview(previewCanvas, brushId, "gallery");
+        brushSelectButton.addEventListener("click", () => {
+          selectBrush(activePackageIndex, brushId, { closePopout: true });
+        });
+        copyButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+
+          const duplicatedBrush = BrushLibrary.duplicateBrush(brushId);
+
+          if (!duplicatedBrush) {
+            return;
+          }
+
+          selectBrush(activePackageIndex, duplicatedBrush.id);
+        });
+        deleteButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+
+          if (!isDeletable) {
+            return;
+          }
+
+          openDeleteDialog(brushId);
         });
 
-        return brushButton;
+        return brushCard;
       }),
     );
   }
 
-  function setActivePackage(packageIndex) {
-    activePackageIndex = packageIndex;
+  function renderPackages() {
+    if (!packageList) {
+      return;
+    }
 
-    packageList?.querySelectorAll(".brushes-gallery-package").forEach((button, index) => {
-      const isActive = index === activePackageIndex;
-
-      button.classList.toggle("active", isActive);
-      button.setAttribute("aria-pressed", String(isActive));
-    });
-
-    renderPackageItems();
-  }
-
-  if (packageList) {
     packageList.replaceChildren(
       ...brushPackages.map((brushPackage, packageIndex) => {
         const packageButton = document.createElement("button");
@@ -194,14 +362,83 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     );
   }
 
-  renderPackageItems();
-  renderSidebarBrushes();
+  function setActivePackage(packageIndex) {
+    activePackageIndex = packageIndex;
+
+    packageList?.querySelectorAll(".brushes-gallery-package").forEach((button, index) => {
+      const isActive = index === activePackageIndex;
+
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+
+    renderPackageItems();
+  }
+
+  function createBrushFromGallery() {
+    const activePackage = brushPackages[activePackageIndex] || brushPackages[0];
+    const createdBrush = BrushLibrary.createBrush(activePackage?.id);
+
+    if (!createdBrush) {
+      return;
+    }
+
+    selectBrush(activePackageIndex, createdBrush.id);
+  }
+
+  function openDeleteDialog(brushId) {
+    if (!deleteDialog || !deleteBrushName) {
+      return;
+    }
+
+    pendingDeleteBrushId = brushId;
+    deleteBrushName.textContent = getBrushName(brushId);
+    deleteDialog.hidden = false;
+    deleteConfirmButton?.focus();
+  }
+
+  function closeDeleteDialog() {
+    if (!deleteDialog) {
+      return;
+    }
+
+    deleteDialog.hidden = true;
+    pendingDeleteBrushId = "";
+  }
+
+  function confirmDeleteBrush() {
+    if (!pendingDeleteBrushId) {
+      return;
+    }
+
+    const brushId = pendingDeleteBrushId;
+    const deleteResult = BrushLibrary.deleteBrush(brushId);
+
+    closeDeleteDialog();
+    BrushPreview?.invalidate?.(brushId);
+
+    if (!deleteResult?.deleted) {
+      renderPackageItems();
+      return;
+    }
+
+    const nextPackageIndex = getPackageIndexById(deleteResult.packageId);
+
+    if (selectedBrushId === brushId && nextPackageIndex >= 0 && deleteResult.nextBrushId) {
+      selectBrush(nextPackageIndex, deleteResult.nextBrushId);
+      return;
+    }
+
+    renderSidebarBrushes();
+    renderPackageItems();
+  }
 
   function closeBrushPopout() {
     if (!brushPopout) {
       return;
     }
 
+    closeDeleteDialog();
     brushPopout.hidden = true;
     brushPopoutButtons.forEach((button) => {
       button.setAttribute("aria-expanded", "false");
@@ -220,11 +457,25 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     });
   }
 
+  renderPackages();
+  renderPackageItems();
+  renderSidebarBrushes();
+  applyBrushPreset(selectedBrushId);
+
   brushPopoutButtons.forEach((button) => {
     button.addEventListener("click", openBrushPopout);
   });
 
+  createBrushButton?.addEventListener("click", createBrushFromGallery);
   closeButton?.addEventListener("click", closeBrushPopout);
+  deleteCancelButton?.addEventListener("click", closeDeleteDialog);
+  deleteConfirmButton?.addEventListener("click", confirmDeleteBrush);
+  deleteDialog?.addEventListener("click", (event) => {
+    if (event.target === deleteDialog) {
+      closeDeleteDialog();
+    }
+  });
+  window.addEventListener("cbo:brush-settings-change", syncSelectedBrushSettings);
 
   document.addEventListener("click", (event) => {
     if (!brushPopout || brushPopout.hidden) {
@@ -238,6 +489,13 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
 
     if (!clickedInsidePopout && !clickedOpenButton) {
       closeBrushPopout();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && deleteDialog && !deleteDialog.hidden) {
+      event.stopPropagation();
+      closeDeleteDialog();
     }
   });
 

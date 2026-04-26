@@ -1,0 +1,219 @@
+window.CBO = window.CBO || {};
+
+(function registerBrushLibrary(namespace) {
+  const BrushDefaults = namespace.BrushDefaults;
+  const hardBlendCircleAlphaSrc = "./data/hard-blend-circle-alpha.png";
+  const hardBlendCircleAlphaName = "CERCHIO DURO";
+  let brushSequence = 0;
+
+  function normalizeSettings(settings = {}) {
+    return BrushDefaults?.createSettings
+      ? BrushDefaults.createSettings(settings)
+      : { ...(settings || {}) };
+  }
+
+  function cloneSettings(settings = {}) {
+    return normalizeSettings({ ...(settings || {}) });
+  }
+
+  function createId(prefix) {
+    brushSequence += 1;
+
+    return `${prefix}-${Date.now().toString(36)}-${brushSequence.toString(36)}`;
+  }
+
+  const hardBlendSettings = normalizeSettings({
+    radius: 48,
+    opacity: 1,
+    renderingMode: "intense-blending",
+    flow: 1,
+    hardness: 1,
+    wetEdges: 0,
+    burntEdges: 0,
+    alphaThresholdEnabled: false,
+    spacing: 0.08,
+    spacingJitter: 0,
+    jitterLateral: 0,
+    jitterLinear: 0,
+    fallOff: 0,
+    taperStart: 0,
+    taperEnd: 0,
+    taperSize: 0,
+    taperOpacity: 0,
+    taperPressure: 0,
+    shapeAlphaSrc: hardBlendCircleAlphaSrc,
+    shapeAlphaName: hardBlendCircleAlphaName,
+    shapeRotation: 0,
+    shapeScatter: 0,
+    shapeCount: 1,
+    shapeCountJitter: 0,
+    shapeRandomized: false,
+    shapeFlipX: false,
+    shapeFlipY: false,
+    grainEnabled: false,
+    stampColorHueJitter: 0,
+    stampColorSaturationJitter: 0,
+    stampColorLightnessJitter: 0,
+    stampColorDarknessJitter: 0,
+    stampColorSecondaryJitter: 0,
+    strokeColorHueJitter: 0,
+    strokeColorSaturationJitter: 0,
+    strokeColorLightnessJitter: 0,
+    strokeColorDarknessJitter: 0,
+    strokeColorSecondaryJitter: 0,
+    wetDilution: 0,
+    wetCharge: 1,
+    wetAttack: 1,
+    wetnessJitter: 0,
+  });
+
+  const brushes = {
+    "hard-blend": {
+      id: "hard-blend",
+      name: "FUSIONE DURO",
+      settings: cloneSettings(hardBlendSettings),
+    },
+  };
+
+  const packages = [
+    {
+      id: "essential",
+      name: "ESSENTIAL PACK",
+      brushIds: ["hard-blend"],
+    },
+  ];
+
+  function getPackage(packageId) {
+    return packages.find((brushPackage) => brushPackage.id === packageId) || packages[0] || null;
+  }
+
+  function findPackageByBrushId(brushId) {
+    return packages.find((brushPackage) => brushPackage.brushIds.includes(brushId)) || null;
+  }
+
+  function getBrush(brushId) {
+    return brushes[brushId] || null;
+  }
+
+  function getUniqueBrushName(packageId, baseName) {
+    const brushPackage = getPackage(packageId);
+    const names = new Set(
+      (brushPackage?.brushIds || [])
+        .map((brushId) => brushes[brushId]?.name)
+        .filter(Boolean),
+    );
+
+    if (!names.has(baseName)) {
+      return baseName;
+    }
+
+    let index = 2;
+    let nextName = `${baseName} ${index}`;
+
+    while (names.has(nextName)) {
+      index += 1;
+      nextName = `${baseName} ${index}`;
+    }
+
+    return nextName;
+  }
+
+  function addBrushToPackage(packageId, brush) {
+    const brushPackage = getPackage(packageId);
+
+    if (!brushPackage || !brush?.id) {
+      return null;
+    }
+
+    brushes[brush.id] = brush;
+    brushPackage.brushIds.push(brush.id);
+
+    return brush;
+  }
+
+  function createBrush(packageId) {
+    const brushPackage = getPackage(packageId);
+
+    if (!brushPackage) {
+      return null;
+    }
+
+    return addBrushToPackage(brushPackage.id, {
+      id: createId("brush"),
+      name: getUniqueBrushName(brushPackage.id, "NUOVO PENNELLO"),
+      settings: cloneSettings(hardBlendSettings),
+    });
+  }
+
+  function duplicateBrush(brushId) {
+    const sourceBrush = getBrush(brushId);
+    const sourcePackage = findPackageByBrushId(brushId);
+
+    if (!sourceBrush || !sourcePackage) {
+      return null;
+    }
+
+    return addBrushToPackage(sourcePackage.id, {
+      id: createId("brush-copy"),
+      name: getUniqueBrushName(sourcePackage.id, `${sourceBrush.name} COPIA`),
+      settings: cloneSettings(sourceBrush.settings),
+    });
+  }
+
+  function deleteBrush(brushId) {
+    const sourceBrush = getBrush(brushId);
+    const sourcePackage = findPackageByBrushId(brushId);
+    const sourceIndex = sourcePackage?.brushIds.indexOf(brushId) ?? -1;
+
+    if (!sourceBrush || !sourcePackage || sourceIndex < 0) {
+      return null;
+    }
+
+    if (sourcePackage.brushIds.length <= 1) {
+      return {
+        deleted: false,
+        reason: "last-brush",
+        packageId: sourcePackage.id,
+        brushId,
+      };
+    }
+
+    sourcePackage.brushIds.splice(sourceIndex, 1);
+    delete brushes[brushId];
+
+    return {
+      deleted: true,
+      packageId: sourcePackage.id,
+      nextBrushId: sourcePackage.brushIds[Math.min(sourceIndex, sourcePackage.brushIds.length - 1)] || null,
+    };
+  }
+
+  function updateBrushSettings(brushId, settings) {
+    const brush = getBrush(brushId);
+
+    if (!brush) {
+      return null;
+    }
+
+    brush.settings = cloneSettings(settings);
+
+    return brush;
+  }
+
+  namespace.BrushLibrary = {
+    createBrush,
+    deleteBrush,
+    duplicateBrush,
+    findPackageByBrushId,
+    getBrush,
+    getPackage,
+    getPackages: () => packages,
+    getSettings: (brushId) => {
+      const brush = getBrush(brushId);
+
+      return brush ? cloneSettings(brush.settings) : null;
+    },
+    hardBlendSettings: cloneSettings(hardBlendSettings),
+    updateBrushSettings,
+  };
+})(window.CBO);

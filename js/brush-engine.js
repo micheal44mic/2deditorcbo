@@ -13,6 +13,7 @@ window.CBO = window.CBO || {};
     "uniform-blending": { flowScale: 1.55 },
     "intense-blending": { flowScale: 1.75 },
   });
+  const COLOR_GOLDEN_RATIO = 0.618033988749895;
 
   const ARTBOARD_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
@@ -150,6 +151,8 @@ precision highp float;
 uniform float u_flow;
 uniform float u_hardness;
 uniform float u_wetEdges;
+uniform float u_burntEdges;
+uniform int u_burntEdgesMode;
 uniform bool u_alphaThresholdEnabled;
 uniform float u_alphaThreshold;
 uniform sampler2D u_shapeTexture;
@@ -191,6 +194,9 @@ const int GRAIN_BLEND_LIGHTEN = 4;
 const int GRAIN_BLEND_DIFFERENCE = 5;
 const int GRAIN_MODE_TEXTURIZED = 0;
 const int GRAIN_MODE_MOVING = 1;
+const int BURNT_EDGES_MULTIPLY = 0;
+const int BURNT_EDGES_COLOR_BURN = 1;
+const int BURNT_EDGES_LINEAR_BURN = 2;
 
 float applyFlowCoverageCurve(float coverage, float flow) {
   float safeCoverage = clamp(coverage, 0.0, 1.0);
@@ -205,6 +211,35 @@ vec3 blendOverlay(vec3 baseColor, vec3 blendColor) {
   vec3 high = 1.0 - 2.0 * (1.0 - baseColor) * (1.0 - blendColor);
 
   return mix(low, high, step(vec3(0.5), baseColor));
+}
+
+vec3 blendColorBurn(vec3 baseColor, vec3 blendColor) {
+  vec3 safeBlend = max(blendColor, vec3(0.001));
+
+  return 1.0 - min(vec3(1.0), (1.0 - baseColor) / safeBlend);
+}
+
+vec3 applyBurntEdgesMode(vec3 baseColor, float mask, int mode) {
+  float strength = clamp(mask, 0.0, 1.0);
+  vec3 blendColor = vec3(1.0 - strength * 0.72);
+
+  if (mode == BURNT_EDGES_COLOR_BURN) {
+    return blendColorBurn(baseColor, blendColor);
+  }
+
+  if (mode == BURNT_EDGES_LINEAR_BURN) {
+    return max(baseColor + blendColor - 1.0, vec3(0.0));
+  }
+
+  return baseColor * blendColor;
+}
+
+float getBurntEdgeMask(float shape, float amount) {
+  float safeShape = clamp(shape, 0.0, 1.0);
+  float softRing = smoothstep(0.04, 0.45, safeShape) * (1.0 - smoothstep(0.55, 0.9, safeShape));
+  float hardRing = clamp(fwidth(safeShape) * 16.0, 0.0, 1.0) * smoothstep(0.001, 0.15, safeShape);
+
+  return clamp(max(softRing, hardRing) * clamp(amount, 0.0, 1.0), 0.0, 1.0);
 }
 
 vec3 applyGrainBlendMode(vec3 baseColor, float grain, int blendMode) {
@@ -356,6 +391,7 @@ void main() {
     shape = mix(shape, pooledShape, u_wetEdges);
   }
 
+  float burntEdgeMask = getBurntEdgeMask(shape, u_burntEdges);
   vec3 brushColor = v_color;
   float grainCoverage = 1.0;
 
@@ -375,8 +411,16 @@ void main() {
     applyGrainSample(grainUv, depth, brushColor, grainCoverage);
   }
 
+  if (burntEdgeMask > 0.0) {
+    brushColor = applyBurntEdgesMode(brushColor, burntEdgeMask, u_burntEdgesMode);
+  }
+
   float flow = clamp(u_flow, 0.0, 2.0);
   float coverage = shape * grainCoverage;
+  if (burntEdgeMask > 0.0) {
+    coverage = clamp(coverage + burntEdgeMask * 0.22, 0.0, 1.0);
+  }
+
   if (flow < 1.0) {
     coverage = applyFlowCoverageCurve(coverage, flow);
   }
@@ -457,6 +501,11 @@ void main() {
     overlay: 3,
     lighten: 4,
     difference: 5,
+  });
+  const BURNT_EDGES_MODE_IDS = Object.freeze({
+    multiply: 0,
+    "color-burn": 1,
+    "linear-burn": 2,
   });
   const GRAIN_TEXTURIZED_MIN_TEXTURE_SCALE = Math.max(
     0.001,
@@ -751,6 +800,8 @@ void main() {
           flow: gl.getUniformLocation(program, "u_flow"),
           hardness: gl.getUniformLocation(program, "u_hardness"),
           wetEdges: gl.getUniformLocation(program, "u_wetEdges"),
+          burntEdges: gl.getUniformLocation(program, "u_burntEdges"),
+          burntEdgesMode: gl.getUniformLocation(program, "u_burntEdgesMode"),
           alphaThresholdEnabled: gl.getUniformLocation(program, "u_alphaThresholdEnabled"),
           alphaThreshold: gl.getUniformLocation(program, "u_alphaThreshold"),
           shapeTexture: gl.getUniformLocation(program, "u_shapeTexture"),
@@ -1716,6 +1767,10 @@ void main() {
       return this.nextColorRandom() * 2 - 1;
     }
 
+    wrapUnit(value) {
+      return ((value % 1) + 1) % 1;
+    }
+
     wrapHue(hue) {
       return ((hue % 360) + 360) % 360;
     }
@@ -1811,38 +1866,109 @@ void main() {
       ];
     }
 
-    applyColorJitter(baseRgb, amounts, secondaryRgb) {
+    getColorSampleUnit(sample, channel) {
+      const value = sample?.[channel];
+
+      return Number.isFinite(value) ? this.wrapUnit(value) : this.nextColorRandom();
+    }
+
+    getColorSampleSigned(sample, channel) {
+      return this.getColorSampleUnit(sample, channel) * 2 - 1;
+    }
+
+    applyNeutralColorVisibility(hsl, amounts, sourceHsl) {
+      const chromaAmount = Math.max(amounts.hue, amounts.saturation);
+
+      if (chromaAmount <= 0) {
+        return;
+      }
+
+      if (sourceHsl.s <= 0.08) {
+        hsl.s = Math.max(hsl.s, this.lerp(0.38, 0.88, chromaAmount));
+      }
+
+      if (sourceHsl.l <= 0.1) {
+        hsl.s = Math.max(hsl.s, this.lerp(0.28, 0.72, chromaAmount));
+        hsl.l = Math.max(hsl.l, this.lerp(0.12, 0.42, chromaAmount));
+      } else if (sourceHsl.l >= 0.9) {
+        hsl.s = Math.max(hsl.s, this.lerp(0.28, 0.72, chromaAmount));
+        hsl.l = Math.min(hsl.l, this.lerp(0.88, 0.58, chromaAmount));
+      }
+    }
+
+    getNextStampColorSample() {
+      const state = this.strokeColorState || {};
+      const index = state.stampColorIndex || 0;
+      const phase = state.stampColorPhase || 0;
+      const position = this.wrapUnit(phase + index * COLOR_GOLDEN_RATIO);
+
+      state.stampColorIndex = index + 1;
+      this.strokeColorState = state;
+
+      return {
+        hue: position,
+        saturation: this.wrapUnit(position + 0.37),
+        lightness: this.wrapUnit(position + 0.61),
+        darkness: this.wrapUnit(position + 0.83),
+        secondary: this.wrapUnit(position + 0.19),
+      };
+    }
+
+    getLumaJitterRange(sourceLightness) {
+      const baseLightness = this.clamp01(sourceLightness);
+
+      return {
+        darkFloor: baseLightness <= 0.1
+          ? Math.max(0.02, baseLightness * 0.65)
+          : Math.max(0.12, baseLightness * 0.35),
+        lightCeiling: baseLightness >= 0.9
+          ? Math.min(0.98, baseLightness + (1 - baseLightness) * 0.35)
+          : Math.min(0.9, 1 - (1 - baseLightness) * 0.35),
+      };
+    }
+
+    applyLumaJitter(hsl, amounts, sample, sourceHsl) {
+      const lightnessAmount = this.clamp01(amounts.lightness);
+      const darknessAmount = this.clamp01(amounts.darkness);
+
+      if (lightnessAmount <= 0 && darknessAmount <= 0) {
+        return;
+      }
+
+      const lightPull = this.getColorSampleUnit(sample, "lightness") * lightnessAmount;
+      const darkPull = this.getColorSampleUnit(sample, "darkness") * darknessAmount;
+      const signedPull = this.clamp(lightPull - darkPull, -1, 1);
+      const { darkFloor, lightCeiling } = this.getLumaJitterRange(sourceHsl.l);
+
+      if (signedPull > 0) {
+        hsl.l = this.lerp(sourceHsl.l, lightCeiling, signedPull);
+      } else if (signedPull < 0) {
+        hsl.l = this.lerp(sourceHsl.l, darkFloor, -signedPull);
+      }
+    }
+
+    applyColorJitter(baseRgb, amounts, secondaryRgb, sample = null) {
       const hsl = this.rgbToHsl(baseRgb);
+      const sourceHsl = { ...hsl };
 
       if (amounts.hue > 0) {
-        hsl.h = this.wrapHue(hsl.h + this.randomColorSigned() * 180 * amounts.hue);
+        hsl.h = this.wrapHue(hsl.h + this.getColorSampleSigned(sample, "hue") * 180 * amounts.hue);
       }
 
       if (amounts.saturation > 0) {
-        hsl.s += this.randomColorSigned() * amounts.saturation;
+        hsl.s += this.getColorSampleSigned(sample, "saturation") * amounts.saturation;
       }
 
-      if (amounts.lightness > 0 || amounts.darkness > 0) {
-        let lumaShift = 0;
+      this.applyLumaJitter(hsl, amounts, sample, sourceHsl);
 
-        if (amounts.lightness > 0) {
-          lumaShift += this.nextColorRandom() * amounts.lightness;
-        }
-
-        if (amounts.darkness > 0) {
-          lumaShift -= this.nextColorRandom() * amounts.darkness;
-        }
-
-        hsl.l += lumaShift;
-      }
-
+      this.applyNeutralColorVisibility(hsl, amounts, sourceHsl);
       hsl.s = this.clamp01(hsl.s);
       hsl.l = this.clamp01(hsl.l);
 
       const rgb = this.hslToRgb(hsl);
 
       if (amounts.secondary > 0) {
-        return this.mixRgb(rgb, secondaryRgb, this.nextColorRandom() * amounts.secondary);
+        return this.mixRgb(rgb, secondaryRgb, this.getColorSampleUnit(sample, "secondary") * amounts.secondary);
       }
 
       return rgb;
@@ -1861,6 +1987,8 @@ void main() {
       this.strokeColorState = {
         secondaryRgb,
         stampAmounts,
+        stampColorIndex: 0,
+        stampColorPhase: this.createSeededUnit(colorSeed ^ 0xb5297a4d),
         hasStampJitter,
         strokeBaseColorRgb: hasStrokeJitter
           ? this.applyColorJitter(primaryRgb, strokeAmounts, secondaryRgb)
@@ -1885,6 +2013,7 @@ void main() {
         this.strokeColorState.strokeBaseColorRgb,
         this.strokeColorState.stampAmounts,
         this.strokeColorState.secondaryRgb,
+        this.getNextStampColorSample(),
       );
     }
 
@@ -1929,6 +2058,21 @@ void main() {
       const value = Number(this.brushState.wetEdges);
 
       return Number.isFinite(value) ? this.clamp(value, 0, 1) : 0;
+    }
+
+    getBurntEdges() {
+      const value = Number(this.brushState.burntEdges);
+
+      return Number.isFinite(value) ? this.clamp(value, 0, 1) : 0;
+    }
+
+    getBurntEdgesModeId() {
+      const mode = String(this.brushState.burntEdgesMode || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "-");
+
+      return BURNT_EDGES_MODE_IDS[mode] ?? BURNT_EDGES_MODE_IDS["linear-burn"];
     }
 
     isAlphaThresholdEnabled() {
@@ -2576,6 +2720,8 @@ void main() {
       gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
       gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getHardness());
       gl.uniform1f(this.brushProgramInfo.uniforms.wetEdges, this.getWetEdges());
+      gl.uniform1f(this.brushProgramInfo.uniforms.burntEdges, this.getBurntEdges());
+      gl.uniform1i(this.brushProgramInfo.uniforms.burntEdgesMode, this.getBurntEdgesModeId());
       gl.uniform1i(this.brushProgramInfo.uniforms.alphaThresholdEnabled, this.isAlphaThresholdEnabled() ? 1 : 0);
       gl.uniform1f(this.brushProgramInfo.uniforms.alphaThreshold, this.getAlphaThreshold());
       gl.uniform1f(this.brushProgramInfo.uniforms.useShapeTexture, useShapeTexture);

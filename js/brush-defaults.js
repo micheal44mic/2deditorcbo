@@ -26,6 +26,8 @@ window.CBO = window.CBO || {};
     "intense-blending",
   ]);
   const renderingModeValueSet = new Set(renderingModeValues);
+  const burntEdgesModeValues = Object.freeze(["multiply", "color-burn", "linear-burn"]);
+  const burntEdgesModeValueSet = new Set(burntEdgesModeValues);
   const grainTexturizedMinTextureScale = 0.05;
 
   const settings = Object.freeze({
@@ -34,6 +36,8 @@ window.CBO = window.CBO || {};
     renderingMode: "light-glaze",
     flow: 1,
     wetEdges: 0,
+    burntEdges: 0,
+    burntEdgesMode: "linear-burn",
     alphaThresholdEnabled: false,
     alphaThreshold: 0.5,
     spacing: 0.18,
@@ -156,6 +160,15 @@ window.CBO = window.CBO || {};
     return renderingModeValueSet.has(normalized) ? normalized : settings.renderingMode;
   }
 
+  function normalizeBurntEdgesMode(value) {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+
+    return burntEdgesModeValueSet.has(normalized) ? normalized : settings.burntEdgesMode;
+  }
+
   function createSettings(overrides = {}) {
     const nextOverrides = overrides || {};
     const nextSettings = {
@@ -177,6 +190,8 @@ window.CBO = window.CBO || {};
     nextSettings.renderingMode = normalizeRenderingMode(nextSettings.renderingMode);
     nextSettings.flow = normalize01(nextSettings.flow, settings.flow);
     nextSettings.wetEdges = normalize01(nextSettings.wetEdges, settings.wetEdges);
+    nextSettings.burntEdges = normalize01(nextSettings.burntEdges, settings.burntEdges);
+    nextSettings.burntEdgesMode = normalizeBurntEdgesMode(nextSettings.burntEdgesMode);
     nextSettings.alphaThresholdEnabled = nextSettings.alphaThresholdEnabled === true;
     nextSettings.alphaThreshold = normalize01(nextSettings.alphaThreshold, settings.alphaThreshold);
     nextSettings.grainBrightness = normalizeSigned(nextSettings.grainBrightness, settings.grainBrightness);
@@ -211,6 +226,7 @@ window.CBO = window.CBO || {};
     defaultShapeAlphaName,
     defaultShapeAlphaSrc,
     defaultTaperMinDistance,
+    burntEdgesModeValues,
     grainBlendModeValues,
     renderingModeValues,
     grainTexturizedMinTextureScale,

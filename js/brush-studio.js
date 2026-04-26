@@ -46,6 +46,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     { key: "uniform-blending", label: "UNIFORM BLENDING" },
     { key: "intense-blending", label: "INTENSE BLENDING" },
   ];
+  const burntEdgesModeOptions = [
+    { key: "multiply", label: "MULTIPLY" },
+    { key: "color-burn", label: "COLOR BURN" },
+    { key: "linear-burn", label: "LINEAR BURN" },
+  ];
 
   if (!editorPage || editorPage.dataset.brushStudioReady === "true") {
     return;
@@ -1592,6 +1597,12 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     });
     const flowSetting = createPercentSetting("flow", "FLOW");
     const wetEdgesSetting = createPercentSetting("wetEdges", "WET EDGES");
+    const burntEdgesSetting = createPercentSetting("burntEdges", "BURNT EDGES");
+    const burntEdgesModeSetting = createSelectSetting({
+      key: "burntEdgesMode",
+      label: "BURNT EDGES MODE",
+      options: burntEdgesModeOptions,
+    });
     const thresholdAmountSetting = createPercentSetting("alphaThreshold", "THRESHOLD AMOUNT");
     const thresholdToggle = createToggleSetting({
       key: "alphaThresholdEnabled",
@@ -1610,6 +1621,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       modeSetting,
       flowSetting,
       wetEdgesSetting,
+      burntEdgesSetting,
+      burntEdgesModeSetting,
       thresholdToggle,
       thresholdAmountSetting,
     );
