@@ -6,12 +6,12 @@ window.CBO = window.CBO || {};
   const WHEEL_ZOOM_INTENSITY = 0.0015;
   const PINCH_ZOOM_INTENSITY = 0.01;
   const RENDERING_MODE_PRESETS = Object.freeze({
-    "light-glaze": { flowScale: 1 },
-    "uniform-glaze": { flowScale: 1 },
-    "intense-glaze": { flowScale: 1.2 },
-    "heavy-glaze": { flowScale: 1.4 },
-    "uniform-blending": { flowScale: 1.55 },
-    "intense-blending": { flowScale: 1.75 },
+    "light-glaze": { strokeBuildUp: 0 },
+    "uniform-glaze": { strokeBuildUp: 0.15 },
+    "intense-glaze": { strokeBuildUp: 0.35 },
+    "heavy-glaze": { strokeBuildUp: 0.6 },
+    "uniform-blending": { strokeBuildUp: 0.8 },
+    "intense-blending": { strokeBuildUp: 1 },
   });
   const COLOR_GOLDEN_RATIO = 0.618033988749895;
 
@@ -435,7 +435,7 @@ void main() {
 
   float alpha = clamp(coverage * v_alpha * flow, 0.0, 1.0);
 
-  // Output strettamente pre-moltiplicato: necessario per MAX blending coerente.
+  // Output pre-moltiplicato: necessario per la pipeline dello stroke attivo.
   outColor = vec4(clamp(brushColor, vec3(0.0), vec3(1.0)) * alpha, alpha);
 }
 `;
@@ -465,6 +465,25 @@ out vec4 outColor;
 
 void main() {
   outColor = texture(u_texture, v_uv) * u_opacity;
+}
+`;
+
+  const STROKE_BUILDUP_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_plateauTexture;
+uniform sampler2D u_accumTexture;
+uniform float u_buildUp;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+void main() {
+  vec4 plateauColor = texture(u_plateauTexture, v_uv);
+  vec4 accumColor = texture(u_accumTexture, v_uv);
+
+  outColor = mix(plateauColor, accumColor, clamp(u_buildUp, 0.0, 1.0));
 }
 `;
 
@@ -588,8 +607,13 @@ void main() {
       this.baseFBO = null;
       this.strokeTexture = null;
       this.strokeFBO = null;
+      this.strokePlateauTexture = null;
+      this.strokePlateauFBO = null;
+      this.strokeAccumTexture = null;
+      this.strokeAccumFBO = null;
       this.brushProgramInfo = null;
       this.compositeProgramInfo = null;
+      this.strokeBuildupProgramInfo = null;
       this.brush = null;
       this.shapeTexture = null;
       this.shapeTextureSource = "";
@@ -621,6 +645,7 @@ void main() {
       this.programInfo = this.createProgramInfo();
       this.brushProgramInfo = this.createBrushProgramInfo();
       this.compositeProgramInfo = this.createCompositeProgramInfo();
+      this.strokeBuildupProgramInfo = this.createStrokeBuildupProgramInfo();
       this.quad = this.createArtboardQuad();
       this.fullscreenQuad = this.createFullscreenQuad();
       this.configureGlState();
@@ -864,6 +889,41 @@ void main() {
       };
     }
 
+    createStrokeBuildupProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, COMPOSITE_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, STROKE_BUILDUP_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma stroke build-up WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma stroke build-up.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          plateauTexture: gl.getUniformLocation(program, "u_plateauTexture"),
+          accumTexture: gl.getUniformLocation(program, "u_accumTexture"),
+          buildUp: gl.getUniformLocation(program, "u_buildUp"),
+        },
+      };
+    }
+
     compileShader(type, source) {
       const gl = this.gl;
       const shader = gl.createShader(type);
@@ -1022,10 +1082,11 @@ void main() {
       this.baseFBO = framebuffer;
     }
 
-    createStrokeLayerTarget() {
+    createTransparentRenderTarget(label) {
       const gl = this.gl;
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
+      const targetLabel = label || "Render target";
 
       if (!texture || !framebuffer) {
         if (texture) {
@@ -1036,7 +1097,7 @@ void main() {
           gl.deleteFramebuffer(framebuffer);
         }
 
-        throw new Error("Impossibile creare lo Stroke FBO in VRAM.");
+        throw new Error(`Impossibile creare ${targetLabel} in VRAM.`);
       }
 
       gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -1071,7 +1132,7 @@ void main() {
         gl.bindTexture(gl.TEXTURE_2D, null);
         gl.deleteFramebuffer(framebuffer);
         gl.deleteTexture(texture);
-        throw new Error("Stroke FBO incompleto: impossibile inizializzare il livello tratto.");
+        throw new Error(`${targetLabel} incompleto: impossibile inizializzare il livello tratto.`);
       }
 
       gl.viewport(0, 0, this.docWidth, this.docHeight);
@@ -1080,8 +1141,32 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      this.strokeTexture = texture;
-      this.strokeFBO = framebuffer;
+      return { texture, framebuffer };
+    }
+
+    createStrokeLayerTarget() {
+      const gl = this.gl;
+      const targets = [];
+
+      try {
+        targets.push(this.createTransparentRenderTarget("Stroke FBO"));
+        targets.push(this.createTransparentRenderTarget("Stroke plateau FBO"));
+        targets.push(this.createTransparentRenderTarget("Stroke accumulation FBO"));
+      } catch (error) {
+        for (const target of targets) {
+          gl.deleteFramebuffer(target.framebuffer);
+          gl.deleteTexture(target.texture);
+        }
+
+        throw error;
+      }
+
+      this.strokeTexture = targets[0].texture;
+      this.strokeFBO = targets[0].framebuffer;
+      this.strokePlateauTexture = targets[1].texture;
+      this.strokePlateauFBO = targets[1].framebuffer;
+      this.strokeAccumTexture = targets[2].texture;
+      this.strokeAccumFBO = targets[2].framebuffer;
     }
 
     createBrushResources() {
@@ -2069,10 +2154,15 @@ void main() {
 
     getFlow() {
       const value = Number(this.brushState.flow ?? 1.0);
-      const userFlow = Number.isFinite(value) ? this.clamp(value, 0, 1) : 1.0;
-      const preset = this.getRenderingModePreset();
 
-      return this.clamp(userFlow * preset.flowScale, 0, 2);
+      return Number.isFinite(value) ? this.clamp(value, 0, 1) : 1.0;
+    }
+
+    getStrokeBuildUp() {
+      const preset = this.getRenderingModePreset();
+      const value = Number(preset.strokeBuildUp);
+
+      return Number.isFinite(value) ? this.clamp(value, 0, 1) : 0;
     }
 
     getWetEdges() {
@@ -2704,6 +2794,7 @@ void main() {
       const fallbackColor = this.getCurrentStrokeColorRgb();
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
       const useGrainTexture = this.isGrainEnabled();
+      const brushOpacity = this.getOpacity01();
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
@@ -2713,7 +2804,7 @@ void main() {
         instanceData[offset] = stamp.x;
         instanceData[offset + 1] = stamp.y;
         instanceData[offset + 2] = stamp.pressure;
-        instanceData[offset + 3] = stamp.alphaScale ?? 1;
+        instanceData[offset + 3] = (stamp.alphaScale ?? 1) * brushOpacity;
         instanceData[offset + 4] = stamp.sizeScale ?? 1;
         instanceData[offset + 5] = stamp.rotation ?? 0;
         instanceData[offset + 6] = color[0];
@@ -2725,13 +2816,6 @@ void main() {
         instanceData[offset + 12] = stamp.grainRotation ?? 0;
         instanceData[offset + 13] = stamp.grainDepthScale ?? 1;
       }
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
-      gl.enable(gl.BLEND);
-      // RGB usa SrcOver pre-moltiplicato; alpha resta MAX per limitare il self-overlap dei soft brush.
-      gl.blendEquationSeparate(gl.FUNC_ADD, gl.MAX);
-      gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
 
       gl.useProgram(this.brushProgramInfo.program);
       gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, this.docWidth, this.docHeight);
@@ -2780,6 +2864,21 @@ void main() {
       gl.bindVertexArray(this.brush.vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.brush.instanceVBO);
       gl.bufferData(gl.ARRAY_BUFFER, instanceData, gl.DYNAMIC_DRAW);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokePlateauFBO);
+      gl.viewport(0, 0, this.docWidth, this.docHeight);
+      gl.enable(gl.BLEND);
+      // Plateau reale: Light Glaze non somma ne' opacità ne' colore nello stesso stroke.
+      gl.blendEquation(gl.MAX);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeAccumFBO);
+      gl.viewport(0, 0, this.docWidth, this.docHeight);
+      gl.enable(gl.BLEND);
+      // Accumulo pieno: gli stamp dello stesso tratto si stratificano con SrcOver pre-moltiplicato.
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
@@ -2794,14 +2893,46 @@ void main() {
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.composeStrokeBuildUp();
       this.stampsBuffer.length = 0;
       this.strokeStampCount += stampCount;
+    }
+
+    composeStrokeBuildUp() {
+      const gl = this.gl;
+      const { program, uniforms } = this.strokeBuildupProgramInfo;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
+      gl.viewport(0, 0, this.docWidth, this.docHeight);
+      gl.disable(gl.BLEND);
+
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.strokePlateauTexture);
+      gl.uniform1i(uniforms.plateauTexture, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.strokeAccumTexture);
+      gl.uniform1i(uniforms.accumTexture, 1);
+      gl.uniform1f(uniforms.buildUp, this.getStrokeBuildUp());
+
+      gl.bindVertexArray(this.fullscreenQuad.vao);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.useProgram(null);
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
     bakeStroke() {
       const gl = this.gl;
       const { program, uniforms } = this.compositeProgramInfo;
-      const opacity = this.getOpacity01();
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.baseFBO);
       gl.viewport(0, 0, this.docWidth, this.docHeight);
@@ -2813,7 +2944,7 @@ void main() {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.strokeTexture);
       gl.uniform1i(uniforms.texture, 0);
-      gl.uniform1f(uniforms.opacity, opacity);
+      gl.uniform1f(uniforms.opacity, 1.0);
 
       gl.bindVertexArray(this.fullscreenQuad.vao);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -2826,11 +2957,19 @@ void main() {
 
     clearStrokeLayer() {
       const gl = this.gl;
+      const framebuffers = [this.strokeFBO, this.strokePlateauFBO, this.strokeAccumFBO];
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
-      gl.viewport(0, 0, this.docWidth, this.docHeight);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      for (const framebuffer of framebuffers) {
+        if (!framebuffer) {
+          continue;
+        }
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.viewport(0, 0, this.docWidth, this.docHeight);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      }
+
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
@@ -3200,10 +3339,11 @@ void main() {
       gl.uniform1f(uniforms.opacity, 1.0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-      // Pass 2: livello tratto attivo (solo durante il disegno) con opacità UI.
+      // Pass 2: livello tratto attivo. L'opacità brush è già dentro i singoli stamp,
+      // così i mode Blending possono accumularla nello stesso stroke.
       if (this.isDrawing) {
         gl.bindTexture(gl.TEXTURE_2D, this.strokeTexture);
-        gl.uniform1f(uniforms.opacity, this.getOpacity01());
+        gl.uniform1f(uniforms.opacity, 1.0);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
 
@@ -3281,6 +3421,26 @@ void main() {
         this.strokeTexture = null;
       }
 
+      if (this.strokePlateauFBO) {
+        gl.deleteFramebuffer(this.strokePlateauFBO);
+        this.strokePlateauFBO = null;
+      }
+
+      if (this.strokePlateauTexture) {
+        gl.deleteTexture(this.strokePlateauTexture);
+        this.strokePlateauTexture = null;
+      }
+
+      if (this.strokeAccumFBO) {
+        gl.deleteFramebuffer(this.strokeAccumFBO);
+        this.strokeAccumFBO = null;
+      }
+
+      if (this.strokeAccumTexture) {
+        gl.deleteTexture(this.strokeAccumTexture);
+        this.strokeAccumTexture = null;
+      }
+
       if (this.shapeTexture) {
         gl.deleteTexture(this.shapeTexture);
         this.shapeTexture = null;
@@ -3294,6 +3454,11 @@ void main() {
       if (this.compositeProgramInfo?.program) {
         gl.deleteProgram(this.compositeProgramInfo.program);
         this.compositeProgramInfo = null;
+      }
+
+      if (this.strokeBuildupProgramInfo?.program) {
+        gl.deleteProgram(this.strokeBuildupProgramInfo.program);
+        this.strokeBuildupProgramInfo = null;
       }
 
       if (this.brushProgramInfo?.program) {
