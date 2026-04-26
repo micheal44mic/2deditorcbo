@@ -51,6 +51,10 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     throw new Error("DocumentLayerModel non caricato: impossibile inizializzare i layer documento.");
   }
 
+  if (!window.CBO.SmudgeEngine) {
+    throw new Error("SmudgeEngine non caricato: impossibile inizializzare lo smudge WebGL2.");
+  }
+
   if (!window.CBO.ImageRasterizer) {
     throw new Error("ImageRasterizer non caricato: impossibile inizializzare il rasterizer immagini.");
   }
@@ -66,6 +70,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
 
   window.CBO.imageRasterizer?.dispose?.();
   window.CBO.imageRasterizer = null;
+  window.CBO.smudgeEngine?.dispose?.();
+  window.CBO.smudgeEngine = null;
   window.CBO.brushEngine?.dispose?.();
   window.CBO.documentRenderer?.dispose?.();
   window.CBO.documentRenderer = null;
@@ -88,6 +94,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     viewportHeight: viewport.height,
   });
   let brushEngine;
+  let smudgeEngine;
 
   try {
     brushEngine = new window.CBO.BrushEngine(canvas, {
@@ -99,7 +106,24 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     throw error;
   }
 
+  try {
+    smudgeEngine = new window.CBO.SmudgeEngine(canvas, {
+      gl,
+      documentRenderer,
+      getViewState: () => ({
+        camera: brushEngine.camera,
+        dpr: brushEngine.dpr,
+      }),
+      requestDraw: () => brushEngine.draw(),
+    });
+  } catch (error) {
+    brushEngine.dispose();
+    documentRenderer.dispose();
+    throw error;
+  }
+
   window.CBO.brushEngine = brushEngine;
+  window.CBO.smudgeEngine = smudgeEngine;
   window.CBO.documentRenderer = documentRenderer;
 
   try {
@@ -114,8 +138,10 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
       },
     });
   } catch (error) {
+    smudgeEngine.dispose();
     brushEngine.dispose();
     documentRenderer.dispose();
+    window.CBO.smudgeEngine = null;
     window.CBO.brushEngine = null;
     window.CBO.documentRenderer = null;
     throw error;
