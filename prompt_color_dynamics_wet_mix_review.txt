@@ -1,0 +1,350 @@
+PROMPT PER ESPERTO GRAPHICS ENGINEER
+Oggetto: audit tecnico di Color Dynamics e Wet Mix in Brush Studio WebGL2 stamp-based
+
+Contesto
+Stiamo costruendo un Brush Studio ispirato a Procreate in una app Vanilla JS/WebGL2.
+Il motore brush e' in `js/brush-engine.js`; la UI Brush Studio e' in `js/brush-studio.js`; i default e la normalizzazione stanno in `js/brush-defaults.js`.
+
+L'utente dice che Color Dynamics e Wet Mix "non funzionano benissimo". Vorrei una review tecnica severa: cosa e' corretto, cosa e' sbagliato, cosa e' solo una V1 accettabile, e quali patch minime consiglieresti senza destabilizzare il motore.
+
+Fonti Procreate usate come riferimento
+- Procreate Handbook 5.4, Brush Studio Settings:
+  https://help.procreate.com/procreate/handbook/5.4/brushes/brush-studio-settings
+
+Sintesi dal manuale Procreate:
+- Wet Mix: deve modificare come il brush interagisce col colore e con il canvas. Dilution rende il pigmento piu' trasparente/acquoso. Charge e' il paint load all'inizio dello stroke: piu' trascini, piu' il brush lascia colore e diventa meno intenso; si ricarica a ogni nuovo stroke. Attack controlla quanto paint resta attaccato al canvas: alto = paint spesso e bold lungo lo stroke. Pull/Grade/Blur esistono in Procreate, ma non sono ancora implementati nella nostra UI. Wetness Jitter randomizza quanta acqua si mescola al paint durante lo stroke.
+- Color Dynamics: Stamp Color Jitter randomizza ogni singolo stamp; Stroke Color Jitter randomizza l'intero stroke. Hue/Saturation/Lightness/Darkness/Secondary sono previsti. Procreate ha anche Color Pressure, Color Tilt e Color Barrel Roll; noi NON li abbiamo implementati.
+
+Architettura rendering attuale
+- Ogni dab/stamp e' un quad instanziato.
+- Lo shape alpha viene da texture (`u_shapeTexture`) quasi sempre; fallback procedurale solo se non c'e' texture.
+- Grain viene moltiplicato o blendato nello shader.
+- Per lo stroke corrente renderizziamo in `strokeFBO`.
+- Intra-stroke blending:
+
+```js
+gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
+gl.enable(gl.BLEND);
+// MAX blending: l'alpha del tratto raggiunge un plateau e non si auto-accumula sui ripassi.
+gl.blendEquation(gl.MAX);
+gl.blendFunc(gl.ONE, gl.ONE);
+```
+
+- Output shader e' premoltiplicato:
+
+```glsl
+float alpha = clamp(coverage * v_alpha * flow, 0.0, 1.0);
+outColor = vec4(clamp(brushColor, vec3(0.0), vec3(1.0)) * alpha, alpha);
+```
+
+Nota critica: con `gl.MAX`, RGB e alpha vengono massimizzati per canale. Questo e' utile per evitare auto-accumulo alpha nei soft brush, ma potrebbe creare artefatti con Color Dynamics: stamp rossi + verdi sovrapposti possono diventare giallo/chiaro per massimo per-canale, non una vera composizione pittorica.
+
+Default attuali rilevanti (`js/brush-defaults.js`)
+
+```js
+stampColorHueJitter: 0,
+stampColorSaturationJitter: 0,
+stampColorLightnessJitter: 0,
+stampColorDarknessJitter: 0,
+stampColorSecondaryJitter: 0,
+strokeColorHueJitter: 0,
+strokeColorSaturationJitter: 0,
+strokeColorLightnessJitter: 0,
+strokeColorDarknessJitter: 0,
+strokeColorSecondaryJitter: 0,
+wetDilution: 0,
+wetCharge: 1,
+wetAttack: 1,
+wetnessJitter: 0,
+```
+
+UI attuale (`js/brush-studio.js`)
+
+Color Dynamics:
+
+```js
+function renderColorDynamicsSettings() {
+  const stampJitterLabel = createSectionLabel("STAMP COLOR JITTER");
+  const strokeJitterLabel = createSectionLabel("STROKE COLOR JITTER");
+  const stampHueSetting = createPercentSetting("stampColorHueJitter", "HUE");
+  const stampSaturationSetting = createPercentSetting("stampColorSaturationJitter", "SATURATION");
+  const stampLightnessSetting = createPercentSetting("stampColorLightnessJitter", "LIGHTNESS");
+  const stampDarknessSetting = createPercentSetting("stampColorDarknessJitter", "DARKNESS");
+  const stampSecondarySetting = createPercentSetting("stampColorSecondaryJitter", "SECONDARY COLOR");
+  const strokeHueSetting = createPercentSetting("strokeColorHueJitter", "HUE");
+  const strokeSaturationSetting = createPercentSetting("strokeColorSaturationJitter", "SATURATION");
+  const strokeLightnessSetting = createPercentSetting("strokeColorLightnessJitter", "LIGHTNESS");
+  const strokeDarknessSetting = createPercentSetting("strokeColorDarknessJitter", "DARKNESS");
+  const strokeSecondarySetting = createPercentSetting("strokeColorSecondaryJitter", "SECONDARY COLOR");
+}
+```
+
+Wet Mix:
+
+```js
+function renderWetMixSettings() {
+  const dilutionSetting = createPercentSetting("wetDilution", "DILUTION");
+  const chargeSetting = createPercentSetting("wetCharge", "CHARGE");
+  const attackSetting = createPercentSetting("wetAttack", "ATTACK");
+  const wetnessJitterSetting = createPercentSetting("wetnessJitter", "WETNESS JITTER");
+}
+```
+
+Sliders chiamano `pushDraftToEngine()` live e la preview fa replay dell'ultimo stroke:
+
+```js
+previewEngine.setBrushState(draftBrushSettings);
+requestAnimationFrame(() => {
+  if (previewEngine && !previewEngine.isDrawing) {
+    previewEngine.replayLastStroke();
+  }
+});
+```
+
+Color Dynamics: implementazione attuale (`js/brush-engine.js`)
+
+```js
+getColorDynamicsAmount(key) {
+  const value = this.brushState?.[key] ?? namespace.brushSettings?.[key] ?? 0;
+  return this.clamp01(value);
+}
+
+getColorJitterAmounts(prefix) {
+  return {
+    hue: this.getColorDynamicsAmount(`${prefix}ColorHueJitter`),
+    saturation: this.getColorDynamicsAmount(`${prefix}ColorSaturationJitter`),
+    lightness: this.getColorDynamicsAmount(`${prefix}ColorLightnessJitter`),
+    darkness: this.getColorDynamicsAmount(`${prefix}ColorDarknessJitter`),
+    secondary: this.getColorDynamicsAmount(`${prefix}ColorSecondaryJitter`),
+  };
+}
+
+getPrimaryColorRgb() {
+  return this.parseColorToRgb01(this.brushState?.color ?? namespace.selectedColor ?? "#000000");
+}
+
+getSecondaryColorRgb() {
+  return this.parseColorToRgb01(namespace.selectedColors?.secondary ?? this.brushState?.secondaryColor ?? "#000000");
+}
+
+applyColorJitter(baseRgb, amounts, secondaryRgb) {
+  const hsl = this.rgbToHsl(baseRgb);
+
+  if (amounts.hue > 0) {
+    hsl.h = this.wrapHue(hsl.h + this.randomColorSigned() * 180 * amounts.hue);
+  }
+
+  if (amounts.saturation > 0) {
+    hsl.s = this.lerp(hsl.s, this.nextColorRandom(), amounts.saturation);
+  }
+
+  if (amounts.lightness > 0) {
+    hsl.l = this.lerp(hsl.l, 1, this.nextColorRandom() * amounts.lightness);
+  }
+
+  if (amounts.darkness > 0) {
+    hsl.l = this.lerp(hsl.l, 0, this.nextColorRandom() * amounts.darkness);
+  }
+
+  hsl.s = this.clamp01(hsl.s);
+  hsl.l = this.clamp01(hsl.l);
+
+  const rgb = this.hslToRgb(hsl);
+
+  if (amounts.secondary <= 0) {
+    return rgb;
+  }
+
+  return this.mixRgb(rgb, secondaryRgb, this.nextColorRandom() * amounts.secondary);
+}
+
+initializeStrokeColorDynamics(seed) {
+  const colorSeed = (((seed || 1) >>> 0) ^ 0x6c8e9cf5) >>> 0;
+  const primaryRgb = this.getPrimaryColorRgb();
+  const secondaryRgb = this.getSecondaryColorRgb();
+  const strokeAmounts = this.getColorJitterAmounts("stroke");
+  const stampAmounts = this.getColorJitterAmounts("stamp");
+  const hasStrokeJitter = this.hasColorJitter(strokeAmounts);
+  const hasStampJitter = this.hasColorJitter(stampAmounts);
+
+  this.strokeColorRandomState = { seed: colorSeed || 1 };
+  this.strokeColorState = {
+    secondaryRgb,
+    stampAmounts,
+    hasStampJitter,
+    strokeBaseColorRgb: hasStrokeJitter
+      ? this.applyColorJitter(primaryRgb, strokeAmounts, secondaryRgb)
+      : primaryRgb,
+  };
+}
+
+getCurrentStrokeColorRgb() {
+  return this.strokeColorState?.strokeBaseColorRgb || this.getPrimaryColorRgb();
+}
+
+getNextStampColorRgb() {
+  if (!this.strokeColorState) {
+    return this.getPrimaryColorRgb();
+  }
+
+  if (!this.strokeColorState.hasStampJitter) {
+    return this.strokeColorState.strokeBaseColorRgb;
+  }
+
+  return this.applyColorJitter(
+    this.strokeColorState.strokeBaseColorRgb,
+    this.strokeColorState.stampAmounts,
+    this.strokeColorState.secondaryRgb,
+  );
+}
+```
+
+Dove viene applicato:
+
+```js
+pushShapeStamps(baseStamp, tangent) {
+  const effectiveCount = this.getEffectiveShapeCount();
+  const directionalRotation = this.getShapeDirectionalRotation(tangent);
+
+  if (effectiveCount === 1) {
+    baseStamp.rotation = directionalRotation + this.getShapeScatterRotation();
+    this.applyMovingGrainToStamp(baseStamp, tangent);
+    baseStamp.colorRgb = this.getNextStampColorRgb();
+    this.stampsBuffer.push(baseStamp);
+    return;
+  }
+
+  for (let index = 0; index < effectiveCount; index += 1) {
+    const stamp = { ... };
+    this.applyMovingGrainToStamp(stamp, tangent);
+    stamp.colorRgb = this.getNextStampColorRgb();
+    this.stampsBuffer.push(stamp);
+  }
+}
+```
+
+Wet Mix: implementazione attuale (`js/brush-engine.js`)
+
+All'inizio dello stroke salviamo seed e raggio per Charge:
+
+```js
+beginStrokeDynamics(sample) {
+  const seed = (sample.strokeSeed ?? this.createStrokeSeed(point) ?? 1) >>> 0;
+  sample.strokeSeed = seed;
+  this.strokeRandomState = { seed };
+  this.strokeInitialSeed = seed;
+  this.strokeChargeRadius = this.getBaseBrushRadius();
+  this.initializeStrokeColorDynamics(seed);
+  this.initializeWetMixRandom(seed);
+  this.initializeGrainDynamics(seed);
+  ...
+}
+```
+
+Formula attuale:
+
+```js
+getWetMixAlphaScale() {
+  const dilution = this.clamp01(this.brushState.wetDilution);
+  const charge = this.clamp01(this.brushState.wetCharge ?? 1);
+  const attack = this.clamp01(this.brushState.wetAttack ?? 1);
+  const jitter = this.clamp01(this.brushState.wetnessJitter);
+  const disabledThreshold = 0.001;
+  const dilutionScale = this.lerp(1, 0.18, dilution);
+  const attackScale = attack <= disabledThreshold ? 1 : this.lerp(0.12, 1, attack);
+  let chargeScale = 1;
+
+  if (charge < 1) {
+    const radius = Math.max(0.5, this.getStrokeChargeRadius());
+    const safeCharge = Math.max(charge, 0.01);
+    const tailLoad = 0.18;
+    const depletionDistance = radius * this.lerp(5, 120, safeCharge);
+    const depletion = this.clamp01(this.strokeDistance / depletionDistance);
+    const easedDepletion = depletion * depletion * (3 - 2 * depletion);
+
+    chargeScale = this.lerp(1, tailLoad, easedDepletion);
+  }
+
+  let alpha = dilutionScale * attackScale * chargeScale;
+
+  if (jitter > 0) {
+    alpha *= this.lerp(1 - jitter * 0.55, 1 + jitter * 0.35, this.nextWetRandom());
+  }
+
+  return this.clamp01(alpha);
+}
+
+getStampAlphaScale() {
+  return this.getFallOffScale() * this.getWetMixAlphaScale();
+}
+```
+
+Dove viene applicato:
+
+```js
+while (this.leftoverDistance >= this.nextStampDistance) {
+  ...
+  this.strokeDistance += stampDistance;
+  stamp.alphaScale = this.getStampAlphaScale();
+  stamp.sizeScale = 1;
+  this.applyTaperToStamp(stamp);
+  this.pushShapeStamps(stamp, tangent);
+}
+```
+
+Shader finale:
+
+```glsl
+float coverage = shape * grainCoverage;
+if (flow < 1.0) {
+  coverage = applyFlowCoverageCurve(coverage, flow);
+}
+
+if (u_alphaThresholdEnabled) {
+  if (coverage < clamp(u_alphaThreshold, 0.0, 1.0)) {
+    discard;
+  }
+  coverage = 1.0;
+}
+
+float alpha = clamp(coverage * v_alpha * flow, 0.0, 1.0);
+outColor = vec4(brushColor * alpha, alpha);
+```
+
+Rendering Mode attuale
+Abbiamo preset solo per `flowScale`, non per Wet Mix:
+
+```js
+const RENDERING_MODE_PRESETS = Object.freeze({
+  "light-glaze": { flowScale: 1 },
+  "uniform-glaze": { flowScale: 1 },
+  "intense-glaze": { flowScale: 1.2 },
+  "heavy-glaze": { flowScale: 1.4 },
+  "uniform-blending": { flowScale: 1.55 },
+  "intense-blending": { flowScale: 1.75 },
+});
+```
+
+Domande specifiche
+1. Color Dynamics: la logica HSL attuale e' fedele per Stamp Color Jitter e Stroke Color Jitter?
+2. Hue: `randomSigned() * 180 * amount` e' corretto per coprire tutto lo spettro al 100%, o conviene usare una distribuzione diversa?
+3. Saturation: `lerp(currentSaturation, random01, amount)` e' corretto rispetto al comportamento Procreate?
+4. Lightness/Darkness: applicarli in sequenza se entrambi > 0 e' accettabile, o produce risultati sbagliati? Serve una formula unica per brightness/darkness?
+5. Secondary Color: mix random da primary/strokeBase a secondary e' corretto? L'ordine `namespace.selectedColors.secondary ?? brushState.secondaryColor` puo' essere un problema?
+6. Shape Count: se `shapeCount > 1`, ogni copia dello stesso dab riceve un colore diverso. In Procreate "each stamp" significa ogni copia deve differire, oppure tutte le copie dello stesso punto dovrebbero condividere colore?
+7. Problema critico: con `gl.blendEquation(gl.MAX)`, Color Dynamics per stamp puo' creare colori non fisici per massimo per canale. Come lo risolveresti in V1.5 senza rifare tutta la pipeline? Cambiare blend equation? Usare `blendEquationSeparate`? Rendere color jitter per-stroke only sotto MAX? Un pass shader diverso?
+8. Wet Mix: oggi Dilution/Charge/Attack/Wetness Jitter scalano solo alpha. E' una V1 accettabile o concettualmente sbagliata?
+9. Attack: `attack <= 0.001 ? 1 : lerp(0.12, 1, attack)` fa si' che Attack 0 ritorni piena intensita'. Questo sembra sospetto: in Procreate Attack alto = paint bold/sticks; basso dovrebbe depositare meno? Quale formula useresti?
+10. Charge: oggi ogni stroke parte sempre da `chargeScale = 1` e poi scarica verso `tailLoad = 0.18`; il valore Charge controlla la distanza di esaurimento. Procreate dice che Charge e' quanto paint e' caricato all'inizio. Quindi Charge basso dovrebbe partire gia' piu' scarico, o va bene farlo partire pieno ma scaricare molto velocemente?
+11. Dilution: `lerp(1, 0.18, dilution)` e' troppo debole/forte? Deve anche influenzare colore/grain/flow, non solo alpha?
+12. Wetness Jitter: randomizzare alpha per stamp e' corretto, o dovrebbe randomizzare dilution/charge/blur in modo correlato lungo lo stroke?
+13. Rendering Mode: Procreate dice Uniform/Intense Blending esagerano Wet Mix. Noi non abbiamo `wetMixScale` nei preset, solo `flowScale`. Dovremmo aggiungere `wetMixScale`? Se si', su quale componente: dilution, charge depletion, attack, jitter, wet edges?
+14. Pull/Grade/Blur: sappiamo che sono assenti. Quali di questi richiedono per forza canvas sampling / stroke FBO ping-pong, e quali si possono approssimare in single pass?
+
+Output desiderato
+- Prima dammi una diagnosi netta: "corretto", "accettabile V1", "sbagliato", "manca architettura".
+- Poi proponi una patch V1.5 minima e concreta, con snippet solo per le parti da cambiare.
+- Non riscrivere tutto il motore.
+- Mantieni compatibilita' con WebGL2 e con l'attuale pipeline stamp-based + `strokeFBO`.
+- Se consigli di cambiare `gl.MAX`, spiega bene il rischio su soft brush e alpha.
+- Dammi test visivi precisi da fare nel Brush Studio Drawing Pad.

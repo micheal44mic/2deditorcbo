@@ -317,7 +317,20 @@ void main() {
   float shape = 1.0;
 
   if (u_useShapeTexture > 0.5) {
-    shape = texture(u_shapeTexture, v_uv).a;
+    float coreShape = texture(u_shapeTexture, v_uv).a;
+
+    if (u_wetEdges > 0.0) {
+      float offset = 0.05 * u_wetEdges;
+      float rightShape = texture(u_shapeTexture, v_uv + vec2(offset, 0.0)).a;
+      float leftShape = texture(u_shapeTexture, v_uv + vec2(-offset, 0.0)).a;
+      float topShape = texture(u_shapeTexture, v_uv + vec2(0.0, offset)).a;
+      float bottomShape = texture(u_shapeTexture, v_uv + vec2(0.0, -offset)).a;
+      float blurredShape = (coreShape * 2.0 + rightShape + leftShape + topShape + bottomShape) / 6.0;
+
+      shape = mix(coreShape, blurredShape, u_wetEdges);
+    } else {
+      shape = coreShape;
+    }
   } else {
     float distanceFromCenter = distance(v_uv, vec2(0.5));
 
@@ -327,12 +340,20 @@ void main() {
 
     // Hardness=1: bordo nitido (fade in 1 px AA). Hardness=0: gradiente radiale dal centro.
     float fw = max(fwidth(distanceFromCenter), 0.001);
-    float edgeStart = mix(0.0, 0.5 - fw, clamp(u_hardness, 0.0, 1.0));
+    float effectiveHardness = clamp(u_hardness * (1.0 - u_wetEdges * 0.8), 0.0, 1.0);
+    float edgeStart = mix(0.0, 0.5 - fw, effectiveHardness);
     shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
   }
 
   if (shape <= 0.001) {
     discard;
+  }
+
+  if (u_wetEdges > 0.0) {
+    float phase = mix(1.0, 1.5, u_wetEdges);
+    float pooledShape = sin(clamp(shape, 0.0, 1.0) * 1.570796 * phase);
+
+    shape = mix(shape, pooledShape, u_wetEdges);
   }
 
   vec3 brushColor = v_color;
@@ -356,14 +377,6 @@ void main() {
 
   float flow = clamp(u_flow, 0.0, 2.0);
   float coverage = shape * grainCoverage;
-  float wetEdges = clamp(u_wetEdges, 0.0, 1.0);
-
-  if (wetEdges > 0.0) {
-    float edgeDilution = mix(1.0, mix(0.84, 1.0, smoothstep(0.25, 0.95, shape)), wetEdges);
-
-    coverage *= edgeDilution;
-  }
-
   if (flow < 1.0) {
     coverage = applyFlowCoverageCurve(coverage, flow);
   }
@@ -503,6 +516,7 @@ void main() {
       this.strokeInitialSeed = 1;
       this.strokeShapeRotation = 0;
       this.strokeGrainOffset = { x: 0, y: 0 };
+      this.strokeChargeRadius = null;
       this.strokeTotalLength = null;
       this.taperSpacingCap = null;
       this.recordedStroke = [];
@@ -1518,6 +1532,7 @@ void main() {
       sample.strokeSeed = seed;
       this.strokeRandomState = { seed };
       this.strokeInitialSeed = seed;
+      this.strokeChargeRadius = this.getBaseBrushRadius();
       this.initializeStrokeColorDynamics(seed);
       this.initializeWetMixRandom(seed);
       this.initializeGrainDynamics(seed);
@@ -1910,15 +1925,6 @@ void main() {
       return Number.isFinite(value) ? this.clamp(value, 0, 1) : 0;
     }
 
-    getWetEdgeBrushScale() {
-      // V2: quando arriva il post-process stroke-FBO, Wet Edges puo' spostarsi sul perimetro reale del tratto.
-      return 1 + this.getWetEdges() * 0.12;
-    }
-
-    getEffectiveHardness() {
-      return this.clamp(this.getHardness() * (1 - this.getWetEdges() * 0.45), 0, 1);
-    }
-
     isAlphaThresholdEnabled() {
       return this.brushState.alphaThresholdEnabled === true;
     }
@@ -2053,20 +2059,30 @@ void main() {
       return (taperStart > 0 || taperEnd > 0) && (taperSize > 0 || taperOpacity > 0 || taperPressure > 0);
     }
 
-    getBrushSize() {
+    getBaseBrushRadius() {
       const radius = Number(this.brushState.radius);
 
       if (Number.isFinite(radius) && radius > 0) {
-        return radius * 2;
+        return radius;
       }
 
       const size = Number(this.brushState.size);
 
       if (Number.isFinite(size) && size > 0) {
-        return size;
+        return size * 0.5;
       }
 
-      return 40;
+      return 20;
+    }
+
+    getBrushSize() {
+      return this.getBaseBrushRadius() * 2;
+    }
+
+    getStrokeChargeRadius() {
+      const radius = Number(this.strokeChargeRadius);
+
+      return Number.isFinite(radius) && radius > 0 ? radius : this.getBaseBrushRadius();
     }
 
     getStampSpacing(sizeScale = 1) {
@@ -2141,12 +2157,15 @@ void main() {
       const attackScale = attack <= disabledThreshold ? 1 : this.lerp(0.12, 1, attack);
       let chargeScale = 1;
 
-      if (charge > disabledThreshold && charge < 1) {
-        const radius = Math.max(0.5, this.getBrushSize() * 0.5);
-        const initialLoad = Math.sqrt(charge);
-        const depletionDistance = radius * this.lerp(4, 96, charge);
+      if (charge < 1) {
+        const radius = Math.max(0.5, this.getStrokeChargeRadius());
+        const safeCharge = Math.max(charge, 0.01);
+        const tailLoad = 0.18;
+        const depletionDistance = radius * this.lerp(5, 120, safeCharge);
+        const depletion = this.clamp01(this.strokeDistance / depletionDistance);
+        const easedDepletion = depletion * depletion * (3 - 2 * depletion);
 
-        chargeScale = initialLoad * this.clamp01(1 - this.strokeDistance / depletionDistance);
+        chargeScale = this.lerp(1, tailLoad, easedDepletion);
       }
 
       let alpha = dilutionScale * attackScale * chargeScale;
@@ -2517,7 +2536,7 @@ void main() {
       const stampCount = this.stampsBuffer.length;
       // 14 float per istanza: base dab + colore + dati grain Moving.
       const instanceData = new Float32Array(stampCount * 14);
-      const brushSize = this.getBrushSize() * this.getWetEdgeBrushScale();
+      const brushSize = this.getBrushSize();
       const fallbackColor = this.getCurrentStrokeColorRgb();
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
       const useGrainTexture = this.isGrainEnabled();
@@ -2556,7 +2575,7 @@ void main() {
       gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
       gl.uniform2f(this.brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
       gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
-      gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getEffectiveHardness());
+      gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getHardness());
       gl.uniform1f(this.brushProgramInfo.uniforms.wetEdges, this.getWetEdges());
       gl.uniform1i(this.brushProgramInfo.uniforms.alphaThresholdEnabled, this.isAlphaThresholdEnabled() ? 1 : 0);
       gl.uniform1f(this.brushProgramInfo.uniforms.alphaThreshold, this.getAlphaThreshold());
@@ -2684,6 +2703,7 @@ void main() {
       this.strokeColorState = null;
       this.strokeWetRandomState = null;
       this.strokeGrainRandomState = null;
+      this.strokeChargeRadius = null;
       this.strokeGrainOffset = { x: 0, y: 0 };
     }
 

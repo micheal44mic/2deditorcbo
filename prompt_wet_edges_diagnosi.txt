@@ -1,0 +1,262 @@
+PROMPT PER LLM ESPERTO / CODEX - DIAGNOSI WET EDGES CHE SEMBRA NON CAMBIARE NULLA
+
+Contesto
+Stiamo lavorando in Codex su una app di pittura digitale Vanilla JS/WebGL2 stile Procreate.
+Il motore e' stamp-based: ogni tratto viene costruito da dab/quad istanziati in WebGL2.
+Non esiste geometria esplicita del perimetro dello stroke.
+Il rendering principale NON deve usare Canvas2D, librerie esterne o line rendering.
+
+Obiettivo di questa richiesta
+Abbiamo aggiunto una sezione RENDERING nel Brush Studio con:
+- Rendering Mode
+- Flow
+- Wet Edges
+- Alpha Threshold
+
+Il problema: Wet Edges, implementato come riduzione della hardness, visivamente sembra non cambiare quasi nulla.
+Voglio una diagnosi tecnica e una proposta concreta.
+Non scrivere file completi.
+Dammi patch/snippet mirati e spiegami cosa cambiare.
+
+================================================================================
+COMPORTAMENTO PROCREATE DA IMITARE
+================================================================================
+
+Nel testo Procreate:
+
+Wet Edges
+Soften and blur the edges of your brushstrokes to mimic pigment bleeding into paper.
+
+Il punto importante:
+- Procreate parla del perimetro del brushstroke, non necessariamente del singolo dab.
+- Nel nostro motore il perimetro dello stroke emerge dall'unione di molti dab e non esiste come maschera separata.
+
+================================================================================
+ARCHITETTURA ATTUALE DEL MOTORE
+================================================================================
+
+File principali:
+- js/brush-engine.js
+- js/brush-studio.js
+- js/brush-defaults.js
+
+Pipeline brush:
+- stroke attivo renderizzato in strokeFBO
+- base consolidato in baseFBO
+- durante il tratto gli stamp vengono renderizzati in strokeFBO con:
+
+gl.blendEquation(gl.MAX);
+gl.blendFunc(gl.ONE, gl.ONE);
+
+Questo evita opacity build-up intra-stroke.
+
+Ogni stamp usa un quad istanziato:
+- posizione
+- pressione
+- alphaScale
+- sizeScale
+- rotation
+- colore
+- dati grain
+
+Shader brush:
+
+```glsl
+uniform float u_flow;
+uniform float u_hardness;
+uniform bool u_alphaThresholdEnabled;
+uniform float u_alphaThreshold;
+uniform sampler2D u_shapeTexture;
+uniform float u_useShapeTexture;
+uniform bool u_grainEnabled;
+...
+
+float applyFlowCoverageCurve(float coverage, float flow) {
+  float safeCoverage = clamp(coverage, 0.0, 1.0);
+  float safeFlow = clamp(flow, 0.0, 1.0);
+  float edgePower = mix(2.35, 1.0, safeFlow);
+
+  return pow(safeCoverage, edgePower);
+}
+
+void main() {
+  float shape = 1.0;
+
+  if (u_useShapeTexture > 0.5) {
+    shape = texture(u_shapeTexture, v_uv).a;
+  } else {
+    float distanceFromCenter = distance(v_uv, vec2(0.5));
+
+    if (distanceFromCenter > 0.5) {
+      discard;
+    }
+
+    // Hardness=1: bordo nitido (fade in 1 px AA). Hardness=0: gradiente radiale dal centro.
+    float fw = max(fwidth(distanceFromCenter), 0.001);
+    float edgeStart = mix(0.0, 0.5 - fw, clamp(u_hardness, 0.0, 1.0));
+    shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
+  }
+
+  if (shape <= 0.001) {
+    discard;
+  }
+
+  vec3 brushColor = v_color;
+  float grainCoverage = 1.0;
+
+  if (u_grainEnabled && u_grainScale > 0.0) {
+    // grain modifica brushColor e grainCoverage
+  }
+
+  float flow = clamp(u_flow, 0.0, 2.0);
+  float coverage = shape * grainCoverage;
+
+  if (flow < 1.0) {
+    coverage = applyFlowCoverageCurve(coverage, flow);
+  }
+
+  if (u_alphaThresholdEnabled) {
+    if (coverage < clamp(u_alphaThreshold, 0.0, 1.0)) {
+      discard;
+    }
+
+    coverage = 1.0;
+  }
+
+  float alpha = clamp(coverage * v_alpha * flow, 0.0, 1.0);
+  outColor = vec4(clamp(brushColor, vec3(0.0), vec3(1.0)) * alpha, alpha);
+}
+```
+
+Wet Edges attuale lato JS:
+
+```js
+getWetEdges() {
+  const value = Number(this.brushState.wetEdges);
+
+  return Number.isFinite(value) ? this.clamp(value, 0, 1) : 0;
+}
+
+getEffectiveHardness() {
+  return this.clamp(this.getHardness() * (1 - this.getWetEdges() * 0.8), 0, 1);
+}
+```
+
+E in flushStamps:
+
+```js
+gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
+gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getEffectiveHardness());
+```
+
+Problema osservato:
+- Portando WET EDGES da 0% a 100%, l'utente dice che non vede praticamente nessun cambiamento.
+- Probabile motivo: molti brush usano shape texture (`u_useShapeTexture > 0.5`), e in quel ramo `u_hardness` non viene usato affatto.
+- Quindi Wet Edges hardness-only funziona solo sul fallback cerchio procedurale, ma non sulle shape alpha importate/default.
+
+================================================================================
+ALTRO CONTESTO IMPORTANTE
+================================================================================
+
+Default brush usa una shape alpha:
+
+```js
+shapeAlphaSrc: defaultShapeAlphaSrc,
+shapeAlphaName: defaultShapeAlphaName,
+```
+
+Quindi nella maggior parte dei casi `u_useShapeTexture > 0.5`, e il ramo procedurale hardness non entra.
+
+Questo spiega bene perche' Wet Edges sembra no-op.
+
+Flow e' stato modificato per far sparire prima i bordi a flow basso:
+
+```glsl
+float applyFlowCoverageCurve(float coverage, float flow) {
+  float safeCoverage = clamp(coverage, 0.0, 1.0);
+  float safeFlow = clamp(flow, 0.0, 1.0);
+  float edgePower = mix(2.35, 1.0, safeFlow);
+
+  return pow(safeCoverage, edgePower);
+}
+```
+
+Questa parte per ora va bene.
+
+Charge e' stato modificato cosi':
+
+```js
+if (charge < 1) {
+  const radius = Math.max(0.5, this.getBrushSize() * 0.5);
+  const safeCharge = Math.max(charge, 0.01);
+  const tailLoad = 0.18;
+  const depletionDistance = radius * this.lerp(5, 120, safeCharge);
+  const depletion = this.clamp01(this.strokeDistance / depletionDistance);
+  const easedDepletion = depletion * depletion * (3 - 2 * depletion);
+
+  chargeScale = this.lerp(1, tailLoad, easedDepletion);
+}
+```
+
+Questa parte per ora non e' il focus, ma puoi segnalare rischi se ne vedi.
+
+================================================================================
+DOMANDA PER TE
+================================================================================
+
+Come implementeresti Wet Edges V1/V1.5 in modo che sia visibile anche quando il brush usa una shape texture?
+
+Vincoli:
+- Non vogliamo ancora fare la V2 completa con stroke-FBO post-process, Sobel/blur/ping-pong.
+- Non vogliamo cambiare dimensione percepita del brush in modo evidente.
+- Non vogliamo rompere output premoltiplicato.
+- Non vogliamo far diventare Wet Edges solo "opacity generale".
+- Deve essere compatibile con shape alpha texture e con fallback procedurale.
+
+Possibili strade che mi vengono in mente:
+
+1. Applicare una curva a `shape` quando wetEdges > 0:
+   - Esempio `shape = pow(shape, mix(1.0, 1.8, wetEdges))`
+   - Questo fa calare prima i valori bassi della texture alpha.
+   - Pero' assomiglia al Flow curve e potrebbe restringere il brush invece di "wet edge".
+
+2. Applicare una curva inversa / softening:
+   - Esempio `shape = smoothstep(0.0, mix(1.0, 0.35, wetEdges), shape)`
+   - Non so se aiuta davvero.
+
+3. Doppia copertura nello shader:
+   - core = shape
+   - wetMask = funzione sui valori medio-bassi di shape
+   - coverage = mix(core, qualcosa di piu' soft/acquoso, wetEdges)
+   - Serve una formula precisa.
+
+4. Solo per shape texture, campionare vicini texel per fare un blur alpha locale:
+   - uniform `u_shapeTexelSize`
+   - `shape = mix(shape, blurredShape, wetEdges)`
+   - Poi eventualmente attenuare edge.
+   - Pro: davvero visibile sulle texture shape.
+   - Contro: costo shader maggiore, ma solo poche sample per dab.
+
+5. Forzare `u_hardness` anche sulle shape texture non ha senso perche' la texture alpha e' gia' baked.
+
+Dimmi quale strada sceglieresti e dammi patch/snippet mirati.
+
+================================================================================
+OUTPUT RICHIESTO
+================================================================================
+
+Rispondi come senior WebGL2 graphics engineer:
+
+1. Diagnosi: perche' Wet Edges attuale sembra non cambiare nulla?
+2. Soluzione raccomandata per V1.5 senza post-process FBO.
+3. Patch/snippet mirati per:
+   - shader brush
+   - uniforms da aggiungere se servono
+   - createBrushProgramInfo()
+   - flushStamps()
+   - eventuale upload texture shape se serve texel size
+4. Spiega come testarlo visivamente nel Drawing Pad.
+5. Spiega i limiti e cosa rimandare alla V2.
+
+Non incollare file completi.
+
