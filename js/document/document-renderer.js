@@ -150,15 +150,11 @@ void main() {
       this.rasterTargetManager = null;
       this.programInfo = null;
       this.quad = null;
-      this.textRenderer = null;
-      this.ownsTextRenderer = !options.textRenderer;
       this.isDisposed = false;
 
       try {
         this.configureDocumentSize(options.viewportWidth, options.viewportHeight);
         this.createBaseLayerTarget();
-        this.textRenderer = options.textRenderer ||
-          (namespace.TextRenderer ? new namespace.TextRenderer({ gl: this.gl }) : null);
         this.programInfo = this.createProgramInfo();
         this.quad = this.createArtboardQuad();
         namespace.debugRasterTargets = () => this.getRasterDebugSnapshot();
@@ -808,13 +804,8 @@ void main() {
         }
 
         if (layer.type === "text") {
-          this.textRenderer?.drawLayer?.(layer, {
-            camera,
-            viewportWidth,
-            viewportHeight,
-          });
-          bindArtboardProgram();
-          gl.uniform1f(uniforms.renderMode, 0.0);
+          // I layer vettoriali non entrano nella pipeline raster/WebGL.
+          // Sono disegnati da VectorOverlayRenderer finche' l'utente non chiede rasterize.
           continue;
         }
 
@@ -872,12 +863,6 @@ void main() {
         gl.deleteProgram(this.programInfo.program);
         this.programInfo = null;
       }
-
-      if (this.ownsTextRenderer) {
-        this.textRenderer?.dispose?.();
-      }
-
-      this.textRenderer = null;
 
       new Set(this.rasterTargetsByLayerId.values()).forEach((target) => {
         if (target.framebuffer) {

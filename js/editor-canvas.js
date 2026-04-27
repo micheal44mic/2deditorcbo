@@ -183,6 +183,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   stage.dataset.paintEngine = "webgl2";
   stage.replaceChildren(canvas);
 
+  window.CBO.vectorOverlayRenderer?.dispose?.();
+  window.CBO.vectorOverlayRenderer = null;
   window.CBO.imageRasterizer?.dispose?.();
   window.CBO.imageRasterizer = null;
   window.CBO.smudgeEngine?.dispose?.();
@@ -240,6 +242,16 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   window.CBO.brushEngine = brushEngine;
   window.CBO.smudgeEngine = smudgeEngine;
   window.CBO.documentRenderer = documentRenderer;
+  window.CBO.vectorOverlayRenderer = window.CBO.VectorOverlayRenderer
+    ? new window.CBO.VectorOverlayRenderer({ stage })
+    : null;
+
+  // Layer model dispatches "cbo:document-layers-change" su qualsiasi mutazione
+  // (creazione layer testo, edit testo, rinomina, opacity, riordino, visibilita').
+  // Senza questo listener il canvas non si aggiorna sui cambi del Model.
+  window.addEventListener("cbo:document-layers-change", () => {
+    window.CBO.brushEngine?.draw?.();
+  });
 
   try {
     window.CBO.imageRasterizer = new window.CBO.ImageRasterizer({
@@ -267,6 +279,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     smudgeEngine.dispose();
     brushEngine.dispose();
     documentRenderer.dispose();
+    window.CBO.vectorOverlayRenderer?.dispose?.();
+    window.CBO.vectorOverlayRenderer = null;
     window.CBO.smudgeEngine = null;
     window.CBO.brushEngine = null;
     window.CBO.documentRenderer = null;

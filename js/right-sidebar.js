@@ -8,6 +8,18 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   }
 
   panel.dataset.rightSidebarReady = "true";
+  const textBorderPlusIcon = `
+    <svg class="text-sidebar-collapse-svg lucide lucide-plus-icon lucide-plus" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </svg>
+  `;
+  const textBorderMinusIcon = `
+    <svg class="text-sidebar-collapse-svg lucide lucide-minus-icon lucide-minus" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h14" />
+    </svg>
+  `;
+
   panel.innerHTML = `
     <div class="right-sidebar-content">
       <div class="right-sidebar-actions right-sidebar-section" aria-label="User actions">
@@ -37,66 +49,47 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           <input class="text-sidebar-range" type="range" min="0" max="100" step="1" aria-label="Text layer opacity" data-text-opacity />
         </label>
       </section>
-      <section class="text-sidebar-panel right-sidebar-section" aria-label="Text content" data-text-content-panel hidden>
-        <div class="text-sidebar-header">
-          <h2 class="text-sidebar-title">TEXT</h2>
-          <button class="text-sidebar-action-button" type="button" data-text-new>NEW</button>
-        </div>
-        <label class="text-sidebar-field text-sidebar-text-field">
-          <span class="text-sidebar-field-label">CONTENT</span>
-          <textarea class="text-sidebar-textarea" aria-label="Text content" spellcheck="false" data-text-content></textarea>
-        </label>
-        <div class="text-sidebar-grid">
-          <label class="text-sidebar-field">
-            <span class="text-sidebar-field-label">SIZE</span>
-            <input class="text-sidebar-number" type="number" min="4" max="512" step="1" data-text-font-size aria-label="Text size" />
-          </label>
-          <label class="text-sidebar-field">
-            <span class="text-sidebar-field-label">LINE</span>
-            <input class="text-sidebar-number" type="number" min="0.65" max="3" step="0.05" data-text-line-height aria-label="Text line height" />
-          </label>
-        </div>
-        <label class="text-sidebar-field">
-          <span class="text-sidebar-field-label">ALIGN</span>
-          <select class="text-sidebar-select" data-text-align aria-label="Text align">
-            <option value="left">Left</option>
-            <option value="center">Center</option>
-            <option value="right">Right</option>
-          </select>
-        </label>
-      </section>
       <section class="text-sidebar-panel right-sidebar-section" aria-label="Text colors" data-text-colors-panel hidden>
         <div class="text-sidebar-header">
-          <h2 class="text-sidebar-title">TEXT COLORS</h2>
+          <h2 class="text-sidebar-title">COLOR</h2>
         </div>
         <div class="text-sidebar-color-row">
           <button class="text-sidebar-color-swatch" type="button" aria-label="Text color" data-text-color-swatch></button>
           <input class="text-sidebar-hex-input" type="text" value="#FFFFFF" maxlength="7" spellcheck="false" aria-label="Text hex color" data-text-color-hex />
-          <span class="text-sidebar-color-opacity">100%</span>
         </div>
-        <button class="text-sidebar-wide-button" type="button" data-text-current-color>USE CURRENT COLOR</button>
       </section>
-      <section class="text-sidebar-panel right-sidebar-section" aria-label="Text transform" data-text-transform-panel hidden>
-        <div class="text-sidebar-header">
-          <h2 class="text-sidebar-title">TRANSFORM</h2>
+      <section class="text-sidebar-panel right-sidebar-section" aria-label="Text border" data-text-border-panel hidden>
+        <button class="text-sidebar-collapse-header" type="button" aria-expanded="false" aria-pressed="false" data-text-border-toggle>
+          <span class="text-sidebar-title">BORDER</span>
+          <span class="text-sidebar-collapse-icon" aria-hidden="true" data-text-border-icon>${textBorderPlusIcon}</span>
+        </button>
+        <div class="text-sidebar-collapse-body" data-text-border-body hidden>
+          <div class="text-sidebar-color-row">
+            <button class="text-sidebar-color-swatch" type="button" aria-label="Border color" data-text-border-color-swatch></button>
+            <input class="text-sidebar-hex-input" type="text" value="#000000" maxlength="7" spellcheck="false" aria-label="Border hex color" data-text-border-color-hex />
+          </div>
+          <label class="text-sidebar-field">
+            <span class="text-sidebar-field-label">SIZE</span>
+            <input class="text-sidebar-number" type="number" min="0" max="64" step="1" data-text-border-width aria-label="Border size" />
+          </label>
         </div>
-        <div class="text-sidebar-grid">
-          <label class="text-sidebar-field">
-            <span class="text-sidebar-field-label">X</span>
-            <input class="text-sidebar-number" type="number" step="1" data-text-transform="x" aria-label="Text X" />
-          </label>
-          <label class="text-sidebar-field">
-            <span class="text-sidebar-field-label">Y</span>
-            <input class="text-sidebar-number" type="number" step="1" data-text-transform="y" aria-label="Text Y" />
-          </label>
-          <label class="text-sidebar-field">
-            <span class="text-sidebar-field-label">ROTATE</span>
-            <input class="text-sidebar-number" type="number" step="1" data-text-transform="rotation" aria-label="Text rotation" />
-          </label>
-          <label class="text-sidebar-field">
-            <span class="text-sidebar-field-label">SCALE</span>
-            <input class="text-sidebar-number" type="number" min="0.01" max="50" step="0.05" data-text-scale aria-label="Text scale" />
-          </label>
+      </section>
+      <section class="text-sidebar-panel right-sidebar-section" aria-label="Text transformation" data-text-transformation-panel hidden>
+        <button class="text-sidebar-collapse-header" type="button" aria-expanded="false" aria-pressed="false" data-text-transformation-toggle>
+          <span class="text-sidebar-title">TRANSFORMATION</span>
+          <span class="text-sidebar-collapse-icon" aria-hidden="true" data-text-transformation-icon>${textBorderPlusIcon}</span>
+        </button>
+        <div class="text-sidebar-collapse-body" data-text-transformation-body hidden>
+          <div class="text-sidebar-transform-grid" aria-hidden="true">
+            <span class="text-sidebar-transform-square"></span>
+            <span class="text-sidebar-transform-square"></span>
+            <span class="text-sidebar-transform-square"></span>
+            <span class="text-sidebar-transform-square"></span>
+            <span class="text-sidebar-transform-square"></span>
+            <span class="text-sidebar-transform-square"></span>
+            <span class="text-sidebar-transform-square"></span>
+            <span class="text-sidebar-transform-square"></span>
+          </div>
         </div>
       </section>
       <section class="smudge-sidebar right-sidebar-section" aria-label="Smudge settings" data-smudge-sidebar hidden>
@@ -116,19 +109,20 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   `;
 
   const projectInput = panel.querySelector(".right-sidebar-project-input");
-  const textPanels = Array.from(panel.querySelectorAll("[data-text-layer-panel], [data-text-content-panel], [data-text-colors-panel], [data-text-transform-panel]"));
+  const textPanels = Array.from(panel.querySelectorAll("[data-text-layer-panel], [data-text-colors-panel], [data-text-border-panel], [data-text-transformation-panel]"));
   const textOpacityInput = panel.querySelector("[data-text-opacity]");
   const textOpacityValue = panel.querySelector("[data-text-opacity-value]");
-  const textContentInput = panel.querySelector("[data-text-content]");
-  const textNewButton = panel.querySelector("[data-text-new]");
-  const textFontSizeInput = panel.querySelector("[data-text-font-size]");
-  const textLineHeightInput = panel.querySelector("[data-text-line-height]");
-  const textAlignInput = panel.querySelector("[data-text-align]");
   const textColorSwatch = panel.querySelector("[data-text-color-swatch]");
   const textColorHexInput = panel.querySelector("[data-text-color-hex]");
-  const textCurrentColorButton = panel.querySelector("[data-text-current-color]");
-  const textTransformInputs = panel.querySelectorAll("[data-text-transform]");
-  const textScaleInput = panel.querySelector("[data-text-scale]");
+  const textBorderToggle = panel.querySelector("[data-text-border-toggle]");
+  const textBorderIcon = panel.querySelector("[data-text-border-icon]");
+  const textBorderBody = panel.querySelector("[data-text-border-body]");
+  const textBorderColorSwatch = panel.querySelector("[data-text-border-color-swatch]");
+  const textBorderColorHexInput = panel.querySelector("[data-text-border-color-hex]");
+  const textBorderWidthInput = panel.querySelector("[data-text-border-width]");
+  const textTransformationToggle = panel.querySelector("[data-text-transformation-toggle]");
+  const textTransformationIcon = panel.querySelector("[data-text-transformation-icon]");
+  const textTransformationBody = panel.querySelector("[data-text-transformation-body]");
   const smudgeSidebar = panel.querySelector("[data-smudge-sidebar]");
   const smudgeControls = panel.querySelector("[data-smudge-controls]");
   const smudgeReset = panel.querySelector("[data-smudge-reset]");
@@ -151,6 +145,8 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   ];
   const smudgeControlElements = new Map();
   let currentToolMode = "";
+  let isTextBorderOpen = false;
+  let isTextTransformationOpen = false;
 
   if (projectInput) {
     projectInput.value = window.localStorage.getItem(storageKey) || "";
@@ -193,7 +189,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   }
 
   function isTextContextVisible() {
-    return currentToolMode === "text" || Boolean(getActiveTextLayer());
+    return currentToolMode === "text" && Boolean(getActiveTextLayer());
   }
 
   function getTextLayerPatch(updater) {
@@ -232,18 +228,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   function syncTextControls() {
     const layer = getActiveTextLayer();
 
-    showTextSettings(Boolean(layer) || currentToolMode === "text");
+    showTextSettings(isTextContextVisible());
 
-    if (!layer) {
+    if (!layer || !isTextContextVisible()) {
       return;
     }
 
     const opacity = clamp(Math.round((Number(layer.opacity) || 0) * 100), 0, 100);
     const fillHex = window.CBO.unitRgbaToHex?.(layer.style?.fillColor, "#FFFFFF") || "#FFFFFF";
-    const fontSize = clamp(layer.font?.size, 4, 512);
-    const lineHeight = clamp(layer.style?.lineHeight ?? 1.15, 0.65, 3);
-    const transform = layer.transform || {};
-    const scaleX = Number.isFinite(transform.scaleX) ? transform.scaleX : 1;
+    const borderHex = window.CBO.unitRgbaToHex?.(layer.style?.strokeColor, "#000000") || "#000000";
+    const borderWidth = clamp(layer.style?.strokeWidth ?? 0, 0, 64);
 
     if (textOpacityInput) {
       textOpacityInput.value = String(opacity);
@@ -254,22 +248,6 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       textOpacityValue.textContent = `${opacity}%`;
     }
 
-    if (textContentInput && textContentInput.value !== layer.text) {
-      textContentInput.value = layer.text || "";
-    }
-
-    if (textFontSizeInput) {
-      textFontSizeInput.value = String(Math.round(fontSize));
-    }
-
-    if (textLineHeightInput) {
-      textLineHeightInput.value = String(Number(lineHeight).toFixed(2));
-    }
-
-    if (textAlignInput) {
-      textAlignInput.value = layer.style?.align || "left";
-    }
-
     if (textColorSwatch) {
       textColorSwatch.style.setProperty("--text-sidebar-color", fillHex);
     }
@@ -278,15 +256,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       textColorHexInput.value = fillHex;
     }
 
-    textTransformInputs.forEach((input) => {
-      const key = input.dataset.textTransform;
-      const value = Number.isFinite(transform[key]) ? transform[key] : 0;
+    if (textBorderColorSwatch) {
+      textBorderColorSwatch.style.setProperty("--text-sidebar-color", borderHex);
+    }
 
-      input.value = String(Math.round(value));
-    });
+    if (textBorderColorHexInput && textBorderColorHexInput.value.toUpperCase() !== borderHex) {
+      textBorderColorHexInput.value = borderHex;
+    }
 
-    if (textScaleInput) {
-      textScaleInput.value = String(Number(scaleX).toFixed(2));
+    if (textBorderWidthInput) {
+      textBorderWidthInput.value = String(Math.round(borderWidth));
     }
   }
 
@@ -305,6 +284,70 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     }), "text-color");
 
     return true;
+  }
+
+  function applyTextBorderHexColor(hexColor) {
+    const normalized = normalizeHexInput(hexColor);
+
+    if (!normalized) {
+      return false;
+    }
+
+    updateActiveTextLayer((layer) => ({
+      style: {
+        ...(layer.style || {}),
+        strokeColor: window.CBO.hexToUnitRgba?.(normalized, [0, 0, 0, 1]) || [0, 0, 0, 1],
+      },
+    }), "text-border-color");
+
+    return true;
+  }
+
+  function updateTextBorderWidth(value) {
+    const strokeWidth = clamp(value, 0, 64);
+
+    updateActiveTextLayer((layer) => ({
+      style: {
+        ...(layer.style || {}),
+        strokeWidth,
+      },
+    }), "text-border-width");
+  }
+
+  function setTextBorderOpen(isOpen) {
+    isTextBorderOpen = isOpen;
+
+    if (textBorderBody) {
+      textBorderBody.hidden = !isTextBorderOpen;
+    }
+
+    if (textBorderToggle) {
+      textBorderToggle.setAttribute("aria-expanded", String(isTextBorderOpen));
+      textBorderToggle.setAttribute("aria-pressed", String(isTextBorderOpen));
+      textBorderToggle.classList.toggle("active", isTextBorderOpen);
+    }
+
+    if (textBorderIcon) {
+      textBorderIcon.innerHTML = isTextBorderOpen ? textBorderMinusIcon : textBorderPlusIcon;
+    }
+  }
+
+  function setTextTransformationOpen(isOpen) {
+    isTextTransformationOpen = isOpen;
+
+    if (textTransformationBody) {
+      textTransformationBody.hidden = !isTextTransformationOpen;
+    }
+
+    if (textTransformationToggle) {
+      textTransformationToggle.setAttribute("aria-expanded", String(isTextTransformationOpen));
+      textTransformationToggle.setAttribute("aria-pressed", String(isTextTransformationOpen));
+      textTransformationToggle.classList.toggle("active", isTextTransformationOpen);
+    }
+
+    if (textTransformationIcon) {
+      textTransformationIcon.innerHTML = isTextTransformationOpen ? textBorderMinusIcon : textBorderPlusIcon;
+    }
   }
 
   function getDefaultSmudgeSettings() {
@@ -449,45 +492,6 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     syncTextControls();
   });
 
-  textContentInput?.addEventListener("input", () => {
-    updateActiveTextLayer({ text: textContentInput.value }, "text-content");
-  });
-
-  textNewButton?.addEventListener("click", () => {
-    window.CBO.createTextLayerOnCanvas?.({ source: "text-sidebar-new" });
-  });
-
-  textFontSizeInput?.addEventListener("input", () => {
-    const size = clamp(textFontSizeInput.value, 4, 512);
-
-    updateActiveTextLayer((layer) => ({
-      font: {
-        ...(layer.font || {}),
-        size,
-      },
-    }), "text-font-size");
-  });
-
-  textLineHeightInput?.addEventListener("input", () => {
-    const lineHeight = clamp(textLineHeightInput.value, 0.65, 3);
-
-    updateActiveTextLayer((layer) => ({
-      style: {
-        ...(layer.style || {}),
-        lineHeight,
-      },
-    }), "text-line-height");
-  });
-
-  textAlignInput?.addEventListener("input", () => {
-    updateActiveTextLayer((layer) => ({
-      style: {
-        ...(layer.style || {}),
-        align: textAlignInput.value,
-      },
-    }), "text-align");
-  });
-
   textColorHexInput?.addEventListener("input", () => {
     applyTextHexColor(textColorHexInput.value);
   });
@@ -503,41 +507,31 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     textColorHexInput?.select();
   });
 
-  textCurrentColorButton?.addEventListener("click", () => {
-    const selectedColor = window.CBO.selectedColor || window.CBO.brushSettings?.color || "#FFFFFF";
-
-    applyTextHexColor(selectedColor);
-    syncTextControls();
+  textBorderToggle?.addEventListener("click", () => {
+    setTextBorderOpen(!isTextBorderOpen);
   });
 
-  textTransformInputs.forEach((input) => {
-    input.addEventListener("input", () => {
-      const key = input.dataset.textTransform;
-      const value = Number(input.value);
-
-      if (!key || !Number.isFinite(value)) {
-        return;
-      }
-
-      updateActiveTextLayer((layer) => ({
-        transform: {
-          ...(layer.transform || {}),
-          [key]: value,
-        },
-      }), "text-transform");
-    });
+  textBorderColorHexInput?.addEventListener("input", () => {
+    applyTextBorderHexColor(textBorderColorHexInput.value);
   });
 
-  textScaleInput?.addEventListener("input", () => {
-    const scale = clamp(textScaleInput.value, 0.01, 50);
+  textBorderColorHexInput?.addEventListener("blur", () => {
+    if (!applyTextBorderHexColor(textBorderColorHexInput.value)) {
+      syncTextControls();
+    }
+  });
 
-    updateActiveTextLayer((layer) => ({
-      transform: {
-        ...(layer.transform || {}),
-        scaleX: scale,
-        scaleY: scale,
-      },
-    }), "text-scale");
+  textBorderColorSwatch?.addEventListener("click", () => {
+    textBorderColorHexInput?.focus();
+    textBorderColorHexInput?.select();
+  });
+
+  textBorderWidthInput?.addEventListener("input", () => {
+    updateTextBorderWidth(textBorderWidthInput.value);
+  });
+
+  textTransformationToggle?.addEventListener("click", () => {
+    setTextTransformationOpen(!isTextTransformationOpen);
   });
 
   smudgeControlDefs.forEach((definition) => {
@@ -576,6 +570,8 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   } : {};
 
   showSmudgeSettings(normalizeToolName(activeToolDetail.toolMode || activeToolDetail.label) === "smudge");
+  setTextBorderOpen(false);
+  setTextTransformationOpen(false);
   syncTextControls();
   syncSmudgeControls();
 };

@@ -23,6 +23,7 @@
 }
 
 .editor-webgl-canvas {
+  grid-area: 1 / 1;
   align-self: stretch;
   justify-self: stretch;
   display: block;
@@ -30,6 +31,129 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
+  z-index: 0;
+}
+
+.editor-vector-overlay {
+  grid-area: 1 / 1;
+  position: relative;
+  align-self: stretch;
+  justify-self: stretch;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.editor-vector-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.editor-vector-text-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  overflow: visible;
+  transform-origin: 0 0;
+  pointer-events: none;
+  letter-spacing: 0;
+}
+
+.editor-vector-text-bounds {
+  --selection-blue: #4f80ff;
+  position: absolute;
+  z-index: 2;
+  border: 1px solid var(--selection-blue);
+  box-shadow: 0 0 0 1px rgba(79, 128, 255, 0.12);
+  pointer-events: none;
+}
+
+.editor-vector-text-bounds[hidden] {
+  display: none;
+}
+
+.editor-selection-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--selection-blue);
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+}
+
+.editor-selection-handle[data-handle="nw"] {
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+}
+
+.editor-selection-handle[data-handle="n"] {
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -50%);
+}
+
+.editor-selection-handle[data-handle="ne"] {
+  right: 0;
+  top: 0;
+  transform: translate(50%, -50%);
+}
+
+.editor-selection-handle[data-handle="e"] {
+  right: 0;
+  top: 50%;
+  transform: translate(50%, -50%);
+}
+
+.editor-selection-handle[data-handle="se"] {
+  right: 0;
+  bottom: 0;
+  transform: translate(50%, 50%);
+}
+
+.editor-selection-handle[data-handle="s"] {
+  left: 50%;
+  bottom: 0;
+  transform: translate(-50%, 50%);
+}
+
+.editor-selection-handle[data-handle="sw"] {
+  left: 0;
+  bottom: 0;
+  transform: translate(-50%, 50%);
+}
+
+.editor-selection-handle[data-handle="w"] {
+  left: 0;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.editor-vector-text-face {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+
+.editor-vector-text-stroke {
+  z-index: 0;
+}
+
+.editor-vector-text-fill {
+  z-index: 1;
 }
 
 .side-panel {

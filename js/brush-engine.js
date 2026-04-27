@@ -3444,6 +3444,17 @@ void main() {
         viewportWidth: this.viewportWidth,
         viewportHeight: this.viewportHeight,
       });
+
+      window.CBO.vectorOverlayRenderer?.sync?.({
+        activeLayerId: this.documentRenderer.layerModel?.activeLayerId || "",
+        camera: this.camera,
+        documentHeight: this.documentRenderer.height,
+        documentWidth: this.documentRenderer.width,
+        dpr: this.dpr,
+        layers: this.documentRenderer.getRenderableLayers?.() || [],
+        viewportHeight: this.viewportHeight,
+        viewportWidth: this.viewportWidth,
+      });
     }
 
     dispose() {
