@@ -1,6 +1,6 @@
 .toolbar-dock {
   position: fixed;
-  left: 50%;
+  left: calc(var(--left-panel-width) + ((100vw - var(--left-panel-width) - var(--right-panel-width)) / 2));
   bottom: 28px;
   z-index: 1000;
   display: flex;

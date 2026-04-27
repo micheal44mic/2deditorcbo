@@ -67,6 +67,13 @@
   letter-spacing: 0;
 }
 
+.editor-vector-text-visual {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .editor-vector-text-bounds {
   --selection-blue: #4f80ff;
   position: absolute;
@@ -80,6 +87,69 @@
   display: none;
 }
 
+.editor-vector-text-warp-canvas {
+  position: absolute;
+  z-index: 1;
+  display: block;
+  pointer-events: none;
+}
+
+.editor-vector-text-warp-canvas[hidden] {
+  display: none;
+}
+
+.editor-text-warp-controls {
+  --warp-blue: #4f80ff;
+  position: absolute;
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.editor-text-warp-controls[hidden] {
+  display: none;
+}
+
+.editor-text-warp-outline {
+  fill: rgba(79, 128, 255, 0.08);
+  stroke: rgba(79, 128, 255, 0.78);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.editor-text-warp-curve {
+  fill: none;
+  stroke: var(--warp-blue);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.editor-text-warp-handle-line {
+  stroke: rgba(255, 255, 255, 0.58);
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.editor-text-warp-anchor,
+.editor-text-warp-handle {
+  pointer-events: auto;
+  cursor: move;
+  vector-effect: non-scaling-stroke;
+}
+
+.editor-text-warp-anchor {
+  fill: #ffffff;
+  stroke: var(--warp-blue);
+  stroke-width: 2;
+}
+
+.editor-text-warp-handle {
+  fill: #ffffff;
+  stroke: var(--warp-blue);
+  stroke-width: 2;
+}
+
 .editor-selection-handle {
   position: absolute;
   width: 10px;
@@ -87,7 +157,7 @@
   border: 2px solid var(--selection-blue);
   border-radius: 2px;
   background: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 0 0 3px #ffffff;
   pointer-events: none;
 }
 
@@ -143,8 +213,9 @@
   position: absolute;
   inset: 0;
   overflow: visible;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
   pointer-events: none;
 }
 
@@ -160,7 +231,7 @@
   position: fixed;
   top: 0;
   bottom: 0;
-  z-index: 1000;
+  z-index: 1100;
   height: 100vh;
   background: #181a1f;
 }

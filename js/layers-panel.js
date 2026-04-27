@@ -256,6 +256,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       serialized.style = existingEntry.style;
       serialized.box = existingEntry.box;
       serialized.transform = existingEntry.transform;
+      serialized.warp = existingEntry.warp;
       serialized.opacity = Number.isFinite(existingEntry.opacity) ? existingEntry.opacity : serialized.opacity;
     }
 

@@ -75,28 +75,36 @@ window.CBO.createTextLayerOnCanvas = function createTextLayerOnCanvas(options = 
 
   const documentWidth = Math.max(1, renderer.width || 1);
   const documentHeight = Math.max(1, renderer.height || 1);
-  const boxWidth = Math.min(720, Math.max(260, documentWidth * 0.45));
-  const boxHeight = 180;
+  const boxWidth = Math.min(800, Math.max(320, documentWidth * 0.55));
+  const boxHeight = Math.min(600, Math.max(260, documentHeight * 0.55));
   const x = Math.round((documentWidth - boxWidth) * 0.5);
   const y = Math.round((documentHeight - boxHeight) * 0.5);
-  const selectedColor = window.CBO.selectedColor || window.CBO.brushSettings?.color || "#FFFFFF";
+  const fillColor = options.fillColor || "#E4E2E4";
   const textLayer = layerModel.createTextLayer({
     name: options.name || "Text",
-    text: options.text || "Text",
+    text: options.text || "Radium FG",
     opacity: 1,
     font: {
-      family: "Inter, Arial, sans-serif",
-      size: 72,
-      weight: 700,
+      key: "roboto",
+      family: "Roboto Black, Roboto, Inter, Arial, sans-serif",
+      size: 163,
+      weight: 900,
       style: "normal",
     },
     style: {
-      fillColor: window.CBO.hexToUnitRgba(selectedColor, [1, 1, 1, 1]),
+      fillColor: window.CBO.hexToUnitRgba(fillColor, [0.894, 0.886, 0.894, 1]),
       strokeColor: [0, 0, 0, 1],
-      strokeWidth: 0,
+      strokeWidth: 5,
       lineHeight: 1.15,
       letterSpacing: 0,
       align: "left",
+    },
+    shadow: {
+      solid: true,
+      color: window.CBO.hexToUnitRgba("#DB1A5A", [0.859, 0.102, 0.353, 1]),
+      offset: 25,
+      angle: 45,
+      blur: 0,
     },
     box: {
       x,
@@ -114,6 +122,11 @@ window.CBO.createTextLayerOnCanvas = function createTextLayerOnCanvas(options = 
       skewY: 0,
       anchorX: 0,
       anchorY: 0,
+    },
+    warp: {
+      enabled: false,
+      mode: "CUSTOM",
+      amount: 0.5,
     },
   });
   const entries = layerModel.getEntries();
