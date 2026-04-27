@@ -193,7 +193,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const label = String(event.detail?.label || "").toUpperCase();
     const toolMode = String(event.detail?.toolMode || "").toLowerCase();
     const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
-    const isBrush = label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush");
+    const isBrush = label === "BRUSH" || label === "ERASER" || toolMode === "eraser" || (toolMode === "brush" && syncGroup === "brush");
 
     showBrushQuickControls(isBrush);
   });

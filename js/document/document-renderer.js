@@ -12,15 +12,17 @@ layout(location = 0) in vec2 aUnitCorner;
 
 uniform vec2 uViewportSize;
 uniform vec2 uDocumentSize;
+uniform vec4 uDestinationRect;
+uniform vec4 uUvRect;
 uniform vec2 uCameraPosition;
 uniform float uCameraZoom;
 
 out vec2 v_uv;
+out vec2 v_docPosition;
 
 void main() {
-  // aUnitCorner contiene i quattro angoli del documento in spazio normalizzato [0..1].
-  // Moltiplicando per uDocumentSize otteniamo coordinate in pixel reali del documento.
-  vec2 documentPixel = aUnitCorner * uDocumentSize;
+  // aUnitCorner contiene i quattro angoli del layer/target in spazio normalizzato [0..1].
+  vec2 documentPixel = uDestinationRect.xy + aUnitCorner * uDestinationRect.zw;
 
   // La camera conserva l'angolo alto-sinistro del documento in pixel fisici del viewport.
   // Lo zoom scala i pixel del documento prima di proiettarli sul canvas-monitor.
@@ -33,7 +35,11 @@ void main() {
     1.0 - (viewportPixel.y / uViewportSize.y) * 2.0
   );
 
-  v_uv = vec2(aUnitCorner.x, 1.0 - aUnitCorner.y);
+  v_uv = vec2(
+    uUvRect.x + aUnitCorner.x * uUvRect.z,
+    1.0 - (uUvRect.y + aUnitCorner.y * uUvRect.w)
+  );
+  v_docPosition = documentPixel;
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
 `;
@@ -42,17 +48,25 @@ void main() {
 precision highp float;
 
 uniform sampler2D u_texture;
+uniform sampler2D u_maskTexture;
 uniform float u_opacity;
+uniform vec4 u_solidColor;
 uniform vec2 uDocumentSize;
 uniform float uCameraZoom;
-uniform float u_gridMode;
+uniform float u_renderMode;
+uniform float u_maskMode;
 
 in vec2 v_uv;
+in vec2 v_docPosition;
 
 out vec4 outColor;
 
 void main() {
-  if (u_gridMode > 0.5) {
+  if (u_renderMode > 1.5) {
+    float alpha = u_solidColor.a * u_opacity;
+
+    outColor = vec4(u_solidColor.rgb * alpha, alpha);
+  } else if (u_renderMode > 0.5) {
     // Griglia pixel: una linea bianca sottile su ogni bordo di pixel del documento.
     vec2 docPx = v_uv * uDocumentSize;
     vec2 boundaryDistance = abs(fract(docPx - 0.5) - 0.5) / fwidth(docPx);
@@ -63,7 +77,19 @@ void main() {
     // Output pre-moltiplicato bianco.
     outColor = vec4(alpha, alpha, alpha, alpha);
   } else {
-    outColor = texture(u_texture, v_uv) * u_opacity;
+    vec4 color = texture(u_texture, v_uv) * u_opacity;
+
+    if (u_maskMode > 0.5) {
+      vec2 maskUv = vec2(
+        v_docPosition.x / uDocumentSize.x,
+        1.0 - v_docPosition.y / uDocumentSize.y
+      );
+      float eraseAlpha = clamp(texture(u_maskTexture, maskUv).a, 0.0, 1.0);
+
+      color *= 1.0 - eraseAlpha;
+    }
+
+    outColor = color;
   }
 }
 `;
@@ -121,15 +147,21 @@ void main() {
       this.framebuffer = null;
       this.paintLayerId = "";
       this.rasterTargetsByLayerId = new Map();
+      this.rasterTargetManager = null;
       this.programInfo = null;
       this.quad = null;
+      this.textRenderer = null;
+      this.ownsTextRenderer = !options.textRenderer;
       this.isDisposed = false;
 
       try {
         this.configureDocumentSize(options.viewportWidth, options.viewportHeight);
         this.createBaseLayerTarget();
+        this.textRenderer = options.textRenderer ||
+          (namespace.TextRenderer ? new namespace.TextRenderer({ gl: this.gl }) : null);
         this.programInfo = this.createProgramInfo();
         this.quad = this.createArtboardQuad();
+        namespace.debugRasterTargets = () => this.getRasterDebugSnapshot();
       } catch (error) {
         this.dispose();
         throw error;
@@ -189,10 +221,15 @@ void main() {
           cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
           documentSize: gl.getUniformLocation(program, "uDocumentSize"),
+          destinationRect: gl.getUniformLocation(program, "uDestinationRect"),
+          maskMode: gl.getUniformLocation(program, "u_maskMode"),
+          maskTexture: gl.getUniformLocation(program, "u_maskTexture"),
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
-          gridMode: gl.getUniformLocation(program, "u_gridMode"),
+          renderMode: gl.getUniformLocation(program, "u_renderMode"),
+          solidColor: gl.getUniformLocation(program, "u_solidColor"),
+          uvRect: gl.getUniformLocation(program, "uUvRect"),
         },
       };
     }
@@ -261,85 +298,37 @@ void main() {
     }
 
     createBaseLayerTarget() {
-      const backgroundTarget = this.createRasterTarget([1, 1, 1, 1]);
-      const target = this.createRasterTarget([0, 0, 0, 0]);
+      const target = this.createPaintTarget();
 
+      target.layerId = this.resolvePaintLayerId();
       this.texture = target.texture;
       this.framebuffer = target.framebuffer;
-      this.rasterTargetsByLayerId.set("background", backgroundTarget);
-      this.paintLayerId = this.resolvePaintLayerId();
+      this.paintLayerId = target.layerId;
       this.rasterTargetsByLayerId.set(this.paintLayerId, target);
     }
 
+    createRasterManager() {
+      if (!this.rasterTargetManager) {
+        if (!namespace.RasterTargetManager) {
+          throw new Error("RasterTargetManager non caricato: impossibile gestire i raster target.");
+        }
+
+        this.rasterTargetManager = new namespace.RasterTargetManager({
+          gl: this.gl,
+          documentWidth: this.width,
+          documentHeight: this.height,
+        });
+      }
+
+      return this.rasterTargetManager;
+    }
+
     createRasterTarget(clearColor = [0, 0, 0, 0]) {
-      const gl = this.gl;
-      const texture = gl.createTexture();
-      const framebuffer = gl.createFramebuffer();
-
-      if (!texture || !framebuffer) {
-        if (texture) {
-          gl.deleteTexture(texture);
-        }
-
-        if (framebuffer) {
-          gl.deleteFramebuffer(framebuffer);
-        }
-
-        throw new Error("Impossibile creare il documento FBO in VRAM.");
-      }
-
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      // MAG = NEAREST: zoomando in si vedono i pixel quadrati come in Photoshop / Procreate.
-      // MIN = LINEAR: zoom out resta liscio senza moire.
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        this.width,
-        this.height,
-        0,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        null,
-      );
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-      gl.framebufferTexture2D(
-        gl.FRAMEBUFFER,
-        gl.COLOR_ATTACHMENT0,
-        gl.TEXTURE_2D,
-        texture,
-        0,
-      );
-
-      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-        gl.deleteFramebuffer(framebuffer);
-        gl.deleteTexture(texture);
-        throw new Error("Documento FBO incompleto: impossibile inizializzare la tela.");
-      }
-
-      const target = {
-        framebuffer,
-        texture,
-        width: this.width,
-        height: this.height,
-        clearColor,
-      };
-
-      this.clearTarget(target);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-
-      return target;
+      return this.createRasterManager().createFullDocumentTarget("", clearColor);
     }
 
     createPaintTarget() {
-      return this.createRasterTarget([0, 0, 0, 0]);
+      return this.createRasterManager().createEmptyBoundedTarget("", [0, 0, 0, 0]);
     }
 
     resolvePaintLayerId() {
@@ -357,18 +346,11 @@ void main() {
     }
 
     clearTarget(target) {
-      if (!target?.framebuffer) {
+      if (!target) {
         return;
       }
 
-      const gl = this.gl;
-      const clearColor = Array.isArray(target.clearColor) ? target.clearColor : [0, 0, 0, 0];
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-      gl.viewport(0, 0, target.width, target.height);
-      gl.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.createRasterManager().clearTarget(target);
     }
 
     clear() {
@@ -397,11 +379,9 @@ void main() {
 
       this.paintLayerId = layerId;
       this.rasterTargetsByLayerId.set(layerId, target);
+      target.layerId = layerId;
 
-      return {
-        ...target,
-        layerId,
-      };
+      return target;
     }
 
     ensurePaintLayerForBrush() {
@@ -420,19 +400,230 @@ void main() {
       });
     }
 
-    getRasterTarget(layerId) {
+    getRasterTarget(layerId, options = {}) {
       if (!layerId) {
         throw new TypeError("DocumentRenderer richiede un layerId per il target raster.");
       }
 
-      const target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
+      let target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!target) {
+        if (options.bounded === true || options.bounds) {
+          const bounds = options.bounds || options;
+
+          target = this.createRasterManager().createBoundedTarget(layerId, bounds, {
+            exact: options.exact === true,
+            clearColor: options.clearColor || [0, 0, 0, 0],
+          });
+        } else {
+          target = this.createPaintTarget();
+          target.layerId = layerId;
+        }
+      }
 
       this.rasterTargetsByLayerId.set(layerId, target);
+      target.layerId = layerId;
 
-      return {
-        ...target,
-        layerId,
-      };
+      return target;
+    }
+
+    ensureRasterOccupancy(target) {
+      if (!target) {
+        return null;
+      }
+
+      if (!target.occupancy) {
+        if (!namespace.RasterTileOccupancy) {
+          throw new Error("RasterTileOccupancy non caricato: impossibile tracciare i tile raster.");
+        }
+
+        target.occupancy = new namespace.RasterTileOccupancy(this.width, this.height, 64);
+      }
+
+      return target.occupancy;
+    }
+
+    ensureRasterTargetAllocation(layerId, bounds, options = {}) {
+      if (!layerId) {
+        throw new TypeError("DocumentRenderer richiede un layerId per allocare un target raster.");
+      }
+
+      let target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!target) {
+        target = this.createPaintTarget();
+        target.layerId = layerId;
+        this.rasterTargetsByLayerId.set(layerId, target);
+      }
+
+      this.createRasterManager().ensureAllocation(target, bounds, options);
+      this.rasterTargetsByLayerId.set(layerId, target);
+
+      return target;
+    }
+
+    markRasterTargetContentMaybe(layerId, bounds) {
+      const target = this.getRasterTarget(layerId);
+      const occupancy = this.ensureRasterOccupancy(target);
+      const manager = this.createRasterManager();
+
+      occupancy?.markRectMaybeOccupied(bounds);
+      const contentRect = occupancy?.getBounds?.() || null;
+
+      if (contentRect) {
+        manager.ensureAllocation(target, contentRect, { padding: 0 });
+      }
+
+      manager.setContentRect(target, contentRect);
+      this.rasterTargetsByLayerId.set(layerId, target);
+
+      return target;
+    }
+
+    markRasterTargetTilesMaybe(layerId, tileKeys) {
+      const target = this.getRasterTarget(layerId);
+      const occupancy = this.ensureRasterOccupancy(target);
+      const manager = this.createRasterManager();
+
+      occupancy?.markTilesMaybeOccupied(tileKeys);
+      const contentRect = occupancy?.getBounds?.() || null;
+
+      if (contentRect) {
+        manager.ensureAllocation(target, contentRect, { padding: 0 });
+      }
+
+      manager.setContentRect(target, contentRect);
+      this.rasterTargetsByLayerId.set(layerId, target);
+
+      return target;
+    }
+
+    recomputeRasterTargetContentFromOccupancy(layerId) {
+      const target = this.getRasterTarget(layerId);
+      const contentRect = target.occupancy?.getBounds?.() || null;
+
+      this.createRasterManager().setContentRect(target, contentRect);
+      this.rasterTargetsByLayerId.set(layerId, target);
+
+      return target;
+    }
+
+    trimRasterTargetContentSync(layerId, bounds = null, options = {}) {
+      const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (
+        !target?.texture ||
+        !target?.framebuffer ||
+        target.isEmpty === true ||
+        target.isFullDocument === true
+      ) {
+        return target || null;
+      }
+
+      const manager = this.createRasterManager();
+      const occupancy = this.ensureRasterOccupancy(target);
+      const readRect = manager.clampRect(bounds || occupancy?.getBounds?.() || {
+        x: target.x,
+        y: target.y,
+        width: target.width,
+        height: target.height,
+      });
+
+      if (!readRect) {
+        occupancy?.clear?.();
+        manager.setContentRect(target, null);
+        return target;
+      }
+
+      const pixelCount = readRect.width * readRect.height;
+      const maxPixels = Number.isFinite(options.maxPixels) ? options.maxPixels : 16 * 1024 * 1024;
+
+      if (pixelCount > maxPixels) {
+        console.warn("[RasterTarget] trim saltato: area troppo grande", {
+          layerId,
+          width: readRect.width,
+          height: readRect.height,
+          pixelCount,
+        });
+        return target;
+      }
+
+      const gl = this.gl;
+      const allocatedX = Number.isFinite(target.allocatedX) ? target.allocatedX : target.x || 0;
+      const allocatedY = Number.isFinite(target.allocatedY) ? target.allocatedY : target.y || 0;
+      const localX = readRect.x - allocatedX;
+      const localY = readRect.y - allocatedY;
+      const framebufferY = Math.max(0, (target.allocatedHeight || target.height) - (localY + readRect.height));
+      const pixels = new Uint8Array(pixelCount * 4);
+      const alphaThreshold = Number.isFinite(options.alphaThreshold) ? options.alphaThreshold : 2;
+      const occupiedTileKeys = new Set();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+
+      try {
+        gl.readPixels(
+          localX,
+          framebufferY,
+          readRect.width,
+          readRect.height,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          pixels,
+        );
+      } catch (error) {
+        console.warn("[RasterTarget] trim non riuscito", error);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return target;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      for (let py = 0; py < readRect.height; py += 1) {
+        const docY = readRect.y + (readRect.height - 1 - py);
+
+        for (let px = 0; px < readRect.width; px += 1) {
+          const alpha = pixels[(py * readRect.width + px) * 4 + 3];
+
+          if (alpha <= alphaThreshold) {
+            continue;
+          }
+
+          const docX = readRect.x + px;
+          const tx = Math.floor(docX / occupancy.tileSize);
+          const ty = Math.floor(docY / occupancy.tileSize);
+
+          occupiedTileKeys.add(occupancy.key(tx, ty));
+        }
+      }
+
+      occupancy.clear();
+      occupancy.markTilesMaybeOccupied(occupiedTileKeys);
+      manager.setContentRect(target, occupancy.getBounds());
+      this.rasterTargetsByLayerId.set(layerId, target);
+
+      return target;
+    }
+
+    ensureRasterTargetBounds(layerId, bounds, options = {}) {
+      const target = this.getRasterTarget(layerId, {
+        bounded: true,
+        bounds,
+        exact: options.exact === true,
+      });
+
+      this.createRasterManager().ensureBounds(target, bounds, options);
+      this.rasterTargetsByLayerId.set(layerId, target);
+
+      return target;
+    }
+
+    ensureFullDocumentRasterTarget(layerId) {
+      const target = this.getRasterTarget(layerId);
+
+      this.createRasterManager().expandToFullDocument(target);
+      this.rasterTargetsByLayerId.set(layerId, target);
+
+      return target;
     }
 
     getRenderableLayers() {
@@ -450,6 +641,17 @@ void main() {
       }];
     }
 
+    getRasterDebugSnapshot() {
+      const manager = this.createRasterManager();
+
+      return Array.from(this.rasterTargetsByLayerId.entries()).map(([layerId, target]) =>
+        manager.getTargetDebugInfo({
+          ...target,
+          layerId,
+        }),
+      );
+    }
+
     drawToCanvas(options = {}) {
       if (this.isDisposed) {
         return;
@@ -462,7 +664,121 @@ void main() {
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const { program, uniforms } = this.programInfo;
       const activeStrokeLayerId = options.activeStrokeLayerId || target.layerId;
+      const activeStrokeMode = String(options.activeStrokeMode || "paint").toLowerCase();
       let didDrawActiveStroke = false;
+      const debugBoundsRects = [];
+      const bindArtboardProgram = () => {
+        gl.useProgram(program);
+        gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+        gl.uniform2f(uniforms.documentSize, this.width, this.height);
+        gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+        gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+        gl.uniform1i(uniforms.texture, 0);
+        gl.uniform1i(uniforms.maskTexture, 1);
+        gl.uniform1f(uniforms.maskMode, 0);
+        gl.bindVertexArray(this.quad.vao);
+        gl.activeTexture(gl.TEXTURE0);
+      };
+      const drawRect = (
+        rect,
+        opacity = 1,
+        renderMode = 0,
+        uvRect = [0, 0, 1, 1],
+        solidColor = [1, 1, 1, 1],
+        maskMode = 0,
+      ) => {
+        gl.uniform4f(uniforms.destinationRect, rect.x, rect.y, rect.width, rect.height);
+        gl.uniform4f(uniforms.uvRect, uvRect[0], uvRect[1], uvRect[2], uvRect[3]);
+        gl.uniform1f(uniforms.opacity, opacity);
+        gl.uniform1f(uniforms.renderMode, renderMode);
+        gl.uniform1f(uniforms.maskMode, maskMode);
+        gl.uniform4f(uniforms.solidColor, solidColor[0], solidColor[1], solidColor[2], solidColor[3]);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (maskMode !== 0) {
+          gl.uniform1f(uniforms.maskMode, 0);
+        }
+      };
+      const drawFullDocumentTexture = (texture, opacity = 1) => {
+        if (!texture) {
+          return;
+        }
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        drawRect({ x: 0, y: 0, width: this.width, height: this.height }, opacity, 0);
+      };
+      const drawRasterTarget = (layerTarget, opacity = 1, maskTexture = null) => {
+        if (!layerTarget?.texture || layerTarget.isEmpty === true) {
+          return;
+        }
+
+        const rect = {
+          x: Number.isFinite(layerTarget.x) ? layerTarget.x : 0,
+          y: Number.isFinite(layerTarget.y) ? layerTarget.y : 0,
+          width: Number.isFinite(layerTarget.width) ? layerTarget.width : this.width,
+          height: Number.isFinite(layerTarget.height) ? layerTarget.height : this.height,
+        };
+        const allocatedWidth = Math.max(1, layerTarget.allocatedWidth || rect.width);
+        const allocatedHeight = Math.max(1, layerTarget.allocatedHeight || rect.height);
+        const allocatedX = Number.isFinite(layerTarget.allocatedX) ? layerTarget.allocatedX : rect.x;
+        const allocatedY = Number.isFinite(layerTarget.allocatedY) ? layerTarget.allocatedY : rect.y;
+        const localX = rect.x - allocatedX;
+        const localY = rect.y - allocatedY;
+
+        if (maskTexture) {
+          gl.activeTexture(gl.TEXTURE1);
+          gl.bindTexture(gl.TEXTURE_2D, maskTexture);
+        }
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, layerTarget.texture);
+        drawRect(
+          rect,
+          opacity,
+          0,
+          [
+            localX / allocatedWidth,
+            localY / allocatedHeight,
+            rect.width / allocatedWidth,
+            rect.height / allocatedHeight,
+          ],
+          [1, 1, 1, 1],
+          maskTexture ? 1 : 0,
+        );
+
+        if (maskTexture) {
+          gl.activeTexture(gl.TEXTURE1);
+          gl.bindTexture(gl.TEXTURE_2D, null);
+          gl.activeTexture(gl.TEXTURE0);
+        }
+
+        if (namespace.rasterDebugShowBounds === true && layerTarget.isBounded === true) {
+          debugBoundsRects.push(rect);
+        }
+      };
+      const drawBackground = (opacity = 1) => {
+        drawRect(
+          { x: 0, y: 0, width: this.width, height: this.height },
+          opacity,
+          2,
+          [0, 0, 1, 1],
+          [1, 1, 1, 1],
+        );
+      };
+      const drawBoundsOutline = (rect) => {
+        const zoom = Math.max(0.0001, camera.zoom || 1);
+        const thickness = Math.max(1, 2 / zoom);
+        const color = [0.05, 0.58, 1, 0.95];
+        const x = rect.x;
+        const y = rect.y;
+        const width = Math.max(thickness, rect.width);
+        const height = Math.max(thickness, rect.height);
+
+        drawRect({ x, y, width, height: thickness }, 1, 2, [0, 0, 1, 1], color);
+        drawRect({ x, y: y + height - thickness, width, height: thickness }, 1, 2, [0, 0, 1, 1], color);
+        drawRect({ x, y, width: thickness, height }, 1, 2, [0, 0, 1, 1], color);
+        drawRect({ x: x + width - thickness, y, width: thickness, height }, 1, 2, [0, 0, 1, 1], color);
+      };
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
@@ -477,49 +793,60 @@ void main() {
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-      gl.useProgram(program);
-      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
-      gl.uniform2f(uniforms.documentSize, target.width, target.height);
-      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
-      gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
-      gl.uniform1i(uniforms.texture, 0);
-      gl.bindVertexArray(this.quad.vao);
-      gl.activeTexture(gl.TEXTURE0);
+      bindArtboardProgram();
 
       // Pass 1: layer documento, dal basso verso l'alto.
-      gl.uniform1f(uniforms.gridMode, 0.0);
+      gl.uniform1f(uniforms.renderMode, 0.0);
 
       for (const layer of this.getRenderableLayers()) {
         const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
         const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
 
-        if (layerTarget?.texture) {
-          gl.bindTexture(gl.TEXTURE_2D, layerTarget.texture);
-          gl.uniform1f(uniforms.opacity, opacity);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (layer.type === "background") {
+          drawBackground(opacity);
+          continue;
         }
 
-        if (options.activeStrokeTexture && layer.id === activeStrokeLayerId) {
-          gl.bindTexture(gl.TEXTURE_2D, options.activeStrokeTexture);
-          gl.uniform1f(uniforms.opacity, opacity);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (layer.type === "text") {
+          this.textRenderer?.drawLayer?.(layer, {
+            camera,
+            viewportWidth,
+            viewportHeight,
+          });
+          bindArtboardProgram();
+          gl.uniform1f(uniforms.renderMode, 0.0);
+          continue;
+        }
+
+        const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
+        const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
+          ? options.activeStrokeTexture
+          : null;
+
+        drawRasterTarget(layerTarget, opacity, eraserMaskTexture);
+
+        if (isActiveStrokeLayer && activeStrokeMode === "eraser") {
+          didDrawActiveStroke = true;
+        } else if (isActiveStrokeLayer) {
+          drawFullDocumentTexture(options.activeStrokeTexture, opacity);
           didDrawActiveStroke = true;
         }
       }
 
-      if (options.activeStrokeTexture && !didDrawActiveStroke) {
+      if (options.activeStrokeTexture && activeStrokeMode !== "eraser" && !didDrawActiveStroke) {
         const hasLayerModel = Boolean(this.layerModel);
 
         if (!hasLayerModel) {
-          gl.bindTexture(gl.TEXTURE_2D, options.activeStrokeTexture);
-          gl.uniform1f(uniforms.opacity, 1.0);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          drawFullDocumentTexture(options.activeStrokeTexture, 1.0);
         }
       }
 
+      if (debugBoundsRects.length > 0) {
+        debugBoundsRects.forEach(drawBoundsOutline);
+      }
+
       // Pass 2: griglia pixel sopra tutto. Lo shader la attiva solo a zoom alto.
-      gl.uniform1f(uniforms.gridMode, 1.0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      drawRect({ x: 0, y: 0, width: this.width, height: this.height }, 1.0, 1);
 
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
@@ -545,6 +872,12 @@ void main() {
         gl.deleteProgram(this.programInfo.program);
         this.programInfo = null;
       }
+
+      if (this.ownsTextRenderer) {
+        this.textRenderer?.dispose?.();
+      }
+
+      this.textRenderer = null;
 
       new Set(this.rasterTargetsByLayerId.values()).forEach((target) => {
         if (target.framebuffer) {

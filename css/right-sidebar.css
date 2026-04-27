@@ -159,6 +159,242 @@
   box-shadow: inset 0 0 0 1px #4b5363;
 }
 
+.text-sidebar-panel {
+  color: #dfe3ea;
+}
+
+.text-sidebar-panel[hidden] {
+  display: none;
+}
+
+.text-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.text-sidebar-title {
+  margin: 0;
+  color: #dfe3ea;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.text-sidebar-action-button,
+.text-sidebar-wide-button {
+  border: 0;
+  border-radius: 7px;
+  background: #2c303a;
+  color: #c3c8d1;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.text-sidebar-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 9px;
+}
+
+.text-sidebar-wide-button {
+  width: 100%;
+  height: 32px;
+  margin-top: 12px;
+}
+
+.text-sidebar-action-button:hover,
+.text-sidebar-action-button:focus-visible,
+.text-sidebar-wide-button:hover,
+.text-sidebar-wide-button:focus-visible {
+  background: #3a3f4b;
+  color: #ffffff;
+}
+
+.text-sidebar-control {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.text-sidebar-control-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.text-sidebar-control-label,
+.text-sidebar-control-value,
+.text-sidebar-field-label,
+.text-sidebar-color-opacity {
+  color: #c3c8d1;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.text-sidebar-control-value,
+.text-sidebar-color-opacity {
+  color: #ffffff;
+}
+
+.text-sidebar-range {
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: transparent;
+}
+
+.text-sidebar-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 8px;
+  background: linear-gradient(
+    to right,
+    #dfe3ea 0 var(--text-sidebar-range-progress, 100%),
+    #2c303a var(--text-sidebar-range-progress, 100%) 100%
+  );
+}
+
+.text-sidebar-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: #dfe3ea;
+  box-shadow: 0 0 0 2px #181a1f;
+}
+
+.text-sidebar-range:hover::-webkit-slider-thumb,
+.text-sidebar-range:focus-visible::-webkit-slider-thumb {
+  background: #ffffff;
+}
+
+.text-sidebar-range::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: #2c303a;
+}
+
+.text-sidebar-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 8px;
+  background: #dfe3ea;
+}
+
+.text-sidebar-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: #dfe3ea;
+  box-shadow: 0 0 0 2px #181a1f;
+}
+
+.text-sidebar-range:hover::-moz-range-thumb,
+.text-sidebar-range:focus-visible::-moz-range-thumb {
+  background: #ffffff;
+}
+
+.text-sidebar-field {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.text-sidebar-text-field {
+  margin-top: 14px;
+}
+
+.text-sidebar-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.text-sidebar-textarea,
+.text-sidebar-number,
+.text-sidebar-select,
+.text-sidebar-hex-input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  border-radius: 7px;
+  background: #242832;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.text-sidebar-textarea:focus,
+.text-sidebar-number:focus,
+.text-sidebar-select:focus,
+.text-sidebar-hex-input:focus {
+  background: #2c303a;
+  box-shadow: inset 0 0 0 1px #4b5363;
+}
+
+.text-sidebar-textarea {
+  min-height: 72px;
+  resize: vertical;
+  padding: 9px 10px;
+  line-height: 1.35;
+}
+
+.text-sidebar-number,
+.text-sidebar-select,
+.text-sidebar-hex-input {
+  height: 32px;
+  padding: 0 9px;
+  line-height: 32px;
+}
+
+.text-sidebar-number {
+  text-align: right;
+}
+
+.text-sidebar-select {
+  appearance: none;
+}
+
+.text-sidebar-color-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.text-sidebar-color-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  background:
+    linear-gradient(135deg, transparent 0 45%, #ef4444 46% 54%, transparent 55% 100%),
+    var(--text-sidebar-color, #ffffff);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.text-sidebar-hex-input {
+  text-transform: uppercase;
+}
+
 .smudge-sidebar {
   color: #dfe3ea;
 }

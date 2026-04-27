@@ -395,13 +395,21 @@ precision highp float;
 
 uniform sampler2D u_texture;
 uniform float u_opacity;
+uniform vec4 u_sourceRect;
+uniform vec2 u_sourceResolution;
 
 in vec2 v_uv;
 
 out vec4 outColor;
 
 void main() {
-  outColor = texture(u_texture, v_uv) * u_opacity;
+  vec2 sourcePixel = vec2(
+    u_sourceRect.x + v_uv.x * u_sourceRect.z,
+    u_sourceRect.y + (1.0 - v_uv.y) * u_sourceRect.w
+  );
+  vec2 sourceUv = vec2(sourcePixel.x / u_sourceResolution.x, 1.0 - sourcePixel.y / u_sourceResolution.y);
+
+  outColor = texture(u_texture, sourceUv) * u_opacity;
 }
 `;
 
@@ -543,6 +551,9 @@ void main() {
       this.resizeObserver = null;
       this.isDisposed = false;
       this.isBrushToolActive = this.getInitialBrushToolActive();
+      this.activeStrokeTool = this.activeStrokeTool || (this.isBrushToolActive ? "brush" : "");
+      this.currentStrokeTool = "brush";
+      this.strokeTargetLayerId = null;
       this.documentRenderer = options.documentRenderer;
       this.strokeTexture = null;
       this.strokeFBO = null;
@@ -550,6 +561,7 @@ void main() {
       this.strokePlateauFBO = null;
       this.strokeAccumTexture = null;
       this.strokeAccumFBO = null;
+      this.activeStrokeBounds = null;
       this.brushProgramInfo = null;
       this.compositeProgramInfo = null;
       this.strokeBuildupProgramInfo = null;
@@ -648,10 +660,9 @@ void main() {
 
       if (
         !target ||
-        !target.framebuffer ||
-        !target.texture ||
-        !Number.isFinite(target.width) ||
-        !Number.isFinite(target.height)
+        !target.layerId ||
+        !Number.isFinite(this.documentRenderer?.width) ||
+        !Number.isFinite(this.documentRenderer?.height)
       ) {
         throw new Error("BrushEngine richiede un target documento valido.");
       }
@@ -659,14 +670,21 @@ void main() {
       return target;
     }
 
+    getDocumentSize() {
+      return {
+        width: Math.max(1, Math.round(this.documentRenderer?.width || 1)),
+        height: Math.max(1, Math.round(this.documentRenderer?.height || 1)),
+      };
+    }
+
     centerCamera() {
-      const target = this.getPaintTarget();
+      const documentSize = this.getDocumentSize();
       const zoom = Math.max(
         0.0001,
-        Math.min(this.viewportWidth / target.width, this.viewportHeight / target.height),
+        Math.min(this.viewportWidth / documentSize.width, this.viewportHeight / documentSize.height),
       );
-      const artboardWidth = target.width * zoom;
-      const artboardHeight = target.height * zoom;
+      const artboardWidth = documentSize.width * zoom;
+      const artboardHeight = documentSize.height * zoom;
 
       this.camera.zoom = zoom;
       this.camera.x = (this.viewportWidth - artboardWidth) * 0.5;
@@ -762,6 +780,8 @@ void main() {
         uniforms: {
           texture: gl.getUniformLocation(program, "u_texture"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
+          sourceRect: gl.getUniformLocation(program, "u_sourceRect"),
+          sourceResolution: gl.getUniformLocation(program, "u_sourceResolution"),
         },
       };
     }
@@ -859,7 +879,7 @@ void main() {
 
     createTransparentRenderTarget(label) {
       const gl = this.gl;
-      const documentTarget = this.getPaintTarget();
+      const documentSize = this.getDocumentSize();
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
       const targetLabel = label || "Render target";
@@ -886,8 +906,8 @@ void main() {
         gl.TEXTURE_2D,
         0,
         gl.RGBA,
-        documentTarget.width,
-        documentTarget.height,
+        documentSize.width,
+        documentSize.height,
         0,
         gl.RGBA,
         gl.UNSIGNED_BYTE,
@@ -911,7 +931,7 @@ void main() {
         throw new Error(`${targetLabel} incompleto: impossibile inizializzare il livello tratto.`);
       }
 
-      gl.viewport(0, 0, documentTarget.width, documentTarget.height);
+      gl.viewport(0, 0, documentSize.width, documentSize.height);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1064,32 +1084,53 @@ void main() {
 
     getInitialBrushToolActive() {
       if (this.options?.respectActiveTool === false || this.options?.getSettings) {
+        this.activeStrokeTool = "brush";
         return true;
       }
 
       const activeTool = document.querySelector("[data-tool].active");
 
       if (!activeTool) {
+        this.activeStrokeTool = "";
         return false;
       }
 
-      return this.isBrushToolDetail({
+      const tool = this.resolveStrokeToolFromDetail({
         label: activeTool.getAttribute("aria-label") || "",
         syncGroup: activeTool.dataset.toolSync || "",
         toolMode: activeTool.dataset.toolMode || "",
       });
+
+      this.activeStrokeTool = tool || "";
+
+      return Boolean(tool);
     }
 
-    isBrushToolDetail(detail = {}) {
+    resolveStrokeToolFromDetail(detail = {}) {
       const label = String(detail.label || "").toUpperCase();
       const toolMode = String(detail.toolMode || "").toLowerCase();
       const syncGroup = String(detail.syncGroup || "").toLowerCase();
 
-      return label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush");
+      if (label === "ERASER" || toolMode === "eraser") {
+        return "eraser";
+      }
+
+      if (label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush")) {
+        return "brush";
+      }
+
+      return "";
+    }
+
+    isBrushToolDetail(detail = {}) {
+      return Boolean(this.resolveStrokeToolFromDetail(detail));
     }
 
     handleToolChange(event) {
-      this.isBrushToolActive = this.isBrushToolDetail(event.detail);
+      const tool = this.resolveStrokeToolFromDetail(event.detail);
+
+      this.activeStrokeTool = tool;
+      this.isBrushToolActive = Boolean(tool);
     }
 
     canStartBrushStroke() {
@@ -1440,14 +1481,72 @@ void main() {
     }
 
     isDocumentPointInside(point) {
-      const target = this.getPaintTarget();
+      const documentSize = this.getDocumentSize();
 
       return (
         point.docX >= 0 &&
         point.docY >= 0 &&
-        point.docX <= target.width &&
-        point.docY <= target.height
+        point.docX <= documentSize.width &&
+        point.docY <= documentSize.height
       );
+    }
+
+    getActiveRasterTargetForEraser() {
+      const layerModel = this.documentRenderer?.layerModel;
+      const activeId = layerModel?.activeLayerId;
+
+      if (!activeId || typeof layerModel?.findEntryById !== "function") {
+        return null;
+      }
+
+      const activeLayer = layerModel.findEntryById(activeId);
+
+      if (activeLayer?.type !== "paint" && activeLayer?.type !== "image") {
+        return null;
+      }
+
+      const target = this.documentRenderer?.getRasterTarget?.(activeId);
+
+      if (!target?.texture || !target?.framebuffer || target.isEmpty === true) {
+        return null;
+      }
+
+      return target;
+    }
+
+    getRectIntersection(a, b) {
+      if (!a || !b) {
+        return null;
+      }
+
+      const x = Math.max(a.x, b.x);
+      const y = Math.max(a.y, b.y);
+      const right = Math.min(a.x + a.width, b.x + b.width);
+      const bottom = Math.min(a.y + a.height, b.y + b.height);
+
+      if (right <= x || bottom <= y) {
+        return null;
+      }
+
+      return {
+        x: Math.floor(x),
+        y: Math.floor(y),
+        width: Math.ceil(right) - Math.floor(x),
+        height: Math.ceil(bottom) - Math.floor(y),
+      };
+    }
+
+    getTargetContentRect(target) {
+      if (!target || target.isEmpty === true || target.width <= 0 || target.height <= 0) {
+        return null;
+      }
+
+      return {
+        x: target.x || 0,
+        y: target.y || 0,
+        width: target.width,
+        height: target.height,
+      };
     }
 
     createSeededUnit(seed) {
@@ -1464,19 +1563,22 @@ void main() {
       return this.createStableStrokeUnit(salt) * 2 - 1;
     }
 
-    createStrokeSeed(point) {
+    createStrokeSeed(point, tool = "brush") {
+      const salt = tool === "eraser" ? 0x9e3779b9 : 0x85ebca6b;
+
       return (
         Date.now() ^
         Math.round(point.x * 1000) ^
         Math.round(point.y * 1000) ^
-        0x85ebca6b
+        salt
       ) >>> 0;
     }
 
     beginStrokeDynamics(sample) {
       const StrokeMath = namespace.StrokeMath;
       const point = { x: sample.x, y: sample.y };
-      const seed = (sample.strokeSeed ?? this.createStrokeSeed(point) ?? 1) >>> 0;
+      const tool = this.currentStrokeTool || "brush";
+      const seed = (sample.strokeSeed ?? this.createStrokeSeed(point, tool) ?? 1) >>> 0;
       const pressure = StrokeMath?.normalizePressure
         ? StrokeMath.normalizePressure(sample.pressure)
         : sample.pressure;
@@ -1495,7 +1597,7 @@ void main() {
         ? StrokeMath.createStrokeState(point, {
             pressure,
             seed,
-            tool: "brush",
+            tool,
           })
         : null;
 
@@ -2247,18 +2349,71 @@ void main() {
       return this.getFallOffScale() * this.getWetMixAlphaScale();
     }
 
-    isStampCompletelyOutsideDocument(stamp) {
-      const target = this.getPaintTarget();
+    getStampBounds(stamp) {
       const pressure = this.clamp(stamp.pressure ?? 1, 0, 1);
       const sizeFactor = this.lerp(this.getMinSizeRatio(), 1, pressure);
       const scale = Math.max(stamp.sizeScale ?? 1, 0);
       const halfExtent = this.getBrushSize() * sizeFactor * scale * Math.SQRT1_2 + 2;
 
+      return {
+        minX: stamp.x - halfExtent,
+        minY: stamp.y - halfExtent,
+        maxX: stamp.x + halfExtent,
+        maxY: stamp.y + halfExtent,
+      };
+    }
+
+    includeStrokeStampBounds(stamp) {
+      const bounds = this.getStampBounds(stamp);
+      const documentSize = this.getDocumentSize();
+      const clampedBounds = {
+        minX: Math.max(0, bounds.minX),
+        minY: Math.max(0, bounds.minY),
+        maxX: Math.min(documentSize.width, bounds.maxX),
+        maxY: Math.min(documentSize.height, bounds.maxY),
+      };
+
+      if (clampedBounds.maxX <= clampedBounds.minX || clampedBounds.maxY <= clampedBounds.minY) {
+        return;
+      }
+
+      if (!this.activeStrokeBounds) {
+        this.activeStrokeBounds = clampedBounds;
+        return;
+      }
+
+      this.activeStrokeBounds.minX = Math.min(this.activeStrokeBounds.minX, clampedBounds.minX);
+      this.activeStrokeBounds.minY = Math.min(this.activeStrokeBounds.minY, clampedBounds.minY);
+      this.activeStrokeBounds.maxX = Math.max(this.activeStrokeBounds.maxX, clampedBounds.maxX);
+      this.activeStrokeBounds.maxY = Math.max(this.activeStrokeBounds.maxY, clampedBounds.maxY);
+    }
+
+    getActiveStrokeRect() {
+      if (!this.activeStrokeBounds) {
+        return null;
+      }
+
+      const x = Math.floor(this.activeStrokeBounds.minX);
+      const y = Math.floor(this.activeStrokeBounds.minY);
+      const width = Math.ceil(this.activeStrokeBounds.maxX) - x;
+      const height = Math.ceil(this.activeStrokeBounds.maxY) - y;
+
+      if (width <= 0 || height <= 0) {
+        return null;
+      }
+
+      return { x, y, width, height };
+    }
+
+    isStampCompletelyOutsideDocument(stamp) {
+      const documentSize = this.getDocumentSize();
+      const bounds = this.getStampBounds(stamp);
+
       return (
-        stamp.x + halfExtent < 0 ||
-        stamp.x - halfExtent > target.width ||
-        stamp.y + halfExtent < 0 ||
-        stamp.y - halfExtent > target.height
+        bounds.maxX < 0 ||
+        bounds.minX > documentSize.width ||
+        bounds.maxY < 0 ||
+        bounds.minY > documentSize.height
       );
     }
 
@@ -2599,6 +2754,7 @@ void main() {
 
         this.applyMovingGrainToStamp(baseStamp, tangent);
         baseStamp.colorRgb = this.getNextStampColorRgb();
+        this.includeStrokeStampBounds(baseStamp);
         this.stampsBuffer.push(baseStamp);
         return;
       }
@@ -2621,6 +2777,7 @@ void main() {
 
         this.applyMovingGrainToStamp(stamp, tangent);
         stamp.colorRgb = this.getNextStampColorRgb();
+        this.includeStrokeStampBounds(stamp);
         this.stampsBuffer.push(stamp);
       }
     }
@@ -2688,7 +2845,7 @@ void main() {
       }
 
       const gl = this.gl;
-      const target = this.getPaintTarget();
+      const documentSize = this.getDocumentSize();
       const stampCount = this.stampsBuffer.length;
       // 14 float per istanza: base dab + colore + dati grain Moving.
       const instanceData = new Float32Array(stampCount * 14);
@@ -2720,7 +2877,7 @@ void main() {
       }
 
       gl.useProgram(this.brushProgramInfo.program);
-      gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, target.width, target.height);
+      gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, documentSize.width, documentSize.height);
       gl.uniform1f(this.brushProgramInfo.uniforms.brushSize, brushSize);
       gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
       gl.uniform2f(this.brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
@@ -2768,7 +2925,7 @@ void main() {
       gl.bufferData(gl.ARRAY_BUFFER, instanceData, gl.DYNAMIC_DRAW);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokePlateauFBO);
-      gl.viewport(0, 0, target.width, target.height);
+      gl.viewport(0, 0, documentSize.width, documentSize.height);
       gl.enable(gl.BLEND);
       // Plateau reale: Light Glaze non somma ne' opacità ne' colore nello stesso stroke.
       gl.blendEquation(gl.MAX);
@@ -2776,7 +2933,7 @@ void main() {
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeAccumFBO);
-      gl.viewport(0, 0, target.width, target.height);
+      gl.viewport(0, 0, documentSize.width, documentSize.height);
       gl.enable(gl.BLEND);
       // Accumulo pieno: gli stamp dello stesso tratto si stratificano con SrcOver pre-moltiplicato.
       gl.blendEquation(gl.FUNC_ADD);
@@ -2802,11 +2959,11 @@ void main() {
 
     composeStrokeBuildUp() {
       const gl = this.gl;
-      const target = this.getPaintTarget();
+      const documentSize = this.getDocumentSize();
       const { program, uniforms } = this.strokeBuildupProgramInfo;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
-      gl.viewport(0, 0, target.width, target.height);
+      gl.viewport(0, 0, documentSize.width, documentSize.height);
       gl.disable(gl.BLEND);
 
       gl.useProgram(program);
@@ -2835,20 +2992,58 @@ void main() {
 
     bakeStroke() {
       const gl = this.gl;
-      const target = this.getPaintTarget();
+      const layerId = this.strokeTargetLayerId || this.getPaintTarget().layerId;
+      const isEraserStroke = this.currentStrokeTool === "eraser";
+      const strokeRect = this.getActiveStrokeRect();
+      const documentSize = this.getDocumentSize();
       const { program, uniforms } = this.compositeProgramInfo;
 
+      if (!strokeRect) {
+        this.clearStrokeLayer();
+        return;
+      }
+
+      let target = null;
+      let writeRect = strokeRect;
+
+      if (isEraserStroke) {
+        target = this.documentRenderer.getRasterTarget(layerId);
+        writeRect = this.getRectIntersection(strokeRect, this.getTargetContentRect(target));
+
+        if (!writeRect || !target?.texture || !target?.framebuffer) {
+          this.clearStrokeLayer();
+          return;
+        }
+      } else {
+        target = this.documentRenderer.ensureRasterTargetAllocation(
+          layerId,
+          strokeRect,
+          { padding: 64 },
+        );
+      }
+
+      const allocatedX = Number.isFinite(target.allocatedX) ? target.allocatedX : target.x;
+      const allocatedY = Number.isFinite(target.allocatedY) ? target.allocatedY : target.y;
+      const localX = writeRect.x - allocatedX;
+      const localY = writeRect.y - allocatedY;
+
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-      gl.viewport(0, 0, target.width, target.height);
+      gl.viewport(localX, target.allocatedHeight - (localY + writeRect.height), writeRect.width, writeRect.height);
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      if (isEraserStroke) {
+        gl.blendFuncSeparate(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
+      } else {
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      }
 
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.strokeTexture);
       gl.uniform1i(uniforms.texture, 0);
       gl.uniform1f(uniforms.opacity, 1.0);
+      gl.uniform4f(uniforms.sourceRect, writeRect.x, writeRect.y, writeRect.width, writeRect.height);
+      gl.uniform2f(uniforms.sourceResolution, documentSize.width, documentSize.height);
 
       gl.bindVertexArray(this.fullscreenQuad.vao);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -2856,12 +3051,20 @@ void main() {
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
 
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+      if (!isEraserStroke) {
+        this.documentRenderer.markRasterTargetContentMaybe?.(layerId, strokeRect);
+      }
+
+      this.documentRenderer.trimRasterTargetContentSync?.(layerId);
       this.clearStrokeLayer();
     }
 
     clearStrokeLayer() {
       const gl = this.gl;
-      const target = this.getPaintTarget();
+      const documentSize = this.getDocumentSize();
       const framebuffers = [this.strokeFBO, this.strokePlateauFBO, this.strokeAccumFBO];
 
       for (const framebuffer of framebuffers) {
@@ -2870,7 +3073,7 @@ void main() {
         }
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-        gl.viewport(0, 0, target.width, target.height);
+        gl.viewport(0, 0, documentSize.width, documentSize.height);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
       }
@@ -2901,6 +3104,9 @@ void main() {
       this.strokeGrainRandomState = null;
       this.strokeChargeRadius = null;
       this.strokeGrainOffset = { x: 0, y: 0 };
+      this.activeStrokeBounds = null;
+      this.strokeTargetLayerId = null;
+      this.currentStrokeTool = this.activeStrokeTool || "brush";
     }
 
     replayLastStroke() {
@@ -2944,6 +3150,7 @@ void main() {
       // Riusiamo il seed iniziale dello stroke originale per riprodurre l'identica
       // sequenza di jitter spaziale (lateral/linear/spacing) e colore.
       this.clearStrokeLayer();
+      this.activeStrokeBounds = null;
       this.strokeRandomState = { seed: this.strokeInitialSeed };
       this.initializeStrokeColorDynamics(this.strokeInitialSeed);
       this.initializeWetMixRandom(this.strokeInitialSeed);
@@ -2995,6 +3202,7 @@ void main() {
       }
 
       this.clearAllLayers();
+      this.activeStrokeBounds = null;
 
       const firstSample = rawSamples[0];
       const startPoint = this.beginStrokeDynamics(firstSample);
@@ -3079,13 +3287,27 @@ void main() {
       }
 
       event.preventDefault();
-      this.documentRenderer?.ensurePaintLayerForBrush?.();
+      const strokeTool = this.activeStrokeTool || "brush";
+      let strokeTarget = null;
+
+      if (strokeTool === "eraser") {
+        strokeTarget = this.getActiveRasterTargetForEraser();
+
+        if (!strokeTarget) {
+          return;
+        }
+      } else {
+        strokeTarget = this.documentRenderer?.ensurePaintLayerForBrush?.() || this.getPaintTarget();
+      }
 
       // Modalità preview: ogni nuovo tratto resetta la canvas (utile nella drawing pad).
-      if (this.options.singleStrokeMode) {
+      if (this.options.singleStrokeMode && strokeTool !== "eraser") {
         this.clearAllLayers();
       }
 
+      this.activeStrokeBounds = null;
+      this.currentStrokeTool = strokeTool;
+      this.strokeTargetLayerId = strokeTarget?.layerId || null;
       const rawSample = this.createPointerSample(event);
 
       this.recordedStroke = [rawSample];
@@ -3209,10 +3431,15 @@ void main() {
 
     draw() {
       const target = this.getPaintTarget();
+      const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
+      const activeStrokeTexture = this.isDrawing
+        ? this.strokeTexture
+        : null;
 
       this.documentRenderer.drawToCanvas({
-        activeStrokeLayerId: target.layerId,
-        activeStrokeTexture: this.isDrawing ? this.strokeTexture : null,
+        activeStrokeLayerId,
+        activeStrokeMode: this.currentStrokeTool === "eraser" ? "eraser" : "paint",
+        activeStrokeTexture,
         camera: this.camera,
         viewportWidth: this.viewportWidth,
         viewportHeight: this.viewportHeight,

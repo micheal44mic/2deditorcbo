@@ -237,8 +237,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const row = entry.querySelector(":scope > [data-layer-row]");
     const type = row?.dataset.layerType || entry.dataset.layerType || "layer";
     const isBackground = type === "background";
+    const id = getLayerId(row) || layerModel?.createId(type) || `${type}-${Date.now().toString(36)}`;
+    const existingEntry = layerModel?.findEntryById?.(id);
     const serialized = {
-      id: getLayerId(row) || layerModel?.createId(type) || `${type}-${Date.now().toString(36)}`,
+      id,
       type,
       name: isBackground
         ? "Background"
@@ -247,6 +249,15 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       locked: isBackground || row?.classList.contains("locked") === true,
       opacity: 1,
     };
+
+    if (existingEntry && existingEntry.type === type && type === "text") {
+      serialized.text = existingEntry.text;
+      serialized.font = existingEntry.font;
+      serialized.style = existingEntry.style;
+      serialized.box = existingEntry.box;
+      serialized.transform = existingEntry.transform;
+      serialized.opacity = Number.isFinite(existingEntry.opacity) ? existingEntry.opacity : serialized.opacity;
+    }
 
     if (type === "group") {
       const children = getLayerChildren(entry);

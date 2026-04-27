@@ -593,8 +593,14 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   });
 
   window.addEventListener("cbo:tool-change", (event) => {
+    const label = String(event.detail?.label || "").toUpperCase();
+    const toolMode = String(event.detail?.toolMode || "").toLowerCase();
+    const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
     const isBrushTool =
-      event.detail?.syncGroup === "brush" || event.detail?.label?.toUpperCase() === "BRUSH";
+      syncGroup === "brush" ||
+      label === "BRUSH" ||
+      label === "ERASER" ||
+      toolMode === "eraser";
 
     if (brushGallery) {
       brushGallery.hidden = !isBrushTool;

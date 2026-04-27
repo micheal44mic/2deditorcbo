@@ -2150,6 +2150,9 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     }
   }
 
+  window.CBO.openBrushStudio = openBrushStudio;
+  window.CBO.closeBrushStudio = closeBrushStudio;
+
   document.addEventListener("click", (event) => {
     const target = event.target;
 
