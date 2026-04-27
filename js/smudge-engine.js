@@ -493,8 +493,36 @@ void main() {
       return event.button === 1 || (event.button === 0 && namespace.brushEngine?.isSpaceHeld);
     }
 
+    getActivePaintLayerTarget() {
+      const layerModel = this.documentRenderer?.layerModel;
+      const activeId = layerModel?.activeLayerId;
+
+      if (!activeId || typeof layerModel?.findEntryById !== "function") {
+        return null;
+      }
+
+      const activeLayer = layerModel.findEntryById(activeId);
+
+      if (activeLayer?.type !== "paint") {
+        return null;
+      }
+
+      const getRasterTarget = this.documentRenderer?.getRasterTarget;
+
+      if (typeof getRasterTarget !== "function") {
+        return null;
+      }
+
+      return getRasterTarget.call(this.documentRenderer, activeId);
+    }
+
     beginStroke(event) {
-      const target = this.documentRenderer.ensurePaintLayerForBrush?.() || this.documentRenderer.getPaintTarget();
+      const target = this.getActivePaintLayerTarget();
+
+      if (!target) {
+        return false;
+      }
+
       const point = this.screenToDocumentSpace(event.clientX, event.clientY);
 
       if (!this.isDocumentPointInside(point, target)) {
@@ -606,7 +634,12 @@ void main() {
     }
 
     renderDab(cx, cy, pressure, directionX, directionY, stepDistance) {
-      const target = this.strokeTarget || this.documentRenderer.getPaintTarget();
+      const target = this.strokeTarget;
+
+      if (!target) {
+        return;
+      }
+
       const radius = this.getRadius();
       const bounds = this.getDabBounds(cx, cy, radius, target);
 
