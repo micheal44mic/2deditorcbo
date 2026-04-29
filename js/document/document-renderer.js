@@ -405,7 +405,7 @@ void main() {
       this.emitContentChange({ source: "clear-document" });
     }
 
-    clearLayer(layerId) {
+    clearLayer(layerId, options = {}) {
       if (!layerId) {
         return false;
       }
@@ -417,7 +417,43 @@ void main() {
       }
 
       this.clearTarget(target);
-      this.emitContentChange({ layerId, source: "clear-layer" });
+      if (options.emit !== false) {
+        this.emitContentChange({ layerId, source: options.source || "clear-layer" });
+      }
+
+      return true;
+    }
+
+    deleteRasterTarget(layerId, options = {}) {
+      if (!layerId) {
+        return false;
+      }
+
+      const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!target) {
+        return false;
+      }
+
+      if (target.texture === this.texture || layerId === this.paintLayerId || layerId === "background") {
+        return false;
+      }
+
+      const gl = this.gl;
+
+      if (target.framebuffer) {
+        gl.deleteFramebuffer(target.framebuffer);
+      }
+
+      if (target.texture) {
+        gl.deleteTexture(target.texture);
+      }
+
+      this.rasterTargetsByLayerId.delete(layerId);
+
+      if (options.emit !== false) {
+        this.emitContentChange({ layerId, source: options.source || "delete-raster-target" });
+      }
 
       return true;
     }

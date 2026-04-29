@@ -59,6 +59,18 @@
   pointer-events: visiblePainted;
 }
 
+.editor-vector-overlay .editor-vector-solid-shadow,
+.editor-vector-overlay .editor-vector-text-paint {
+  opacity: 0;
+}
+
+.editor-vector-overlay.is-text-edit-previewing .editor-vector-text-layer.active .editor-vector-solid-shadow,
+.editor-vector-overlay.is-text-edit-previewing .editor-vector-text-layer.active .editor-vector-text-paint,
+.editor-vector-overlay.is-raster-previewing .editor-vector-text-layer.active .editor-vector-solid-shadow,
+.editor-vector-overlay.is-raster-previewing .editor-vector-text-layer.active .editor-vector-text-paint {
+  opacity: 1;
+}
+
 .editor-vector-text-layer.locked {
   pointer-events: none;
 }

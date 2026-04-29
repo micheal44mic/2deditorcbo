@@ -4,6 +4,8 @@
   const CORNER_ENVELOPE_NODES = ["TL", "TR", "BL", "BR"];
   const CENTER_ENVELOPE_NODES = ["TC", "BC"];
   const HANDLE_ENVELOPE_NODES = ["TC_HandleL", "TC_HandleR", "BC_HandleL", "BC_HandleR"];
+  const ACTIVE_TEXT_RASTER_DEBOUNCE_MS = 180;
+  const TEXT_RASTER_PREVIEW_MS = 260;
 
   function createSvgElement(name, attributes = {}) {
     const element = document.createElementNS(SVG_NS, name);
@@ -195,6 +197,167 @@
     return hex;
   }
 
+  let solidShadowCacheKey = "";
+  let solidShadowCacheValue = "";
+
+  function createSolidShadowExtrusionPathData(pathData, offsetX, offsetY) {
+    const offsetXRounded = Math.round(offsetX * 100) / 100;
+    const offsetYRounded = Math.round(offsetY * 100) / 100;
+    const cacheKey = `${pathData}|${offsetXRounded}|${offsetYRounded}`;
+
+    if (solidShadowCacheKey === cacheKey) {
+      return solidShadowCacheValue;
+    }
+
+    const tokens = String(pathData || "").match(/[a-zA-Z]|[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi) || [];
+    const segments = [];
+    let index = 0;
+    let command = "";
+    let current = { x: 0, y: 0 };
+    let contourStart = { x: 0, y: 0 };
+
+    function toNum(token) {
+      const value = Number(token);
+
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    function formatPoint(point) {
+      return `${Math.round(point.x * 100) / 100} ${Math.round(point.y * 100) / 100}`;
+    }
+
+    function formatOffsetPoint(point) {
+      return `${Math.round((point.x + offsetX) * 100) / 100} ${Math.round((point.y + offsetY) * 100) / 100}`;
+    }
+
+    function needsReverse(start, end) {
+      return (end.x - start.x) * offsetY - (end.y - start.y) * offsetX < 0;
+    }
+
+    function addLinePatch(start, end) {
+      if (Math.abs(end.x - start.x) < 0.01 && Math.abs(end.y - start.y) < 0.01) {
+        return;
+      }
+
+      if (needsReverse(start, end)) {
+        segments.push(`M ${formatPoint(start)} L ${formatOffsetPoint(start)} L ${formatOffsetPoint(end)} L ${formatPoint(end)} Z`);
+      } else {
+        segments.push(`M ${formatPoint(start)} L ${formatPoint(end)} L ${formatOffsetPoint(end)} L ${formatOffsetPoint(start)} Z`);
+      }
+    }
+
+    function addQuadraticPatch(start, control, end) {
+      if (Math.abs(end.x - start.x) < 0.01 && Math.abs(end.y - start.y) < 0.01) {
+        return;
+      }
+
+      if (needsReverse(start, end)) {
+        segments.push(`M ${formatPoint(start)} L ${formatOffsetPoint(start)} Q ${formatOffsetPoint(control)} ${formatOffsetPoint(end)} L ${formatPoint(end)} Q ${formatPoint(control)} ${formatPoint(start)} Z`);
+      } else {
+        segments.push(`M ${formatPoint(start)} Q ${formatPoint(control)} ${formatPoint(end)} L ${formatOffsetPoint(end)} Q ${formatOffsetPoint(control)} ${formatOffsetPoint(start)} Z`);
+      }
+    }
+
+    function addCubicPatch(start, controlA, controlB, end) {
+      if (Math.abs(end.x - start.x) < 0.01 && Math.abs(end.y - start.y) < 0.01) {
+        return;
+      }
+
+      if (needsReverse(start, end)) {
+        segments.push(`M ${formatPoint(start)} L ${formatOffsetPoint(start)} C ${formatOffsetPoint(controlA)} ${formatOffsetPoint(controlB)} ${formatOffsetPoint(end)} L ${formatPoint(end)} C ${formatPoint(controlB)} ${formatPoint(controlA)} ${formatPoint(start)} Z`);
+      } else {
+        segments.push(`M ${formatPoint(start)} C ${formatPoint(controlA)} ${formatPoint(controlB)} ${formatPoint(end)} L ${formatOffsetPoint(end)} C ${formatOffsetPoint(controlB)} ${formatOffsetPoint(controlA)} ${formatOffsetPoint(start)} Z`);
+      }
+    }
+
+    while (index < tokens.length) {
+      if (/^[a-zA-Z]$/.test(tokens[index])) {
+        command = tokens[index];
+        index += 1;
+      }
+
+      const normalized = command.toUpperCase();
+      const relative = command !== normalized;
+
+      if (normalized === "M") {
+        const x = toNum(tokens[index]);
+        const y = toNum(tokens[index + 1]);
+
+        index += 2;
+        current = relative ? { x: current.x + x, y: current.y + y } : { x, y };
+        contourStart = current;
+        command = relative ? "l" : "L";
+      } else if (normalized === "L") {
+        const x = toNum(tokens[index]);
+        const y = toNum(tokens[index + 1]);
+        const next = relative ? { x: current.x + x, y: current.y + y } : { x, y };
+
+        index += 2;
+        addLinePatch(current, next);
+        current = next;
+      } else if (normalized === "H") {
+        const x = toNum(tokens[index]);
+        const next = relative ? { x: current.x + x, y: current.y } : { x, y: current.y };
+
+        index += 1;
+        addLinePatch(current, next);
+        current = next;
+      } else if (normalized === "V") {
+        const y = toNum(tokens[index]);
+        const next = relative ? { x: current.x, y: current.y + y } : { x: current.x, y };
+
+        index += 1;
+        addLinePatch(current, next);
+        current = next;
+      } else if (normalized === "Q") {
+        const controlX = toNum(tokens[index]);
+        const controlY = toNum(tokens[index + 1]);
+        const endX = toNum(tokens[index + 2]);
+        const endY = toNum(tokens[index + 3]);
+        const control = relative
+          ? { x: current.x + controlX, y: current.y + controlY }
+          : { x: controlX, y: controlY };
+        const next = relative
+          ? { x: current.x + endX, y: current.y + endY }
+          : { x: endX, y: endY };
+
+        index += 4;
+        addQuadraticPatch(current, control, next);
+        current = next;
+      } else if (normalized === "C") {
+        const controlAX = toNum(tokens[index]);
+        const controlAY = toNum(tokens[index + 1]);
+        const controlBX = toNum(tokens[index + 2]);
+        const controlBY = toNum(tokens[index + 3]);
+        const endX = toNum(tokens[index + 4]);
+        const endY = toNum(tokens[index + 5]);
+        const controlA = relative
+          ? { x: current.x + controlAX, y: current.y + controlAY }
+          : { x: controlAX, y: controlAY };
+        const controlB = relative
+          ? { x: current.x + controlBX, y: current.y + controlBY }
+          : { x: controlBX, y: controlBY };
+        const next = relative
+          ? { x: current.x + endX, y: current.y + endY }
+          : { x: endX, y: endY };
+
+        index += 6;
+        addCubicPatch(current, controlA, controlB, next);
+        current = next;
+      } else if (normalized === "Z") {
+        addLinePatch(current, contourStart);
+        current = contourStart;
+      } else {
+        break;
+      }
+    }
+
+    solidShadowCacheKey = cacheKey;
+    solidShadowCacheValue = segments.join(" ");
+
+    return solidShadowCacheValue;
+  }
+
   function getLayerSignature(layer) {
     return JSON.stringify({
       envelopeGrid: layer.envelopeGrid || null,
@@ -208,6 +371,63 @@
       textAlign: layer.textAlign,
       uppercase: layer.uppercase,
       warp: layer.warp || null,
+    });
+  }
+
+  function getTextRasterSignature(layer, pathData, size) {
+    return JSON.stringify({
+      documentHeight: size.height,
+      documentWidth: size.width,
+      pathData,
+      rotation: layer.rotation,
+      scaleX: layer.scaleX,
+      scaleY: layer.scaleY,
+      shadowAngle: layer.shadowAngle,
+      shadowDistance: layer.shadowDistance,
+      shadowType: layer.shadowType,
+      style: layer.style || null,
+      x: layer.x,
+      y: layer.y,
+    });
+  }
+
+  function serializeTextLayerSvg(layerNode, defs, size) {
+    const svg = createSvgElement("svg", {
+      height: size.height,
+      viewBox: `0 0 ${size.width} ${size.height}`,
+      width: size.width,
+      xmlns: SVG_NS,
+    });
+
+    if (defs?.length) {
+      const defsNode = createSvgElement("defs");
+
+      defs.forEach((definition) => defsNode.append(definition));
+      svg.append(defsNode);
+    }
+
+    svg.append(layerNode);
+
+    return new XMLSerializer().serializeToString(svg);
+  }
+
+  function loadSvgImage(svgMarkup) {
+    return new Promise((resolve, reject) => {
+      const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+      const objectUrl = URL.createObjectURL(blob);
+      const image = new Image();
+
+      image.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve(image);
+      };
+
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Impossibile aggiornare la texture del testo vettoriale."));
+      };
+
+      image.src = objectUrl;
     });
   }
 
@@ -369,6 +589,9 @@
       this.pathCache = new Map();
       this.fontCache = new Map();
       this.fontRequests = new Map();
+      this.rasterLayerCache = new Map();
+      this.rasterGeneration = 0;
+      this.previewTimer = 0;
       this.frameRequest = 0;
       this.interactionTimer = 0;
       this.isInteracting = false;
@@ -504,6 +727,43 @@
       }, 140);
     }
 
+    beginRasterPreview(duration = TEXT_RASTER_PREVIEW_MS) {
+      this.svg.classList.add("is-raster-previewing");
+
+      if (this.previewTimer) {
+        window.clearTimeout(this.previewTimer);
+      }
+
+      this.previewTimer = window.setTimeout(() => {
+        this.svg.classList.remove("is-raster-previewing");
+        this.previewTimer = 0;
+      }, duration);
+    }
+
+    finishRasterPreviewIfIdle() {
+      const hasPendingRasterWork = Array.from(this.rasterLayerCache.values())
+        .some((cache) => cache?.pendingSignature || cache?.queuedSignature);
+
+      if (hasPendingRasterWork) {
+        return;
+      }
+
+      if (this.previewTimer) {
+        window.clearTimeout(this.previewTimer);
+        this.previewTimer = 0;
+      }
+
+      this.svg.classList.remove("is-raster-previewing");
+    }
+
+    beginTextEditPreview() {
+      this.svg.classList.add("is-text-edit-previewing");
+    }
+
+    endTextEditPreview() {
+      this.svg.classList.remove("is-text-edit-previewing");
+    }
+
     updateViewportSize() {
       const rect = this.stage.getBoundingClientRect();
       const width = Math.max(1, Math.round(rect.width));
@@ -608,6 +868,189 @@
         .find((node) => node.getAttribute("data-layer-id") === layerId) || null;
     }
 
+    getDocumentTextureSize() {
+      const renderer = namespace.documentRenderer;
+
+      return {
+        height: Math.max(1, Math.round(renderer?.height || 4000)),
+        width: Math.max(1, Math.round(renderer?.width || 4000)),
+      };
+    }
+
+    createRasterTextLayerMarkup(layer, pathData, size) {
+      const defs = [];
+      const filter = this.createDropShadowFilter(layer, { ignoreInteraction: true });
+      const rasterLayer = {
+        ...layer,
+        opacity: 1,
+      };
+      const node = this.createTextLayerNode(rasterLayer, pathData, {
+        active: false,
+        applyLayerOpacity: false,
+        defs,
+        filterId: filter?.id || "",
+        ignoreInteraction: true,
+        includeControls: false,
+        interactive: false,
+      });
+
+      if (filter) {
+        defs.push(filter.node);
+      }
+
+      return serializeTextLayerSvg(node, defs, size);
+    }
+
+    syncTextLayerRaster(layer, pathData) {
+      const renderer = namespace.documentRenderer;
+      const rasterizer = namespace.imageRasterizer;
+
+      if (!renderer?.getRasterTarget || !rasterizer?.placeRasterImage) {
+        return;
+      }
+
+      const size = this.getDocumentTextureSize();
+      const signature = getTextRasterSignature(layer, pathData, size);
+      const cached = this.rasterLayerCache.get(layer.id);
+
+      if (
+        cached?.signature === signature ||
+        cached?.pendingSignature === signature ||
+        cached?.queuedSignature === signature
+      ) {
+        return;
+      }
+
+      const delay = layer.id === this.layerModel?.activeLayerId ? ACTIVE_TEXT_RASTER_DEBOUNCE_MS : 0;
+
+      if (delay > 0) {
+        this.queueTextLayerRasterSync(layer, pathData, size, signature, delay);
+        this.beginRasterPreview(delay + TEXT_RASTER_PREVIEW_MS);
+        return;
+      }
+
+      this.runTextLayerRasterSync(layer, pathData, size, signature);
+    }
+
+    queueTextLayerRasterSync(layer, pathData, size, signature, delay) {
+      const cached = this.rasterLayerCache.get(layer.id) || {};
+
+      if (cached.timerId) {
+        window.clearTimeout(cached.timerId);
+      }
+
+      const timerId = window.setTimeout(() => {
+        const latest = this.rasterLayerCache.get(layer.id);
+
+        if (!latest || latest.queuedSignature !== signature) {
+          return;
+        }
+
+        this.rasterLayerCache.set(layer.id, {
+          ...latest,
+          queuedSignature: "",
+          timerId: 0,
+        });
+        this.runTextLayerRasterSync(layer, pathData, size, signature);
+      }, delay);
+
+      this.rasterLayerCache.set(layer.id, {
+        ...cached,
+        queuedSignature: signature,
+        timerId,
+      });
+    }
+
+    runTextLayerRasterSync(layer, pathData, size, signature) {
+      const renderer = namespace.documentRenderer;
+      const rasterizer = namespace.imageRasterizer;
+
+      if (!renderer?.getRasterTarget || !rasterizer?.placeRasterImage) {
+        return;
+      }
+
+      const cached = this.rasterLayerCache.get(layer.id) || {};
+      const generation = this.rasterGeneration + 1;
+      const svgMarkup = this.createRasterTextLayerMarkup(layer, pathData, size);
+
+      this.rasterGeneration = generation;
+      this.rasterLayerCache.set(layer.id, {
+        ...cached,
+        generation,
+        pendingSignature: signature,
+      });
+
+      loadSvgImage(svgMarkup)
+        .then((image) => {
+          const latest = this.rasterLayerCache.get(layer.id);
+
+          if (
+            !latest ||
+            latest.generation !== generation ||
+            latest.pendingSignature !== signature ||
+            namespace.documentRenderer !== renderer ||
+            namespace.imageRasterizer !== rasterizer
+          ) {
+            return;
+          }
+
+          const target = renderer.getRasterTarget(layer.id);
+
+          renderer.clearLayer(layer.id, { emit: false });
+          rasterizer.placeRasterImage(image, {
+            emit: false,
+            layerId: layer.id,
+            source: "vector-text-cache",
+            target,
+            x: 0,
+            y: 0,
+          });
+
+          this.rasterLayerCache.set(layer.id, {
+            generation,
+            pendingSignature: "",
+            signature,
+          });
+          this.finishRasterPreviewIfIdle();
+          namespace.brushEngine?.requestDraw?.();
+        })
+        .catch((error) => {
+          const latest = this.rasterLayerCache.get(layer.id);
+
+          if (latest?.generation === generation) {
+            this.rasterLayerCache.set(layer.id, {
+              ...latest,
+              pendingSignature: "",
+            });
+          }
+
+          this.finishRasterPreviewIfIdle();
+          console.warn("Impossibile sincronizzare il testo vettoriale nel compositing WebGL.", error);
+        });
+    }
+
+    removeStaleTextRasterTargets(activeLayerIds) {
+      const renderer = namespace.documentRenderer;
+      let didRemoveTarget = false;
+
+      this.rasterLayerCache.forEach((_cache, layerId) => {
+        if (activeLayerIds.has(layerId)) {
+          return;
+        }
+
+        if (_cache?.timerId) {
+          window.clearTimeout(_cache.timerId);
+        }
+
+        this.rasterLayerCache.delete(layerId);
+        didRemoveTarget = renderer?.deleteRasterTarget?.(layerId, { emit: false }) || didRemoveTarget;
+      });
+
+      if (didRemoveTarget) {
+        namespace.brushEngine?.requestDraw?.();
+      }
+    }
+
     getEnvelopeHandleHitAtClient(clientX, clientY, pointerType = "mouse") {
       const layer = this.getActiveTextLayer();
 
@@ -652,6 +1095,7 @@
     renderContent() {
       const layers = this.getRenderableTextLayers();
       const activeLayerId = this.layerModel?.activeLayerId || "";
+      const activeTextLayerIds = new Set();
       const nodes = [];
       const defs = [];
 
@@ -659,6 +1103,8 @@
         if (layer.visible === false) {
           return;
         }
+
+        activeTextLayerIds.add(layer.id);
 
         const font = this.getFont(layer.fontUrl);
 
@@ -683,15 +1129,17 @@
         }
 
         nodes.push(node);
+        this.syncTextLayerRaster(renderLayer, pathData);
       });
 
+      this.removeStaleTextRasterTargets(activeTextLayerIds);
       this.defs.replaceChildren(...defs);
       this.contentGroup.replaceChildren(...nodes);
       this.updateCameraTransform();
     }
 
-    createDropShadowFilter(layer) {
-      if (this.isInteracting || layer.shadowType !== "drop") {
+    createDropShadowFilter(layer, options = {}) {
+      if ((this.isInteracting && options.ignoreInteraction !== true) || layer.shadowType !== "drop") {
         return null;
       }
 
@@ -730,7 +1178,7 @@
       const group = createSvgElement("g", {
         class: `editor-vector-text-layer${options.active ? " active" : ""}`,
         "data-layer-id": layer.id,
-        opacity: toFiniteNumber(layer.opacity, 1),
+        opacity: options.applyLayerOpacity === false ? 1 : toFiniteNumber(layer.opacity, 1),
         transform: formatLayerTransform(layer),
       });
 
@@ -738,17 +1186,21 @@
         group.classList.add("locked");
       }
 
-      this.appendSolidShadow(group, layer, pathData);
+      this.appendSolidShadow(group, layer, pathData, {
+        ignoreInteraction: options.ignoreInteraction === true,
+      });
 
       const paintGroup = this.createTextPaintGroup(layer, pathData, options);
 
       group.append(paintGroup);
 
-      if (options.active && layer.envelopeGrid) {
+      if (options.includeControls !== false && options.active && layer.envelopeGrid) {
         group.append(this.createEnvelopeControls(layer));
       }
 
-      group.addEventListener("pointerdown", (event) => this.handleTextLayerPointerDown(event, layer.id));
+      if (options.interactive !== false) {
+        group.addEventListener("pointerdown", (event) => this.handleTextLayerPointerDown(event, layer.id));
+      }
 
       return group;
     }
@@ -984,8 +1436,8 @@
       return group;
     }
 
-    appendSolidShadow(group, layer, pathData) {
-      if (this.isInteracting || layer.shadowType !== "solid") {
+    appendSolidShadow(group, layer, pathData, options = {}) {
+      if ((this.isInteracting && options.ignoreInteraction !== true) || layer.shadowType !== "solid") {
         return;
       }
 
@@ -997,26 +1449,37 @@
         return;
       }
 
-      const shadowGroup = createSvgElement("g", { class: "editor-vector-solid-shadow" });
+      const shadowGroup = createSvgElement("g", {
+        class: "editor-vector-solid-shadow",
+        opacity: String(opacity),
+      });
       const angle = (toFiniteNumber(layer.shadowAngle, 0) * Math.PI) / 180;
-      const maxSteps = 140;
-      const steps = Math.max(1, Math.min(maxSteps, Math.ceil(distance)));
-      const stepDistance = distance / steps;
-      const color = colorWithOpacity(shadow.color || "#000000", opacity);
+      const color = colorWithOpacity(shadow.color || "#000000", 1);
+      const offsetX = Math.cos(angle) * distance;
+      const offsetY = Math.sin(angle) * distance;
+      const extrusionPathData = createSolidShadowExtrusionPathData(pathData, offsetX, offsetY);
 
-      for (let index = steps; index >= 1; index -= 1) {
-        const offset = index * stepDistance;
-        const path = createSvgElement("path", {
-          d: pathData,
+      if (extrusionPathData) {
+        shadowGroup.append(createSvgElement("path", {
+          class: "editor-vector-solid-shadow-extrusion",
+          d: extrusionPathData,
           fill: color,
           stroke: color,
+          "stroke-linecap": "round",
           "stroke-linejoin": "round",
-          "stroke-width": 1.5,
-          transform: `translate(${Math.cos(angle) * offset} ${Math.sin(angle) * offset})`,
-        });
-
-        shadowGroup.append(path);
+          "stroke-width": 1,
+        }));
       }
+
+      shadowGroup.append(createSvgElement("path", {
+        class: "editor-vector-solid-shadow-backface",
+        d: pathData,
+        fill: color,
+        stroke: color,
+        "stroke-linejoin": "round",
+        "stroke-width": 1,
+        transform: `translate(${offsetX} ${offsetY})`,
+      }));
 
       group.append(shadowGroup);
     }
@@ -1078,6 +1541,7 @@
       window.addEventListener("pointermove", this.handleDragMove);
       window.addEventListener("pointerup", this.handleDragEnd);
       window.addEventListener("pointercancel", this.handleDragEnd);
+      this.beginTextEditPreview();
       this.beginInteraction();
     }
 
@@ -1105,6 +1569,7 @@
       window.addEventListener("pointermove", this.handleEnvelopeDragMove);
       window.addEventListener("pointerup", this.handleEnvelopeDragEnd);
       window.addEventListener("pointercancel", this.handleEnvelopeDragEnd);
+      this.beginTextEditPreview();
       this.beginInteraction();
     }
 
@@ -1146,6 +1611,7 @@
       window.removeEventListener("pointerup", this.handleEnvelopeDragEnd);
       window.removeEventListener("pointercancel", this.handleEnvelopeDragEnd);
       this.envelopeDragState = null;
+      this.endTextEditPreview();
       event.preventDefault();
     }
 
@@ -1185,9 +1651,11 @@
           x: nextLayer.x,
           y: nextLayer.y,
         }, { source: "vector-text-drag" });
+        this.beginRasterPreview(ACTIVE_TEXT_RASTER_DEBOUNCE_MS + TEXT_RASTER_PREVIEW_MS);
       }
 
       this.dragState = null;
+      this.endTextEditPreview();
       event.preventDefault();
     }
 

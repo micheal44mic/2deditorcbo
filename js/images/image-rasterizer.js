@@ -264,12 +264,14 @@ void main() {
         gl.deleteTexture(texture);
       }
 
-      window.dispatchEvent(new CustomEvent("cbo:document-content-change", {
-        detail: {
-          layerId: target.layerId || null,
-          source: "image-rasterizer",
-        },
-      }));
+      if (options.emit !== false) {
+        window.dispatchEvent(new CustomEvent("cbo:document-content-change", {
+          detail: {
+            layerId: target.layerId || null,
+            source: options.source || "image-rasterizer",
+          },
+        }));
+      }
     }
 
     dispose() {
