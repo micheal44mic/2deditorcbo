@@ -3600,6 +3600,17 @@ void main() {
         viewportWidth: this.viewportWidth,
         viewportHeight: this.viewportHeight,
       });
+
+      window.dispatchEvent(
+        new CustomEvent("cbo:camera-change", {
+          detail: {
+            camera: { ...this.camera },
+            dpr: this.dpr,
+            viewportHeight: this.viewportHeight,
+            viewportWidth: this.viewportWidth,
+          },
+        }),
+      );
     }
 
     dispose() {

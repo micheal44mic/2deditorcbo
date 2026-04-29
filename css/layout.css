@@ -32,6 +32,49 @@
   min-height: 0;
 }
 
+.editor-vector-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.editor-vector-overlay.text-tool-active {
+  pointer-events: auto;
+}
+
+.editor-vector-hit-area {
+  pointer-events: none;
+}
+
+.editor-vector-overlay.text-tool-active .editor-vector-hit-area {
+  pointer-events: all;
+}
+
+.editor-vector-text-layer {
+  pointer-events: visiblePainted;
+}
+
+.editor-vector-text-layer.locked {
+  pointer-events: none;
+}
+
+.editor-vector-text-path {
+  cursor: var(--editor-cursor);
+}
+
+.editor-vector-envelope-ui {
+  pointer-events: auto;
+}
+
+.editor-vector-envelope-handle {
+  pointer-events: all;
+}
+
 .side-panel {
   position: fixed;
   top: 0;

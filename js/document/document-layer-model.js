@@ -1,5 +1,19 @@
 (function registerDocumentLayerModel(namespace) {
   const BACKGROUND_LAYER_ID = "background";
+  const VECTOR_TEXT_TYPE = "vector-text";
+  const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
+    fill: "#f8efe2",
+    stroke: "#1b1713",
+    strokeAlign: "center",
+    strokeWidth: 7,
+    shadow: {
+      color: "#0f172a",
+      blur: 28,
+      offsetX: 20,
+      offsetY: 24,
+      opacity: 1,
+    },
+  });
 
   class DocumentLayerModel extends EventTarget {
     constructor(options = {}) {
@@ -20,8 +34,23 @@
 
     createBaseLayer(options = {}) {
       const type = options.type || "layer";
+      const baseKeys = new Set([
+        "id",
+        "type",
+        "name",
+        "visible",
+        "locked",
+        "opacity",
+        "children",
+      ]);
+      const extras = Object.fromEntries(
+        Object.entries(options)
+          .filter(([key]) => !baseKeys.has(key))
+          .map(([key, value]) => [key, this.cloneValue(value)]),
+      );
 
       return {
+        ...extras,
         id: options.id || this.createId(type),
         type,
         name: options.name || this.getFallbackName(type),
@@ -38,7 +67,78 @@
         return this.createGroup(options);
       }
 
+      if (type === VECTOR_TEXT_TYPE || type === "text") {
+        return this.createVectorTextLayer(options);
+      }
+
       return this.createBaseLayer(options);
+    }
+
+    createVectorTextLayer(options = {}) {
+      const engine = window.CBO?.VectorTextEngine;
+      const fontRecord = (window.CBO?.VECTOR_TEXT_FONTS || []).find((font) =>
+        font.url === (options.fontUrl || engine?.DEFAULT_FONT_URL),
+      ) || null;
+      const style = options.style || {};
+      const shadow = style.shadow || {};
+      const base = this.createBaseLayer({
+        ...options,
+        type: VECTOR_TEXT_TYPE,
+        name: options.name || "Text",
+      });
+
+      return {
+        ...base,
+        kind: "text",
+        text: typeof options.text === "string" ? options.text : "BOIL THE OCEAN",
+        x: Number.isFinite(options.x) ? options.x : 850,
+        y: Number.isFinite(options.y) ? options.y : 1420,
+        scaleX: Number.isFinite(options.scaleX) ? options.scaleX : 1,
+        scaleY: Number.isFinite(options.scaleY) ? options.scaleY : 1,
+        rotation: Number.isFinite(options.rotation) ? options.rotation : 0,
+        fontSize: Number.isFinite(options.fontSize) ? options.fontSize : 300,
+        fontUrl: options.fontUrl || engine?.DEFAULT_FONT_URL || "./vendor/fonts/LibreBaskerville-wght.ttf",
+        fontLabel: options.fontLabel || fontRecord?.label || engine?.DEFAULT_FONT_LABEL || "Libre Baskerville VF",
+        fontFamily: options.fontFamily || fontRecord?.family || engine?.DEFAULT_FONT_LABEL || "UnifrakturCook",
+        fontStyle: options.fontStyle || fontRecord?.style || "Bold",
+        letterSpacing: Number.isFinite(options.letterSpacing) ? options.letterSpacing : 0,
+        lineHeight: Number.isFinite(options.lineHeight) ? options.lineHeight : 182,
+        textAlign: ["left", "center", "right"].includes(options.textAlign) ? options.textAlign : "center",
+        uppercase: options.uppercase === true,
+        ligatures: options.ligatures !== false,
+        alternates: options.alternates === true,
+        shadowType: options.shadowType || "drop",
+        shadowAngle: Number.isFinite(options.shadowAngle) ? options.shadowAngle : 42,
+        shadowDistance: Number.isFinite(options.shadowDistance) ? options.shadowDistance : 72,
+        envelopeGrid: options.envelopeGrid ? this.cloneValue(options.envelopeGrid) : null,
+        warp: {
+          type: options.warp?.type || "arch",
+          amount: Number.isFinite(options.warp?.amount) ? options.warp.amount : 170,
+        },
+        style: {
+          fill: style.fill || DEFAULT_VECTOR_TEXT_STYLE.fill,
+          stroke: style.stroke || DEFAULT_VECTOR_TEXT_STYLE.stroke,
+          strokeAlign: ["outer", "inner", "center"].includes(style.strokeAlign)
+            ? style.strokeAlign
+            : DEFAULT_VECTOR_TEXT_STYLE.strokeAlign,
+          strokeWidth: Number.isFinite(style.strokeWidth)
+            ? style.strokeWidth
+            : DEFAULT_VECTOR_TEXT_STYLE.strokeWidth,
+          shadow: {
+            color: shadow.color || DEFAULT_VECTOR_TEXT_STYLE.shadow.color,
+            blur: Number.isFinite(shadow.blur) ? shadow.blur : DEFAULT_VECTOR_TEXT_STYLE.shadow.blur,
+            offsetX: Number.isFinite(shadow.offsetX)
+              ? shadow.offsetX
+              : DEFAULT_VECTOR_TEXT_STYLE.shadow.offsetX,
+            offsetY: Number.isFinite(shadow.offsetY)
+              ? shadow.offsetY
+              : DEFAULT_VECTOR_TEXT_STYLE.shadow.offsetY,
+            opacity: Number.isFinite(shadow.opacity)
+              ? shadow.opacity
+              : DEFAULT_VECTOR_TEXT_STYLE.shadow.opacity,
+          },
+        },
+      };
     }
 
     createGroup(options = {}) {
@@ -63,6 +163,10 @@
 
       if (type === "image") {
         return "Image";
+      }
+
+      if (type === VECTOR_TEXT_TYPE || type === "text") {
+        return "Text";
       }
 
       if (type === "svg" || type === "vector") {

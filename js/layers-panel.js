@@ -238,8 +238,16 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const type = row?.dataset.layerType || entry.dataset.layerType || "layer";
     const isBackground = type === "background";
     const id = getLayerId(row) || layerModel?.createId(type) || `${type}-${Date.now().toString(36)}`;
-    const existingEntry = layerModel?.findEntryById?.(id);
+    const cloneSourceId = entry.dataset.layerCloneSourceId || "";
+    const existingEntry = layerModel?.findEntryById?.(id) || layerModel?.findEntryById?.(cloneSourceId);
+    const preservedEntry = existingEntry
+      ? Object.fromEntries(
+          Object.entries(existingEntry)
+            .filter(([key]) => !["id", "type", "name", "visible", "locked", "opacity", "children"].includes(key)),
+        )
+      : {};
     const serialized = {
+      ...preservedEntry,
       id,
       type,
       name: isBackground
@@ -354,6 +362,16 @@ window.CBO.initLayersPanel = function initLayersPanel() {
           <path d="M5 17A12 12 0 0 1 17 5" />
           <circle cx="19" cy="5" r="2" />
           <circle cx="5" cy="19" r="2" />
+        </svg>
+      `;
+    }
+
+    if (type === "vector-text" || type === "text") {
+      return `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 4v16" />
+          <path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" />
+          <path d="M9 20h6" />
         </svg>
       `;
     }
@@ -536,6 +554,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const copiedEntry = createLayerEntry(`${layerName} Copy`, type);
     const copiedRow = copiedEntry.querySelector(":scope > [data-layer-row]");
 
+    copiedEntry.dataset.layerCloneSourceId = getLayerId(sourceRow);
     syncCopiedRowState(sourceRow, copiedRow);
 
     if (type === "group") {

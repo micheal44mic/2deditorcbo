@@ -40,6 +40,16 @@ window.CBO.initTopToolbar = function initTopToolbar() {
           <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
         </svg>
       </button>
+      <button class="tool-button top-rasterize-text-button" type="button" aria-label="RASTERIZE" aria-pressed="false" data-tooltip="RASTERIZE TEXT" data-rasterize-text hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 4h6v6H4z" />
+          <path d="M14 4h6v6h-6z" />
+          <path d="M4 14h6v6H4z" />
+          <path d="M14 14h6v6h-6z" />
+          <path d="M10 12h4" />
+          <path d="M12 10v4" />
+        </svg>
+      </button>
     </nav>
     <nav class="bottom-toolbar top-toolbar" aria-label="Paint toolbar">
       <div class="tool-group" aria-label="Brush tools">
@@ -91,6 +101,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   editorPage.appendChild(dock);
 
   const layersButton = dock.querySelector(".top-layers-button");
+  const rasterizeTextButton = dock.querySelector("[data-rasterize-text]");
   const quickControls = dock.querySelector("[data-brush-quick-controls]");
   const quickInputs = dock.querySelectorAll("[data-brush-quick-input]");
   const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
@@ -177,9 +188,49 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     }
   }
 
+  function getActiveLayer() {
+    const layerModel = window.CBO.documentLayerModel;
+
+    return layerModel?.findEntryById?.(layerModel.activeLayerId) || null;
+  }
+
+  function isVectorTextLayer(layer) {
+    return layer?.type === "vector-text" || layer?.type === "text" || layer?.kind === "text";
+  }
+
+  function syncRasterizeTextButton() {
+    if (!rasterizeTextButton) {
+      return;
+    }
+
+    const canRasterize = isVectorTextLayer(getActiveLayer()) &&
+      typeof window.CBO.rasterizeActiveVectorTextLayer === "function";
+
+    rasterizeTextButton.hidden = !canRasterize;
+    rasterizeTextButton.disabled = !canRasterize;
+  }
+
   layersButton.addEventListener("click", () => {
     if (window.CBO.openDrawerPanel) {
       window.CBO.openDrawerPanel("layers");
+    }
+  });
+
+  rasterizeTextButton?.addEventListener("click", async () => {
+    if (rasterizeTextButton.disabled) {
+      return;
+    }
+
+    rasterizeTextButton.disabled = true;
+    rasterizeTextButton.classList.add("active");
+
+    try {
+      await window.CBO.rasterizeActiveVectorTextLayer?.();
+    } catch (error) {
+      console.warn("Impossibile rasterizzare il testo vettoriale.", error);
+    } finally {
+      rasterizeTextButton.classList.remove("active");
+      syncRasterizeTextButton();
     }
   });
 
@@ -198,6 +249,9 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     showBrushQuickControls(isBrush);
   });
 
+  window.addEventListener("cbo:document-layers-change", syncRasterizeTextButton);
+  window.addEventListener("cbo:vector-text-rasterized", syncRasterizeTextButton);
   window.addEventListener("cbo:brush-settings-change", syncQuickControls);
+  syncRasterizeTextButton();
   syncQuickControls();
 };

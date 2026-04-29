@@ -89,8 +89,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
                 <span class="text-sidebar-label">Border Weight</span>
                 <output class="text-sidebar-value-pill" data-text-border-weight-value>0.00</output>
               </span>
-              <input class="text-sidebar-range" type="range" min="0" max="20" step="0.01" value="0" aria-label="Border weight" data-text-border-weight />
+              <input class="text-sidebar-range" type="range" min="0" max="120" step="0.01" value="0" aria-label="Border weight" data-text-border-weight />
             </label>
+            <div class="text-sidebar-stroke-align-field" aria-label="Border position">
+              <span class="text-sidebar-label">Position</span>
+              <div class="text-sidebar-stroke-align-modes" role="group" aria-label="Border position">
+                <button class="text-sidebar-stroke-align-mode" type="button" aria-pressed="false" data-text-stroke-align="outer">OUT</button>
+                <button class="text-sidebar-stroke-align-mode active" type="button" aria-pressed="true" data-text-stroke-align="center">META</button>
+                <button class="text-sidebar-stroke-align-mode" type="button" aria-pressed="false" data-text-stroke-align="inner">IN</button>
+              </div>
+            </div>
           </div>
         </section>
         <section class="text-sidebar-section" aria-label="Text style">
@@ -107,10 +115,11 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           </div>
           <label class="text-sidebar-select-wrap text-sidebar-font-wrap">
             <select class="text-sidebar-select text-sidebar-font-select" aria-label="Font family" data-text-font>
-              <option>Roman Shine</option>
-              <option>Libre Baskerville</option>
-              <option>Inter Display</option>
-              <option>Georgia</option>
+              <option value="UnifrakturCook">UnifrakturCook</option>
+              <option value="Pirata One">Pirata One</option>
+              <option value="New Rocker">New Rocker</option>
+              <option value="Germania One">Germania One</option>
+              <option value="Libre Baskerville">Libre Baskerville</option>
             </select>
             <svg class="text-sidebar-select-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="m6 9 6 6 6-6" />
@@ -130,42 +139,42 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           <div class="text-sidebar-metrics" aria-label="Text metrics">
             <label class="text-sidebar-metric">
               <span class="text-sidebar-metric-icon">Tt</span>
-              <input type="number" min="1" max="999" step="1" value="147" aria-label="Font size" />
+              <input type="number" min="1" max="999" step="1" value="300" aria-label="Font size" data-text-font-size />
             </label>
             <label class="text-sidebar-metric">
               <span class="text-sidebar-metric-icon">AV</span>
-              <input type="number" min="-200" max="500" step="1" value="0" aria-label="Letter spacing" />
+              <input type="number" min="-200" max="500" step="1" value="0" aria-label="Letter spacing" data-text-letter-spacing />
             </label>
             <label class="text-sidebar-metric">
               <span class="text-sidebar-metric-icon">A|</span>
-              <input type="number" min="1" max="999" step="1" value="182" aria-label="Line height" />
+              <input type="number" min="1" max="999" step="1" value="182" aria-label="Line height" data-text-line-height />
             </label>
           </div>
           <div class="text-sidebar-button-grid" aria-label="Text formatting">
-            <button class="text-sidebar-format-button" type="button" aria-label="Align left">
+            <button class="text-sidebar-format-button" type="button" aria-label="Align left" aria-pressed="false" data-text-align="left">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M15 12H3" />
                 <path d="M17 18H3" />
                 <path d="M21 6H3" />
               </svg>
             </button>
-            <button class="text-sidebar-format-button active" type="button" aria-label="Align center">
+            <button class="text-sidebar-format-button active" type="button" aria-label="Align center" aria-pressed="true" data-text-align="center">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M17 12H7" />
                 <path d="M19 18H5" />
                 <path d="M21 6H3" />
               </svg>
             </button>
-            <button class="text-sidebar-format-button" type="button" aria-label="Align right">
+            <button class="text-sidebar-format-button" type="button" aria-label="Align right" aria-pressed="false" data-text-align="right">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21 12H9" />
                 <path d="M21 18H7" />
                 <path d="M21 6H3" />
               </svg>
             </button>
-            <button class="text-sidebar-format-button" type="button" aria-label="Uppercase">TT</button>
-            <button class="text-sidebar-format-button" type="button" aria-label="Ligatures">fi</button>
-            <button class="text-sidebar-format-button" type="button" aria-label="Alternate glyphs">A</button>
+            <button class="text-sidebar-format-button" type="button" aria-label="Uppercase" aria-pressed="false" data-text-uppercase>TT</button>
+            <button class="text-sidebar-format-button active" type="button" aria-label="Ligatures" aria-pressed="true" data-text-ligatures>fi</button>
+            <button class="text-sidebar-format-button" type="button" aria-label="Alternate glyphs" aria-pressed="false" data-text-alternates>A</button>
             <button class="text-sidebar-format-button" type="button" aria-label="More text options">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <circle cx="5" cy="12" r="1.6" />
@@ -194,9 +203,9 @@ window.CBO.initRightSidebar = function initRightSidebar() {
             <label class="text-sidebar-range-field text-sidebar-transform-range-field">
               <span class="text-sidebar-control-header">
                 <span class="text-sidebar-label" data-text-transform-label>Arch Curve</span>
-                <output class="text-sidebar-value-pill" data-text-transform-value>35%</output>
-              </span>
-              <input class="text-sidebar-range" type="range" min="0" max="100" step="1" value="35" aria-label="Transformation amount" data-text-transform-amount />
+              <output class="text-sidebar-value-pill" data-text-transform-value>170</output>
+            </span>
+              <input class="text-sidebar-range" type="range" min="-1200" max="1200" step="1" value="170" aria-label="Transformation amount" data-text-transform-amount />
             </label>
             <div class="text-sidebar-transform-actions">
               <button class="text-sidebar-secondary-button" type="button" data-text-transform-reset>Reset</button>
@@ -239,7 +248,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
                 <span class="text-sidebar-label">Shadow Depth</span>
                 <output class="text-sidebar-value-pill" data-text-shadow-depth-value>24</output>
               </span>
-              <input class="text-sidebar-range" type="range" min="0" max="100" step="1" value="24" aria-label="Shadow depth" data-text-shadow-depth />
+              <input class="text-sidebar-range" type="range" min="0" max="500" step="1" value="24" aria-label="Shadow depth" data-text-shadow-depth />
             </label>
             <label class="text-sidebar-range-field text-sidebar-shadow-angle-field">
               <span class="text-sidebar-control-header">
@@ -253,7 +262,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
                 <span class="text-sidebar-label">Shadow Blur</span>
                 <output class="text-sidebar-value-pill" data-text-shadow-blur-value>0.00</output>
               </span>
-              <input class="text-sidebar-range" type="range" min="0" max="100" step="0.01" value="0" aria-label="Shadow blur" data-text-shadow-blur />
+              <input class="text-sidebar-range" type="range" min="0" max="300" step="0.01" value="0" aria-label="Shadow blur" data-text-shadow-blur />
             </label>
           </div>
         </section>
@@ -281,6 +290,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const smudgeReset = panel.querySelector("[data-smudge-reset]");
   const pressureButton = panel.querySelector("[data-smudge-pressure]");
   const textSidebar = panel.querySelector("[data-text-sidebar]");
+  const textContentInput = panel.querySelector("[data-text-content]");
   const textOpacityInput = panel.querySelector("[data-text-opacity]");
   const textOpacityValue = panel.querySelector("[data-text-opacity-value]");
   const textColorInput = panel.querySelector("[data-text-color-input]");
@@ -293,6 +303,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const textBorderColorSwatch = panel.querySelector("[data-text-border-color-swatch]");
   const textBorderWeightInput = panel.querySelector("[data-text-border-weight]");
   const textBorderWeightValue = panel.querySelector("[data-text-border-weight-value]");
+  const textStrokeAlignButtons = panel.querySelectorAll("[data-text-stroke-align]");
   const textTransformToggle = panel.querySelector("[data-text-transform-toggle]");
   const textTransformPanel = panel.querySelector("[data-text-transform-panel]");
   const textTransformModeButtons = panel.querySelectorAll("[data-text-transform-mode]");
@@ -301,6 +312,15 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const textTransformLabel = panel.querySelector("[data-text-transform-label]");
   const textTransformReset = panel.querySelector("[data-text-transform-reset]");
   const textTransformConfirm = panel.querySelector("[data-text-transform-confirm]");
+  const textFontSelect = panel.querySelector("[data-text-font]");
+  const textFontStyleSelect = panel.querySelector("[data-text-font-style]");
+  const textFontSizeInput = panel.querySelector("[data-text-font-size]");
+  const textLetterSpacingInput = panel.querySelector("[data-text-letter-spacing]");
+  const textLineHeightInput = panel.querySelector("[data-text-line-height]");
+  const textAlignButtons = panel.querySelectorAll("[data-text-align]");
+  const textUppercaseButton = panel.querySelector("[data-text-uppercase]");
+  const textLigaturesButton = panel.querySelector("[data-text-ligatures]");
+  const textAlternatesButton = panel.querySelector("[data-text-alternates]");
   const textShadowToggle = panel.querySelector("[data-text-shadow-toggle]");
   const textShadowPanel = panel.querySelector("[data-text-shadow-panel]");
   const textShadowSolidToggle = panel.querySelector("[data-text-shadow-solid-toggle]");
@@ -465,6 +485,639 @@ window.CBO.initRightSidebar = function initRightSidebar() {
 
     if (isVisible) {
       syncSmudgeControls();
+    }
+  }
+
+  let currentToolName = "";
+  let isSyncingTextLayerControls = false;
+  let textGeometryPatchRevision = 0;
+
+  function isVectorTextLayer(layer) {
+    return layer?.type === "vector-text" || layer?.type === "text" || layer?.kind === "text";
+  }
+
+  function getLayerModel() {
+    return window.CBO.documentLayerModel || null;
+  }
+
+  function getActiveTextLayer() {
+    const layerModel = getLayerModel();
+    const activeLayer = layerModel?.findEntryById?.(layerModel.activeLayerId);
+
+    return isVectorTextLayer(activeLayer) ? activeLayer : null;
+  }
+
+  function mergeTextLayerPatch(layer, patch = {}) {
+    const nextPatch = { ...patch };
+
+    if (patch.warp) {
+      nextPatch.warp = {
+        ...(layer.warp || {}),
+        ...patch.warp,
+      };
+    }
+
+    if (patch.style) {
+      nextPatch.style = {
+        ...(layer.style || {}),
+        ...patch.style,
+        shadow: {
+          ...(layer.style?.shadow || {}),
+          ...(patch.style.shadow || {}),
+        },
+      };
+    }
+
+    if (patch.textEffectState) {
+      nextPatch.textEffectState = {
+        ...(layer.textEffectState || {}),
+      };
+
+      Object.entries(patch.textEffectState).forEach(([key, value]) => {
+        nextPatch.textEffectState[key] = value && typeof value === "object" && !Array.isArray(value)
+          ? {
+            ...(layer.textEffectState?.[key] || {}),
+            ...value,
+          }
+          : value;
+      });
+    }
+
+    return nextPatch;
+  }
+
+  function cloneTextValue(value) {
+    if (Array.isArray(value)) {
+      return value.map(cloneTextValue);
+    }
+
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, cloneTextValue(item)]),
+      );
+    }
+
+    return value;
+  }
+
+  function toFiniteNumber(value, fallback) {
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function getTextPathOptions(layer) {
+    return {
+      letterSpacing: layer.letterSpacing,
+      ligatures: layer.ligatures,
+      lineHeight: layer.lineHeight,
+      textAlign: layer.textAlign,
+      uppercase: layer.uppercase,
+    };
+  }
+
+  function getLayerVisualCenterOffset(layer, bounds) {
+    const centerX = (bounds.x1 + bounds.x2) / 2;
+    const centerY = (bounds.y1 + bounds.y2) / 2;
+    const scaleX = toFiniteNumber(layer.scaleX, 1);
+    const scaleY = toFiniteNumber(layer.scaleY, 1);
+    const radians = (toFiniteNumber(layer.rotation, 0) * Math.PI) / 180;
+    const scaledX = centerX * scaleX;
+    const scaledY = centerY * scaleY;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+
+    return {
+      x: scaledX * cos - scaledY * sin,
+      y: scaledX * sin + scaledY * cos,
+    };
+  }
+
+  function getWarpedTextBounds(layer, font) {
+    const engine = window.CBO.VectorTextEngine;
+    const path = engine.createTextPath(font, layer.text, layer.fontSize, getTextPathOptions(layer));
+    const bounds = path.getBoundingBox();
+
+    if (layer.envelopeGrid) {
+      engine.applyEnvelopeWarp(path, layer.envelopeGrid);
+    } else {
+      path.commands = engine.warpPathCommands(path.commands, bounds, layer.warp);
+    }
+
+    return path.getBoundingBox();
+  }
+
+  function patchActiveTextLayer(patch, source = "text-sidebar") {
+    if (isSyncingTextLayerControls) {
+      return;
+    }
+
+    const layerModel = getLayerModel();
+    const layer = getActiveTextLayer();
+
+    if (!layer || !layerModel?.updateLayer) {
+      return;
+    }
+
+    layerModel.updateLayer(layer.id, mergeTextLayerPatch(layer, patch), { source });
+  }
+
+  function getStoredTextEffect(layer, key) {
+    const value = layer?.textEffectState?.[key];
+
+    return value && typeof value === "object" ? value : {};
+  }
+
+  function getCurrentStrokeWidth(layer) {
+    return Number.isFinite(layer?.style?.strokeWidth) ? layer.style.strokeWidth : 0;
+  }
+
+  function getCurrentShadowOpacity(layer) {
+    return Number.isFinite(layer?.style?.shadow?.opacity) ? layer.style.shadow.opacity : 0;
+  }
+
+  function disableTextBorderEffect() {
+    const layer = getActiveTextLayer();
+
+    if (!layer) {
+      return;
+    }
+
+    const strokeWidth = getCurrentStrokeWidth(layer);
+    const stored = getStoredTextEffect(layer, "border");
+
+    patchActiveTextLayer({
+      style: { strokeWidth: 0 },
+      textEffectState: {
+        border: {
+          strokeWidth: strokeWidth > 0 ? strokeWidth : stored.strokeWidth || 7,
+        },
+      },
+    }, "text-sidebar-border-off");
+  }
+
+  function enableTextBorderEffect() {
+    const layer = getActiveTextLayer();
+
+    if (!layer || getCurrentStrokeWidth(layer) > 0) {
+      return;
+    }
+
+    const stored = getStoredTextEffect(layer, "border");
+    const inputValue = textBorderWeightInput
+      ? clamp(textBorderWeightInput.value, 0, 120)
+      : 0;
+    const strokeWidth = Number.isFinite(stored.strokeWidth) && stored.strokeWidth > 0
+      ? stored.strokeWidth
+      : inputValue > 0 ? inputValue : 7;
+
+    patchActiveTextLayer({
+      style: { strokeWidth },
+      textEffectState: {
+        border: { strokeWidth },
+      },
+    }, "text-sidebar-border-on");
+  }
+
+  function disableTextShadowEffect() {
+    const layer = getActiveTextLayer();
+
+    if (!layer) {
+      return;
+    }
+
+    const shadow = layer.style?.shadow || {};
+    const opacity = getCurrentShadowOpacity(layer);
+    const stored = getStoredTextEffect(layer, "shadow");
+
+    patchActiveTextLayer({
+      style: { shadow: { opacity: 0 } },
+      textEffectState: {
+        shadow: {
+          blur: Number.isFinite(shadow.blur) ? shadow.blur : stored.blur || 0,
+          opacity: opacity > 0 ? opacity : stored.opacity || 1,
+          shadowDistance: Number.isFinite(layer.shadowDistance) ? layer.shadowDistance : stored.shadowDistance || 72,
+          shadowType: layer.shadowType || stored.shadowType || "drop",
+        },
+      },
+    }, "text-sidebar-shadow-off");
+  }
+
+  function enableTextShadowEffect() {
+    const layer = getActiveTextLayer();
+
+    if (!layer || getCurrentShadowOpacity(layer) > 0) {
+      return;
+    }
+
+    const stored = getStoredTextEffect(layer, "shadow");
+
+    patchActiveTextLayer({
+      shadowDistance: Number.isFinite(stored.shadowDistance) ? stored.shadowDistance : layer.shadowDistance || 72,
+      shadowType: stored.shadowType || layer.shadowType || "drop",
+      style: {
+        shadow: {
+          blur: Number.isFinite(stored.blur) ? stored.blur : layer.style?.shadow?.blur || 0,
+          opacity: Number.isFinite(stored.opacity) && stored.opacity > 0 ? stored.opacity : 1,
+        },
+      },
+    }, "text-sidebar-shadow-on");
+  }
+
+  function isTextTransformEffectActive(layer) {
+    if (!layer) {
+      return false;
+    }
+
+    if (layer.envelopeGrid) {
+      return true;
+    }
+
+    const warpType = layer.warp?.type || "none";
+    const amount = Number.isFinite(layer.warp?.amount) ? layer.warp.amount : 0;
+
+    return warpType !== "none" && amount !== 0;
+  }
+
+  function disableTextTransformEffect() {
+    const layer = getActiveTextLayer();
+
+    if (!layer) {
+      return;
+    }
+
+    const stored = getStoredTextEffect(layer, "transform");
+    const nextStored = isTextTransformEffectActive(layer)
+      ? {
+        envelopeGrid: cloneTextValue(layer.envelopeGrid),
+        warp: cloneTextValue(layer.warp || { type: "arch", amount: 170 }),
+      }
+      : stored;
+
+    void patchActiveTextLayerPreservingVisualCenter({
+      envelopeGrid: null,
+      textEffectState: {
+        transform: nextStored,
+      },
+      warp: {
+        amount: 0,
+        type: "none",
+      },
+    }, "text-sidebar-transform-off");
+  }
+
+  function enableTextTransformEffect() {
+    const layer = getActiveTextLayer();
+
+    if (!layer || isTextTransformEffectActive(layer)) {
+      return;
+    }
+
+    const stored = getStoredTextEffect(layer, "transform");
+    const inputValue = textTransformAmountInput
+      ? clamp(textTransformAmountInput.value, -1200, 1200)
+      : 0;
+    const warp = stored.warp?.type
+      ? cloneTextValue(stored.warp)
+      : {
+        amount: inputValue !== 0 ? inputValue : 170,
+        type: "arch",
+      };
+
+    void patchActiveTextLayerPreservingVisualCenter({
+      envelopeGrid: stored.envelopeGrid ? cloneTextValue(stored.envelopeGrid) : null,
+      textEffectState: {
+        transform: {
+          envelopeGrid: stored.envelopeGrid ? cloneTextValue(stored.envelopeGrid) : null,
+          warp: cloneTextValue(warp),
+        },
+      },
+      warp,
+    }, "text-sidebar-transform-on");
+  }
+
+  async function patchActiveTextLayerPreservingVisualCenter(patch, source = "text-sidebar-transform") {
+    if (isSyncingTextLayerControls) {
+      return;
+    }
+
+    const layerModel = getLayerModel();
+    const layer = getActiveTextLayer();
+    const engine = window.CBO.VectorTextEngine;
+
+    if (!layer || !layerModel?.updateLayer || !engine?.loadOpenTypeFont) {
+      patchActiveTextLayer(patch, source);
+      return;
+    }
+
+    const revision = ++textGeometryPatchRevision;
+    const mergedPatch = mergeTextLayerPatch(layer, patch);
+    const nextLayer = {
+      ...cloneTextValue(layer),
+      ...cloneTextValue(mergedPatch),
+    };
+
+    try {
+      const beforeFont = await engine.loadOpenTypeFont(layer.fontUrl || engine.DEFAULT_FONT_URL);
+      const afterFont = nextLayer.fontUrl === layer.fontUrl
+        ? beforeFont
+        : await engine.loadOpenTypeFont(nextLayer.fontUrl || engine.DEFAULT_FONT_URL);
+
+      if (revision !== textGeometryPatchRevision) {
+        return;
+      }
+
+      const currentLayer = getActiveTextLayer();
+
+      if (!currentLayer || currentLayer.id !== layer.id) {
+        return;
+      }
+
+      const beforeOffset = getLayerVisualCenterOffset(layer, getWarpedTextBounds(layer, beforeFont));
+      const afterOffset = getLayerVisualCenterOffset(nextLayer, getWarpedTextBounds(nextLayer, afterFont));
+      const centerX = toFiniteNumber(layer.x, 0) + beforeOffset.x;
+      const centerY = toFiniteNumber(layer.y, 0) + beforeOffset.y;
+
+      layerModel.updateLayer(layer.id, {
+        ...mergedPatch,
+        x: centerX - afterOffset.x,
+        y: centerY - afterOffset.y,
+      }, { source });
+    } catch (error) {
+      console.warn("Impossibile preservare il centro della trasformazione testo.", error);
+      patchActiveTextLayer(patch, source);
+    }
+  }
+
+  function normalizeHexColor(value, fallback = "#ffffff") {
+    const color = String(value || "").trim();
+
+    return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
+  }
+
+  function getVectorFontRegistry() {
+    const registry = Array.isArray(window.CBO.VECTOR_TEXT_FONTS)
+      ? window.CBO.VECTOR_TEXT_FONTS.filter((font) => font?.family && font?.url)
+      : [];
+
+    if (registry.length > 0) {
+      return registry;
+    }
+
+    const engine = window.CBO.VectorTextEngine;
+
+    return [{
+      family: engine?.DEFAULT_FONT_LABEL || "UnifrakturCook",
+      label: engine?.DEFAULT_FONT_LABEL || "UnifrakturCook",
+      style: "Bold",
+      url: engine?.DEFAULT_FONT_URL || "./vendor/fonts/UnifrakturCook-Bold.ttf",
+    }];
+  }
+
+  function getUniqueFontFamilies() {
+    const seen = new Set();
+
+    return getVectorFontRegistry().filter((font) => {
+      if (seen.has(font.family)) {
+        return false;
+      }
+
+      seen.add(font.family);
+      return true;
+    });
+  }
+
+  function getFontsByFamily(family) {
+    const registry = getVectorFontRegistry();
+    const matches = registry.filter((font) => font.family === family);
+
+    return matches.length > 0 ? matches : registry.slice(0, 1);
+  }
+
+  function findFontRecordForLayer(layer) {
+    const registry = getVectorFontRegistry();
+
+    return registry.find((font) => font.url === layer?.fontUrl) ||
+      registry.find((font) => font.family === layer?.fontFamily && font.style === layer?.fontStyle) ||
+      registry[0] ||
+      null;
+  }
+
+  function findFontRecordForSelection(family, style) {
+    const fonts = getFontsByFamily(family);
+
+    return fonts.find((font) => font.style === style) || fonts[0] || null;
+  }
+
+  function populateTextFontStyleOptions(family, preferredStyle) {
+    if (!textFontStyleSelect) {
+      return null;
+    }
+
+    const fonts = getFontsByFamily(family);
+    const selectedFont = fonts.find((font) => font.style === preferredStyle) || fonts[0] || null;
+
+    textFontStyleSelect.replaceChildren(
+      ...fonts.map((font) => {
+        const option = document.createElement("option");
+
+        option.value = font.style || "Regular";
+        option.textContent = font.style || "Regular";
+
+        return option;
+      }),
+    );
+
+    if (selectedFont) {
+      textFontStyleSelect.value = selectedFont.style || "Regular";
+    }
+
+    return selectedFont;
+  }
+
+  function populateTextFontFamilyOptions() {
+    if (!textFontSelect) {
+      return;
+    }
+
+    const families = getUniqueFontFamilies();
+    const currentValue = textFontSelect.value;
+
+    textFontSelect.replaceChildren(
+      ...families.map((font) => {
+        const option = document.createElement("option");
+
+        option.value = font.family;
+        option.textContent = font.family;
+
+        return option;
+      }),
+    );
+
+    if (families.some((font) => font.family === currentValue)) {
+      textFontSelect.value = currentValue;
+    }
+  }
+
+  function syncTextFontControlsFromLayer(layer) {
+    const fontRecord = findFontRecordForLayer(layer);
+    const family = fontRecord?.family || layer.fontFamily || textFontSelect?.value || "UnifrakturCook";
+    const style = fontRecord?.style || layer.fontStyle || textFontStyleSelect?.value || "Bold";
+
+    populateTextFontFamilyOptions();
+
+    if (textFontSelect) {
+      textFontSelect.value = family;
+
+      if (textFontSelect.value !== family) {
+        textFontSelect.selectedIndex = 0;
+      }
+    }
+
+    populateTextFontStyleOptions(textFontSelect?.value || family, style);
+  }
+
+  function patchTextFontFromControls() {
+    const family = textFontSelect?.value;
+    const style = textFontStyleSelect?.value;
+    const fontRecord = findFontRecordForSelection(family, style);
+
+    if (!fontRecord) {
+      return;
+    }
+
+    patchActiveTextLayer({
+      fontFamily: fontRecord.family,
+      fontLabel: fontRecord.label || fontRecord.family,
+      fontStyle: fontRecord.style || "Regular",
+      fontUrl: fontRecord.url,
+    }, "text-sidebar-font");
+  }
+
+  function setTextAlign(align) {
+    const nextAlign = ["left", "center", "right"].includes(align) ? align : "center";
+
+    textAlignButtons.forEach((button) => {
+      const isActive = button.dataset.textAlign === nextAlign;
+
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+  }
+
+  function setTextToggleButton(button, isActive) {
+    if (!button) {
+      return;
+    }
+
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  }
+
+  function shouldShowTextSettings(activeTool = currentToolName) {
+    return activeTool === "text" || activeTool === "type" || Boolean(getActiveTextLayer());
+  }
+
+  function syncTextControlsFromLayer() {
+    const layer = getActiveTextLayer();
+
+    if (!layer) {
+      return;
+    }
+
+    isSyncingTextLayerControls = true;
+
+    try {
+      if (textContentInput) {
+        textContentInput.value = layer.text || "";
+      }
+
+      if (textOpacityInput) {
+        textOpacityInput.value = String(Math.round((Number.isFinite(layer.opacity) ? layer.opacity : 1) * 100));
+      }
+
+      if (textColorInput) {
+        textColorInput.value = normalizeHexColor(layer.style?.fill, "#ffffff");
+      }
+
+      if (textBorderColorInput) {
+        textBorderColorInput.value = normalizeHexColor(layer.style?.stroke, "#000000");
+      }
+
+      if (textBorderWeightInput) {
+        textBorderWeightInput.value = String(Number.isFinite(layer.style?.strokeWidth) ? layer.style.strokeWidth : 0);
+      }
+
+      setTextStrokeAlign(layer.style?.strokeAlign || "center");
+      syncTextFontControlsFromLayer(layer);
+
+      if (textFontSizeInput) {
+        textFontSizeInput.value = String(Math.round(Number.isFinite(layer.fontSize) ? layer.fontSize : 300));
+      }
+
+      if (textLetterSpacingInput) {
+        textLetterSpacingInput.value = String(Math.round(Number.isFinite(layer.letterSpacing) ? layer.letterSpacing : 0));
+      }
+
+      if (textLineHeightInput) {
+        textLineHeightInput.value = String(Math.round(Number.isFinite(layer.lineHeight) ? layer.lineHeight : 182));
+      }
+
+      setTextAlign(layer.textAlign || "center");
+      setTextToggleButton(textUppercaseButton, layer.uppercase === true);
+      setTextToggleButton(textLigaturesButton, layer.ligatures !== false);
+      setTextToggleButton(textAlternatesButton, layer.alternates === true);
+
+      setTextTransformMode(layer.envelopeGrid ? "distort" : layer.warp?.type || "arch");
+
+      if (textTransformAmountInput) {
+        textTransformAmountInput.value = String(Number.isFinite(layer.warp?.amount) ? layer.warp.amount : 0);
+      }
+
+      setTextShadowSolidMode(layer.shadowType === "solid");
+
+      if (textShadowColorInput) {
+        textShadowColorInput.value = normalizeHexColor(layer.style?.shadow?.color, "#000000");
+      }
+
+      if (textShadowDepthInput) {
+        textShadowDepthInput.value = String(Math.round(Number.isFinite(layer.shadowDistance) ? layer.shadowDistance : 0));
+      }
+
+      if (textShadowAngleInput) {
+        textShadowAngleInput.value = String(Math.round(Number.isFinite(layer.shadowAngle) ? layer.shadowAngle : 0));
+      }
+
+      if (textShadowBlurInput) {
+        textShadowBlurInput.value = String(Number.isFinite(layer.style?.shadow?.blur) ? layer.style.shadow.blur : 0);
+      }
+
+      syncTextControls();
+    } finally {
+      isSyncingTextLayerControls = false;
+    }
+  }
+
+  async function initEnvelopeForActiveTextLayer() {
+    const layer = getActiveTextLayer();
+    const engine = window.CBO.VectorTextEngine;
+
+    if (!layer || !engine?.loadOpenTypeFont) {
+      return;
+    }
+
+    try {
+      const font = await engine.loadOpenTypeFont(layer.fontUrl || engine.DEFAULT_FONT_URL);
+      const path = engine.createTextPath(font, layer.text, layer.fontSize, getTextPathOptions(layer));
+      const envelopeGrid = engine.createEnvelopeGridFromBounds(path.getBoundingBox());
+
+      void patchActiveTextLayerPreservingVisualCenter({
+        envelopeGrid,
+        warp: {
+          type: "none",
+          amount: 0,
+        },
+      }, "text-sidebar-envelope");
+    } catch (error) {
+      console.warn("Impossibile inizializzare la distorsione envelope.", error);
     }
   }
 
@@ -637,7 +1290,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     textTransformAmountInput.style.setProperty("--text-sidebar-range-progress", `${progress}%`);
 
     if (textTransformValue) {
-      textTransformValue.textContent = `${Math.round(value)}%`;
+      textTransformValue.textContent = String(Math.round(value));
     }
   }
 
@@ -656,7 +1309,19 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     }
   }
 
+  function setTextStrokeAlign(align) {
+    const nextAlign = ["outer", "inner", "center"].includes(align) ? align : "center";
+
+    textStrokeAlignButtons.forEach((button) => {
+      const isActive = button.dataset.textStrokeAlign === nextAlign;
+
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+  }
+
   function syncTextControls() {
+    populateTextFontFamilyOptions();
     updateTextRangeProgress();
     syncTextColor();
     syncTextBorderColor();
@@ -666,7 +1331,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     syncTextShadowControls();
   }
 
-  function setTextBorderOpen(isOpen) {
+  function setTextBorderOpen(isOpen, options = {}) {
     if (!textBorderToggle || !textBorderPanel) {
       return;
     }
@@ -674,13 +1339,21 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     textBorderToggle.setAttribute("aria-expanded", String(isOpen));
     textBorderPanel.hidden = !isOpen;
 
+    if (options.updateLayer !== false) {
+      if (isOpen) {
+        enableTextBorderEffect();
+      } else {
+        disableTextBorderEffect();
+      }
+    }
+
     if (isOpen) {
       syncTextBorderColor();
       updateTextBorderWeight();
     }
   }
 
-  function setTextTransformationOpen(isOpen) {
+  function setTextTransformationOpen(isOpen, options = {}) {
     if (!textTransformToggle || !textTransformPanel) {
       return;
     }
@@ -688,19 +1361,35 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     textTransformToggle.setAttribute("aria-expanded", String(isOpen));
     textTransformPanel.hidden = !isOpen;
 
+    if (options.updateLayer !== false) {
+      if (isOpen) {
+        enableTextTransformEffect();
+      } else {
+        disableTextTransformEffect();
+      }
+    }
+
     if (isOpen) {
       setTextTransformMode(getActiveTextTransformMode());
       updateTextTransformAmount();
     }
   }
 
-  function setTextShadowOpen(isOpen) {
+  function setTextShadowOpen(isOpen, options = {}) {
     if (!textShadowToggle || !textShadowPanel) {
       return;
     }
 
     textShadowToggle.setAttribute("aria-expanded", String(isOpen));
     textShadowPanel.hidden = !isOpen;
+
+    if (options.updateLayer !== false) {
+      if (isOpen) {
+        enableTextShadowEffect();
+      } else {
+        disableTextShadowEffect();
+      }
+    }
 
     if (isOpen) {
       syncTextShadowControls();
@@ -718,7 +1407,11 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     });
 
     if (isVisible) {
-      syncTextControls();
+      if (getActiveTextLayer()) {
+        syncTextControlsFromLayer();
+      } else {
+        syncTextControls();
+      }
     }
   }
 
@@ -753,37 +1446,158 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     syncSmudgeControls();
   });
 
-  textOpacityInput?.addEventListener("input", updateTextRangeProgress);
-  textColorInput?.addEventListener("input", syncTextColor);
-  textBorderColorInput?.addEventListener("input", syncTextBorderColor);
-  textBorderWeightInput?.addEventListener("input", updateTextBorderWeight);
+  textContentInput?.addEventListener("input", () => {
+    patchActiveTextLayer({ text: textContentInput.value });
+  });
+  textOpacityInput?.addEventListener("input", () => {
+    updateTextRangeProgress();
+    patchActiveTextLayer({ opacity: clamp(textOpacityInput.value, 0, 100) / 100 });
+  });
+  textColorInput?.addEventListener("input", () => {
+    syncTextColor();
+    patchActiveTextLayer({ style: { fill: textColorInput.value } });
+  });
+  textBorderColorInput?.addEventListener("input", () => {
+    syncTextBorderColor();
+    patchActiveTextLayer({ style: { stroke: textBorderColorInput.value } });
+  });
+  textBorderWeightInput?.addEventListener("input", () => {
+    updateTextBorderWeight();
+    patchActiveTextLayer({ style: { strokeWidth: clamp(textBorderWeightInput.value, 0, 120) } });
+  });
+  textStrokeAlignButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const align = button.dataset.textStrokeAlign || "center";
+
+      setTextStrokeAlign(align);
+      patchActiveTextLayer({ style: { strokeAlign: align } });
+    });
+  });
+  textFontSelect?.addEventListener("change", () => {
+    const selectedFont = populateTextFontStyleOptions(textFontSelect.value, textFontStyleSelect?.value);
+
+    if (selectedFont && textFontStyleSelect) {
+      textFontStyleSelect.value = selectedFont.style || "Regular";
+    }
+
+    patchTextFontFromControls();
+  });
+  textFontStyleSelect?.addEventListener("change", () => {
+    patchTextFontFromControls();
+  });
+  textFontSizeInput?.addEventListener("input", () => {
+    patchActiveTextLayer({ fontSize: clamp(textFontSizeInput.value, 1, 999) });
+  });
+  textLetterSpacingInput?.addEventListener("input", () => {
+    patchActiveTextLayer({ letterSpacing: clamp(textLetterSpacingInput.value, -200, 500) });
+  });
+  textLineHeightInput?.addEventListener("input", () => {
+    patchActiveTextLayer({ lineHeight: clamp(textLineHeightInput.value, 1, 999) });
+  });
+  textAlignButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const align = button.dataset.textAlign || "center";
+
+      setTextAlign(align);
+      patchActiveTextLayer({ textAlign: align });
+    });
+  });
+  textUppercaseButton?.addEventListener("click", () => {
+    const isActive = textUppercaseButton.getAttribute("aria-pressed") !== "true";
+
+    setTextToggleButton(textUppercaseButton, isActive);
+    patchActiveTextLayer({ uppercase: isActive });
+  });
+  textLigaturesButton?.addEventListener("click", () => {
+    const isActive = textLigaturesButton.getAttribute("aria-pressed") !== "true";
+
+    setTextToggleButton(textLigaturesButton, isActive);
+    patchActiveTextLayer({ ligatures: isActive });
+  });
+  textAlternatesButton?.addEventListener("click", () => {
+    const isActive = textAlternatesButton.getAttribute("aria-pressed") !== "true";
+
+    setTextToggleButton(textAlternatesButton, isActive);
+    patchActiveTextLayer({ alternates: isActive });
+  });
   textBorderToggle?.addEventListener("click", () => {
     setTextBorderOpen(textBorderToggle.getAttribute("aria-expanded") !== "true");
   });
   textShadowSolidToggle?.addEventListener("click", () => {
-    setTextShadowSolidMode(!isTextShadowSolidEnabled());
+    const isSolid = !isTextShadowSolidEnabled();
+
+    setTextShadowSolidMode(isSolid);
+    patchActiveTextLayer({
+      shadowType: isSolid ? "solid" : "drop",
+      style: {
+        shadow: isSolid ? { blur: 0, opacity: 1 } : { opacity: 1 },
+      },
+    });
   });
-  textShadowColorInput?.addEventListener("input", syncTextShadowColor);
-  textShadowDepthInput?.addEventListener("input", updateTextShadowDepth);
-  textShadowAngleInput?.addEventListener("input", updateTextShadowAngle);
-  textShadowBlurInput?.addEventListener("input", updateTextShadowBlur);
+  textShadowColorInput?.addEventListener("input", () => {
+    syncTextShadowColor();
+    patchActiveTextLayer({ style: { shadow: { color: textShadowColorInput.value, opacity: 1 } } });
+  });
+  textShadowDepthInput?.addEventListener("input", () => {
+    updateTextShadowDepth();
+    patchActiveTextLayer({
+      shadowDistance: clamp(textShadowDepthInput.value, 0, 500),
+      style: { shadow: { opacity: 1 } },
+    });
+  });
+  textShadowAngleInput?.addEventListener("input", () => {
+    updateTextShadowAngle();
+    patchActiveTextLayer({
+      shadowAngle: clamp(textShadowAngleInput.value, 0, 360),
+      style: { shadow: { opacity: 1 } },
+    });
+  });
+  textShadowBlurInput?.addEventListener("input", () => {
+    updateTextShadowBlur();
+    patchActiveTextLayer({ style: { shadow: { blur: clamp(textShadowBlurInput.value, 0, 300), opacity: 1 } } });
+  });
   textShadowToggle?.addEventListener("click", () => {
     setTextShadowOpen(textShadowToggle.getAttribute("aria-expanded") !== "true");
   });
-  textTransformAmountInput?.addEventListener("input", updateTextTransformAmount);
+  textTransformAmountInput?.addEventListener("input", () => {
+    updateTextTransformAmount();
+    void patchActiveTextLayerPreservingVisualCenter({
+      warp: { amount: clamp(textTransformAmountInput.value, -1200, 1200) },
+    }, "text-sidebar-transform-amount");
+  });
   textTransformModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      setTextTransformMode(button.dataset.textTransformMode);
+      const mode = button.dataset.textTransformMode;
+
+      setTextTransformMode(mode);
+
+      if (mode === "distort") {
+        void initEnvelopeForActiveTextLayer();
+      } else {
+        void patchActiveTextLayerPreservingVisualCenter({
+          envelopeGrid: null,
+          warp: {
+            type: mode === "flag" ? "flag" : "arch",
+          },
+        });
+      }
     });
   });
   textTransformReset?.addEventListener("click", () => {
     setTextTransformMode("arch");
 
     if (textTransformAmountInput) {
-      textTransformAmountInput.value = "35";
+      textTransformAmountInput.value = "170";
     }
 
     updateTextTransformAmount();
+    void patchActiveTextLayerPreservingVisualCenter({
+      envelopeGrid: null,
+      warp: {
+        amount: 170,
+        type: "arch",
+      },
+    });
   });
   textTransformConfirm?.addEventListener("click", () => {
     textTransformConfirm.classList.add("active");
@@ -798,8 +1612,14 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   window.addEventListener("cbo:tool-change", (event) => {
     const activeTool = normalizeToolName(event.detail?.toolMode || event.detail?.label);
 
-    showTextSettings(activeTool === "text");
+    currentToolName = activeTool;
+    showTextSettings(shouldShowTextSettings(activeTool));
     showSmudgeSettings(activeTool === "smudge");
+  });
+
+  window.addEventListener("cbo:document-layers-change", () => {
+    showTextSettings(shouldShowTextSettings());
+    syncTextControlsFromLayer();
   });
 
   syncSmudgeControls();
