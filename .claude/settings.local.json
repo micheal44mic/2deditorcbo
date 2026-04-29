@@ -12,7 +12,10 @@
       "Bash(curl -sIL -o /dev/null -w \"%{http_code} %{size_download} %{url_effective}\\\\n\" \"https://github.com/googlefonts/roboto-3-classic/raw/main/src/hinted/Roboto-Regular.ttf\")",
       "Bash(curl -sIL -o /dev/null -w \"%{http_code} %{size_download} %{url_effective}\\\\n\" \"https://unpkg.com/canvaskit-wasm@0.39.1/tests/Roboto-Regular.ttf\")",
       "Bash(curl -sL -o \"vendor/fonts/Roboto-Regular.ttf\" \"https://raw.githubusercontent.com/google/skia/main/resources/fonts/Roboto-Regular.ttf\")",
-      "Bash(xxd)"
+      "Bash(xxd)",
+      "Bash(ls .claude/)",
+      "Bash(ls package.json)",
+      "Bash(ls index.html)"
     ]
   }
 }

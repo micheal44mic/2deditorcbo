@@ -1,5 +1,7 @@
 window.CBO = window.CBO || {};
 
+const EDITOR_DOCUMENT_SIZE = 4000;
+
 window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanvas(detail = {}) {
   const rasterizer = window.CBO.imageRasterizer;
   const layerModel = window.CBO.documentLayerModel;
@@ -31,134 +33,6 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
 window.addEventListener("cbo:place-uploaded-image", (event) => {
   void window.CBO.placeUploadedImageOnCanvas(event.detail);
 });
-
-window.CBO.hexToUnitRgba = function hexToUnitRgba(hexColor, fallback = [1, 1, 1, 1]) {
-  const normalized = String(hexColor || "").trim().replace(/^#/, "");
-
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-    return fallback.slice();
-  }
-
-  return [
-    parseInt(normalized.slice(0, 2), 16) / 255,
-    parseInt(normalized.slice(2, 4), 16) / 255,
-    parseInt(normalized.slice(4, 6), 16) / 255,
-    1,
-  ];
-};
-
-window.CBO.unitRgbaToHex = function unitRgbaToHex(color, fallback = "#FFFFFF") {
-  if (!Array.isArray(color)) {
-    return fallback;
-  }
-
-  const hex = color
-    .slice(0, 3)
-    .map((channel) => {
-      const value = Number.isFinite(channel) ? Math.min(1, Math.max(0, channel)) : 1;
-
-      return Math.round(value * 255).toString(16).padStart(2, "0");
-    })
-    .join("")
-    .toUpperCase();
-
-  return `#${hex}`;
-};
-
-window.CBO.createTextLayerOnCanvas = function createTextLayerOnCanvas(options = {}) {
-  const layerModel = window.CBO.documentLayerModel;
-  const renderer = window.CBO.documentRenderer;
-
-  if (!layerModel?.createTextLayer || !renderer) {
-    return null;
-  }
-
-  const documentWidth = Math.max(1, renderer.width || 1);
-  const documentHeight = Math.max(1, renderer.height || 1);
-  const boxWidth = Math.min(800, Math.max(320, documentWidth * 0.55));
-  const boxHeight = Math.min(600, Math.max(260, documentHeight * 0.55));
-  const x = Math.round((documentWidth - boxWidth) * 0.5);
-  const y = Math.round((documentHeight - boxHeight) * 0.5);
-  const fillColor = options.fillColor || "#E4E2E4";
-  const textLayer = layerModel.createTextLayer({
-    name: options.name || "Text",
-    text: options.text || "Radium FG",
-    opacity: 1,
-    font: {
-      key: "roboto",
-      family: "Roboto Black, Roboto, Inter, Arial, sans-serif",
-      size: 163,
-      weight: 900,
-      style: "normal",
-    },
-    style: {
-      fillColor: window.CBO.hexToUnitRgba(fillColor, [0.894, 0.886, 0.894, 1]),
-      strokeColor: [0, 0, 0, 1],
-      strokeWidth: 5,
-      lineHeight: 1.15,
-      letterSpacing: 0,
-      align: "left",
-    },
-    shadow: {
-      solid: true,
-      color: window.CBO.hexToUnitRgba("#DB1A5A", [0.859, 0.102, 0.353, 1]),
-      offset: 25,
-      angle: 45,
-      blur: 0,
-    },
-    box: {
-      x,
-      y,
-      width: boxWidth,
-      height: boxHeight,
-    },
-    transform: {
-      x,
-      y,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
-      skewX: 0,
-      skewY: 0,
-      anchorX: 0,
-      anchorY: 0,
-    },
-    warp: {
-      enabled: false,
-      mode: "CUSTOM",
-      amount: 0.5,
-    },
-  });
-  const entries = layerModel.getEntries();
-
-  layerModel.setEntries([textLayer, ...entries], { source: options.source || "text-tool-create" });
-  layerModel.setActiveLayer(textLayer.id, { source: options.source || "text-tool-create" });
-
-  return textLayer;
-};
-
-window.CBO.ensureActiveTextLayer = function ensureActiveTextLayer(options = {}) {
-  const layerModel = window.CBO.documentLayerModel;
-  const activeLayer = layerModel?.getActiveLayer?.();
-
-  if (activeLayer?.type === "text") {
-    return activeLayer;
-  }
-
-  return window.CBO.createTextLayerOnCanvas(options);
-};
-
-if (window.CBO.textToolBindingReady !== true) {
-  window.CBO.textToolBindingReady = true;
-  window.addEventListener("cbo:tool-change", (event) => {
-    const label = String(event.detail?.label || "").toUpperCase();
-    const toolMode = String(event.detail?.toolMode || "").toLowerCase();
-
-    if (label === "TYPE" || toolMode === "text") {
-      window.CBO.ensureActiveTextLayer?.({ source: "text-tool" });
-    }
-  });
-}
 
 window.CBO.initEditorCanvas = function initEditorCanvas() {
   const stage = document.querySelector(".editor-stage");
@@ -196,8 +70,6 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   stage.dataset.paintEngine = "webgl2";
   stage.replaceChildren(canvas);
 
-  window.CBO.vectorOverlayRenderer?.dispose?.();
-  window.CBO.vectorOverlayRenderer = null;
   window.CBO.imageRasterizer?.dispose?.();
   window.CBO.imageRasterizer = null;
   window.CBO.smudgeEngine?.dispose?.();
@@ -220,6 +92,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   const documentRenderer = new window.CBO.DocumentRenderer({
     gl,
     layerModel,
+    documentWidth: EDITOR_DOCUMENT_SIZE,
+    documentHeight: EDITOR_DOCUMENT_SIZE,
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
   });
@@ -244,7 +118,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
         camera: brushEngine.camera,
         dpr: brushEngine.dpr,
       }),
-      requestDraw: () => brushEngine.draw(),
+      requestDraw: () => brushEngine.requestDraw?.() || brushEngine.draw(),
     });
   } catch (error) {
     brushEngine.dispose();
@@ -255,45 +129,22 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   window.CBO.brushEngine = brushEngine;
   window.CBO.smudgeEngine = smudgeEngine;
   window.CBO.documentRenderer = documentRenderer;
-  window.CBO.vectorOverlayRenderer = window.CBO.VectorOverlayRenderer
-    ? new window.CBO.VectorOverlayRenderer({ stage })
-    : null;
-
-  // Layer model dispatches "cbo:document-layers-change" su qualsiasi mutazione
-  // (creazione layer testo, edit testo, rinomina, opacity, riordino, visibilita').
-  // Senza questo listener il canvas non si aggiorna sui cambi del Model.
-  window.addEventListener("cbo:document-layers-change", () => {
-    window.CBO.brushEngine?.draw?.();
-  });
 
   try {
     window.CBO.imageRasterizer = new window.CBO.ImageRasterizer({
       gl,
-      getDocumentSize: () => ({
-        width: window.CBO.documentRenderer.width,
-        height: window.CBO.documentRenderer.height,
-      }),
       getTarget: (options = {}) => {
         if (options.layerId) {
-          return window.CBO.documentRenderer.getRasterTarget(options.layerId, options);
+          return window.CBO.documentRenderer.getRasterTarget(options.layerId);
         }
 
         return window.CBO.documentRenderer.getPaintTarget();
-      },
-      markContent: ({ layerId, bounds }) => {
-        if (!layerId || !bounds) {
-          return;
-        }
-
-        window.CBO.documentRenderer.markRasterTargetContentMaybe(layerId, bounds);
       },
     });
   } catch (error) {
     smudgeEngine.dispose();
     brushEngine.dispose();
     documentRenderer.dispose();
-    window.CBO.vectorOverlayRenderer?.dispose?.();
-    window.CBO.vectorOverlayRenderer = null;
     window.CBO.smudgeEngine = null;
     window.CBO.brushEngine = null;
     window.CBO.documentRenderer = null;

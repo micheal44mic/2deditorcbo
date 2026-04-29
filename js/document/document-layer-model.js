@@ -38,156 +38,7 @@
         return this.createGroup(options);
       }
 
-      if (type === "text") {
-        return this.createTextLayer(options);
-      }
-
       return this.createBaseLayer(options);
-    }
-
-    createTextLayer(options = {}) {
-      const box = {
-        x: Number.isFinite(options.box?.x) ? options.box.x : 0,
-        y: Number.isFinite(options.box?.y) ? options.box.y : 0,
-        width: Number.isFinite(options.box?.width) ? Math.max(1, options.box.width) : 640,
-        height: Number.isFinite(options.box?.height) ? Math.max(1, options.box.height) : 180,
-      };
-
-      return {
-        ...this.createBaseLayer({
-          ...options,
-          type: "text",
-          name: options.name || "Text",
-        }),
-        text: typeof options.text === "string" ? options.text : "Text",
-        font: this.normalizeTextFont(options.font),
-        style: this.normalizeTextStyle(options.style),
-        shadow: this.normalizeTextShadow(options.shadow),
-        box,
-        transform: this.normalizeTextTransform(options.transform, box),
-        warp: this.normalizeTextWarp(options.warp, box),
-      };
-    }
-
-    normalizeTextFont(font = {}) {
-      font = font && typeof font === "object" ? font : {};
-
-      return {
-        key: ["roboto", "oswald"].includes(font.key) ? font.key : "roboto",
-        family: typeof font.family === "string" && font.family.trim()
-          ? font.family.trim()
-          : "Roboto Black, Roboto, Inter, Arial, sans-serif",
-        size: Number.isFinite(font.size) ? Math.min(512, Math.max(4, font.size)) : 163,
-        weight: Number.isFinite(font.weight) || typeof font.weight === "string" ? font.weight : 900,
-        style: font.style === "italic" ? "italic" : "normal",
-      };
-    }
-
-    normalizeTextStyle(style = {}) {
-      style = style && typeof style === "object" ? style : {};
-
-      return {
-        fillColor: this.normalizeColor(style.fillColor, [1, 1, 1, 1]),
-        strokeColor: this.normalizeColor(style.strokeColor, [0, 0, 0, 1]),
-        strokeWidth: Number.isFinite(style.strokeWidth) ? Math.max(0, style.strokeWidth) : 5,
-        lineHeight: Number.isFinite(style.lineHeight) ? Math.min(3, Math.max(0.65, style.lineHeight)) : 1.15,
-        letterSpacing: Number.isFinite(style.letterSpacing) ? Math.min(200, Math.max(-100, style.letterSpacing)) : 0,
-        align: ["left", "center", "right"].includes(style.align) ? style.align : "left",
-      };
-    }
-
-    normalizeTextShadow(shadow = {}) {
-      shadow = shadow && typeof shadow === "object" ? shadow : {};
-
-      return {
-        solid: shadow.solid !== false,
-        color: this.normalizeColor(shadow.color, [0.859, 0.102, 0.353, 1]),
-        offset: Number.isFinite(shadow.offset) ? Math.min(200, Math.max(0, shadow.offset)) : 25,
-        angle: Number.isFinite(shadow.angle) ? Math.min(360, Math.max(0, shadow.angle)) : 45,
-        blur: Number.isFinite(shadow.blur) ? Math.min(100, Math.max(0, shadow.blur)) : 0,
-      };
-    }
-
-    normalizeTextTransform(transform = {}, box = {}) {
-      transform = transform && typeof transform === "object" ? transform : {};
-
-      return {
-        x: Number.isFinite(transform.x) ? transform.x : Number(box.x) || 0,
-        y: Number.isFinite(transform.y) ? transform.y : Number(box.y) || 0,
-        rotation: Number.isFinite(transform.rotation) ? transform.rotation : 0,
-        scaleX: Number.isFinite(transform.scaleX) ? Math.min(50, Math.max(0.01, transform.scaleX)) : 1,
-        scaleY: Number.isFinite(transform.scaleY) ? Math.min(50, Math.max(0.01, transform.scaleY)) : 1,
-        skewX: Number.isFinite(transform.skewX) ? Math.min(85, Math.max(-85, transform.skewX)) : 0,
-        skewY: Number.isFinite(transform.skewY) ? Math.min(85, Math.max(-85, transform.skewY)) : 0,
-        anchorX: Number.isFinite(transform.anchorX) ? Math.min(1, Math.max(0, transform.anchorX)) : 0,
-        anchorY: Number.isFinite(transform.anchorY) ? Math.min(1, Math.max(0, transform.anchorY)) : 0,
-      };
-    }
-
-    normalizeTextWarp(warp = {}, box = {}) {
-      warp = warp && typeof warp === "object" ? warp : {};
-      const width = Math.max(1, Number(box.width) || 1);
-      const height = Math.max(1, Number(box.height) || 1);
-      const transformModes = ["CUSTOM", "DISTORT", "CIRCLE", "ANGLE", "ARCH", "RISE", "WAVE", "FLAG"];
-      const rawMode = String(warp.mode || "").trim().toUpperCase();
-      const mode = transformModes.includes(rawMode)
-        ? rawMode
-        : warp.enabled === true
-          ? "DISTORT"
-          : "CUSTOM";
-      const defaultPoints = {
-        topLeft: { x: 0, y: 0 },
-        topCenter: { x: 0.5, y: 0 },
-        topRight: { x: 1, y: 0 },
-        bottomLeft: { x: 0, y: 1 },
-        bottomCenter: { x: 0.5, y: 1 },
-        bottomRight: { x: 1, y: 1 },
-      };
-      const defaultHandles = {
-        topIn: { x: 0.35, y: 0 },
-        topOut: { x: 0.65, y: 0 },
-        bottomIn: { x: 0.35, y: 1 },
-        bottomOut: { x: 0.65, y: 1 },
-      };
-      const normalizeWarpPoint = (point, fallback) => {
-        point = point && typeof point === "object" ? point : {};
-
-        return {
-          x: Number.isFinite(point.x) ? Math.min(3, Math.max(-2, point.x)) : fallback.x,
-          y: Number.isFinite(point.y) ? Math.min(3, Math.max(-2, point.y)) : fallback.y,
-        };
-      };
-      const normalizePointMap = (source, fallback) =>
-        Object.fromEntries(
-          Object.entries(fallback).map(([key, fallbackPoint]) => [
-            key,
-            normalizeWarpPoint(source?.[key], fallbackPoint),
-          ]),
-        );
-
-      return {
-        enabled: mode !== "CUSTOM",
-        mode,
-        amount: Number.isFinite(warp.amount) ? Math.min(1, Math.max(-1, warp.amount)) : 0.5,
-        sourceWidth: Number.isFinite(warp.sourceWidth) ? Math.max(1, warp.sourceWidth) : width,
-        sourceHeight: Number.isFinite(warp.sourceHeight) ? Math.max(1, warp.sourceHeight) : height,
-        points: normalizePointMap(warp.points, defaultPoints),
-        handles: normalizePointMap(warp.handles, defaultHandles),
-      };
-    }
-
-    normalizeColor(value, fallback) {
-      if (!Array.isArray(value)) {
-        return fallback.slice();
-      }
-
-      const channels = fallback.map((fallbackChannel, index) => {
-        const channel = value[index];
-
-        return Number.isFinite(channel) ? Math.min(1, Math.max(0, channel)) : fallbackChannel;
-      });
-
-      return channels;
     }
 
     createGroup(options = {}) {
@@ -212,10 +63,6 @@
 
       if (type === "image") {
         return "Image";
-      }
-
-      if (type === "text") {
-        return "Text";
       }
 
       if (type === "svg" || type === "vector") {
@@ -413,14 +260,7 @@
       }
 
       Object.assign(entry, this.cloneValue(nextPatch));
-
-      if (entry.type === "text") {
-        const normalized = this.createTextLayer(entry);
-
-        Object.assign(entry, normalized);
-      } else {
-        entry.opacity = Number.isFinite(entry.opacity) ? Math.min(1, Math.max(0, entry.opacity)) : 1;
-      }
+      entry.opacity = Number.isFinite(entry.opacity) ? Math.min(1, Math.max(0, entry.opacity)) : 1;
 
       this.emitChange(options.source || "update-layer");
 

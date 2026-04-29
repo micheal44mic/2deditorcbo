@@ -250,16 +250,6 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       opacity: 1,
     };
 
-    if (existingEntry && existingEntry.type === type && type === "text") {
-      serialized.text = existingEntry.text;
-      serialized.font = existingEntry.font;
-      serialized.style = existingEntry.style;
-      serialized.box = existingEntry.box;
-      serialized.transform = existingEntry.transform;
-      serialized.warp = existingEntry.warp;
-      serialized.opacity = Number.isFinite(existingEntry.opacity) ? existingEntry.opacity : serialized.opacity;
-    }
-
     if (type === "group") {
       const children = getLayerChildren(entry);
 
@@ -335,16 +325,6 @@ window.CBO.initLayersPanel = function initLayersPanel() {
           <path d="M11 21a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1" />
           <path d="M16 16a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1" />
           <path d="M21 6a2 2 0 0 0-.586-1.414l-2-2A2 2 0 0 0 17 2h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1z" />
-        </svg>
-      `;
-    }
-
-    if (type === "text") {
-      return `
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 4v16" />
-          <path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" />
-          <path d="M9 20h6" />
         </svg>
       `;
     }
@@ -452,8 +432,6 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const row = document.createElement("div");
     const layerId = id || layerModel?.createId(type) || `${type}-${Date.now().toString(36)}`;
 
-    // TODO: when canvas objects are wired to the layers panel, pass "text" or "vector"
-    // here so text layers and vector layers use their dedicated icons.
     entry.className = `layer-entry ${type === "group" ? "layer-group-entry" : ""}`;
     entry.dataset.layerEntry = "";
     entry.dataset.layerId = layerId;

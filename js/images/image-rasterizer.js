@@ -47,8 +47,6 @@ void main() {
 
       this.gl = options.gl;
       this.getTarget = options.getTarget;
-      this.markContent = typeof options.markContent === "function" ? options.markContent : null;
-      this.getDocumentSize = typeof options.getDocumentSize === "function" ? options.getDocumentSize : null;
       this.isDisposed = false;
       this.programInfo = this.createPlacedImageProgramInfo();
       this.quad = this.createPlacementQuad();
@@ -227,31 +225,18 @@ void main() {
         return;
       }
 
-      const gl = this.gl;
-      const { width, height } = this.getRasterSourceSize(source);
-      const documentSize = this.getDocumentSize?.() || {
-        width: Number.isFinite(options.documentWidth) ? options.documentWidth : width,
-        height: Number.isFinite(options.documentHeight) ? options.documentHeight : height,
-      };
-      const x = Number.isFinite(options.x) ? options.x : Math.round((documentSize.width - width) * 0.5);
-      const y = Number.isFinite(options.y) ? options.y : Math.round((documentSize.height - height) * 0.5);
-      const target = options.target || this.getTarget({
-        ...options,
-        bounded: true,
-        bounds: { x, y, width, height },
-        exact: true,
-      });
+      const target = options.target || this.getTarget(options);
 
       if (!target || !Number.isFinite(target.width) || !Number.isFinite(target.height)) {
         throw new Error("ImageRasterizer richiede un target raster valido.");
       }
 
-      const targetWidth = Math.max(1, Math.round(target.allocatedWidth || target.width));
-      const targetHeight = Math.max(1, Math.round(target.allocatedHeight || target.height));
-      const targetOriginX = Number.isFinite(target.allocatedX) ? target.allocatedX : target.x || 0;
-      const targetOriginY = Number.isFinite(target.allocatedY) ? target.allocatedY : target.y || 0;
-      const localX = target.isBounded === true ? x - targetOriginX : x;
-      const localY = target.isBounded === true ? y - targetOriginY : y;
+      const gl = this.gl;
+      const targetWidth = Math.max(1, Math.round(target.width));
+      const targetHeight = Math.max(1, Math.round(target.height));
+      const { width, height } = this.getRasterSourceSize(source);
+      const x = Number.isFinite(options.x) ? options.x : Math.round((targetWidth - width) * 0.5);
+      const y = Number.isFinite(options.y) ? options.y : Math.round((targetHeight - height) * 0.5);
       const texture = this.createRasterImageTexture(source);
       const { program, uniforms } = this.programInfo;
 
@@ -264,7 +249,7 @@ void main() {
 
         gl.useProgram(program);
         gl.uniform2f(uniforms.docResolution, targetWidth, targetHeight);
-        gl.uniform4f(uniforms.destinationRect, localX, localY, width, height);
+        gl.uniform4f(uniforms.destinationRect, x, y, width, height);
         gl.uniform1i(uniforms.texture, 0);
 
         gl.bindVertexArray(this.quad.vao);
@@ -277,12 +262,14 @@ void main() {
         gl.useProgram(null);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.deleteTexture(texture);
-        this.markContent?.({
-          layerId: target.layerId,
-          bounds: { x, y, width, height },
-          target,
-        });
       }
+
+      window.dispatchEvent(new CustomEvent("cbo:document-content-change", {
+        detail: {
+          layerId: target.layerId || null,
+          source: "image-rasterizer",
+        },
+      }));
     }
 
     dispose() {

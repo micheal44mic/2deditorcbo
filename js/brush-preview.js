@@ -11,6 +11,7 @@ window.CBO = window.CBO || {};
   const previewColorHex = "#dfe3ea";
   const previewFixedRadius = 30;
   const thumbnailInternalSize = { width: 188, height: 52 };
+  const previewsPerFrame = 1;
   const renderingModeFlowScale = Object.freeze({
     "light-glaze": 1,
     "uniform-glaze": 1,
@@ -206,7 +207,7 @@ window.CBO = window.CBO || {};
 
     try {
       let rendered = 0;
-      while (queue.length > 0 && rendered < 2) {
+      while (queue.length > 0 && rendered < previewsPerFrame) {
         const job = queue.shift();
 
         if (!job.canvas.isConnected || pendingKeys.get(job.canvas) !== job.key) {
@@ -386,6 +387,11 @@ window.CBO = window.CBO || {};
     const samples = createSyntheticStrokeSamples(renderer.engine, engineSettings);
 
     renderer.engine.renderSyntheticStroke(samples);
+
+    if (window.createImageBitmap) {
+      return window.createImageBitmap(renderer.canvas);
+    }
+
     context.clearRect(0, 0, output.width, output.height);
     context.drawImage(renderer.canvas, 0, 0, output.width, output.height);
 
