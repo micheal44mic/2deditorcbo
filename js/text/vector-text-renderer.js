@@ -138,6 +138,35 @@
     ].join(" ");
   }
 
+  function envelopeOutlinePath(grid) {
+    const topLeftControl = {
+      x: grid.TL.x + (grid.TC.x - grid.TL.x) / 3,
+      y: grid.TL.y,
+    };
+    const topRightControl = {
+      x: grid.TR.x - (grid.TR.x - grid.TC.x) / 3,
+      y: grid.TR.y,
+    };
+    const bottomLeftControl = {
+      x: grid.BL.x + (grid.BC.x - grid.BL.x) / 3,
+      y: grid.BL.y,
+    };
+    const bottomRightControl = {
+      x: grid.BR.x - (grid.BR.x - grid.BC.x) / 3,
+      y: grid.BR.y,
+    };
+
+    return [
+      `M ${grid.TL.x} ${grid.TL.y}`,
+      `C ${topLeftControl.x} ${topLeftControl.y} ${grid.TC_HandleL.x} ${grid.TC_HandleL.y} ${grid.TC.x} ${grid.TC.y}`,
+      `C ${grid.TC_HandleR.x} ${grid.TC_HandleR.y} ${topRightControl.x} ${topRightControl.y} ${grid.TR.x} ${grid.TR.y}`,
+      `L ${grid.BR.x} ${grid.BR.y}`,
+      `C ${bottomRightControl.x} ${bottomRightControl.y} ${grid.BC_HandleR.x} ${grid.BC_HandleR.y} ${grid.BC.x} ${grid.BC.y}`,
+      `C ${grid.BC_HandleL.x} ${grid.BC_HandleL.y} ${bottomLeftControl.x} ${bottomLeftControl.y} ${grid.BL.x} ${grid.BL.y}`,
+      "Z",
+    ].join(" ");
+  }
+
   function colorWithOpacity(color, opacity) {
     const clampedOpacity = Math.min(1, Math.max(0, Number.isFinite(opacity) ? opacity : 1));
     const hex = String(color || "#000000").trim();
@@ -485,7 +514,7 @@
 
     updateCameraTransform() {
       const { camera, dpr } = resolveCameraState();
-      const zoom = Math.max(0.0001, camera.zoom || 1);
+      const zoom = Math.max(0.0001, (camera.zoom || 1) / dpr);
       const x = (camera.x || 0) / dpr;
       const y = (camera.y || 0) / dpr;
 
@@ -579,6 +608,47 @@
         .find((node) => node.getAttribute("data-layer-id") === layerId) || null;
     }
 
+    getEnvelopeHandleHitAtClient(clientX, clientY, pointerType = "mouse") {
+      const layer = this.getActiveTextLayer();
+
+      if (!layer?.envelopeGrid || layer.locked === true) {
+        return null;
+      }
+
+      const layerNode = this.getLayerNode(layer.id);
+
+      if (!layerNode) {
+        return null;
+      }
+
+      const nodeIds = [
+        ...CORNER_ENVELOPE_NODES,
+        ...CENTER_ENVELOPE_NODES,
+        ...HANDLE_ENVELOPE_NODES,
+      ];
+      const hitRadius = pointerType === "touch" ? 24 : 18;
+      let closest = null;
+
+      nodeIds.forEach((nodeId) => {
+        const handle = layerNode.querySelector(`[data-envelope-node="${nodeId}"]`);
+
+        if (!handle) {
+          return;
+        }
+
+        const rect = handle.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const distance = Math.hypot(clientX - centerX, clientY - centerY);
+
+        if (!closest || distance < closest.distance) {
+          closest = { distance, layerId: layer.id, nodeId };
+        }
+      });
+
+      return closest?.distance <= hitRadius ? closest : null;
+    }
+
     renderContent() {
       const layers = this.getRenderableTextLayers();
       const activeLayerId = this.layerModel?.activeLayerId || "";
@@ -596,10 +666,14 @@
           return;
         }
 
+        const draggingLayer = this.dragState?.layerId === layer.id ? this.dragState.nextLayer : null;
+        const renderLayer = draggingLayer
+          ? { ...layer, x: draggingLayer.x, y: draggingLayer.y }
+          : layer;
         const pathData = this.getPathData(layer, font);
-        const filter = this.createDropShadowFilter(layer);
-        const node = this.createTextLayerNode(layer, pathData, {
-          active: layer.id === activeLayerId,
+        const filter = this.createDropShadowFilter(renderLayer);
+        const node = this.createTextLayerNode(renderLayer, pathData, {
+          active: renderLayer.id === activeLayerId,
           defs,
           filterId: filter?.id || "",
         });
@@ -759,28 +833,54 @@
     createEnvelopeControls(layer) {
       const grid = layer.envelopeGrid;
       const group = createSvgElement("g", { class: "editor-vector-envelope-ui" });
-      const guideAttributes = {
+      const outlinePath = envelopeOutlinePath(grid);
+      const outlineAttributes = {
+        d: outlinePath,
         fill: "none",
-        stroke: "#00a3ff",
-        "stroke-dasharray": "16 10",
         "stroke-linecap": "round",
         "stroke-linejoin": "round",
-        "stroke-width": 3,
+        "vector-effect": "non-scaling-stroke",
+      };
+      const curveAttributes = {
+        fill: "none",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
         "vector-effect": "non-scaling-stroke",
       };
 
       group.append(
-        createSvgElement("path", { ...guideAttributes, d: topCurvePath(grid) }),
-        createSvgElement("path", { ...guideAttributes, d: bottomCurvePath(grid) }),
-        createSvgElement("polyline", { ...guideAttributes, points: pointList(grid.TL, grid.BL) }),
-        createSvgElement("polyline", { ...guideAttributes, points: pointList(grid.TR, grid.BR) }),
+        createSvgElement("path", {
+          class: "editor-vector-envelope-fill",
+          d: outlinePath,
+          fill: "rgba(20, 115, 230, 0.035)",
+          stroke: "none",
+        }),
+        createSvgElement("path", {
+          ...outlineAttributes,
+          class: "editor-vector-envelope-outline",
+          stroke: "#1473e6",
+          "stroke-width": 1.75,
+        }),
         createSvgElement("polyline", {
-          fill: "none",
+          class: "editor-vector-envelope-midline",
           points: pointList(grid.TC, grid.BC),
-          stroke: "rgba(0, 163, 255, 0.45)",
-          "stroke-dasharray": "8 8",
-          "stroke-width": 2,
+          stroke: "rgba(20, 115, 230, 0.36)",
+          "stroke-width": 1.15,
           "vector-effect": "non-scaling-stroke",
+        }),
+        createSvgElement("path", {
+          ...curveAttributes,
+          class: "editor-vector-envelope-curve-guide",
+          d: topCurvePath(grid),
+          stroke: "rgba(20, 115, 230, 0.28)",
+          "stroke-width": 1,
+        }),
+        createSvgElement("path", {
+          ...curveAttributes,
+          class: "editor-vector-envelope-curve-guide",
+          d: bottomCurvePath(grid),
+          stroke: "rgba(20, 115, 230, 0.28)",
+          "stroke-width": 1,
         }),
       );
 
@@ -791,46 +891,97 @@
         ["BC", "BC_HandleR"],
       ].forEach(([anchorId, handleId]) => {
         group.append(createSvgElement("polyline", {
+          class: "editor-vector-envelope-control-line",
           fill: "none",
           points: pointList(grid[anchorId], grid[handleId]),
-          stroke: "rgba(23, 61, 53, 0.72)",
-          "stroke-width": 2,
+          stroke: "rgba(20, 115, 230, 0.55)",
+          "stroke-linecap": "round",
+          "stroke-width": 1.15,
           "vector-effect": "non-scaling-stroke",
         }));
       });
 
       CORNER_ENVELOPE_NODES.forEach((nodeId) => {
-        group.append(this.createEnvelopeHandle(layer, nodeId, 8, "#f9f2e8", "#0077b6"));
+        group.append(this.createEnvelopeHandle(layer, nodeId, {
+          className: "corner",
+          shape: "square",
+          size: 13,
+        }));
       });
       CENTER_ENVELOPE_NODES.forEach((nodeId) => {
-        group.append(this.createEnvelopeHandle(layer, nodeId, 10, "#00a3ff", "#f9f2e8"));
+        group.append(this.createEnvelopeHandle(layer, nodeId, {
+          className: "anchor",
+          shape: "diamond",
+          size: 14,
+        }));
       });
       HANDLE_ENVELOPE_NODES.forEach((nodeId) => {
-        group.append(this.createEnvelopeHandle(layer, nodeId, 7, "#173d35", "#f9f2e8"));
+        group.append(this.createEnvelopeHandle(layer, nodeId, {
+          className: "control",
+          shape: "circle",
+          size: 9,
+        }));
       });
 
       return group;
     }
 
-    createEnvelopeHandle(layer, nodeId, radius, fill, stroke) {
+    createEnvelopeHandle(layer, nodeId, options = {}) {
       const point = layer.envelopeGrid[nodeId];
-      const handle = createSvgElement("circle", {
-        class: "editor-vector-envelope-handle",
+      const size = Number.isFinite(options.size) ? options.size : 12;
+      const roleClass = options.className || "anchor";
+      const group = createSvgElement("g", {
+        class: `editor-vector-envelope-handle-group ${roleClass}`,
         "data-envelope-node": nodeId,
-        cx: point.x,
-        cy: point.y,
-        fill,
-        r: radius,
-        stroke,
-        "stroke-width": 2.5,
+        transform: `translate(${point.x} ${point.y})`,
+      });
+      const hitTarget = createSvgElement("circle", {
+        class: "editor-vector-envelope-hit",
+        cx: 0,
+        cy: 0,
+        fill: "none",
+        "pointer-events": "stroke",
+        r: Math.max(7, size / 2),
+        stroke: "#1473e6",
+        "stroke-opacity": 0.001,
+        "stroke-width": 24,
         "vector-effect": "non-scaling-stroke",
       });
+      let marker;
 
-      handle.addEventListener("pointerdown", (event) => {
+      if (options.shape === "circle") {
+        marker = createSvgElement("circle", {
+          class: "editor-vector-envelope-handle",
+          cx: 0,
+          cy: 0,
+          fill: "#ffffff",
+          r: size / 2,
+          stroke: "#1473e6",
+          "stroke-width": 1.5,
+          "vector-effect": "non-scaling-stroke",
+        });
+      } else {
+        marker = createSvgElement("rect", {
+          class: "editor-vector-envelope-handle",
+          fill: options.shape === "diamond" ? "#1473e6" : "#ffffff",
+          height: size,
+          rx: 1.75,
+          stroke: "#1473e6",
+          "stroke-width": 1.5,
+          transform: options.shape === "diamond" ? "rotate(45)" : "",
+          "vector-effect": "non-scaling-stroke",
+          width: size,
+          x: -size / 2,
+          y: -size / 2,
+        });
+      }
+
+      group.append(hitTarget, marker);
+      group.addEventListener("pointerdown", (event) => {
         this.handleEnvelopePointerDown(event, layer.id, nodeId);
       });
 
-      return handle;
+      return group;
     }
 
     appendSolidShadow(group, layer, pathData) {
@@ -871,6 +1022,19 @@
     }
 
     handlePointerDown(event) {
+      if (event.button === 0 && event.target === this.hitArea) {
+        const envelopeHit = this.getEnvelopeHandleHitAtClient(
+          event.clientX,
+          event.clientY,
+          event.pointerType,
+        );
+
+        if (envelopeHit) {
+          this.handleEnvelopePointerDown(event, envelopeHit.layerId, envelopeHit.nodeId);
+          return;
+        }
+      }
+
       if (event.target !== this.hitArea) {
         return;
       }
@@ -929,9 +1093,12 @@
       this.layerModel.setActiveLayer(layerId, { source: "vector-text-envelope-select" });
 
       this.envelopeDragState = {
+        grid: cloneValue(layer.envelopeGrid),
         layerId,
         nodeId,
         pointerId: event.pointerId,
+        startLayerPoint: this.clientToLayerPoint(event.clientX, event.clientY, layer),
+        startNodePosition: cloneValue(layer.envelopeGrid[nodeId]),
       };
 
       event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -952,9 +1119,15 @@
         return;
       }
 
-      const position = this.clientToLayerPoint(event.clientX, event.clientY, layer);
+      const currentPosition = this.clientToLayerPoint(event.clientX, event.clientY, layer);
+      const startLayerPoint = this.envelopeDragState.startLayerPoint;
+      const startNodePosition = this.envelopeDragState.startNodePosition;
+      const position = {
+        x: startNodePosition.x + currentPosition.x - startLayerPoint.x,
+        y: startNodePosition.y + currentPosition.y - startLayerPoint.y,
+      };
       const envelopeGrid = namespace.VectorTextEngine.updateEnvelopeGridNode(
-        layer.envelopeGrid,
+        this.envelopeDragState.grid,
         this.envelopeDragState.nodeId,
         position,
       );

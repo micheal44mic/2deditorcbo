@@ -71,8 +71,43 @@
   pointer-events: auto;
 }
 
-.editor-vector-envelope-handle {
+.editor-vector-envelope-fill,
+.editor-vector-envelope-outline,
+.editor-vector-envelope-midline,
+.editor-vector-envelope-curve-guide,
+.editor-vector-envelope-control-line {
+  pointer-events: none;
+}
+
+.editor-vector-envelope-handle-group,
+.editor-vector-envelope-handle,
+.editor-vector-envelope-hit {
   pointer-events: all;
+}
+
+.editor-vector-envelope-hit {
+  pointer-events: stroke;
+}
+
+.editor-vector-envelope-handle-group {
+  cursor: grab;
+}
+
+.editor-vector-envelope-handle-group:active {
+  cursor: grabbing;
+}
+
+.editor-vector-envelope-handle {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.28));
+}
+
+.editor-vector-envelope-handle-group:hover .editor-vector-envelope-handle {
+  fill: #eaf3ff;
+  stroke: #0b5cad;
+}
+
+.editor-vector-envelope-handle-group.anchor:hover .editor-vector-envelope-handle {
+  fill: #0b5cad;
 }
 
 .side-panel {
