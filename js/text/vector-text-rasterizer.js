@@ -65,19 +65,25 @@
     };
   }
 
-  function createRasterSvg(layerNode, size) {
+  function createRasterSvg(layerNode, size, rasterBox = null) {
     const sourceSvg = namespace.vectorTextRenderer?.svg || document.querySelector(".editor-vector-overlay");
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     const defs = sourceSvg?.querySelector("defs")?.cloneNode(true);
     const clonedLayer = layerNode.cloneNode(true);
+    const box = rasterBox || {
+      height: size.height,
+      width: size.width,
+      x: 0,
+      y: 0,
+    };
 
     clonedLayer.classList.remove("active");
     clonedLayer.querySelectorAll(".editor-vector-envelope-ui").forEach((node) => node.remove());
 
     svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    svg.setAttribute("width", String(size.width));
-    svg.setAttribute("height", String(size.height));
-    svg.setAttribute("viewBox", `0 0 ${size.width} ${size.height}`);
+    svg.setAttribute("width", String(box.width));
+    svg.setAttribute("height", String(box.height));
+    svg.setAttribute("viewBox", `${box.x} ${box.y} ${box.width} ${box.height}`);
 
     if (defs) {
       svg.append(defs);
@@ -108,8 +114,14 @@
     });
   }
 
-  async function renderLayerNodeToCanvas(layerNode, size) {
-    const svgMarkup = createRasterSvg(layerNode, size);
+  async function renderLayerNodeToCanvas(layerNode, size, rasterBox = null) {
+    const box = rasterBox || {
+      height: size.height,
+      width: size.width,
+      x: 0,
+      y: 0,
+    };
+    const svgMarkup = createRasterSvg(layerNode, size, box);
     const image = await loadSvgImage(svgMarkup);
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d", { alpha: true });
@@ -118,12 +130,52 @@
       throw new Error("Canvas 2D non disponibile per rasterizzare il testo.");
     }
 
-    canvas.width = size.width;
-    canvas.height = size.height;
+    canvas.width = box.width;
+    canvas.height = box.height;
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
     return canvas;
+  }
+
+  async function createRasterSource(layer, layerNode, size) {
+    const vectorRenderer = namespace.vectorTextRenderer;
+    let asset = vectorRenderer?.createRasterTextAsset?.(layer, { size }) || null;
+
+    if (!asset && vectorRenderer?.createRasterTextAsset && namespace.VectorTextEngine?.loadOpenTypeFont) {
+      try {
+        const font = await namespace.VectorTextEngine.loadOpenTypeFont(
+          layer.fontUrl || namespace.VectorTextEngine.DEFAULT_FONT_URL,
+        );
+
+        asset = vectorRenderer.createRasterTextAsset(layer, { font, size });
+      } catch (error) {
+        console.warn("Impossibile preparare il crop del testo rasterizzato.", error);
+      }
+    }
+
+    if (asset) {
+      if (!asset.rasterBox || !asset.svgMarkup) {
+        return { rasterBox: null, source: null };
+      }
+
+      return {
+        rasterBox: asset.rasterBox,
+        source: await loadSvgImage(asset.svgMarkup),
+      };
+    }
+
+    const rasterBox = {
+      height: size.height,
+      width: size.width,
+      x: 0,
+      y: 0,
+    };
+
+    return {
+      rasterBox,
+      source: await renderLayerNodeToCanvas(layerNode, size, rasterBox),
+    };
   }
 
   function replaceEntry(entries, targetId, replacement) {
@@ -174,16 +226,24 @@
       visible: layer.visible !== false,
     });
     const size = getDocumentSize();
-    const canvas = await renderLayerNodeToCanvas(layerNode, size);
+    const rasterSource = await createRasterSource(layer, layerNode, size);
     const target = renderer.getRasterTarget(rasterLayer.id);
 
     renderer.clearLayer?.(rasterLayer.id);
-    rasterizer.placeRasterImage(canvas, {
-      layerId: rasterLayer.id,
-      target,
-      x: 0,
-      y: 0,
-    });
+    if (rasterSource.source && rasterSource.rasterBox) {
+      rasterizer.placeRasterImage(rasterSource.source, {
+        layerId: rasterLayer.id,
+        target,
+        x: rasterSource.rasterBox.x,
+        y: rasterSource.rasterBox.y,
+      });
+      namespace.vectorTextRenderer?.debugTextRaster?.(
+        layer,
+        rasterSource.rasterBox,
+        size,
+        "manual-vector-text-rasterize",
+      );
+    }
 
     const entries = layerModel.getEntries();
     const didReplace = replaceEntry(entries, layer.id, rasterLayer);

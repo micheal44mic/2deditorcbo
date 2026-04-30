@@ -6,6 +6,10 @@ window.CBO = window.CBO || {};
   const WHEEL_ZOOM_INTENSITY = 0.0015;
   const PINCH_ZOOM_INTENSITY = 0.01;
   const MAX_HISTORY_ENTRIES = 40;
+  const BRUSH_RASTER_DEBUG = true;
+  const CROPPED_BRUSH_STROKES = true;
+  const STROKE_ALLOCATION_QUANTUM = 128;
+  const STROKE_FINAL_PADDING = 6;
   const RENDERING_MODE_PRESETS = Object.freeze({
     "light-glaze": { strokeBuildUp: 0 },
     "uniform-glaze": { strokeBuildUp: 0.15 },
@@ -32,6 +36,8 @@ layout(location = 9) in float aInstanceGrainRotation;
 layout(location = 10) in float aInstanceGrainDepthScale;
 
 uniform vec2 u_docResolution;
+uniform vec2 u_targetOrigin;
+uniform vec2 u_targetSize;
 uniform float u_brushSize;
 uniform float u_minSizeRatio;
 uniform vec2 u_shapeFlip;
@@ -65,7 +71,8 @@ void main() {
   );
   float stampPixelSize = u_brushSize * sizeFactor * scale;
   vec2 documentPosition = aInstancePos + rotatedPosition * stampPixelSize;
-  vec2 clipPosition = (documentPosition / u_docResolution) * 2.0 - 1.0;
+  vec2 targetPosition = (documentPosition - u_targetOrigin) / max(u_targetSize, vec2(1.0));
+  vec2 clipPosition = targetPosition * 2.0 - 1.0;
 
   clipPosition.y *= -1.0;
   v_uv = a_position + 0.5;
@@ -451,6 +458,19 @@ void main() {
   };
 
   namespace.ImageCache = ImageCache;
+
+  function bytesToMega(bytes) {
+    return Math.round((bytes / (1024 * 1024)) * 100) / 100;
+  }
+
+  function rectBytes(rect) {
+    if (!rect) {
+      return 0;
+    }
+
+    return Math.max(0, Math.round(rect.width * rect.height * 4));
+  }
+
   const GRAIN_BLEND_MODE_IDS = Object.freeze({
     multiply: 0,
     darken: 1,
@@ -562,6 +582,7 @@ void main() {
       this.strokePlateauFBO = null;
       this.strokeAccumTexture = null;
       this.strokeAccumFBO = null;
+      this.strokeBufferRect = null;
       this.brushProgramInfo = null;
       this.compositeProgramInfo = null;
       this.strokeBuildupProgramInfo = null;
@@ -599,7 +620,6 @@ void main() {
       this.strokeBuildupProgramInfo = this.createStrokeBuildupProgramInfo();
       this.fullscreenQuad = this.createFullscreenQuad();
       this.configureGlState();
-      this.createStrokeLayerTarget();
       this.brush = this.createBrushResources();
       this.syncShapeTextureFromState();
       this.syncGrainTextureFromState();
@@ -719,6 +739,8 @@ void main() {
         uniforms: {
           brushSize: gl.getUniformLocation(program, "u_brushSize"),
           docResolution: gl.getUniformLocation(program, "u_docResolution"),
+          targetOrigin: gl.getUniformLocation(program, "u_targetOrigin"),
+          targetSize: gl.getUniformLocation(program, "u_targetSize"),
           minSizeRatio: gl.getUniformLocation(program, "u_minSizeRatio"),
           shapeFlip: gl.getUniformLocation(program, "u_shapeFlip"),
           flow: gl.getUniformLocation(program, "u_flow"),
@@ -873,9 +895,11 @@ void main() {
       return { vao, buffer };
     }
 
-    createTransparentRenderTarget(label) {
+    createTransparentRenderTarget(label, width, height) {
       const gl = this.gl;
       const documentTarget = this.getPaintTarget();
+      const targetWidth = Math.max(1, Math.round(width || documentTarget.width));
+      const targetHeight = Math.max(1, Math.round(height || documentTarget.height));
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
       const targetLabel = label || "Render target";
@@ -902,8 +926,8 @@ void main() {
         gl.TEXTURE_2D,
         0,
         gl.RGBA,
-        documentTarget.width,
-        documentTarget.height,
+        targetWidth,
+        targetHeight,
         0,
         gl.RGBA,
         gl.UNSIGNED_BYTE,
@@ -927,23 +951,30 @@ void main() {
         throw new Error(`${targetLabel} incompleto: impossibile inizializzare il livello tratto.`);
       }
 
-      gl.viewport(0, 0, documentTarget.width, documentTarget.height);
+      gl.viewport(0, 0, targetWidth, targetHeight);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      return { texture, framebuffer };
+      return { texture, framebuffer, width: targetWidth, height: targetHeight };
     }
 
-    createStrokeLayerTarget() {
+    createStrokeLayerTarget(rect = null) {
       const gl = this.gl;
       const targets = [];
+      const documentTarget = this.getPaintTarget();
+      const nextRect = rect || {
+        x: 0,
+        y: 0,
+        width: documentTarget.width,
+        height: documentTarget.height,
+      };
 
       try {
-        targets.push(this.createTransparentRenderTarget("Stroke FBO"));
-        targets.push(this.createTransparentRenderTarget("Stroke plateau FBO"));
-        targets.push(this.createTransparentRenderTarget("Stroke accumulation FBO"));
+        targets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height));
+        targets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height));
+        targets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height));
       } catch (error) {
         for (const target of targets) {
           gl.deleteFramebuffer(target.framebuffer);
@@ -959,6 +990,267 @@ void main() {
       this.strokePlateauFBO = targets[1].framebuffer;
       this.strokeAccumTexture = targets[2].texture;
       this.strokeAccumFBO = targets[2].framebuffer;
+      this.strokeBufferRect = { ...nextRect };
+    }
+
+    getFullDocumentRect(target = this.getPaintTarget()) {
+      return {
+        x: 0,
+        y: 0,
+        width: Math.max(1, Math.round(target.width || 1)),
+        height: Math.max(1, Math.round(target.height || 1)),
+      };
+    }
+
+    isBrushStrokeCropped() {
+      return CROPPED_BRUSH_STROKES;
+    }
+
+    containsRect(container, rect) {
+      return Boolean(
+        container &&
+        rect &&
+        rect.x >= container.x &&
+        rect.y >= container.y &&
+        rect.x + rect.width <= container.x + container.width &&
+        rect.y + rect.height <= container.y + container.height
+      );
+    }
+
+    unionRects(first, second) {
+      if (!first) {
+        return second ? { ...second } : null;
+      }
+
+      if (!second) {
+        return { ...first };
+      }
+
+      const x = Math.min(first.x, second.x);
+      const y = Math.min(first.y, second.y);
+      const x2 = Math.max(first.x + first.width, second.x + second.width);
+      const y2 = Math.max(first.y + first.height, second.y + second.height);
+
+      return {
+        x,
+        y,
+        width: x2 - x,
+        height: y2 - y,
+      };
+    }
+
+    getPaddedStrokeAllocationRect(rect, target) {
+      if (!this.isBrushStrokeCropped()) {
+        return this.getFullDocumentRect(target);
+      }
+
+      const quantum = STROKE_ALLOCATION_QUANTUM;
+      const padding = Math.max(16, Math.ceil(this.getBrushSize()));
+      const minX = Math.max(0, Math.floor((rect.x - padding) / quantum) * quantum);
+      const minY = Math.max(0, Math.floor((rect.y - padding) / quantum) * quantum);
+      const maxX = Math.min(
+        target.width,
+        Math.ceil((rect.x + rect.width + padding) / quantum) * quantum,
+      );
+      const maxY = Math.min(
+        target.height,
+        Math.ceil((rect.y + rect.height + padding) / quantum) * quantum,
+      );
+
+      return {
+        x: minX,
+        y: minY,
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+      };
+    }
+
+    getFinalStrokeAllocationRect(rect, target) {
+      if (!this.isBrushStrokeCropped()) {
+        return this.getFullDocumentRect(target);
+      }
+
+      const padding = STROKE_FINAL_PADDING;
+      const minX = Math.max(0, Math.floor(rect.x - padding));
+      const minY = Math.max(0, Math.floor(rect.y - padding));
+      const maxX = Math.min(target.width, Math.ceil(rect.x + rect.width + padding));
+      const maxY = Math.min(target.height, Math.ceil(rect.y + rect.height + padding));
+
+      return {
+        x: minX,
+        y: minY,
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+      };
+    }
+
+    isSameRect(first, second) {
+      return Boolean(
+        first &&
+        second &&
+        first.x === second.x &&
+        first.y === second.y &&
+        first.width === second.width &&
+        first.height === second.height
+      );
+    }
+
+    getCurrentStrokeTargets() {
+      if (!this.strokeTexture || !this.strokeFBO) {
+        return null;
+      }
+
+      return [
+        { texture: this.strokeTexture, framebuffer: this.strokeFBO, width: this.strokeBufferRect?.width || 1, height: this.strokeBufferRect?.height || 1 },
+        { texture: this.strokePlateauTexture, framebuffer: this.strokePlateauFBO, width: this.strokeBufferRect?.width || 1, height: this.strokeBufferRect?.height || 1 },
+        { texture: this.strokeAccumTexture, framebuffer: this.strokeAccumFBO, width: this.strokeBufferRect?.width || 1, height: this.strokeBufferRect?.height || 1 },
+      ];
+    }
+
+    deleteStrokeTargets(targets = this.getCurrentStrokeTargets()) {
+      if (!Array.isArray(targets)) {
+        return;
+      }
+
+      const gl = this.gl;
+
+      targets.forEach((target) => {
+        if (target?.framebuffer) {
+          gl.deleteFramebuffer(target.framebuffer);
+        }
+
+        if (target?.texture) {
+          gl.deleteTexture(target.texture);
+        }
+      });
+    }
+
+    releaseStrokeLayerTarget() {
+      this.deleteStrokeTargets();
+      this.strokeTexture = null;
+      this.strokeFBO = null;
+      this.strokePlateauTexture = null;
+      this.strokePlateauFBO = null;
+      this.strokeAccumTexture = null;
+      this.strokeAccumFBO = null;
+      this.strokeBufferRect = null;
+    }
+
+    copyStrokeTargetContent(previousTargets, previousRect, nextTargets, nextRect) {
+      if (!previousRect || !nextRect || !Array.isArray(previousTargets) || !Array.isArray(nextTargets)) {
+        return;
+      }
+
+      const intersectionX = Math.max(previousRect.x, nextRect.x);
+      const intersectionY = Math.max(previousRect.y, nextRect.y);
+      const intersectionMaxX = Math.min(previousRect.x + previousRect.width, nextRect.x + nextRect.width);
+      const intersectionMaxY = Math.min(previousRect.y + previousRect.height, nextRect.y + nextRect.height);
+      const intersectionWidth = Math.max(0, Math.round(intersectionMaxX - intersectionX));
+      const intersectionHeight = Math.max(0, Math.round(intersectionMaxY - intersectionY));
+
+      if (intersectionWidth <= 0 || intersectionHeight <= 0) {
+        return;
+      }
+
+      const gl = this.gl;
+      const sourceX0 = Math.round(intersectionX - previousRect.x);
+      const sourceY0 = Math.round(previousRect.height - ((intersectionY - previousRect.y) + intersectionHeight));
+      const destX0 = Math.round(intersectionX - nextRect.x);
+      const destY0 = Math.round(nextRect.height - ((intersectionY - nextRect.y) + intersectionHeight));
+
+      previousTargets.forEach((previous, index) => {
+        const next = nextTargets[index];
+
+        if (!previous?.framebuffer || !next?.framebuffer) {
+          return;
+        }
+
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, previous.framebuffer);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, next.framebuffer);
+        gl.blitFramebuffer(
+          sourceX0,
+          sourceY0,
+          sourceX0 + intersectionWidth,
+          sourceY0 + intersectionHeight,
+          destX0,
+          destY0,
+          destX0 + intersectionWidth,
+          destY0 + intersectionHeight,
+          gl.COLOR_BUFFER_BIT,
+          gl.NEAREST,
+        );
+      });
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    }
+
+    replaceStrokeLayerTarget(nextRect, previousTargets = this.getCurrentStrokeTargets(), previousRect = this.strokeBufferRect) {
+      const gl = this.gl;
+      const nextTargets = [];
+
+      try {
+        nextTargets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height));
+        nextTargets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height));
+        nextTargets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height));
+      } catch (error) {
+        this.deleteStrokeTargets(nextTargets);
+        throw error;
+      }
+
+      this.copyStrokeTargetContent(previousTargets, previousRect, nextTargets, nextRect);
+      this.deleteStrokeTargets(previousTargets);
+
+      this.strokeTexture = nextTargets[0].texture;
+      this.strokeFBO = nextTargets[0].framebuffer;
+      this.strokePlateauTexture = nextTargets[1].texture;
+      this.strokePlateauFBO = nextTargets[1].framebuffer;
+      this.strokeAccumTexture = nextTargets[2].texture;
+      this.strokeAccumFBO = nextTargets[2].framebuffer;
+      this.strokeBufferRect = { ...nextRect };
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
+    ensureStrokeLayerTargetForRect(rect, target = this.getPaintTarget()) {
+      const requiredRect = this.isBrushStrokeCropped() ? rect : this.getFullDocumentRect(target);
+
+      if (!requiredRect) {
+        return false;
+      }
+
+      if (this.strokeBufferRect && this.containsRect(this.strokeBufferRect, requiredRect)) {
+        return true;
+      }
+
+      const previousTargets = this.getCurrentStrokeTargets();
+      const previousRect = this.strokeBufferRect ? { ...this.strokeBufferRect } : null;
+      const unionRect = previousRect ? this.unionRects(previousRect, requiredRect) : requiredRect;
+      const nextRect = this.getPaddedStrokeAllocationRect(unionRect, target);
+
+      this.replaceStrokeLayerTarget(nextRect, previousTargets, previousRect);
+
+      return true;
+    }
+
+    compactStrokeLayerTargetForRect(rect, target = this.getPaintTarget()) {
+      if (!rect || !this.strokeBufferRect || !this.strokeTexture) {
+        return false;
+      }
+
+      const nextRect = this.getFinalStrokeAllocationRect(rect, target);
+
+      if (this.isSameRect(this.strokeBufferRect, nextRect)) {
+        return true;
+      }
+
+      this.replaceStrokeLayerTarget(
+        nextRect,
+        this.getCurrentStrokeTargets(),
+        { ...this.strokeBufferRect },
+      );
+
+      return true;
     }
 
     createBrushResources() {
@@ -2842,6 +3134,14 @@ void main() {
 
       const gl = this.gl;
       const target = this.getPaintTarget();
+      const strokeRect = this.getActiveStrokeRect();
+
+      if (!strokeRect || !this.ensureStrokeLayerTargetForRect(strokeRect, target)) {
+        this.stampsBuffer.length = 0;
+        return;
+      }
+
+      const strokeBufferRect = this.strokeBufferRect || this.getFullDocumentRect(target);
       const stampCount = this.stampsBuffer.length;
       // 14 float per istanza: base dab + colore + dati grain Moving.
       const instanceData = new Float32Array(stampCount * 14);
@@ -2874,6 +3174,8 @@ void main() {
 
       gl.useProgram(this.brushProgramInfo.program);
       gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, target.width, target.height);
+      gl.uniform2f(this.brushProgramInfo.uniforms.targetOrigin, strokeBufferRect.x, strokeBufferRect.y);
+      gl.uniform2f(this.brushProgramInfo.uniforms.targetSize, strokeBufferRect.width, strokeBufferRect.height);
       gl.uniform1f(this.brushProgramInfo.uniforms.brushSize, brushSize);
       gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
       gl.uniform2f(this.brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
@@ -2921,7 +3223,7 @@ void main() {
       gl.bufferData(gl.ARRAY_BUFFER, instanceData, gl.DYNAMIC_DRAW);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokePlateauFBO);
-      gl.viewport(0, 0, target.width, target.height);
+      gl.viewport(0, 0, strokeBufferRect.width, strokeBufferRect.height);
       gl.enable(gl.BLEND);
       // Plateau reale: Light Glaze non somma ne' opacità ne' colore nello stesso stroke.
       gl.blendEquation(gl.MAX);
@@ -2929,7 +3231,7 @@ void main() {
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeAccumFBO);
-      gl.viewport(0, 0, target.width, target.height);
+      gl.viewport(0, 0, strokeBufferRect.width, strokeBufferRect.height);
       gl.enable(gl.BLEND);
       // Accumulo pieno: gli stamp dello stesso tratto si stratificano con SrcOver pre-moltiplicato.
       gl.blendEquation(gl.FUNC_ADD);
@@ -2956,7 +3258,7 @@ void main() {
 
     composeStrokeBuildUp() {
       const gl = this.gl;
-      const target = this.getPaintTarget();
+      const target = this.strokeBufferRect || this.getFullDocumentRect();
       const { program, uniforms } = this.strokeBuildupProgramInfo;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
@@ -2998,13 +3300,16 @@ void main() {
         ? this.createHistorySnapshot(target, strokeRect, "before-stroke")
         : null;
 
-      if (!target?.framebuffer || !target?.texture) {
-        this.clearStrokeLayer();
+      if (!target?.framebuffer || !target?.texture || !this.strokeTexture || !strokeRect) {
+        this.releaseStrokeLayerTarget();
         return;
       }
 
+      this.compactStrokeLayerTargetForRect(strokeRect, target);
+      const bakeRect = this.strokeBufferRect || { ...strokeRect };
+
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-      gl.viewport(0, 0, target.width, target.height);
+      gl.viewport(bakeRect.x, target.height - (bakeRect.y + bakeRect.height), bakeRect.width, bakeRect.height);
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       if (isEraserStroke) {
@@ -3039,12 +3344,59 @@ void main() {
       }
 
       this.clearStrokeLayer();
+      this.debugBrushRaster(strokeRect, target, layerId, isEraserStroke, bakeRect);
+      this.releaseStrokeLayerTarget();
       this.requestDraw();
+    }
+
+    debugBrushRaster(strokeRect, target, layerId, isEraserStroke = false, allocationRect = null) {
+      if (!BRUSH_RASTER_DEBUG || !strokeRect || !target) {
+        return;
+      }
+
+      const fullLayerBytes = Math.max(1, Math.round(target.width * target.height * 4));
+      const dirtyBytes = rectBytes(strokeRect);
+      const allocation = allocationRect || this.getFullDocumentRect(target);
+      const allocationBytes = rectBytes(allocation) * 3;
+      const historyBytes = this.options.enableHistory ? dirtyBytes * 2 : 0;
+      const toolName = isEraserStroke ? "Eraser" : "Brush";
+
+      namespace.vectorTextRenderer?.debugRasterBox?.({
+        allocationBox: {
+          height: allocation.height,
+          width: allocation.width,
+          x: allocation.x,
+          y: allocation.y,
+        },
+        allocationCount: 3,
+        allocationStroke: "#ff7a00",
+        fill: "rgba(0, 255, 170, 0.08)",
+        layer: {
+          id: layerId,
+          name: isEraserStroke ? "Eraser stroke" : "Brush stroke",
+        },
+        rasterBox: strokeRect,
+        size: {
+          height: target.height,
+          width: target.width,
+        },
+        source: isEraserStroke ? "eraser-stroke" : "brush-stroke",
+        stroke: "#00ffaa",
+        note: this.isBrushStrokeCropped()
+          ? `${toolName} debug: green is dirty/history area; orange is the real temporary FBO allocation baked for this stroke.`
+          : `${toolName} debug: this tool still uses full-document temporary FBOs.`,
+        extraRows: {
+          dirtyAreaMB: bytesToMega(dirtyBytes),
+          strokeAllocatedFBOsMB: bytesToMega(allocationBytes),
+          oldFullStrokeFBOsMB: bytesToMega(fullLayerBytes * 3),
+          historyBeforeAfterMB: bytesToMega(historyBytes),
+        },
+      });
     }
 
     clearStrokeLayer() {
       const gl = this.gl;
-      const target = this.getPaintTarget();
+      const target = this.strokeBufferRect || this.getFullDocumentRect();
       const framebuffers = [this.strokeFBO, this.strokePlateauFBO, this.strokeAccumFBO];
 
       for (const framebuffer of framebuffers) {
@@ -3063,7 +3415,7 @@ void main() {
 
     clearAllLayers() {
       this.documentRenderer?.clear();
-      this.clearStrokeLayer();
+      this.releaseStrokeLayerTarget();
       this.requestDraw();
     }
 
@@ -3295,7 +3647,7 @@ void main() {
 
       // Riusiamo il seed iniziale dello stroke originale per riprodurre l'identica
       // sequenza di jitter spaziale (lateral/linear/spacing) e colore.
-      this.clearStrokeLayer();
+      this.releaseStrokeLayerTarget();
       this.activeStrokeBounds = null;
       this.strokeRandomState = { seed: this.strokeInitialSeed };
       this.initializeStrokeColorDynamics(this.strokeInitialSeed);
@@ -3453,6 +3805,7 @@ void main() {
         this.clearAllLayers();
       }
 
+      this.releaseStrokeLayerTarget();
       this.activeStrokeBounds = null;
       this.currentStrokeTool = strokeTool;
       this.strokeTargetLayerId = strokeTarget?.layerId || null;
@@ -3554,7 +3907,7 @@ void main() {
         this.canvas.releasePointerCapture(event.pointerId);
       }
 
-      this.clearStrokeLayer();
+      this.releaseStrokeLayerTarget();
       this.recordedStroke = [];
       this.resetStrokeRuntimeState();
       this.isDrawing = false;
@@ -3595,6 +3948,7 @@ void main() {
       this.documentRenderer.drawToCanvas({
         activeStrokeLayerId,
         activeStrokeMode: this.currentStrokeTool === "eraser" ? "eraser" : "paint",
+        activeStrokeRect: this.strokeBufferRect,
         activeStrokeTexture: this.isDrawing ? this.strokeTexture : null,
         camera: this.camera,
         viewportWidth: this.viewportWidth,

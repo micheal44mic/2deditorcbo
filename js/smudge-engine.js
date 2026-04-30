@@ -1,12 +1,29 @@
 window.CBO = window.CBO || {};
 
 (function registerSmudgeEngine(namespace) {
+  const SMUDGE_RASTER_DEBUG = true;
+  const CROPPED_SMUDGE_SCRATCH = true;
+
+  function bytesToMega(bytes) {
+    return Math.round((bytes / (1024 * 1024)) * 100) / 100;
+  }
+
+  function rectBytes(rect) {
+    if (!rect) {
+      return 0;
+    }
+
+    return Math.max(0, Math.round(rect.width * rect.height * 4));
+  }
+
   const DAB_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
 layout(location = 0) in vec2 a_corner;
 
 uniform vec2 u_docResolution;
+uniform vec2 u_targetOrigin;
+uniform vec2 u_targetSize;
 uniform vec4 u_bounds;
 
 out vec2 v_docPosition;
@@ -14,7 +31,8 @@ out vec2 v_docUv;
 
 void main() {
   vec2 documentPosition = u_bounds.xy + a_corner * u_bounds.zw;
-  vec2 clipPosition = (documentPosition / u_docResolution) * 2.0 - 1.0;
+  vec2 targetPosition = (documentPosition - u_targetOrigin) / max(u_targetSize, vec2(1.0));
+  vec2 clipPosition = targetPosition * 2.0 - 1.0;
 
   clipPosition.y *= -1.0;
   v_docPosition = documentPosition;
@@ -161,7 +179,12 @@ void main() {
       this.strokeTarget = null;
       this.scratchTarget = null;
       this.activeHistoryDabs = [];
+      this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = null;
+      this.activeSmudgeBounds = null;
+      this.activeScratchPeakRect = null;
+      this.activeScratchPeakBytes = 0;
+      this.activeScratchDabCount = 0;
       this.historyDisabledForStroke = false;
       this.dabProgramInfo = this.createDabProgramInfo();
       this.quad = this.createQuad();
@@ -247,6 +270,8 @@ void main() {
           pressure: gl.getUniformLocation(program, "u_pressure"),
           radius: gl.getUniformLocation(program, "u_radius"),
           sourceTexture: gl.getUniformLocation(program, "u_sourceTexture"),
+          targetOrigin: gl.getUniformLocation(program, "u_targetOrigin"),
+          targetSize: gl.getUniformLocation(program, "u_targetSize"),
         },
       };
     }
@@ -326,27 +351,53 @@ void main() {
       return { framebuffer, height, texture, width };
     }
 
-    createScratchTarget(target) {
-      return this.createTarget(target.width, target.height, "temporaneo smudge", this.gl.NEAREST);
+    getFullDocumentRect(target) {
+      return {
+        x: 0,
+        y: 0,
+        width: Math.max(1, Math.round(target?.width || 1)),
+        height: Math.max(1, Math.round(target?.height || 1)),
+      };
+    }
+
+    createScratchTarget(target, bounds = null) {
+      const rect = CROPPED_SMUDGE_SCRATCH && bounds
+        ? { ...bounds }
+        : this.getFullDocumentRect(target);
+      const scratch = this.createTarget(rect.width, rect.height, "temporaneo smudge", this.gl.NEAREST);
+
+      scratch.rect = rect;
+
+      return scratch;
     }
 
     hasHistorySupport() {
       return typeof namespace.brushEngine?.pushHistoryEntry === "function";
     }
 
-    ensureScratchTarget(target) {
+    ensureScratchTarget(target, bounds = null) {
+      const rect = CROPPED_SMUDGE_SCRATCH && bounds
+        ? { ...bounds }
+        : this.getFullDocumentRect(target);
+
       if (
         this.scratchTarget &&
-        this.scratchTarget.width === target.width &&
-        this.scratchTarget.height === target.height
+        this.scratchTarget.width === rect.width &&
+        this.scratchTarget.height === rect.height
       ) {
+        this.scratchTarget.rect = rect;
         return this.scratchTarget;
       }
 
       this.deleteTarget(this.scratchTarget);
-      this.scratchTarget = this.createScratchTarget(target);
+      this.scratchTarget = this.createScratchTarget(target, rect);
 
       return this.scratchTarget;
+    }
+
+    releaseScratchTarget() {
+      this.deleteTarget(this.scratchTarget);
+      this.scratchTarget = null;
     }
 
     deleteTarget(target) {
@@ -445,6 +496,231 @@ void main() {
       }
     }
 
+    getSnapshotBytes(snapshot) {
+      return rectBytes(snapshot?.rect);
+    }
+
+    getHistoryDabsBytes(dabs) {
+      if (!Array.isArray(dabs)) {
+        return 0;
+      }
+
+      return dabs.reduce((total, dab) => (
+        total + this.getSnapshotBytes(dab?.before) + this.getSnapshotBytes(dab?.after)
+      ), 0);
+    }
+
+    containsRect(container, rect) {
+      return Boolean(
+        container &&
+        rect &&
+        rect.x >= container.x &&
+        rect.y >= container.y &&
+        rect.x + rect.width <= container.x + container.width &&
+        rect.y + rect.height <= container.y + container.height
+      );
+    }
+
+    unionRects(first, second) {
+      if (!first) {
+        return second ? { ...second } : null;
+      }
+
+      if (!second) {
+        return { ...first };
+      }
+
+      const x = Math.min(first.x, second.x);
+      const y = Math.min(first.y, second.y);
+      const x2 = Math.max(first.x + first.width, second.x + second.width);
+      const y2 = Math.max(first.y + first.height, second.y + second.height);
+
+      return {
+        x,
+        y,
+        width: x2 - x,
+        height: y2 - y,
+      };
+    }
+
+    getRectDifference(outer, inner) {
+      if (!outer) {
+        return [];
+      }
+
+      if (!inner || !this.containsRect(outer, inner)) {
+        return [{ ...outer }];
+      }
+
+      const rects = [];
+      const outerRight = outer.x + outer.width;
+      const outerBottom = outer.y + outer.height;
+      const innerRight = inner.x + inner.width;
+      const innerBottom = inner.y + inner.height;
+
+      if (inner.y > outer.y) {
+        rects.push({
+          x: outer.x,
+          y: outer.y,
+          width: outer.width,
+          height: inner.y - outer.y,
+        });
+      }
+
+      if (innerBottom < outerBottom) {
+        rects.push({
+          x: outer.x,
+          y: innerBottom,
+          width: outer.width,
+          height: outerBottom - innerBottom,
+        });
+      }
+
+      const overlapY = Math.max(outer.y, inner.y);
+      const overlapBottom = Math.min(outerBottom, innerBottom);
+      const overlapHeight = overlapBottom - overlapY;
+
+      if (overlapHeight > 0 && inner.x > outer.x) {
+        rects.push({
+          x: outer.x,
+          y: overlapY,
+          width: inner.x - outer.x,
+          height: overlapHeight,
+        });
+      }
+
+      if (overlapHeight > 0 && innerRight < outerRight) {
+        rects.push({
+          x: innerRight,
+          y: overlapY,
+          width: outerRight - innerRight,
+          height: overlapHeight,
+        });
+      }
+
+      return rects.filter((rect) => rect.width > 0 && rect.height > 0);
+    }
+
+    createEmptyHistorySnapshot(rect, label = "smudge history union") {
+      if (!this.hasHistorySupport() || !rect || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+
+      const snapshot = this.createTarget(rect.width, rect.height, label, this.gl.NEAREST);
+
+      snapshot.rect = { ...rect };
+
+      return snapshot;
+    }
+
+    copyTargetRectToSnapshot(target, rect, snapshot) {
+      if (!target?.framebuffer || !snapshot?.framebuffer || !snapshot.rect || !rect) {
+        return;
+      }
+
+      const gl = this.gl;
+      const destRect = snapshot.rect;
+      const sourceX0 = rect.x;
+      const sourceX1 = rect.x + rect.width;
+      const sourceY0 = target.height - (rect.y + rect.height);
+      const sourceY1 = target.height - rect.y;
+      const destX0 = rect.x - destRect.x;
+      const destX1 = destX0 + rect.width;
+      const destY0 = destRect.height - ((rect.y - destRect.y) + rect.height);
+      const destY1 = destY0 + rect.height;
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.framebuffer);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, snapshot.framebuffer);
+      gl.blitFramebuffer(
+        sourceX0,
+        sourceY0,
+        sourceX1,
+        sourceY1,
+        destX0,
+        destY0,
+        destX1,
+        destY1,
+        gl.COLOR_BUFFER_BIT,
+        gl.NEAREST,
+      );
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    }
+
+    copySnapshotToSnapshot(sourceSnapshot, destSnapshot) {
+      if (!sourceSnapshot?.framebuffer || !sourceSnapshot.rect || !destSnapshot?.framebuffer || !destSnapshot.rect) {
+        return;
+      }
+
+      const gl = this.gl;
+      const sourceRect = sourceSnapshot.rect;
+      const destRect = destSnapshot.rect;
+      const destX0 = sourceRect.x - destRect.x;
+      const destX1 = destX0 + sourceRect.width;
+      const destY0 = destRect.height - ((sourceRect.y - destRect.y) + sourceRect.height);
+      const destY1 = destY0 + sourceRect.height;
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, sourceSnapshot.framebuffer);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, destSnapshot.framebuffer);
+      gl.blitFramebuffer(
+        0,
+        0,
+        sourceRect.width,
+        sourceRect.height,
+        destX0,
+        destY0,
+        destX1,
+        destY1,
+        gl.COLOR_BUFFER_BIT,
+        gl.NEAREST,
+      );
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    }
+
+    captureActiveHistoryBefore(target, bounds) {
+      if (this.historyDisabledForStroke || !this.hasHistorySupport() || !target?.framebuffer || !bounds) {
+        return true;
+      }
+
+      try {
+        if (!this.activeHistoryBeforeSnapshot) {
+          this.activeHistoryBeforeSnapshot = this.createHistorySnapshot(target, bounds, "smudge prima");
+          return Boolean(this.activeHistoryBeforeSnapshot);
+        }
+
+        if (this.containsRect(this.activeHistoryBeforeSnapshot.rect, bounds)) {
+          return true;
+        }
+
+        const previousSnapshot = this.activeHistoryBeforeSnapshot;
+        const nextRect = this.unionRects(previousSnapshot.rect, bounds);
+        const nextSnapshot = this.createEmptyHistorySnapshot(nextRect, "smudge prima union");
+
+        if (!nextSnapshot) {
+          this.clearActiveHistoryDabs();
+          this.historyDisabledForStroke = true;
+          return false;
+        }
+
+        this.copySnapshotToSnapshot(previousSnapshot, nextSnapshot);
+
+        for (const rect of this.getRectDifference(nextRect, previousSnapshot.rect)) {
+          this.copyTargetRectToSnapshot(target, rect, nextSnapshot);
+        }
+
+        this.deleteHistorySnapshot(previousSnapshot);
+        this.activeHistoryBeforeSnapshot = nextSnapshot;
+
+        return true;
+      } catch (error) {
+        console.warn?.("[CBO smudge] History snapshot disattivato per questo tratto.", error);
+        this.clearActiveHistoryDabs();
+        this.historyDisabledForStroke = true;
+        return false;
+      }
+    }
+
     deleteHistoryDab(dab) {
       this.deleteHistorySnapshot(dab?.before);
       this.deleteHistorySnapshot(dab?.after);
@@ -463,6 +739,8 @@ void main() {
     clearActiveHistoryDabs() {
       this.deleteHistoryDabs(this.activeHistoryDabs);
       this.activeHistoryDabs = [];
+      this.deleteHistorySnapshot(this.activeHistoryBeforeSnapshot);
+      this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = null;
       this.historyDisabledForStroke = false;
     }
@@ -561,11 +839,39 @@ void main() {
 
     commitHistory() {
       const dabs = this.activeHistoryDabs;
+      const before = this.activeHistoryBeforeSnapshot;
       const layerId = this.activeHistoryLayerId || this.strokeTarget?.layerId || null;
+      const target = this.strokeTarget;
 
       this.activeHistoryDabs = [];
+      this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = null;
       this.historyDisabledForStroke = false;
+
+      if (before) {
+        if (!layerId || !target || !this.hasHistorySupport()) {
+          this.deleteHistorySnapshot(before);
+          this.deleteHistoryDabs(dabs);
+          return;
+        }
+
+        const after = this.createHistorySnapshot(target, before.rect, "smudge dopo");
+
+        if (!after) {
+          this.deleteHistorySnapshot(before);
+          this.deleteHistoryDabs(dabs);
+          return;
+        }
+
+        this.deleteHistoryDabs(dabs);
+        namespace.brushEngine.pushHistoryEntry({
+          after,
+          before,
+          layerId,
+          source: "smudge",
+        });
+        return;
+      }
 
       if (!dabs.length) {
         return;
@@ -769,8 +1075,14 @@ void main() {
       this.moved = false;
       this.activePointerId = event.pointerId;
       this.activeHistoryDabs = [];
+      this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = target.layerId || this.documentRenderer?.layerModel?.activeLayerId || null;
+      this.activeSmudgeBounds = null;
+      this.activeScratchPeakRect = null;
+      this.activeScratchPeakBytes = 0;
+      this.activeScratchDabCount = 0;
       this.historyDisabledForStroke = false;
+      this.releaseScratchTarget();
       this.lastStampX = point.docX;
       this.lastStampY = point.docY;
       this.lastPressure = this.normalizePressure(event.pressure);
@@ -871,6 +1183,62 @@ void main() {
       return { x: minX, y: minY, width, height };
     }
 
+    includeSmudgeBounds(bounds) {
+      if (!bounds) {
+        return;
+      }
+
+      const x2 = bounds.x + bounds.width;
+      const y2 = bounds.y + bounds.height;
+
+      if (!this.activeSmudgeBounds) {
+        this.activeSmudgeBounds = {
+          x: bounds.x,
+          y: bounds.y,
+          x2,
+          y2,
+        };
+        return;
+      }
+
+      this.activeSmudgeBounds.x = Math.min(this.activeSmudgeBounds.x, bounds.x);
+      this.activeSmudgeBounds.y = Math.min(this.activeSmudgeBounds.y, bounds.y);
+      this.activeSmudgeBounds.x2 = Math.max(this.activeSmudgeBounds.x2, x2);
+      this.activeSmudgeBounds.y2 = Math.max(this.activeSmudgeBounds.y2, y2);
+    }
+
+    getActiveSmudgeRect() {
+      if (!this.activeSmudgeBounds) {
+        return null;
+      }
+
+      const x = Math.floor(this.activeSmudgeBounds.x);
+      const y = Math.floor(this.activeSmudgeBounds.y);
+      const width = Math.ceil(this.activeSmudgeBounds.x2) - x;
+      const height = Math.ceil(this.activeSmudgeBounds.y2) - y;
+
+      if (width <= 0 || height <= 0) {
+        return null;
+      }
+
+      return { x, y, width, height };
+    }
+
+    trackScratchAllocation(rect) {
+      if (!rect) {
+        return;
+      }
+
+      const bytes = rectBytes(rect);
+
+      this.activeScratchDabCount += 1;
+
+      if (!this.activeScratchPeakRect || bytes > this.activeScratchPeakBytes) {
+        this.activeScratchPeakRect = { ...rect };
+        this.activeScratchPeakBytes = bytes;
+      }
+    }
+
     renderDab(cx, cy, pressure, directionX, directionY, stepDistance) {
       const target = this.strokeTarget;
 
@@ -885,6 +1253,8 @@ void main() {
         return;
       }
 
+      this.includeSmudgeBounds(bounds);
+
       const direction = this.resolveDirection(directionX, directionY);
 
       if (direction.x === 0 && direction.y === 0) {
@@ -892,20 +1262,28 @@ void main() {
       }
 
       const gl = this.gl;
-      const scratch = this.ensureScratchTarget(target);
+      const scratch = this.ensureScratchTarget(target, bounds);
+      const scratchRect = scratch.rect || bounds;
       const { program, uniforms } = this.dabProgramInfo;
       const pressureStrength = this.getPressureStrength(pressure);
       const dragScale = this.getDrag();
       const safeStep = Number.isFinite(stepDistance) && stepDistance > 0 ? stepDistance : Math.max(1, radius * 2 * this.getSpacing());
       const dragOffset = safeStep * dragScale;
       const shouldCaptureHistory = !this.historyDisabledForStroke && this.hasHistorySupport();
-      const beforeSnapshot = shouldCaptureHistory ? this.createHistorySnapshot(target, bounds, "smudge prima") : null;
+
+      if (shouldCaptureHistory && !this.captureActiveHistoryBefore(target, bounds)) {
+        this.historyDisabledForStroke = true;
+      }
+
+      this.trackScratchAllocation(scratchRect);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, scratch.framebuffer);
-      gl.viewport(0, 0, target.width, target.height);
+      gl.viewport(0, 0, scratch.width, scratch.height);
       gl.disable(gl.BLEND);
       gl.useProgram(program);
       gl.uniform2f(uniforms.docResolution, target.width, target.height);
+      gl.uniform2f(uniforms.targetOrigin, scratchRect.x, scratchRect.y);
+      gl.uniform2f(uniforms.targetSize, scratchRect.width, scratchRect.height);
       gl.uniform4f(uniforms.bounds, bounds.x, bounds.y, bounds.width, bounds.height);
       gl.uniform2f(uniforms.center, cx, cy);
       gl.uniform2f(uniforms.direction, direction.x, direction.y);
@@ -927,10 +1305,6 @@ void main() {
 
       this.blitScratchToTarget(scratch, target, bounds);
       this.restoreDocumentTextureFiltering(target);
-      this.recordHistoryDab(
-        beforeSnapshot,
-        shouldCaptureHistory ? this.createHistorySnapshot(target, bounds, "smudge dopo") : null
-      );
 
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
@@ -950,6 +1324,11 @@ void main() {
 
     blitScratchToTarget(scratch, target, bounds) {
       const gl = this.gl;
+      const scratchRect = scratch.rect || this.getFullDocumentRect(target);
+      const sourceX0 = bounds.x - scratchRect.x;
+      const sourceX1 = sourceX0 + bounds.width;
+      const sourceY0 = scratchRect.height - ((bounds.y - scratchRect.y) + bounds.height);
+      const sourceY1 = scratchRect.height - (bounds.y - scratchRect.y);
       const x0 = bounds.x;
       const x1 = bounds.x + bounds.width;
       const y0 = target.height - (bounds.y + bounds.height);
@@ -957,7 +1336,7 @@ void main() {
 
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, scratch.framebuffer);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, target.framebuffer);
-      gl.blitFramebuffer(x0, y0, x1, y1, x0, y0, x1, y1, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.blitFramebuffer(sourceX0, sourceY0, sourceX1, sourceY1, x0, y0, x1, y1, gl.COLOR_BUFFER_BIT, gl.NEAREST);
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
     }
@@ -967,9 +1346,27 @@ void main() {
         this.canvas.releasePointerCapture(event.pointerId);
       }
 
+      const smudgeRect = this.getActiveSmudgeRect();
+      const target = this.strokeTarget;
+      const layerId = this.activeHistoryLayerId || target?.layerId || null;
+      const debugInfo = {
+        historyBytes: this.activeHistoryBeforeSnapshot
+          ? this.getSnapshotBytes(this.activeHistoryBeforeSnapshot) * 2
+          : this.getHistoryDabsBytes(this.activeHistoryDabs),
+        scratchDabCount: this.activeScratchDabCount,
+        scratchPeakBytes: this.activeScratchPeakBytes,
+        scratchPeakRect: this.activeScratchPeakRect ? { ...this.activeScratchPeakRect } : null,
+      };
+
       this.isDragging = false;
       this.activePointerId = null;
       this.commitHistory();
+      this.debugSmudgeRaster(smudgeRect, target, layerId, debugInfo);
+      this.releaseScratchTarget();
+      this.activeSmudgeBounds = null;
+      this.activeScratchPeakRect = null;
+      this.activeScratchPeakBytes = 0;
+      this.activeScratchDabCount = 0;
       this.strokeTarget = null;
     }
 
@@ -982,7 +1379,59 @@ void main() {
       this.moved = false;
       this.activePointerId = null;
       this.clearActiveHistoryDabs();
+      this.releaseScratchTarget();
+      this.activeSmudgeBounds = null;
+      this.activeScratchPeakRect = null;
+      this.activeScratchPeakBytes = 0;
+      this.activeScratchDabCount = 0;
       this.strokeTarget = null;
+    }
+
+    debugSmudgeRaster(smudgeRect, target, layerId, debugInfo = {}) {
+      if (!SMUDGE_RASTER_DEBUG || !smudgeRect || !target) {
+        return;
+      }
+
+      const fullLayerBytes = Math.max(1, Math.round(target.width * target.height * 4));
+      const dirtyBytes = rectBytes(smudgeRect);
+      const allocation = debugInfo.scratchPeakRect || this.getFullDocumentRect(target);
+      const scratchBytes = Number.isFinite(debugInfo.scratchPeakBytes)
+        ? debugInfo.scratchPeakBytes
+        : rectBytes(allocation);
+      const historyBytes = Number.isFinite(debugInfo.historyBytes) ? debugInfo.historyBytes : 0;
+
+      namespace.vectorTextRenderer?.debugRasterBox?.({
+        allocationBox: {
+          height: allocation.height,
+          width: allocation.width,
+          x: allocation.x,
+          y: allocation.y,
+        },
+        allocationCount: 1,
+        allocationStroke: "#ff7a00",
+        fill: "rgba(64, 156, 255, 0.08)",
+        layer: {
+          id: layerId,
+          name: "Smudge stroke",
+        },
+        rasterBox: smudgeRect,
+        size: {
+          height: target.height,
+          width: target.width,
+        },
+        source: "smudge-stroke",
+        stroke: "#409cff",
+        note: CROPPED_SMUDGE_SCRATCH
+          ? "Smudge debug: blue is the whole dirty stroke; orange is the peak single scratch dab, reused during drag and released on stroke end."
+          : "Smudge debug: blue is dirty area; orange is the full-document scratch allocation.",
+        extraRows: {
+          dirtyAreaMB: bytesToMega(dirtyBytes),
+          historyBeforeAfterMB: bytesToMega(historyBytes),
+          oldFullScratchMB: bytesToMega(fullLayerBytes),
+          scratchDabCount: debugInfo.scratchDabCount || 0,
+          scratchPeakDabMB: bytesToMega(scratchBytes),
+        },
+      });
     }
 
     dispose() {

@@ -103,10 +103,13 @@ test("vector text renderer caches visual text into the matching WebGL layer targ
     "utf8",
   );
 
-  assert.match(source, /syncTextLayerRaster\(layer, pathData\)/);
+  assert.match(source, /syncTextLayerRaster\(layer, pathData, pathBounds\)/);
   assert.match(source, /renderer\.getRasterTarget\(layer\.id\)/);
   assert.match(source, /rasterizer\.placeRasterImage\(image,/);
   assert.match(source, /layerId: layer\.id/);
+  assert.match(source, /getTextLayerRasterBox\(layer, pathBounds, size\)/);
+  assert.match(source, /x: rasterBox\.x/);
+  assert.match(source, /y: rasterBox\.y/);
   assert.doesNotMatch(source, /type:\s*"paint"[\s\S]{0,120}vector-text-cache/);
 });
 
@@ -127,8 +130,20 @@ test("active text rasterization is debounced so drag and sliders stay responsive
   const dragMoveBody = source.match(/handleDragMove\(event\) \{([\s\S]*?)\n    handleDragEnd\(event\)/)?.[1] || "";
 
   assert.match(source, /ACTIVE_TEXT_RASTER_DEBOUNCE_MS/);
-  assert.match(source, /queueTextLayerRasterSync\(layer, pathData, size, signature, delay\)/);
+  assert.match(source, /queueTextLayerRasterSync\(layer, pathData, size, rasterBox, signature, delay\)/);
   assert.doesNotMatch(dragMoveBody, /scheduleContentRender\(\)/);
+});
+
+test("manual vector text rasterization uses the cropped renderer asset when available", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-rasterizer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /createRasterTextAsset\?\.\(layer, \{ size \}\)/);
+  assert.match(source, /x: rasterSource\.rasterBox\.x/);
+  assert.match(source, /y: rasterSource\.rasterBox\.y/);
+  assert.doesNotMatch(source, /rasterizer\.placeRasterImage\(canvas,[\s\S]{0,120}x:\s*0,[\s\S]{0,80}y:\s*0/);
 });
 
 test("solid 3D text shadow uses a continuous extrusion instead of stamped copies", () => {

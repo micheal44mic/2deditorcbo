@@ -6,6 +6,8 @@
   const HANDLE_ENVELOPE_NODES = ["TC_HandleL", "TC_HandleR", "BC_HandleL", "BC_HandleR"];
   const ACTIVE_TEXT_RASTER_DEBOUNCE_MS = 180;
   const TEXT_RASTER_PREVIEW_MS = 260;
+  const TEXT_RASTER_BOUNDS_PADDING = 2;
+  const TEXT_RASTER_DEBUG = true;
 
   function createSvgElement(name, attributes = {}) {
     const element = document.createElementNS(SVG_NS, name);
@@ -17,6 +19,34 @@
     });
 
     return element;
+  }
+
+  function bytesToMega(bytes) {
+    return Math.round((bytes / (1024 * 1024)) * 100) / 100;
+  }
+
+  function getRasterDebugStats(size, rasterBox) {
+    const documentPixels = Math.max(1, Math.round(size.width * size.height));
+    const cropPixels = rasterBox
+      ? Math.max(1, Math.round(rasterBox.width * rasterBox.height))
+      : 0;
+    const documentBytes = documentPixels * 4;
+    const cropBytes = cropPixels * 4;
+    const savedBytes = Math.max(0, documentBytes - cropBytes);
+    const reduction = documentBytes > 0
+      ? Math.round((1 - cropBytes / documentBytes) * 1000) / 10
+      : 0;
+
+    return {
+      cropBytes,
+      cropMB: bytesToMega(cropBytes),
+      cropPixels,
+      documentBytes,
+      documentMB: bytesToMega(documentBytes),
+      documentPixels,
+      reduction,
+      savedMB: bytesToMega(savedBytes),
+    };
   }
 
   function isTextLayer(entry) {
@@ -374,11 +404,17 @@
     });
   }
 
-  function getTextRasterSignature(layer, pathData, size) {
+  function getTextRasterSignature(layer, pathData, size, rasterBox) {
     return JSON.stringify({
       documentHeight: size.height,
       documentWidth: size.width,
       pathData,
+      rasterBox: rasterBox ? {
+        height: rasterBox.height,
+        width: rasterBox.width,
+        x: rasterBox.x,
+        y: rasterBox.y,
+      } : null,
       rotation: layer.rotation,
       scaleX: layer.scaleX,
       scaleY: layer.scaleY,
@@ -391,11 +427,17 @@
     });
   }
 
-  function serializeTextLayerSvg(layerNode, defs, size) {
-    const svg = createSvgElement("svg", {
+  function serializeTextLayerSvg(layerNode, defs, size, rasterBox = null) {
+    const box = rasterBox || {
       height: size.height,
-      viewBox: `0 0 ${size.width} ${size.height}`,
       width: size.width,
+      x: 0,
+      y: 0,
+    };
+    const svg = createSvgElement("svg", {
+      height: box.height,
+      viewBox: `${box.x} ${box.y} ${box.width} ${box.height}`,
+      width: box.width,
       xmlns: SVG_NS,
     });
 
@@ -441,6 +483,177 @@
     return ["outer", "inner", "center"].includes(layer.style?.strokeAlign)
       ? layer.style.strokeAlign
       : "center";
+  }
+
+  function hasFiniteBounds(bounds) {
+    return (
+      bounds &&
+      Number.isFinite(bounds.x1) &&
+      Number.isFinite(bounds.y1) &&
+      Number.isFinite(bounds.x2) &&
+      Number.isFinite(bounds.y2) &&
+      bounds.x2 > bounds.x1 &&
+      bounds.y2 > bounds.y1
+    );
+  }
+
+  function cloneBounds(bounds) {
+    return {
+      x1: bounds.x1,
+      y1: bounds.y1,
+      x2: bounds.x2,
+      y2: bounds.y2,
+    };
+  }
+
+  function expandBounds(bounds, amount) {
+    const pad = Math.max(0, toFiniteNumber(amount, 0));
+
+    return {
+      x1: bounds.x1 - pad,
+      y1: bounds.y1 - pad,
+      x2: bounds.x2 + pad,
+      y2: bounds.y2 + pad,
+    };
+  }
+
+  function offsetBounds(bounds, dx, dy) {
+    return {
+      x1: bounds.x1 + dx,
+      y1: bounds.y1 + dy,
+      x2: bounds.x2 + dx,
+      y2: bounds.y2 + dy,
+    };
+  }
+
+  function includeBounds(target, bounds) {
+    if (!hasFiniteBounds(bounds)) {
+      return target;
+    }
+
+    target.x1 = Math.min(target.x1, bounds.x1);
+    target.y1 = Math.min(target.y1, bounds.y1);
+    target.x2 = Math.max(target.x2, bounds.x2);
+    target.y2 = Math.max(target.y2, bounds.y2);
+
+    return target;
+  }
+
+  function getLayerShadowOffset(layer) {
+    const angle = (toFiniteNumber(layer.shadowAngle, 0) * Math.PI) / 180;
+    const distance = Math.max(0, toFiniteNumber(layer.shadowDistance, 0));
+
+    return {
+      x: Math.cos(angle) * distance,
+      y: Math.sin(angle) * distance,
+    };
+  }
+
+  function getTextStrokePadding(layer) {
+    const strokeWidth = Math.max(0, toFiniteNumber(layer.style?.strokeWidth, 0));
+    const strokeAlign = getStrokeAlign(layer);
+
+    if (strokeWidth <= 0 || strokeAlign === "inner") {
+      return 0;
+    }
+
+    return strokeAlign === "outer" ? strokeWidth : strokeWidth / 2;
+  }
+
+  function getTextLocalRasterBounds(layer, pathBounds) {
+    if (!hasFiniteBounds(pathBounds)) {
+      return null;
+    }
+
+    const paintBounds = expandBounds(pathBounds, getTextStrokePadding(layer));
+    const bounds = cloneBounds(paintBounds);
+    const shadow = layer.style?.shadow || {};
+    const shadowOpacity = Number.isFinite(shadow.opacity) ? shadow.opacity : 0;
+
+    if (shadowOpacity <= 0) {
+      return bounds;
+    }
+
+    const offset = getLayerShadowOffset(layer);
+
+    if (layer.shadowType === "drop") {
+      const blur = Math.max(0, toFiniteNumber(shadow.blur, 0));
+      const blurPad = Math.ceil(blur * 2 + 2);
+
+      includeBounds(bounds, expandBounds(offsetBounds(paintBounds, offset.x, offset.y), blurPad));
+    } else if (layer.shadowType === "solid") {
+      const distance = Math.hypot(offset.x, offset.y);
+
+      if (distance > 0) {
+        includeBounds(bounds, expandBounds(pathBounds, 2));
+        includeBounds(bounds, expandBounds(offsetBounds(pathBounds, offset.x, offset.y), 2));
+      }
+    }
+
+    return bounds;
+  }
+
+  function transformLayerPoint(layer, point) {
+    const scaleX = toFiniteNumber(layer.scaleX, 1);
+    const scaleY = toFiniteNumber(layer.scaleY, 1);
+    const radians = (toFiniteNumber(layer.rotation, 0) * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const x = point.x * scaleX;
+    const y = point.y * scaleY;
+
+    return {
+      x: toFiniteNumber(layer.x, 0) + x * cos - y * sin,
+      y: toFiniteNumber(layer.y, 0) + x * sin + y * cos,
+    };
+  }
+
+  function transformLayerBounds(layer, bounds) {
+    const points = [
+      transformLayerPoint(layer, { x: bounds.x1, y: bounds.y1 }),
+      transformLayerPoint(layer, { x: bounds.x2, y: bounds.y1 }),
+      transformLayerPoint(layer, { x: bounds.x1, y: bounds.y2 }),
+      transformLayerPoint(layer, { x: bounds.x2, y: bounds.y2 }),
+    ];
+
+    return points.reduce(
+      (next, point) => ({
+        x1: Math.min(next.x1, point.x),
+        y1: Math.min(next.y1, point.y),
+        x2: Math.max(next.x2, point.x),
+        y2: Math.max(next.y2, point.y),
+      }),
+      { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity },
+    );
+  }
+
+  function getClampedRasterBox(bounds, size) {
+    const paddedBounds = expandBounds(bounds, TEXT_RASTER_BOUNDS_PADDING);
+    const x1 = Math.max(0, Math.min(size.width, paddedBounds.x1));
+    const y1 = Math.max(0, Math.min(size.height, paddedBounds.y1));
+    const x2 = Math.max(0, Math.min(size.width, paddedBounds.x2));
+    const y2 = Math.max(0, Math.min(size.height, paddedBounds.y2));
+
+    if (x2 <= x1 || y2 <= y1) {
+      return null;
+    }
+
+    const x = Math.floor(x1);
+    const y = Math.floor(y1);
+    const width = Math.max(1, Math.min(size.width - x, Math.ceil(x2) - x));
+    const height = Math.max(1, Math.min(size.height - y, Math.ceil(y2) - y));
+
+    return { height, width, x, y };
+  }
+
+  function getTextLayerRasterBox(layer, pathBounds, size) {
+    const localBounds = getTextLocalRasterBounds(layer, pathBounds);
+
+    if (!localBounds) {
+      return null;
+    }
+
+    return getClampedRasterBox(transformLayerBounds(layer, localBounds), size);
   }
 
   function resolveCameraState() {
@@ -586,6 +799,7 @@
       this.hitArea = null;
       this.viewportGroup = null;
       this.contentGroup = null;
+      this.debugGroup = null;
       this.pathCache = new Map();
       this.fontCache = new Map();
       this.fontRequests = new Map();
@@ -636,8 +850,12 @@
       });
       this.viewportGroup = createSvgElement("g", { class: "editor-vector-viewport" });
       this.contentGroup = createSvgElement("g", { class: "editor-vector-content" });
+      this.debugGroup = createSvgElement("g", {
+        class: "editor-vector-raster-debug",
+        "pointer-events": "none",
+      });
 
-      this.viewportGroup.append(this.contentGroup);
+      this.viewportGroup.append(this.contentGroup, this.debugGroup);
       this.svg.append(this.defs, this.hitArea, this.viewportGroup);
       this.stage.append(this.svg);
       this.updateViewportSize();
@@ -820,31 +1038,43 @@
       return null;
     }
 
-    getPathData(layer, font) {
+    getPathMetrics(layer, font) {
       const signature = getLayerSignature(layer);
       const cached = this.pathCache.get(layer.id);
 
       if (cached?.signature === signature) {
-        return cached.pathData;
+        return cached;
       }
 
-      const pathData = namespace.VectorTextEngine.getWarpedPathData({
-        alternates: layer.alternates,
-        envelopeGrid: layer.envelopeGrid,
-        font,
-        fontSize: layer.fontSize,
+      const engine = namespace.VectorTextEngine;
+      const path = engine.createTextPath(font, layer.text, layer.fontSize, {
         letterSpacing: layer.letterSpacing,
         ligatures: layer.ligatures,
         lineHeight: layer.lineHeight,
-        text: layer.text,
         textAlign: layer.textAlign,
         uppercase: layer.uppercase,
-        warp: layer.warp,
       });
+      const baseBounds = path.getBoundingBox();
 
-      this.pathCache.set(layer.id, { pathData, signature });
+      if (layer.envelopeGrid) {
+        engine.applyEnvelopeWarp(path, layer.envelopeGrid);
+      } else {
+        path.commands = engine.warpPathCommands(path.commands, baseBounds, layer.warp);
+      }
 
-      return pathData;
+      const metrics = {
+        bounds: path.getBoundingBox(),
+        pathData: path.toPathData(2),
+        signature,
+      };
+
+      this.pathCache.set(layer.id, metrics);
+
+      return metrics;
+    }
+
+    getPathData(layer, font) {
+      return this.getPathMetrics(layer, font).pathData;
     }
 
     getRenderableTextLayers() {
@@ -877,7 +1107,7 @@
       };
     }
 
-    createRasterTextLayerMarkup(layer, pathData, size) {
+    createRasterTextLayerMarkup(layer, pathData, size, rasterBox) {
       const defs = [];
       const filter = this.createDropShadowFilter(layer, { ignoreInteraction: true });
       const rasterLayer = {
@@ -898,10 +1128,147 @@
         defs.push(filter.node);
       }
 
-      return serializeTextLayerSvg(node, defs, size);
+      return serializeTextLayerSvg(node, defs, size, rasterBox);
     }
 
-    syncTextLayerRaster(layer, pathData) {
+    createRasterTextAsset(layer, options = {}) {
+      const font = options.font || this.getFont(layer.fontUrl);
+
+      if (!font) {
+        return null;
+      }
+
+      const size = options.size || this.getDocumentTextureSize();
+      const metrics = this.getPathMetrics(layer, font);
+      const rasterBox = getTextLayerRasterBox(layer, metrics.bounds, size);
+
+      if (!rasterBox) {
+        return {
+          pathData: metrics.pathData,
+          rasterBox: null,
+          svgMarkup: "",
+        };
+      }
+
+      return {
+        pathData: metrics.pathData,
+        rasterBox,
+        svgMarkup: this.createRasterTextLayerMarkup(layer, metrics.pathData, size, rasterBox),
+      };
+    }
+
+    debugRasterBox(options = {}) {
+      const rasterBox = options.rasterBox;
+      const size = options.size;
+      const source = options.source || "raster-debug";
+
+      if (!TEXT_RASTER_DEBUG || !rasterBox) {
+        return;
+      }
+
+      const stats = getRasterDebugStats(size, rasterBox);
+      const stroke = options.stroke || "#ff2bd6";
+      const fill = options.fill || "rgba(255, 43, 214, 0.08)";
+      const allocationBox = options.allocationBox || null;
+      const allocationCount = Math.max(1, Math.round(options.allocationCount || 1));
+      const allocationStroke = options.allocationStroke || "#ff7a00";
+      const layer = options.layer || {};
+      const extraRows = options.extraRows || {};
+      const debugNote = options.note || "Nota: fullLayerTargetMB resta pieno; crop/dirty MB misura l'area realmente toccata.";
+      const label = `${rasterBox.width}x${rasterBox.height} px / ${stats.cropMB} MB`;
+      const group = createSvgElement("g", {
+        class: "editor-vector-raster-debug-box",
+        "data-layer-id": layer.id || "",
+        "data-source": source,
+      });
+      const nodes = [];
+
+      if (allocationBox) {
+        const allocationBytes = allocationBox.width * allocationBox.height * 4;
+        const allocationRect = createSvgElement("rect", {
+          fill: "none",
+          height: allocationBox.height,
+          stroke: allocationStroke,
+          "stroke-dasharray": "36 18",
+          "stroke-linejoin": "round",
+          "stroke-width": 4,
+          "vector-effect": "non-scaling-stroke",
+          width: allocationBox.width,
+          x: allocationBox.x,
+          y: allocationBox.y,
+        });
+        const allocationText = createSvgElement("text", {
+          fill: allocationStroke,
+          "font-family": "monospace",
+          "font-size": 32,
+          "font-weight": 800,
+          "paint-order": "stroke",
+          stroke: "rgba(0, 0, 0, 0.78)",
+          "stroke-width": 7,
+          x: allocationBox.x + 18,
+          y: allocationBox.y + 42,
+        });
+
+        allocationText.textContent = `ALLOC ${allocationBox.width}x${allocationBox.height} x${allocationCount} / ${bytesToMega(allocationBytes * allocationCount)} MB`;
+        nodes.push(allocationRect, allocationText);
+        extraRows.allocationBox = `${allocationBox.width}x${allocationBox.height} @ ${allocationBox.x},${allocationBox.y}`;
+        extraRows.allocationEachMB = bytesToMega(allocationBytes);
+        extraRows.allocationTotalMB = bytesToMega(allocationBytes * allocationCount);
+      }
+
+      const rect = createSvgElement("rect", {
+        fill,
+        height: rasterBox.height,
+        stroke,
+        "stroke-dasharray": "18 10",
+        "stroke-linejoin": "round",
+        "stroke-width": 3,
+        "vector-effect": "non-scaling-stroke",
+        width: rasterBox.width,
+        x: rasterBox.x,
+        y: rasterBox.y,
+      });
+      const text = createSvgElement("text", {
+        fill: stroke,
+        "font-family": "monospace",
+        "font-size": 28,
+        "font-weight": 700,
+        "paint-order": "stroke",
+        stroke: "rgba(0, 0, 0, 0.72)",
+        "stroke-width": 6,
+        x: rasterBox.x,
+        y: Math.max(28, rasterBox.y - 12),
+      });
+
+      text.textContent = label;
+      nodes.push(rect, text);
+      group.append(...nodes);
+      this.debugGroup?.replaceChildren(group);
+
+      console.groupCollapsed?.(`[CBO raster debug] ${layer.name || layer.id || "layer"} (${source})`);
+      console.table?.({
+        cropBox: `${rasterBox.width}x${rasterBox.height} @ ${rasterBox.x},${rasterBox.y}`,
+        cropTempMB: stats.cropMB,
+        fullDocumentTempMB: stats.documentMB,
+        fullLayerTargetMB: stats.documentMB,
+        reductionPercent: `${stats.reduction}%`,
+        savedTempMB: stats.savedMB,
+        ...extraRows,
+      });
+      console.log?.(debugNote);
+      console.groupEnd?.();
+    }
+
+    debugTextRaster(layer, rasterBox, size, source = "vector-text-cache") {
+      this.debugRasterBox({
+        layer,
+        rasterBox,
+        size,
+        source,
+      });
+    }
+
+    syncTextLayerRaster(layer, pathData, pathBounds) {
       const renderer = namespace.documentRenderer;
       const rasterizer = namespace.imageRasterizer;
 
@@ -910,7 +1277,8 @@
       }
 
       const size = this.getDocumentTextureSize();
-      const signature = getTextRasterSignature(layer, pathData, size);
+      const rasterBox = getTextLayerRasterBox(layer, pathBounds, size);
+      const signature = getTextRasterSignature(layer, pathData, size, rasterBox);
       const cached = this.rasterLayerCache.get(layer.id);
 
       if (
@@ -924,15 +1292,15 @@
       const delay = layer.id === this.layerModel?.activeLayerId ? ACTIVE_TEXT_RASTER_DEBOUNCE_MS : 0;
 
       if (delay > 0) {
-        this.queueTextLayerRasterSync(layer, pathData, size, signature, delay);
+        this.queueTextLayerRasterSync(layer, pathData, size, rasterBox, signature, delay);
         this.beginRasterPreview(delay + TEXT_RASTER_PREVIEW_MS);
         return;
       }
 
-      this.runTextLayerRasterSync(layer, pathData, size, signature);
+      this.runTextLayerRasterSync(layer, pathData, size, rasterBox, signature);
     }
 
-    queueTextLayerRasterSync(layer, pathData, size, signature, delay) {
+    queueTextLayerRasterSync(layer, pathData, size, rasterBox, signature, delay) {
       const cached = this.rasterLayerCache.get(layer.id) || {};
 
       if (cached.timerId) {
@@ -951,7 +1319,7 @@
           queuedSignature: "",
           timerId: 0,
         });
-        this.runTextLayerRasterSync(layer, pathData, size, signature);
+        this.runTextLayerRasterSync(layer, pathData, size, rasterBox, signature);
       }, delay);
 
       this.rasterLayerCache.set(layer.id, {
@@ -961,7 +1329,7 @@
       });
     }
 
-    runTextLayerRasterSync(layer, pathData, size, signature) {
+    runTextLayerRasterSync(layer, pathData, size, rasterBox, signature) {
       const renderer = namespace.documentRenderer;
       const rasterizer = namespace.imageRasterizer;
 
@@ -971,7 +1339,6 @@
 
       const cached = this.rasterLayerCache.get(layer.id) || {};
       const generation = this.rasterGeneration + 1;
-      const svgMarkup = this.createRasterTextLayerMarkup(layer, pathData, size);
 
       this.rasterGeneration = generation;
       this.rasterLayerCache.set(layer.id, {
@@ -979,6 +1346,20 @@
         generation,
         pendingSignature: signature,
       });
+
+      if (!rasterBox) {
+        renderer.clearLayer(layer.id, { emit: false });
+        this.rasterLayerCache.set(layer.id, {
+          generation,
+          pendingSignature: "",
+          signature,
+        });
+        this.finishRasterPreviewIfIdle();
+        namespace.brushEngine?.requestDraw?.();
+        return;
+      }
+
+      const svgMarkup = this.createRasterTextLayerMarkup(layer, pathData, size, rasterBox);
 
       loadSvgImage(svgMarkup)
         .then((image) => {
@@ -1002,9 +1383,10 @@
             layerId: layer.id,
             source: "vector-text-cache",
             target,
-            x: 0,
-            y: 0,
+            x: rasterBox.x,
+            y: rasterBox.y,
           });
+          this.debugTextRaster(layer, rasterBox, size, "vector-text-cache");
 
           this.rasterLayerCache.set(layer.id, {
             generation,
@@ -1116,7 +1498,8 @@
         const renderLayer = draggingLayer
           ? { ...layer, x: draggingLayer.x, y: draggingLayer.y }
           : layer;
-        const pathData = this.getPathData(layer, font);
+        const pathMetrics = this.getPathMetrics(layer, font);
+        const pathData = pathMetrics.pathData;
         const filter = this.createDropShadowFilter(renderLayer);
         const node = this.createTextLayerNode(renderLayer, pathData, {
           active: renderLayer.id === activeLayerId,
@@ -1129,7 +1512,7 @@
         }
 
         nodes.push(node);
-        this.syncTextLayerRaster(renderLayer, pathData);
+        this.syncTextLayerRaster(renderLayer, pathData, pathMetrics.bounds);
       });
 
       this.removeStaleTextRasterTargets(activeTextLayerIds);

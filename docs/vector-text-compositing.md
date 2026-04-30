@@ -14,7 +14,7 @@ Text remains a `vector-text` layer in `DocumentLayerModel`. The editable source 
 - warp and envelope grid
 - transform values
 
-The visible document no longer relies on the SVG overlay as the final text paint. `VectorTextRenderer` renders each visible text layer into an SVG image, uploads that image into a WebGL raster target with the same layer id, and lets `DocumentRenderer` composite it in `getRenderableLayers()` order.
+The visible document no longer relies on the SVG overlay as the final text paint. `VectorTextRenderer` renders each visible text layer into a cropped SVG image, uploads that image into a WebGL raster target with the same layer id, and lets `DocumentRenderer` composite it in `getRenderableLayers()` order.
 
 The SVG overlay still exists for interaction:
 
@@ -38,6 +38,8 @@ Its paint and solid shadow groups are transparent in `css/layout.css`, so the ov
 Opacity is intentionally applied by `DocumentRenderer` at composite time, so opacity changes do not require regenerating the text texture. Visibility and group visibility are handled by the renderable layer stack; stale text targets are deleted when a text layer is hidden, removed, or moved into a hidden group.
 
 Active text layers use a short debounce before rebuilding their WebGL texture. Dragging and slider changes update the SVG interaction overlay immediately, then commit a new compositor texture after the input settles. This avoids re-decoding and re-uploading a full document-sized text texture on every pointer move while keeping the final document stack correct.
+
+Text raster sync crops the temporary SVG/image to the transformed text bounds, including stroke and shadow padding, then places that smaller bitmap back at its document `x/y` position. The per-layer WebGL target is still document-sized, but the expensive decode/upload step is sized to the text instead of the full artboard.
 
 Solid 3D shadows are rendered as a continuous extrusion, not as repeated stamped text copies. The renderer builds native line/quadratic/cubic side faces from the text outline and adds a single back face at the requested depth, which keeps diagonal shadow sides straight instead of stair-stepped. The extrusion cache is keyed by path and offset, so pan and zoom do not rebuild Bezier geometry. Internal faces are painted fully opaque and the requested shadow opacity is applied once on the parent group, avoiding striped overlap seams.
 

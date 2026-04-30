@@ -16,6 +16,7 @@ uniform vec2 uCameraPosition;
 uniform float uCameraZoom;
 
 out vec2 v_uv;
+out vec2 v_documentPixel;
 
 void main() {
   // aUnitCorner contiene i quattro angoli del documento in spazio normalizzato [0..1].
@@ -34,6 +35,7 @@ void main() {
   );
 
   v_uv = vec2(aUnitCorner.x, 1.0 - aUnitCorner.y);
+  v_documentPixel = documentPixel;
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
 `;
@@ -48,8 +50,11 @@ uniform vec2 uDocumentSize;
 uniform float uCameraZoom;
 uniform float u_gridMode;
 uniform float u_maskMode;
+uniform vec4 u_maskRect;
+uniform float u_maskRectMode;
 
 in vec2 v_uv;
+in vec2 v_documentPixel;
 
 out vec4 outColor;
 
@@ -68,7 +73,17 @@ void main() {
     vec4 color = texture(u_texture, v_uv) * u_opacity;
 
     if (u_maskMode > 0.5) {
-      float eraseAlpha = clamp(texture(u_maskTexture, v_uv).a, 0.0, 1.0);
+      float eraseAlpha = 0.0;
+
+      if (u_maskRectMode > 0.5) {
+        vec2 local = (v_documentPixel - u_maskRect.xy) / max(u_maskRect.zw, vec2(1.0));
+
+        if (!any(lessThan(local, vec2(0.0))) && !any(greaterThan(local, vec2(1.0)))) {
+          eraseAlpha = clamp(texture(u_maskTexture, vec2(local.x, 1.0 - local.y)).a, 0.0, 1.0);
+        }
+      } else {
+        eraseAlpha = clamp(texture(u_maskTexture, v_uv).a, 0.0, 1.0);
+      }
 
       color *= 1.0 - eraseAlpha;
     }
@@ -206,6 +221,8 @@ void main() {
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
           documentSize: gl.getUniformLocation(program, "uDocumentSize"),
           maskMode: gl.getUniformLocation(program, "u_maskMode"),
+          maskRect: gl.getUniformLocation(program, "u_maskRect"),
+          maskRectMode: gl.getUniformLocation(program, "u_maskRectMode"),
           maskTexture: gl.getUniformLocation(program, "u_maskTexture"),
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
@@ -536,7 +553,28 @@ void main() {
       const { program, uniforms } = this.programInfo;
       const activeStrokeLayerId = options.activeStrokeLayerId || target.layerId;
       const activeStrokeMode = String(options.activeStrokeMode || "paint").toLowerCase();
+      const activeStrokeRect = options.activeStrokeRect || null;
       let didDrawActiveStroke = false;
+      const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
+        gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
+        gl.uniform2f(uniforms.cameraPosition, cameraX, cameraY);
+      };
+      const drawTexture = (texture, opacity, rect = null) => {
+        if (rect) {
+          setDocumentProjection(
+            rect.width,
+            rect.height,
+            (camera.x || 0) + rect.x * (camera.zoom || 1),
+            (camera.y || 0) + rect.y * (camera.zoom || 1),
+          );
+        } else {
+          setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
+        }
+
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1f(uniforms.opacity, opacity);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      };
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
@@ -553,12 +591,13 @@ void main() {
 
       gl.useProgram(program);
       gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
-      gl.uniform2f(uniforms.documentSize, target.width, target.height);
-      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+      setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniform1i(uniforms.texture, 0);
       gl.uniform1i(uniforms.maskTexture, 1);
       gl.uniform1f(uniforms.maskMode, 0.0);
+      gl.uniform1f(uniforms.maskRectMode, 0.0);
+      gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
       gl.bindVertexArray(this.quad.vao);
       gl.activeTexture(gl.TEXTURE0);
 
@@ -578,15 +617,27 @@ void main() {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, eraserMaskTexture);
             gl.uniform1f(uniforms.maskMode, 1.0);
+            if (activeStrokeRect) {
+              gl.uniform1f(uniforms.maskRectMode, 1.0);
+              gl.uniform4f(
+                uniforms.maskRect,
+                activeStrokeRect.x,
+                activeStrokeRect.y,
+                activeStrokeRect.width,
+                activeStrokeRect.height,
+              );
+            } else {
+              gl.uniform1f(uniforms.maskRectMode, 0.0);
+              gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
+            }
             gl.activeTexture(gl.TEXTURE0);
           }
 
-          gl.bindTexture(gl.TEXTURE_2D, layerTarget.texture);
-          gl.uniform1f(uniforms.opacity, opacity);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          drawTexture(layerTarget.texture, opacity);
 
           if (eraserMaskTexture) {
             gl.uniform1f(uniforms.maskMode, 0.0);
+            gl.uniform1f(uniforms.maskRectMode, 0.0);
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, null);
             gl.activeTexture(gl.TEXTURE0);
@@ -595,9 +646,7 @@ void main() {
         }
 
         if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
-          gl.bindTexture(gl.TEXTURE_2D, options.activeStrokeTexture);
-          gl.uniform1f(uniforms.opacity, opacity);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect);
           didDrawActiveStroke = true;
         }
       }
@@ -606,13 +655,12 @@ void main() {
         const hasLayerModel = Boolean(this.layerModel);
 
         if (!hasLayerModel) {
-          gl.bindTexture(gl.TEXTURE_2D, options.activeStrokeTexture);
-          gl.uniform1f(uniforms.opacity, 1.0);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          drawTexture(options.activeStrokeTexture, 1.0, activeStrokeRect);
         }
       }
 
       // Pass 2: griglia pixel sopra tutto. Lo shader la attiva solo a zoom alto.
+      setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
       gl.uniform1f(uniforms.gridMode, 1.0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
