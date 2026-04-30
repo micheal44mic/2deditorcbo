@@ -155,6 +155,8 @@ void main() {
       this.programInfo = null;
       this.quad = null;
       this.isDisposed = false;
+      this.handleLayerModelChange = this.handleLayerModelChange.bind(this);
+      this.handleHistoryChange = this.handleHistoryChange.bind(this);
 
       try {
         this.configureDocumentSize(options.viewportWidth, options.viewportHeight);
@@ -165,6 +167,9 @@ void main() {
         this.dispose();
         throw error;
       }
+
+      this.layerModel?.addEventListener?.("change", this.handleLayerModelChange);
+      window.addEventListener("cbo:history-change", this.handleHistoryChange);
     }
 
     compileShader(type, source) {
@@ -441,6 +446,180 @@ void main() {
       return true;
     }
 
+    getSnapshotRect(target, rect = null) {
+      if (!target || !Number.isFinite(target.width) || !Number.isFinite(target.height)) {
+        return null;
+      }
+
+      if (!rect) {
+        return {
+          height: Math.max(1, Math.round(target.height)),
+          width: Math.max(1, Math.round(target.width)),
+          x: 0,
+          y: 0,
+        };
+      }
+
+      const rawX = Number.isFinite(rect.x) ? rect.x : 0;
+      const rawY = Number.isFinite(rect.y) ? rect.y : 0;
+      const x = Math.max(0, Math.min(target.width - 1, Math.floor(rawX)));
+      const y = Math.max(0, Math.min(target.height - 1, Math.floor(rawY)));
+      const rawWidth = Number.isFinite(rect.width) && rect.width > 0 ? rect.width : target.width - x;
+      const rawHeight = Number.isFinite(rect.height) && rect.height > 0 ? rect.height : target.height - y;
+      const width = Math.max(1, Math.min(target.width - x, Math.ceil(rawWidth)));
+      const height = Math.max(1, Math.min(target.height - y, Math.ceil(rawHeight)));
+
+      return { x, y, width, height };
+    }
+
+    createRasterSnapshot(targetOrLayerId, rect = null, label = "raster snapshot") {
+      const target = typeof targetOrLayerId === "string"
+        ? this.getRasterTarget(targetOrLayerId)
+        : targetOrLayerId;
+      const snapshotRect = this.getSnapshotRect(target, rect);
+
+      if (!target?.framebuffer || !snapshotRect) {
+        return null;
+      }
+
+      const gl = this.gl;
+      const texture = gl.createTexture();
+      const framebuffer = gl.createFramebuffer();
+
+      if (!texture || !framebuffer) {
+        if (texture) {
+          gl.deleteTexture(texture);
+        }
+
+        if (framebuffer) {
+          gl.deleteFramebuffer(framebuffer);
+        }
+
+        return null;
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        snapshotRect.width,
+        snapshotRect.height,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        null,
+      );
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.deleteFramebuffer(framebuffer);
+        gl.deleteTexture(texture);
+        console.warn(`Snapshot raster ${label} incompleto.`);
+        return null;
+      }
+
+      const sourceX0 = snapshotRect.x;
+      const sourceX1 = snapshotRect.x + snapshotRect.width;
+      const sourceY0 = target.height - (snapshotRect.y + snapshotRect.height);
+      const sourceY1 = target.height - snapshotRect.y;
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.framebuffer);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, framebuffer);
+      gl.blitFramebuffer(
+        sourceX0,
+        sourceY0,
+        sourceX1,
+        sourceY1,
+        0,
+        0,
+        snapshotRect.width,
+        snapshotRect.height,
+        gl.COLOR_BUFFER_BIT,
+        gl.NEAREST,
+      );
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return {
+        framebuffer,
+        label,
+        rect: snapshotRect,
+        texture,
+      };
+    }
+
+    canRestoreRasterSnapshot(target, snapshot) {
+      const rect = snapshot?.rect;
+
+      return Boolean(
+        target?.framebuffer &&
+        snapshot?.framebuffer &&
+        rect &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.x >= 0 &&
+        rect.y >= 0 &&
+        rect.x + rect.width <= target.width &&
+        rect.y + rect.height <= target.height
+      );
+    }
+
+    restoreRasterSnapshot(layerId, snapshot, options = {}) {
+      if (!layerId || !snapshot) {
+        return false;
+      }
+
+      const target = this.getRasterTarget(layerId);
+
+      if (!this.canRestoreRasterSnapshot(target, snapshot)) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const rect = snapshot.rect;
+      const x0 = rect.x;
+      const x1 = rect.x + rect.width;
+      const y0 = target.height - (rect.y + rect.height);
+      const y1 = target.height - rect.y;
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, snapshot.framebuffer);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, target.framebuffer);
+      gl.blitFramebuffer(0, 0, rect.width, rect.height, x0, y0, x1, y1, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId,
+          source: options.source || "raster-snapshot-restore",
+        });
+      }
+
+      return true;
+    }
+
+    deleteRasterSnapshot(snapshot) {
+      if (snapshot?.framebuffer) {
+        this.gl.deleteFramebuffer(snapshot.framebuffer);
+        snapshot.framebuffer = null;
+      }
+
+      if (snapshot?.texture) {
+        this.gl.deleteTexture(snapshot.texture);
+        snapshot.texture = null;
+      }
+    }
+
     deleteRasterTarget(layerId, options = {}) {
       if (!layerId) {
         return false;
@@ -479,6 +658,110 @@ void main() {
       window.dispatchEvent(new CustomEvent("cbo:document-content-change", {
         detail,
       }));
+    }
+
+    handleLayerModelChange() {
+      this.pruneOrphanRasterTargets();
+    }
+
+    handleHistoryChange() {
+      this.pruneOrphanRasterTargets();
+    }
+
+    collectEntryLayerIds(entries, result = new Set()) {
+      if (!Array.isArray(entries)) {
+        return result;
+      }
+
+      for (const entry of entries) {
+        if (!entry) {
+          continue;
+        }
+
+        if (entry.id) {
+          result.add(entry.id);
+        }
+
+        this.collectEntryLayerIds(entry.children || [], result);
+      }
+
+      return result;
+    }
+
+    collectHistoryEntryLayerIds(entry, result = new Set()) {
+      if (!entry) {
+        return result;
+      }
+
+      if (entry.layerId) {
+        result.add(entry.layerId);
+      }
+
+      if (Array.isArray(entry.layerIds)) {
+        entry.layerIds.forEach((layerId) => {
+          if (layerId) {
+            result.add(layerId);
+          }
+        });
+      }
+
+      this.collectEntryLayerIds(entry.beforeEntries || [], result);
+      this.collectEntryLayerIds(entry.afterEntries || [], result);
+
+      return result;
+    }
+
+    collectHistoryLayerIds(result = new Set()) {
+      const history = namespace.documentHistory;
+      const stacks = [history?.undoStack, history?.redoStack];
+
+      for (const stack of stacks) {
+        if (!Array.isArray(stack)) {
+          continue;
+        }
+
+        for (const entry of stack) {
+          this.collectHistoryEntryLayerIds(entry, result);
+        }
+      }
+
+      return result;
+    }
+
+    getRetainedRasterTargetLayerIds() {
+      const retainedLayerIds = this.collectEntryLayerIds(this.layerModel?.getEntries?.() || []);
+
+      this.collectHistoryLayerIds(retainedLayerIds);
+      retainedLayerIds.add("background");
+
+      if (this.paintLayerId) {
+        retainedLayerIds.add(this.paintLayerId);
+      }
+
+      return retainedLayerIds;
+    }
+
+    pruneOrphanRasterTargets() {
+      if (this.isDisposed || !this.rasterTargetsByLayerId?.size) {
+        return 0;
+      }
+
+      const retainedLayerIds = this.getRetainedRasterTargetLayerIds();
+      let prunedCount = 0;
+
+      for (const layerId of Array.from(this.rasterTargetsByLayerId.keys())) {
+        const target = this.rasterTargetsByLayerId.get(layerId);
+
+        if (retainedLayerIds.has(layerId) || target?.texture === this.texture) {
+          continue;
+        }
+
+        if (this.deleteRasterTarget(layerId, { emit: false })) {
+          prunedCount += 1;
+        }
+      }
+
+      return prunedCount;
     }
 
     getPaintTarget() {
@@ -677,6 +960,8 @@ void main() {
       const gl = this.gl;
 
       this.isDisposed = true;
+      this.layerModel?.removeEventListener?.("change", this.handleLayerModelChange);
+      window.removeEventListener("cbo:history-change", this.handleHistoryChange);
 
       if (this.quad) {
         gl.deleteBuffer(this.quad.buffer);

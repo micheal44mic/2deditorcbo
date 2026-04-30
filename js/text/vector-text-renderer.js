@@ -719,24 +719,24 @@
     return path.getBoundingBox();
   }
 
-  function centerVectorTextLayer(layerModel, layerId, targetPoint) {
+  function centerVectorTextLayer(layerModel, layerId, targetPoint, historyGroup = "") {
     const engine = namespace.VectorTextEngine;
     const layer = layerModel?.findEntryById?.(layerId);
 
     if (!layer || !engine?.loadOpenTypeFont) {
-      return;
+      return Promise.resolve(false);
     }
 
     const initialX = layer.x;
     const initialY = layer.y;
 
-    engine
+    return engine
       .loadOpenTypeFont(layer.fontUrl || engine.DEFAULT_FONT_URL)
       .then((font) => {
         const currentLayer = layerModel.findEntryById(layerId);
 
         if (!currentLayer || currentLayer.x !== initialX || currentLayer.y !== initialY) {
-          return;
+          return false;
         }
 
         const bounds = getWarpedTextBounds(currentLayer, font);
@@ -745,10 +745,16 @@
         layerModel.updateLayer(layerId, {
           x: targetPoint.x - offset.x,
           y: targetPoint.y - offset.y,
-        }, { source: "vector-text-center" });
+        }, {
+          historyGroup,
+          source: "vector-text-center",
+        });
+
+        return true;
       })
       .catch((error) => {
         console.warn("Impossibile centrare il testo vettoriale.", error);
+        return false;
       });
   }
 
@@ -775,16 +781,30 @@
     const didInsert = activeLayer?.type !== "background"
       ? insertEntryAbove(entries, activeLayer?.id, layer)
       : false;
+    const historyGroup = `vector-text-create-${layer.id}`;
+    let shouldEndCreateGroup = true;
 
     if (!didInsert) {
       insertAboveBackground(entries, layer);
     }
 
-    layerModel.setEntries(entries, { source: "vector-text-create" });
-    layerModel.setActiveLayer(layer.id, { source: "vector-text-create" });
+    namespace.documentHistory?.beginGroup?.(historyGroup);
 
-    if (shouldCenterVisually) {
-      centerVectorTextLayer(layerModel, layer.id, centeredPoint);
+    try {
+      layerModel.setEntries(entries, { historyGroup, source: "vector-text-create" });
+      layerModel.setActiveLayer(layer.id, { historyGroup, source: "vector-text-create" });
+
+      if (shouldCenterVisually) {
+        shouldEndCreateGroup = false;
+        void centerVectorTextLayer(layerModel, layer.id, centeredPoint, historyGroup)
+          .finally(() => {
+            namespace.documentHistory?.endGroup?.(historyGroup);
+          });
+      }
+    } finally {
+      if (shouldEndCreateGroup) {
+        namespace.documentHistory?.endGroup?.(historyGroup);
+      }
     }
 
     return cloneValue(layer);
@@ -1913,6 +1933,7 @@
 
       this.dragState = {
         group,
+        historyGroup: `text-drag-${layerId}`,
         layer: cloneValue(layer),
         layerId,
         pointerId: event.pointerId,
@@ -1941,6 +1962,7 @@
 
       this.envelopeDragState = {
         grid: cloneValue(layer.envelopeGrid),
+        historyGroup: `text-envelope-${layerId}-${nodeId}`,
         layerId,
         nodeId,
         pointerId: event.pointerId,
@@ -1948,6 +1970,7 @@
         startNodePosition: cloneValue(layer.envelopeGrid[nodeId]),
       };
 
+      namespace.documentHistory?.beginGroup?.(this.envelopeDragState.historyGroup);
       event.currentTarget.setPointerCapture?.(event.pointerId);
       window.addEventListener("pointermove", this.handleEnvelopeDragMove);
       window.addEventListener("pointerup", this.handleEnvelopeDragEnd);
@@ -1980,7 +2003,10 @@
         position,
       );
 
-      this.layerModel.updateLayer(layer.id, { envelopeGrid }, { source: "vector-text-envelope-drag" });
+      this.layerModel.updateLayer(layer.id, { envelopeGrid }, {
+        historyGroup: this.envelopeDragState.historyGroup,
+        source: "vector-text-envelope-drag",
+      });
       this.beginInteraction();
       event.preventDefault();
     }
@@ -1993,6 +2019,7 @@
       window.removeEventListener("pointermove", this.handleEnvelopeDragMove);
       window.removeEventListener("pointerup", this.handleEnvelopeDragEnd);
       window.removeEventListener("pointercancel", this.handleEnvelopeDragEnd);
+      namespace.documentHistory?.endGroup?.(this.envelopeDragState.historyGroup);
       this.envelopeDragState = null;
       this.endTextEditPreview();
       event.preventDefault();
@@ -2022,7 +2049,7 @@
         return;
       }
 
-      const { group, layerId, nextLayer } = this.dragState;
+      const { group, historyGroup, layerId, nextLayer } = this.dragState;
 
       group.releasePointerCapture?.(event.pointerId);
       window.removeEventListener("pointermove", this.handleDragMove);
@@ -2033,7 +2060,10 @@
         this.layerModel.updateLayer(layerId, {
           x: nextLayer.x,
           y: nextLayer.y,
-        }, { source: "vector-text-drag" });
+        }, {
+          historyGroup,
+          source: "vector-text-drag",
+        });
         this.beginRasterPreview(ACTIVE_TEXT_RASTER_DEBOUNCE_MS + TEXT_RASTER_PREVIEW_MS);
       }
 

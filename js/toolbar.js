@@ -59,6 +59,10 @@ window.CBO.initToolbar = function initToolbar() {
   }
 
   function flashHistoryButton(button) {
+    if (button.disabled) {
+      return;
+    }
+
     button.classList.add("active");
     button.setAttribute("aria-pressed", "true");
 
@@ -71,7 +75,7 @@ window.CBO.initToolbar = function initToolbar() {
   function triggerHistoryAction(action) {
     const button = document.querySelector(`[data-history-action="${action}"]`);
 
-    if (!button) {
+    if (!button || button.disabled) {
       return;
     }
 
@@ -81,6 +85,29 @@ window.CBO.initToolbar = function initToolbar() {
         detail: { action },
       }),
     );
+  }
+
+  function setHistoryButtonState(button, isEnabled) {
+    button.disabled = !isEnabled;
+    button.classList.toggle("disabled", !isEnabled);
+    button.setAttribute("aria-disabled", String(!isEnabled));
+
+    if (!isEnabled) {
+      button.classList.remove("active");
+      button.setAttribute("aria-pressed", "false");
+    }
+  }
+
+  function updateHistoryButtons(detail = {}) {
+    historyButtons.forEach((button) => {
+      const action = String(button.dataset.historyAction || "").toLowerCase();
+
+      if (action === "undo") {
+        setHistoryButtonState(button, detail.canUndo === true);
+      } else if (action === "redo") {
+        setHistoryButtonState(button, detail.canRedo === true);
+      }
+    });
   }
 
   toolButtons.forEach((button) => {
@@ -93,6 +120,14 @@ window.CBO.initToolbar = function initToolbar() {
     button.addEventListener("click", () => {
       triggerHistoryAction(button.dataset.historyAction);
     });
+  });
+
+  window.addEventListener("cbo:history-change", (event) => {
+    updateHistoryButtons(event.detail || {});
+  });
+  updateHistoryButtons({
+    canRedo: window.CBO.documentHistory?.redoStack?.length > 0,
+    canUndo: window.CBO.documentHistory?.undoStack?.length > 0,
   });
 
   toolsetOptions.forEach((option) => {

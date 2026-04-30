@@ -195,10 +195,93 @@
     return false;
   }
 
+  function createRasterizeHistoryEntry(options = {}) {
+    const {
+      afterState,
+      beforeState,
+      history,
+      layerModel,
+      rasterLayer,
+      rasterSnapshot,
+      requiresRasterSnapshot = false,
+      renderer,
+    } = options;
+
+    if (!history || !layerModel || !renderer || !rasterLayer?.id || !beforeState || !afterState) {
+      return null;
+    }
+
+    const before = cloneValue(beforeState);
+    const after = cloneValue(afterState);
+    const rasterLayerId = rasterLayer.id;
+
+    return {
+      type: "custom",
+      afterActiveLayerId: after.activeLayerId,
+      afterEntries: after.entries,
+      beforeActiveLayerId: before.activeLayerId,
+      beforeEntries: before.entries,
+      rasterLayerId,
+      rasterSnapshot,
+      requiresRasterSnapshot,
+      source: "vector-text-rasterize",
+      undo() {
+        const didRestore = history.restoreLayerState(layerModel, before, {
+          source: "history-undo-vector-text-rasterize",
+        });
+
+        renderer.deleteRasterTarget?.(rasterLayerId, { emit: false });
+        namespace.brushEngine?.requestDraw?.();
+
+        return didRestore;
+      },
+      redo() {
+        const didRestore = history.restoreLayerState(layerModel, after, {
+          source: "history-redo-vector-text-rasterize",
+        });
+
+        if (!didRestore) {
+          return false;
+        }
+
+        if (this.requiresRasterSnapshot && !rasterSnapshot?.framebuffer) {
+          history.restoreLayerState(layerModel, before, {
+            source: "history-redo-vector-text-rasterize-rollback",
+          });
+          renderer.deleteRasterTarget?.(rasterLayerId, { emit: false });
+          namespace.brushEngine?.requestDraw?.();
+          return false;
+        }
+
+        if (rasterSnapshot) {
+          renderer.clearLayer?.(rasterLayerId, { emit: false });
+
+          if (!renderer.restoreRasterSnapshot?.(rasterLayerId, rasterSnapshot, {
+            source: "history-redo-vector-text-rasterize",
+          })) {
+            history.restoreLayerState(layerModel, before, {
+              source: "history-redo-vector-text-rasterize-rollback",
+            });
+            renderer.deleteRasterTarget?.(rasterLayerId, { emit: false });
+            namespace.brushEngine?.requestDraw?.();
+            return false;
+          }
+        }
+
+        namespace.brushEngine?.requestDraw?.();
+        return true;
+      },
+      destroy() {
+        renderer.deleteRasterSnapshot?.(rasterSnapshot);
+      },
+    };
+  }
+
   async function rasterizeVectorTextLayer(layerId) {
     const layerModel = namespace.documentLayerModel;
     const renderer = namespace.documentRenderer;
     const rasterizer = namespace.imageRasterizer;
+    const history = namespace.documentHistory;
     const activeLayerId = layerId || layerModel?.activeLayerId;
     const layer = layerModel?.findEntryById?.(activeLayerId);
 
@@ -218,6 +301,7 @@
       throw new Error("Layer testo non renderizzato: impossibile rasterizzare.");
     }
 
+    const beforeState = history?.getLayerSnapshot?.(layerModel) || null;
     const rasterLayer = layerModel.createLayer({
       locked: layer.locked === true,
       name: layer.name || "Text",
@@ -227,12 +311,15 @@
     });
     const size = getDocumentSize();
     const rasterSource = await createRasterSource(layer, layerNode, size);
+    const requiresRasterSnapshot = Boolean(rasterSource.source && rasterSource.rasterBox);
     const target = renderer.getRasterTarget(rasterLayer.id);
 
-    renderer.clearLayer?.(rasterLayer.id);
-    if (rasterSource.source && rasterSource.rasterBox) {
+    renderer.clearLayer?.(rasterLayer.id, { emit: false });
+    if (requiresRasterSnapshot) {
       rasterizer.placeRasterImage(rasterSource.source, {
+        emit: false,
         layerId: rasterLayer.id,
+        source: "vector-text-rasterize",
         target,
         x: rasterSource.rasterBox.x,
         y: rasterSource.rasterBox.y,
@@ -245,6 +332,15 @@
       );
     }
 
+    const rasterSnapshot = requiresRasterSnapshot
+      ? renderer.createRasterSnapshot?.(target, rasterSource.rasterBox, "vector-text-rasterize")
+      : null;
+
+    if (history && requiresRasterSnapshot && !rasterSnapshot) {
+      renderer.deleteRasterTarget?.(rasterLayer.id, { emit: false });
+      throw new Error("Impossibile salvare lo snapshot raster del testo per Undo/Redo.");
+    }
+
     const entries = layerModel.getEntries();
     const didReplace = replaceEntry(entries, layer.id, rasterLayer);
 
@@ -252,8 +348,26 @@
       entries.unshift(rasterLayer);
     }
 
-    layerModel.setEntries(entries, { source: "vector-text-rasterize" });
-    layerModel.setActiveLayer(rasterLayer.id, { source: "vector-text-rasterize" });
+    layerModel.setEntries(entries, { history: false, source: "vector-text-rasterize" });
+    layerModel.setActiveLayer(rasterLayer.id, { history: false, source: "vector-text-rasterize" });
+    const afterState = history?.getLayerSnapshot?.(layerModel) || null;
+    const historyEntry = createRasterizeHistoryEntry({
+      afterState,
+      beforeState,
+      history,
+      layerModel,
+      rasterLayer,
+      rasterSnapshot,
+      requiresRasterSnapshot,
+      renderer,
+    });
+
+    if (historyEntry) {
+      history.push(historyEntry);
+    } else {
+      renderer.deleteRasterSnapshot?.(rasterSnapshot);
+    }
+
     namespace.brushEngine?.requestDraw?.();
 
     window.dispatchEvent(new CustomEvent("cbo:vector-text-rasterized", {
@@ -266,6 +380,7 @@
     return cloneValue(rasterLayer);
   }
 
+  namespace.createVectorTextRasterizeHistoryEntry = createRasterizeHistoryEntry;
   namespace.rasterizeVectorTextLayer = rasterizeVectorTextLayer;
   namespace.rasterizeActiveVectorTextLayer = () => rasterizeVectorTextLayer();
 })(window.CBO = window.CBO || {});

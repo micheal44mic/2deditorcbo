@@ -278,6 +278,7 @@
         return this.cloneEntry(activeEntry);
       }
 
+      const beforeState = this.captureHistoryState(options);
       const paintLayer = this.createLayer({
         name: this.getNextPaintLayerName(),
         type: "paint",
@@ -293,6 +294,7 @@
       this.entries = this.ensureSystemLayers(this.entries);
       this.activeLayerId = paintLayer.id;
       this.emitChange(options.source || "ensure-paint-layer");
+      this.recordHistoryStateChange(beforeState, options);
 
       return this.cloneEntry(paintLayer);
     }
@@ -333,7 +335,29 @@
       return this.entries.map((entry) => this.cloneEntry(entry));
     }
 
+    captureHistoryState(options = {}) {
+      const history = window.CBO?.documentHistory;
+
+      if (!history?.canRecord?.(options) || !history?.getLayerSnapshot) {
+        return null;
+      }
+
+      return history.getLayerSnapshot(this);
+    }
+
+    recordHistoryStateChange(beforeState, options = {}) {
+      const history = window.CBO?.documentHistory;
+
+      if (!beforeState || !history?.recordLayerStateChange) {
+        return false;
+      }
+
+      return history.recordLayerStateChange(this, beforeState, options);
+    }
+
     setEntries(entries, options = {}) {
+      const beforeState = this.captureHistoryState(options);
+
       this.entries = this.ensureSystemLayers(this.normalizeEntries(entries));
 
       if (!this.canActivateEntry(this.findEntryById(this.activeLayerId))) {
@@ -341,13 +365,18 @@
       }
 
       this.emitChange(options.source || "set-entries");
+      this.recordHistoryStateChange(beforeState, options);
     }
 
     setActiveLayer(id, options = {}) {
+      const beforeState = options.recordActiveLayerHistory === true
+        ? this.captureHistoryState(options)
+        : null;
       const entry = this.findEntryById(id);
 
       this.activeLayerId = this.canActivateEntry(entry) ? entry.id : null;
       this.emitChange(options.source || "active-layer");
+      this.recordHistoryStateChange(beforeState, options);
     }
 
     updateLayer(id, patch, options = {}) {
@@ -363,10 +392,13 @@
         return false;
       }
 
+      const beforeState = this.captureHistoryState(options);
+
       Object.assign(entry, this.cloneValue(nextPatch));
       entry.opacity = Number.isFinite(entry.opacity) ? Math.min(1, Math.max(0, entry.opacity)) : 1;
 
       this.emitChange(options.source || "update-layer");
+      this.recordHistoryStateChange(beforeState, options);
 
       return true;
     }

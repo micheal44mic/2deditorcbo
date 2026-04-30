@@ -5,7 +5,6 @@ window.CBO = window.CBO || {};
   const MAX_ZOOM = 32;
   const WHEEL_ZOOM_INTENSITY = 0.0015;
   const PINCH_ZOOM_INTENSITY = 0.01;
-  const MAX_HISTORY_ENTRIES = 40;
   const BRUSH_RASTER_DEBUG = true;
   const CROPPED_BRUSH_STROKES = true;
   const STROKE_ALLOCATION_QUANTUM = 128;
@@ -573,8 +572,6 @@ void main() {
       this.currentStrokeTool = "brush";
       this.strokeTargetLayerId = null;
       this.activeStrokeBounds = null;
-      this.undoStack = [];
-      this.redoStack = [];
       this.documentRenderer = options.documentRenderer;
       this.strokeTexture = null;
       this.strokeFBO = null;
@@ -603,7 +600,6 @@ void main() {
       this.handleBrushSettingsChange = this.handleBrushSettingsChange.bind(this);
       this.handleToolChange = this.handleToolChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
-      this.handleHistoryAction = this.handleHistoryAction.bind(this);
       this.handlePointerDown = this.handlePointerDown.bind(this);
       this.handlePointerMove = this.handlePointerMove.bind(this);
       this.handlePointerUp = this.handlePointerUp.bind(this);
@@ -628,7 +624,6 @@ void main() {
       this.bindBrushSettings();
       this.bindToolState();
       this.bindDocumentEvents();
-      this.bindHistoryEvents();
       if (!this.options.disableInput) {
         this.bindPointerEvents();
         this.bindNavigationEvents();
@@ -1371,14 +1366,6 @@ void main() {
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
     }
 
-    bindHistoryEvents() {
-      if (!this.options.enableHistory) {
-        return;
-      }
-
-      window.addEventListener("cbo:history-action", this.handleHistoryAction);
-    }
-
     handleBrushSettingsChange() {
       this.brushState = { ...(this.readBrushSettingsSource() || {}) };
       this.syncShapeTextureFromState();
@@ -1438,16 +1425,6 @@ void main() {
 
     handleDocumentChange() {
       this.requestDraw();
-    }
-
-    handleHistoryAction(event) {
-      const action = String(event.detail?.action || "").toLowerCase();
-
-      if (action === "undo") {
-        this.undoHistory();
-      } else if (action === "redo") {
-        this.redoHistory();
-      }
     }
 
     canStartBrushStroke() {
@@ -3333,14 +3310,27 @@ void main() {
 
       if (beforeSnapshot) {
         const afterSnapshot = this.createHistorySnapshot(target, beforeSnapshot.rect, "after-stroke");
+        const history = namespace.documentHistory;
 
-        this.pushHistoryEntry({
-          after: afterSnapshot,
-          before: beforeSnapshot,
-          layerId,
-          rect: beforeSnapshot.rect,
-          source: this.currentStrokeTool,
-        });
+        if (history?.push && afterSnapshot) {
+          history.push({
+            type: "pixel",
+            after: afterSnapshot,
+            before: beforeSnapshot,
+            layerId,
+            rect: beforeSnapshot.rect,
+            source: this.currentStrokeTool,
+            undo: () => this.restoreHistorySnapshot(layerId, beforeSnapshot),
+            redo: () => this.restoreHistorySnapshot(layerId, afterSnapshot),
+            destroy: () => {
+              this.deleteHistorySnapshot(beforeSnapshot);
+              this.deleteHistorySnapshot(afterSnapshot);
+            },
+          });
+        } else {
+          this.deleteHistorySnapshot(beforeSnapshot);
+          this.deleteHistorySnapshot(afterSnapshot);
+        }
       }
 
       this.clearStrokeLayer();
@@ -3512,75 +3502,6 @@ void main() {
       if (snapshot?.framebuffer) {
         this.gl.deleteFramebuffer(snapshot.framebuffer);
         snapshot.framebuffer = null;
-      }
-    }
-
-    deleteHistoryEntry(entry) {
-      if (typeof entry?.destroy === "function") {
-        entry.destroy();
-        return;
-      }
-
-      this.deleteHistorySnapshot(entry?.before);
-      this.deleteHistorySnapshot(entry?.after);
-    }
-
-    clearHistoryStack(stack) {
-      while (stack.length > 0) {
-        this.deleteHistoryEntry(stack.pop());
-      }
-    }
-
-    pushHistoryEntry(entry) {
-      const isCustomEntry = typeof entry?.undo === "function" && typeof entry?.redo === "function";
-      const isSnapshotEntry = entry?.before?.texture && entry?.after?.texture;
-
-      if (!this.options.enableHistory || (!isCustomEntry && !isSnapshotEntry)) {
-        this.deleteHistoryEntry(entry);
-        return;
-      }
-
-      this.undoStack.push(entry);
-      this.clearHistoryStack(this.redoStack);
-
-      while (this.undoStack.length > MAX_HISTORY_ENTRIES) {
-        this.deleteHistoryEntry(this.undoStack.shift());
-      }
-    }
-
-    undoHistory() {
-      const entry = this.undoStack.pop();
-
-      if (!entry) {
-        return;
-      }
-
-      const didUndo = typeof entry.undo === "function"
-        ? entry.undo()
-        : this.restoreHistorySnapshot(entry.layerId, entry.before);
-
-      if (didUndo) {
-        this.redoStack.push(entry);
-      } else {
-        this.deleteHistoryEntry(entry);
-      }
-    }
-
-    redoHistory() {
-      const entry = this.redoStack.pop();
-
-      if (!entry) {
-        return;
-      }
-
-      const didRedo = typeof entry.redo === "function"
-        ? entry.redo()
-        : this.restoreHistorySnapshot(entry.layerId, entry.after);
-
-      if (didRedo) {
-        this.undoStack.push(entry);
-      } else {
-        this.deleteHistoryEntry(entry);
       }
     }
 
@@ -3982,7 +3903,6 @@ void main() {
       window.removeEventListener("cbo:tool-change", this.handleToolChange);
       window.removeEventListener("cbo:document-content-change", this.handleDocumentChange);
       window.removeEventListener("cbo:document-layers-change", this.handleDocumentChange);
-      window.removeEventListener("cbo:history-action", this.handleHistoryAction);
       this.resizeObserver?.disconnect();
       this.resizeObserver = null;
       if (!this.options.disableInput) {
@@ -4008,9 +3928,6 @@ void main() {
         gl.deleteVertexArray(this.brush.vao);
         this.brush = null;
       }
-
-      this.clearHistoryStack(this.undoStack);
-      this.clearHistoryStack(this.redoStack);
 
       this.documentRenderer = null;
 

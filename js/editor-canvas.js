@@ -53,6 +53,10 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     throw new Error("DocumentLayerModel non caricato: impossibile inizializzare i layer documento.");
   }
 
+  if (!window.CBO.DocumentHistory) {
+    throw new Error("DocumentHistory non caricato: impossibile inizializzare la history documento.");
+  }
+
   if (!window.CBO.SmudgeEngine) {
     throw new Error("SmudgeEngine non caricato: impossibile inizializzare lo smudge WebGL2.");
   }
@@ -70,6 +74,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   stage.dataset.paintEngine = "webgl2";
   stage.replaceChildren(canvas);
 
+  window.CBO.documentHistory?.dispose?.();
+  window.CBO.documentHistory = null;
   window.CBO.imageRasterizer?.dispose?.();
   window.CBO.imageRasterizer = null;
   window.CBO.smudgeEngine?.dispose?.();
@@ -97,6 +103,9 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
   });
+  window.CBO.documentHistory = new window.CBO.DocumentHistory({
+    maxEntries: 40,
+  });
   let brushEngine;
   let smudgeEngine;
 
@@ -106,6 +115,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
       documentRenderer,
     });
   } catch (error) {
+    window.CBO.documentHistory?.dispose?.();
+    window.CBO.documentHistory = null;
     documentRenderer.dispose();
     throw error;
   }
@@ -121,6 +132,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
       requestDraw: () => brushEngine.requestDraw?.() || brushEngine.draw(),
     });
   } catch (error) {
+    window.CBO.documentHistory?.dispose?.();
+    window.CBO.documentHistory = null;
     brushEngine.dispose();
     documentRenderer.dispose();
     throw error;
@@ -142,6 +155,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
       },
     });
   } catch (error) {
+    window.CBO.documentHistory?.dispose?.();
+    window.CBO.documentHistory = null;
     smudgeEngine.dispose();
     brushEngine.dispose();
     documentRenderer.dispose();

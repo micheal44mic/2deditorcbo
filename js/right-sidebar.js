@@ -605,7 +605,37 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     return path.getBoundingBox();
   }
 
-  function patchActiveTextLayer(patch, source = "text-sidebar") {
+  function getTextHistoryGroup(suffix, layer = getActiveTextLayer()) {
+    const key = String(suffix || "").trim();
+
+    return key && layer?.id ? `text-${key}-${layer.id}` : "";
+  }
+
+  function getTextHistoryOptions(suffix) {
+    const historyGroup = getTextHistoryGroup(suffix);
+
+    return historyGroup ? { historyGroup } : {};
+  }
+
+  function bindTextHistoryGroup(control, suffix) {
+    if (!control) {
+      return;
+    }
+
+    let activeGroup = "";
+
+    control.addEventListener("focus", () => {
+      activeGroup = getTextHistoryGroup(suffix);
+      window.CBO.documentHistory?.beginGroup?.(activeGroup);
+    });
+
+    control.addEventListener("blur", () => {
+      window.CBO.documentHistory?.endGroup?.(activeGroup);
+      activeGroup = "";
+    });
+  }
+
+  function patchActiveTextLayer(patch, source = "text-sidebar", historyOptions = {}) {
     if (isSyncingTextLayerControls) {
       return;
     }
@@ -617,7 +647,10 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       return;
     }
 
-    layerModel.updateLayer(layer.id, mergeTextLayerPatch(layer, patch), { source });
+    layerModel.updateLayer(layer.id, mergeTextLayerPatch(layer, patch), {
+      ...historyOptions,
+      source,
+    });
   }
 
   function getStoredTextEffect(layer, key) {
@@ -794,7 +827,11 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     }, "text-sidebar-transform-on");
   }
 
-  async function patchActiveTextLayerPreservingVisualCenter(patch, source = "text-sidebar-transform") {
+  async function patchActiveTextLayerPreservingVisualCenter(
+    patch,
+    source = "text-sidebar-transform",
+    historyOptions = {},
+  ) {
     if (isSyncingTextLayerControls) {
       return;
     }
@@ -804,7 +841,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     const engine = window.CBO.VectorTextEngine;
 
     if (!layer || !layerModel?.updateLayer || !engine?.loadOpenTypeFont) {
-      patchActiveTextLayer(patch, source);
+      patchActiveTextLayer(patch, source, historyOptions);
       return;
     }
 
@@ -840,10 +877,13 @@ window.CBO.initRightSidebar = function initRightSidebar() {
         ...mergedPatch,
         x: centerX - afterOffset.x,
         y: centerY - afterOffset.y,
-      }, { source });
+      }, {
+        ...historyOptions,
+        source,
+      });
     } catch (error) {
       console.warn("Impossibile preservare il centro della trasformazione testo.", error);
-      patchActiveTextLayer(patch, source);
+      patchActiveTextLayer(patch, source, historyOptions);
     }
   }
 
@@ -1446,24 +1486,58 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     syncSmudgeControls();
   });
 
+  bindTextHistoryGroup(textContentInput, "content");
+  bindTextHistoryGroup(textOpacityInput, "opacity");
+  bindTextHistoryGroup(textColorInput, "fill-color");
+  bindTextHistoryGroup(textBorderColorInput, "stroke-color");
+  bindTextHistoryGroup(textBorderWeightInput, "stroke-width");
+  bindTextHistoryGroup(textFontSizeInput, "font-size");
+  bindTextHistoryGroup(textLetterSpacingInput, "letter-spacing");
+  bindTextHistoryGroup(textLineHeightInput, "line-height");
+  bindTextHistoryGroup(textShadowColorInput, "shadow-color");
+  bindTextHistoryGroup(textShadowDepthInput, "shadow-depth");
+  bindTextHistoryGroup(textShadowAngleInput, "shadow-angle");
+  bindTextHistoryGroup(textShadowBlurInput, "shadow-blur");
+  bindTextHistoryGroup(textTransformAmountInput, "transform-amount");
+
   textContentInput?.addEventListener("input", () => {
-    patchActiveTextLayer({ text: textContentInput.value });
+    patchActiveTextLayer(
+      { text: textContentInput.value },
+      "text-sidebar-content",
+      getTextHistoryOptions("content"),
+    );
   });
   textOpacityInput?.addEventListener("input", () => {
     updateTextRangeProgress();
-    patchActiveTextLayer({ opacity: clamp(textOpacityInput.value, 0, 100) / 100 });
+    patchActiveTextLayer(
+      { opacity: clamp(textOpacityInput.value, 0, 100) / 100 },
+      "text-sidebar-opacity",
+      getTextHistoryOptions("opacity"),
+    );
   });
   textColorInput?.addEventListener("input", () => {
     syncTextColor();
-    patchActiveTextLayer({ style: { fill: textColorInput.value } });
+    patchActiveTextLayer(
+      { style: { fill: textColorInput.value } },
+      "text-sidebar-fill-color",
+      getTextHistoryOptions("fill-color"),
+    );
   });
   textBorderColorInput?.addEventListener("input", () => {
     syncTextBorderColor();
-    patchActiveTextLayer({ style: { stroke: textBorderColorInput.value } });
+    patchActiveTextLayer(
+      { style: { stroke: textBorderColorInput.value } },
+      "text-sidebar-stroke-color",
+      getTextHistoryOptions("stroke-color"),
+    );
   });
   textBorderWeightInput?.addEventListener("input", () => {
     updateTextBorderWeight();
-    patchActiveTextLayer({ style: { strokeWidth: clamp(textBorderWeightInput.value, 0, 120) } });
+    patchActiveTextLayer(
+      { style: { strokeWidth: clamp(textBorderWeightInput.value, 0, 120) } },
+      "text-sidebar-stroke-width",
+      getTextHistoryOptions("stroke-width"),
+    );
   });
   textStrokeAlignButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -1486,13 +1560,25 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     patchTextFontFromControls();
   });
   textFontSizeInput?.addEventListener("input", () => {
-    patchActiveTextLayer({ fontSize: clamp(textFontSizeInput.value, 1, 999) });
+    patchActiveTextLayer(
+      { fontSize: clamp(textFontSizeInput.value, 1, 999) },
+      "text-sidebar-font-size",
+      getTextHistoryOptions("font-size"),
+    );
   });
   textLetterSpacingInput?.addEventListener("input", () => {
-    patchActiveTextLayer({ letterSpacing: clamp(textLetterSpacingInput.value, -200, 500) });
+    patchActiveTextLayer(
+      { letterSpacing: clamp(textLetterSpacingInput.value, -200, 500) },
+      "text-sidebar-letter-spacing",
+      getTextHistoryOptions("letter-spacing"),
+    );
   });
   textLineHeightInput?.addEventListener("input", () => {
-    patchActiveTextLayer({ lineHeight: clamp(textLineHeightInput.value, 1, 999) });
+    patchActiveTextLayer(
+      { lineHeight: clamp(textLineHeightInput.value, 1, 999) },
+      "text-sidebar-line-height",
+      getTextHistoryOptions("line-height"),
+    );
   });
   textAlignButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -1536,25 +1622,33 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   });
   textShadowColorInput?.addEventListener("input", () => {
     syncTextShadowColor();
-    patchActiveTextLayer({ style: { shadow: { color: textShadowColorInput.value, opacity: 1 } } });
+    patchActiveTextLayer(
+      { style: { shadow: { color: textShadowColorInput.value, opacity: 1 } } },
+      "text-sidebar-shadow-color",
+      getTextHistoryOptions("shadow-color"),
+    );
   });
   textShadowDepthInput?.addEventListener("input", () => {
     updateTextShadowDepth();
     patchActiveTextLayer({
       shadowDistance: clamp(textShadowDepthInput.value, 0, 500),
       style: { shadow: { opacity: 1 } },
-    });
+    }, "text-sidebar-shadow-depth", getTextHistoryOptions("shadow-depth"));
   });
   textShadowAngleInput?.addEventListener("input", () => {
     updateTextShadowAngle();
     patchActiveTextLayer({
       shadowAngle: clamp(textShadowAngleInput.value, 0, 360),
       style: { shadow: { opacity: 1 } },
-    });
+    }, "text-sidebar-shadow-angle", getTextHistoryOptions("shadow-angle"));
   });
   textShadowBlurInput?.addEventListener("input", () => {
     updateTextShadowBlur();
-    patchActiveTextLayer({ style: { shadow: { blur: clamp(textShadowBlurInput.value, 0, 300), opacity: 1 } } });
+    patchActiveTextLayer(
+      { style: { shadow: { blur: clamp(textShadowBlurInput.value, 0, 300), opacity: 1 } } },
+      "text-sidebar-shadow-blur",
+      getTextHistoryOptions("shadow-blur"),
+    );
   });
   textShadowToggle?.addEventListener("click", () => {
     setTextShadowOpen(textShadowToggle.getAttribute("aria-expanded") !== "true");
@@ -1563,7 +1657,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     updateTextTransformAmount();
     void patchActiveTextLayerPreservingVisualCenter({
       warp: { amount: clamp(textTransformAmountInput.value, -1200, 1200) },
-    }, "text-sidebar-transform-amount");
+    }, "text-sidebar-transform-amount", getTextHistoryOptions("transform-amount"));
   });
   textTransformModeButtons.forEach((button) => {
     button.addEventListener("click", () => {

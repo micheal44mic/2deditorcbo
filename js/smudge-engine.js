@@ -372,7 +372,7 @@ void main() {
     }
 
     hasHistorySupport() {
-      return typeof namespace.brushEngine?.pushHistoryEntry === "function";
+      return typeof namespace.documentHistory?.push === "function";
     }
 
     ensureScratchTarget(target, bounds = null) {
@@ -864,11 +864,39 @@ void main() {
         }
 
         this.deleteHistoryDabs(dabs);
-        namespace.brushEngine.pushHistoryEntry({
+        namespace.documentHistory.push({
+          type: "pixel",
           after,
           before,
           layerId,
+          rect: before.rect,
           source: "smudge",
+          undo: () => {
+            const restoreTarget = this.documentRenderer?.getRasterTarget?.(layerId);
+            const didRestore = this.restoreHistorySnapshot(restoreTarget, before);
+
+            if (didRestore) {
+              this.emitContentChange(layerId, "smudge-undo");
+              this.requestDraw?.();
+            }
+
+            return didRestore;
+          },
+          redo: () => {
+            const restoreTarget = this.documentRenderer?.getRasterTarget?.(layerId);
+            const didRestore = this.restoreHistorySnapshot(restoreTarget, after);
+
+            if (didRestore) {
+              this.emitContentChange(layerId, "smudge-redo");
+              this.requestDraw?.();
+            }
+
+            return didRestore;
+          },
+          destroy: () => {
+            this.deleteHistorySnapshot(before);
+            this.deleteHistorySnapshot(after);
+          },
         });
         return;
       }
@@ -882,7 +910,8 @@ void main() {
         return;
       }
 
-      namespace.brushEngine.pushHistoryEntry({
+      namespace.documentHistory.push({
+        type: "custom",
         dabs,
         layerId,
         source: "smudge",
