@@ -3,7 +3,7 @@ window.CBO = window.CBO || {};
 window.CBO.createResizeButton = function createResizeButton() {
   return `
     <div class="tool-group vertical-resize-tool-group" aria-label="Resize tools">
-      <button class="tool-button vertical-resize-button" type="button" aria-label="RESIZE" aria-pressed="false" data-tooltip="RESIZE" data-toolset-primary="vertical-resize" data-tool>
+      <button class="tool-button vertical-resize-button" type="button" aria-label="RESIZE" aria-pressed="false" data-tooltip="RESIZE" data-toolset-primary="vertical-resize" data-tool-mode="resize" data-tool>
         <svg class="lucide lucide-scaling-icon lucide-scaling" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
           <path d="M14 15H9v-5" />
@@ -16,7 +16,7 @@ window.CBO.createResizeButton = function createResizeButton() {
           <path d="m6 9 6 6 6-6" />
         </svg>
         <span class="tool-popover" aria-hidden="true">
-          <span class="popover-option active" data-toolset-option="vertical-resize" data-label="RESIZE">
+          <span class="popover-option active" data-toolset-option="vertical-resize" data-tool-mode="resize" data-label="RESIZE">
             <svg class="lucide lucide-scaling-icon lucide-scaling" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
               <path d="M14 15H9v-5" />

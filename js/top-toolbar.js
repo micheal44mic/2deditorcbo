@@ -1,5 +1,26 @@
 window.CBO = window.CBO || {};
 
+const TRANSFORM_MODE_ICONS = Object.freeze({
+  freeTransform: `
+    <svg class="lucide lucide-scaling-icon lucide-scaling" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M14 15H9v-5" />
+      <path d="M16 3h5v5" />
+      <path d="M21 3 9 15" />
+    </svg>
+  `,
+  perspectiveDistort: `
+    <svg class="transform-mode-fill-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M17.3,2H6.7c-1.2,0-2.4,1-2.5,2.3l-1.7,13.9c-.3,2.1.9,3.8,2.5,3.8h14c1.7,0,2.8-1.8,2.5-3.8l-1.7-13.9c-.2-1.3-1.3-2.3-2.5-2.3ZM18.2,4.3l.5,5.3h-5.9V3.5c0,0,4.6,0,4.6,0,.4,0,.8.4.9.8ZM6.6,3.5h4.6v6.1h-6l.5-5.3c0-.4.4-.8.9-.8ZM4.4,18.2l.7-6.6h6.1v7.8h-5.9c-.5,0-.9-.6-.8-1.2ZM18.8,19.4h-5.8v-7.8c0,0,6,0,6,0l.7,6.6c0,.7-.3,1.2-.8,1.2Z" />
+    </svg>
+  `,
+  freeDistort: `
+    <svg class="transform-mode-fill-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M16.01.61l-11.27,1.42c-1.37.17-2.62,1.36-2.79,2.68L.38,17.04c-.21,1.62.91,2.75,2.48,2.49l12.87-2.11c1.47-.24,2.66-1.7,2.66-3.22l-.02-11.65c0-1.25-1.05-2.11-2.35-1.95ZM16.77,2.77l-.05,4.76-5.87.83.31-5.63,4.82-.62c.44-.06.79.24.79.66ZM4.57,3.59l4.96-.64-.39,5.66-6.07.86.57-4.98c.05-.44.47-.84.93-.9ZM2.24,16.75l.63-5.53,6.16-.9-.44,6.36-5.53.88c-.51.08-.88-.29-.82-.82ZM15.76,15.54l-5.35.85.35-6.33,5.95-.87-.06,5.28c0,.51-.4.98-.89,1.06Z" />
+    </svg>
+  `,
+});
+
 window.CBO.initTopToolbar = function initTopToolbar() {
   const editorPage = document.querySelector(".editor-page");
   const BrushDefaults = window.CBO.BrushDefaults;
@@ -20,6 +41,17 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   window.CBO.brushSettings = BrushDefaults.createSettings(window.CBO.brushSettings);
 
   dock.innerHTML = `
+    <nav class="bottom-toolbar transform-mode-toolbar" aria-label="Transform toolbar" data-transform-mode-toolbar hidden>
+      <button class="transform-mode-button active" type="button" aria-label="FREE TRANSFORM" aria-pressed="true" data-tooltip="FREE TRANSFORM" data-transform-mode="free">
+        ${TRANSFORM_MODE_ICONS.freeTransform}
+      </button>
+      <button class="transform-mode-button" type="button" aria-label="PERSPECTIVE DISTORTION" aria-pressed="false" data-tooltip="PERSPECTIVE DISTORTION" data-transform-mode="perspective">
+        ${TRANSFORM_MODE_ICONS.perspectiveDistort}
+      </button>
+      <button class="transform-mode-button" type="button" aria-label="FREE DISTORTION" aria-pressed="false" data-tooltip="FREE DISTORTION" data-transform-mode="free-distort">
+        ${TRANSFORM_MODE_ICONS.freeDistort}
+      </button>
+    </nav>
     <div class="brush-quick-controls" data-brush-quick-controls hidden>
       <label class="bottom-toolbar brush-quick-toolbar">
         <span class="brush-quick-label">SIZE</span>
@@ -102,9 +134,12 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
   const layersButton = dock.querySelector(".top-layers-button");
   const rasterizeTextButton = dock.querySelector("[data-rasterize-text]");
+  const transformModeToolbar = dock.querySelector("[data-transform-mode-toolbar]");
+  const transformModeButtons = dock.querySelectorAll("[data-transform-mode]");
   const quickControls = dock.querySelector("[data-brush-quick-controls]");
   const quickInputs = dock.querySelectorAll("[data-brush-quick-input]");
   const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
+  let selectedTransformMode = "free";
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, Number(value) || 0));
@@ -188,6 +223,46 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     }
   }
 
+  function setTransformMode(mode, options = {}) {
+    if (!mode) {
+      return;
+    }
+
+    selectedTransformMode = mode;
+
+    transformModeButtons.forEach((button) => {
+      const isActive = button.dataset.transformMode === selectedTransformMode;
+
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+
+    window.CBO.transformMode = selectedTransformMode;
+
+    if (options.emit !== false) {
+      window.dispatchEvent(
+        new CustomEvent("cbo:transform-mode-change", {
+          detail: {
+            mode: selectedTransformMode,
+            source: options.source || "transform-mode-toolbar",
+          },
+        }),
+      );
+    }
+  }
+
+  function showTransformModeToolbar(isVisible) {
+    if (!transformModeToolbar) {
+      return;
+    }
+
+    transformModeToolbar.hidden = !isVisible;
+
+    if (isVisible) {
+      setTransformMode(selectedTransformMode, { emit: false });
+    }
+  }
+
   function getActiveLayer() {
     const layerModel = window.CBO.documentLayerModel;
 
@@ -240,18 +315,27 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   });
 
+  transformModeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setTransformMode(button.dataset.transformMode, { source: "transform-mode-toolbar" });
+    });
+  });
+
   window.addEventListener("cbo:tool-change", (event) => {
     const label = String(event.detail?.label || "").toUpperCase();
     const toolMode = String(event.detail?.toolMode || "").toLowerCase();
     const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
     const isBrush = label === "BRUSH" || label === "ERASER" || toolMode === "eraser" || (toolMode === "brush" && syncGroup === "brush");
+    const isResize = label === "RESIZE" || toolMode === "resize";
 
     showBrushQuickControls(isBrush);
+    showTransformModeToolbar(isResize);
   });
 
   window.addEventListener("cbo:document-layers-change", syncRasterizeTextButton);
   window.addEventListener("cbo:vector-text-rasterized", syncRasterizeTextButton);
   window.addEventListener("cbo:brush-settings-change", syncQuickControls);
+  setTransformMode(selectedTransformMode, { emit: false });
   syncRasterizeTextButton();
   syncQuickControls();
 };

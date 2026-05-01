@@ -531,6 +531,7 @@ void main() {
       }
 
       this.camera = { x: 0, y: 0, zoom: 1 };
+      this.stage = canvas.closest(".editor-stage") || canvas.parentElement || canvas;
       this.dpr = 1;
       this.viewportWidth = 1;
       this.viewportHeight = 1;
@@ -560,6 +561,7 @@ void main() {
       this.activePointerId = null;
       this.isPanning = false;
       this.activePanPointerId = null;
+      this.panCaptureElement = null;
       this.panLastViewportX = 0;
       this.panLastViewportY = 0;
       this.isSpaceHeld = false;
@@ -604,9 +606,15 @@ void main() {
       this.handlePointerMove = this.handlePointerMove.bind(this);
       this.handlePointerUp = this.handlePointerUp.bind(this);
       this.handlePointerCancel = this.handlePointerCancel.bind(this);
+      this.handleNavigationPointerDown = this.handleNavigationPointerDown.bind(this);
+      this.handleNavigationPointerMove = this.handleNavigationPointerMove.bind(this);
+      this.handleNavigationPointerUp = this.handleNavigationPointerUp.bind(this);
+      this.handleNavigationPointerCancel = this.handleNavigationPointerCancel.bind(this);
+      this.handleAuxClick = this.handleAuxClick.bind(this);
       this.handleWheel = this.handleWheel.bind(this);
       this.handleKeyDown = this.handleKeyDown.bind(this);
       this.handleKeyUp = this.handleKeyUp.bind(this);
+      this.handleWindowBlur = this.handleWindowBlur.bind(this);
       this.renderLoop = this.renderLoop.bind(this);
 
       // Misuriamo prima il viewport: serve a calcolare il documento con il giusto aspect ratio.
@@ -1629,9 +1637,17 @@ void main() {
         return;
       }
 
+      const navigationTarget = this.stage || this.canvas;
+
       this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
-      window.addEventListener("keydown", this.handleKeyDown);
-      window.addEventListener("keyup", this.handleKeyUp);
+      navigationTarget.addEventListener("pointerdown", this.handleNavigationPointerDown, true);
+      navigationTarget.addEventListener("pointermove", this.handleNavigationPointerMove, true);
+      navigationTarget.addEventListener("pointerup", this.handleNavigationPointerUp, true);
+      navigationTarget.addEventListener("pointercancel", this.handleNavigationPointerCancel, true);
+      navigationTarget.addEventListener("auxclick", this.handleAuxClick, true);
+      window.addEventListener("keydown", this.handleKeyDown, true);
+      window.addEventListener("keyup", this.handleKeyUp, true);
+      window.addEventListener("blur", this.handleWindowBlur);
     }
 
     handleWheel(event) {
@@ -1677,14 +1693,25 @@ void main() {
       this.requestDraw();
     }
 
-    beginPan(event) {
+    isTemporaryPanTrigger(event) {
+      return event.button === 1 || (event.button === 0 && this.isSpaceHeld);
+    }
+
+    markNavigationEvent(event) {
+      event.__cboNavigationHandled = true;
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    beginPan(event, captureElement = this.canvas) {
       this.isPanning = true;
       this.activePanPointerId = event.pointerId;
+      this.panCaptureElement = captureElement || this.canvas;
       this.panLastViewportX = event.clientX * this.dpr;
       this.panLastViewportY = event.clientY * this.dpr;
 
       try {
-        this.canvas.setPointerCapture(event.pointerId);
+        this.panCaptureElement.setPointerCapture(event.pointerId);
       } catch (error) {
         // Alcuni browser rifiutano la capture su pointer non principali; il pan funziona comunque.
       }
@@ -1705,32 +1732,107 @@ void main() {
     }
 
     endPan(event) {
-      if (this.canvas.hasPointerCapture(event.pointerId)) {
-        this.canvas.releasePointerCapture(event.pointerId);
+      const pointerId = event?.pointerId ?? this.activePanPointerId;
+      const captureElement = this.panCaptureElement || this.canvas;
+
+      if (pointerId != null && captureElement?.hasPointerCapture?.(pointerId)) {
+        captureElement.releasePointerCapture(pointerId);
       }
 
       this.isPanning = false;
       this.activePanPointerId = null;
+      this.panCaptureElement = null;
       this.updateCursor();
+    }
+
+    handleNavigationPointerDown(event) {
+      if (this.isDisposed || !this.isTemporaryPanTrigger(event)) {
+        return;
+      }
+
+      this.markNavigationEvent(event);
+
+      if (this.isDrawing || this.isPanning) {
+        return;
+      }
+
+      this.beginPan(event, event.currentTarget || this.stage || this.canvas);
+    }
+
+    handleNavigationPointerMove(event) {
+      if (this.isDisposed || !this.isPanning || this.activePanPointerId !== event.pointerId) {
+        return;
+      }
+
+      this.markNavigationEvent(event);
+      this.updatePan(event);
+    }
+
+    handleNavigationPointerUp(event) {
+      if (this.isDisposed || !this.isPanning || this.activePanPointerId !== event.pointerId) {
+        return;
+      }
+
+      this.markNavigationEvent(event);
+      this.endPan(event);
+    }
+
+    handleNavigationPointerCancel(event) {
+      if (!this.isPanning || this.activePanPointerId !== event.pointerId) {
+        return;
+      }
+
+      this.markNavigationEvent(event);
+      this.endPan(event);
+    }
+
+    handleAuxClick(event) {
+      if (event.button !== 1) {
+        return;
+      }
+
+      this.markNavigationEvent(event);
+    }
+
+    markSpacebarEvent(event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
     }
 
     handleKeyDown(event) {
-      if (event.code !== "Space" || this.isSpaceHeld || this.isInputFocused()) {
+      if (event.code !== "Space" || this.isInputFocused()) {
         return;
       }
 
-      this.isSpaceHeld = true;
-      event.preventDefault();
-      this.updateCursor();
+      this.markSpacebarEvent(event);
+
+      if (!this.isSpaceHeld) {
+        this.isSpaceHeld = true;
+        this.updateCursor();
+      }
     }
 
     handleKeyUp(event) {
-      if (event.code !== "Space" || !this.isSpaceHeld) {
+      if (event.code !== "Space" || (!this.isSpaceHeld && this.isInputFocused())) {
         return;
       }
 
+      this.markSpacebarEvent(event);
+
+      if (this.isSpaceHeld) {
+        this.isSpaceHeld = false;
+        this.updateCursor();
+      }
+    }
+
+    handleWindowBlur() {
       this.isSpaceHeld = false;
-      this.updateCursor();
+
+      if (this.isPanning) {
+        this.endPan();
+      } else {
+        this.updateCursor();
+      }
     }
 
     isInputFocused() {
@@ -1746,6 +1848,9 @@ void main() {
     }
 
     updateCursor() {
+      document.body?.classList.toggle("cbo-canvas-pan-active", this.isPanning);
+      document.body?.classList.toggle("cbo-canvas-pan-ready", !this.isPanning && this.isSpaceHeld);
+
       if (this.isPanning) {
         this.canvas.style.cursor = "grabbing";
       } else if (this.isSpaceHeld) {
@@ -3679,7 +3784,11 @@ void main() {
     }
 
     handlePointerDown(event) {
-      const isPanTrigger = event.button === 1 || (event.button === 0 && this.isSpaceHeld);
+      if (event.__cboNavigationHandled) {
+        return;
+      }
+
+      const isPanTrigger = this.isTemporaryPanTrigger(event);
 
       if (isPanTrigger) {
         if (this.isDrawing || this.isPanning) {
@@ -3751,6 +3860,10 @@ void main() {
     }
 
     handlePointerMove(event) {
+      if (event.__cboNavigationHandled) {
+        return;
+      }
+
       if (this.isPanning && this.activePanPointerId === event.pointerId) {
         event.preventDefault();
         this.updatePan(event);
@@ -3771,6 +3884,10 @@ void main() {
     }
 
     handlePointerUp(event) {
+      if (event.__cboNavigationHandled) {
+        return;
+      }
+
       if (this.isPanning && this.activePanPointerId === event.pointerId) {
         event.preventDefault();
         this.endPan(event);
@@ -3815,6 +3932,10 @@ void main() {
     }
 
     handlePointerCancel(event) {
+      if (event.__cboNavigationHandled) {
+        return;
+      }
+
       if (this.isPanning && this.activePanPointerId === event.pointerId) {
         this.endPan(event);
         return;
@@ -3906,15 +4027,24 @@ void main() {
       this.resizeObserver?.disconnect();
       this.resizeObserver = null;
       if (!this.options.disableInput) {
+        const navigationTarget = this.stage || this.canvas;
+
         this.canvas.removeEventListener("pointerdown", this.handlePointerDown);
         this.canvas.removeEventListener("pointermove", this.handlePointerMove);
         this.canvas.removeEventListener("pointerup", this.handlePointerUp);
         this.canvas.removeEventListener("pointercancel", this.handlePointerCancel);
         this.canvas.removeEventListener("wheel", this.handleWheel);
+        navigationTarget.removeEventListener("pointerdown", this.handleNavigationPointerDown, true);
+        navigationTarget.removeEventListener("pointermove", this.handleNavigationPointerMove, true);
+        navigationTarget.removeEventListener("pointerup", this.handleNavigationPointerUp, true);
+        navigationTarget.removeEventListener("pointercancel", this.handleNavigationPointerCancel, true);
+        navigationTarget.removeEventListener("auxclick", this.handleAuxClick, true);
       }
-      window.removeEventListener("keydown", this.handleKeyDown);
-      window.removeEventListener("keyup", this.handleKeyUp);
+      window.removeEventListener("keydown", this.handleKeyDown, true);
+      window.removeEventListener("keyup", this.handleKeyUp, true);
+      window.removeEventListener("blur", this.handleWindowBlur);
       this.canvas.style.cursor = "";
+      document.body?.classList.remove("cbo-canvas-pan-active", "cbo-canvas-pan-ready");
 
       if (this.fullscreenQuad) {
         gl.deleteBuffer(this.fullscreenQuad.buffer);

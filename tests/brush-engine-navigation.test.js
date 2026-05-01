@@ -1,0 +1,42 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+
+const repoRoot = path.resolve(__dirname, "..");
+
+test("temporary pan is captured from the editor stage before tool overlays", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+
+  assert.match(source, /this\.stage = canvas\.closest\("\.editor-stage"\)/);
+  assert.match(source, /navigationTarget\.addEventListener\("pointerdown", this\.handleNavigationPointerDown, true\)/);
+  assert.match(source, /handleNavigationPointerDown\(event\)/);
+  assert.match(source, /this\.isTemporaryPanTrigger\(event\)/);
+  assert.match(source, /this\.beginPan\(event, event\.currentTarget \|\| this\.stage \|\| this\.canvas\)/);
+});
+
+test("temporary pan owns the cursor and blocks other tool handlers while active", () => {
+  const brushSource = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const cssSource = fs.readFileSync(path.join(repoRoot, "css", "base.css"), "utf8");
+
+  assert.match(brushSource, /event\.__cboNavigationHandled = true/);
+  assert.match(brushSource, /event\.stopPropagation\(\)/);
+  assert.match(brushSource, /classList\.toggle\("cbo-canvas-pan-active", this\.isPanning\)/);
+  assert.match(brushSource, /classList\.toggle\("cbo-canvas-pan-ready", !this\.isPanning && this\.isSpaceHeld\)/);
+  assert.match(cssSource, /body\.cbo-canvas-pan-ready[\s\S]*cursor: grab !important/);
+  assert.match(cssSource, /body\.cbo-canvas-pan-active[\s\S]*cursor: grabbing !important/);
+});
+
+test("spacebar navigation cancels native browser button and toolbar behavior", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+
+  assert.match(source, /window\.addEventListener\("keydown", this\.handleKeyDown, true\)/);
+  assert.match(source, /window\.addEventListener\("keyup", this\.handleKeyUp, true\)/);
+  assert.match(source, /window\.removeEventListener\("keydown", this\.handleKeyDown, true\)/);
+  assert.match(source, /window\.removeEventListener\("keyup", this\.handleKeyUp, true\)/);
+  assert.match(source, /markSpacebarEvent\(event\)/);
+  assert.match(source, /event\.preventDefault\(\)/);
+  assert.match(source, /event\.stopImmediatePropagation\(\)/);
+  assert.match(source, /if \(event\.code !== "Space" \|\| this\.isInputFocused\(\)\)/);
+  assert.match(source, /if \(event\.code !== "Space" \|\| \(!this\.isSpaceHeld && this\.isInputFocused\(\)\)\)/);
+});

@@ -4,7 +4,7 @@
   top: 0;
   z-index: 6000;
   width: max-content;
-  max-width: 140px;
+  max-width: calc(100vw - 24px);
   padding: 6px 8px;
   border-radius: 7px;
   background: #181a1f;
@@ -16,11 +16,14 @@
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1;
+  overflow: hidden;
   opacity: 0;
   pointer-events: none;
+  text-overflow: ellipsis;
   transition:
     opacity 120ms ease,
     transform 120ms ease;
+  white-space: nowrap;
 }
 
 .floating-tooltip.visible {

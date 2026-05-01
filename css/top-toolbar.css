@@ -26,6 +26,57 @@
   display: none;
 }
 
+.transform-mode-toolbar {
+  position: fixed;
+  top: 28px;
+  left: calc(var(--left-panel-width) + ((100vw - var(--left-panel-width) - var(--right-panel-width)) / 2));
+  z-index: 1001;
+  max-width: calc(100vw - var(--left-panel-width) - var(--right-panel-width) - 36px);
+  transform: translateX(-50%);
+  overflow: hidden;
+}
+
+.transform-mode-toolbar[hidden] {
+  display: none;
+}
+
+.transform-mode-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 37px;
+  min-width: 37px;
+  height: 37px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #c3c8d1;
+}
+
+.transform-mode-button:hover,
+.transform-mode-button:focus-visible {
+  color: #ffffff;
+  background: rgb(44, 48, 58);
+}
+
+.transform-mode-button.active {
+  color: #ffffff;
+  background: rgb(44, 48, 58);
+}
+
+.transform-mode-button svg {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 auto;
+}
+
+.transform-mode-button .transform-mode-fill-icon {
+  fill: currentColor;
+  stroke: none;
+}
+
 .brush-quick-toolbar {
   width: 220px;
   min-width: 180px;
@@ -131,5 +182,10 @@
 @media (max-width: 940px) {
   .brush-quick-controls {
     display: none;
+  }
+
+  .transform-mode-toolbar {
+    gap: 5px;
+    padding: 6px;
   }
 }

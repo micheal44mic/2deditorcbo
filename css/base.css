@@ -55,6 +55,20 @@ body *::after {
   cursor: var(--editor-cursor) !important;
 }
 
+body.cbo-canvas-pan-ready,
+body.cbo-canvas-pan-ready *,
+body.cbo-canvas-pan-ready *::before,
+body.cbo-canvas-pan-ready *::after {
+  cursor: grab !important;
+}
+
+body.cbo-canvas-pan-active,
+body.cbo-canvas-pan-active *,
+body.cbo-canvas-pan-active *::before,
+body.cbo-canvas-pan-active *::after {
+  cursor: grabbing !important;
+}
+
 html,
 body {
   width: 100%;
