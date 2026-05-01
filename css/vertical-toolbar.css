@@ -20,12 +20,14 @@
   justify-content: center;
 }
 
-.right-vertical-toolbar .vertical-selection-tool-group {
+.right-vertical-toolbar .vertical-selection-tool-group,
+.right-vertical-toolbar .vertical-resize-tool-group {
   flex-direction: column;
   gap: 1px;
 }
 
-.right-vertical-toolbar .vertical-selection-tool-group .tool-menu-button {
+.right-vertical-toolbar .vertical-selection-tool-group .tool-menu-button,
+.right-vertical-toolbar .vertical-resize-tool-group .tool-menu-button {
   width: 37px;
   min-width: 37px;
   height: 18px;

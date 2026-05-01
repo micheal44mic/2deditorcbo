@@ -15,3 +15,18 @@ test("toolbar derives undo and redo enabled state from document history events",
   assert.match(source, /button\.disabled = !isEnabled/);
   assert.match(source, /if \(!button \|\| button\.disabled\)/);
 });
+
+test("toolbar menu arrows open popovers without activating their paired tool", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "toolbar.js"), "utf8");
+  const toolbarBindingStart = source.indexOf("toolsetOptions.forEach");
+  const menuStart = source.indexOf("menuButtons.forEach", toolbarBindingStart);
+  const menuEnd = source.indexOf('document.addEventListener("click"', menuStart);
+  const menuHandlerSource = source.slice(menuStart, menuEnd);
+
+  assert.notEqual(toolbarBindingStart, -1);
+  assert.notEqual(menuStart, -1);
+  assert.notEqual(menuEnd, -1);
+  assert.match(menuHandlerSource, /closeMenus\(button\)/);
+  assert.match(menuHandlerSource, /classList\.toggle\("open"\)/);
+  assert.doesNotMatch(menuHandlerSource, /activateTool\(/);
+});

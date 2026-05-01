@@ -122,6 +122,121 @@
   fill: #0b5cad;
 }
 
+.editor-puppet-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.editor-puppet-overlay.puppet-tool-active {
+  cursor: crosshair;
+  pointer-events: auto;
+}
+
+.editor-puppet-hit-area {
+  pointer-events: none;
+}
+
+.editor-puppet-pin-layer {
+  pointer-events: none;
+}
+
+.editor-puppet-mesh-layer {
+  pointer-events: none;
+}
+
+.editor-puppet-mesh-triangles {
+  fill: none;
+  stroke: rgba(96, 96, 96, 0.62);
+  stroke-linejoin: round;
+  stroke-width: 0.55;
+  vector-effect: non-scaling-stroke;
+}
+
+.editor-puppet-pin,
+.editor-puppet-pin-hit,
+.editor-puppet-pin-rotation,
+.editor-puppet-pin-ring,
+.editor-puppet-pin-core {
+  pointer-events: none;
+}
+
+.editor-puppet-overlay.puppet-tool-active .editor-puppet-hit-area,
+.editor-puppet-overlay.puppet-tool-active .editor-puppet-pin,
+.editor-puppet-overlay.puppet-tool-active .editor-puppet-pin-hit,
+.editor-puppet-overlay.puppet-tool-active .editor-puppet-pin-rotation,
+.editor-puppet-overlay.puppet-tool-active .editor-puppet-pin-ring,
+.editor-puppet-overlay.puppet-tool-active .editor-puppet-pin-core {
+  pointer-events: all;
+}
+
+.editor-puppet-pin {
+  cursor: grab;
+}
+
+.editor-puppet-pin:active {
+  cursor: grabbing;
+}
+
+.editor-puppet-pin-ring,
+.editor-puppet-pin-rotation,
+.editor-puppet-pin-core {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.28));
+}
+
+.editor-puppet-pin:hover .editor-puppet-pin-ring {
+  fill: rgba(20, 115, 230, 0.28);
+  stroke: #5eb1ff;
+}
+
+.editor-puppet-loading {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 12px;
+  transform: translateX(-50%);
+  border-radius: 8px;
+  background: rgba(24, 26, 31, 0.92);
+  color: #f3f6fb;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.16);
+  pointer-events: none;
+}
+
+.editor-puppet-loading[hidden] {
+  display: none;
+}
+
+.editor-puppet-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-top-color: #f3f6fb;
+  border-radius: 50%;
+  animation: editor-puppet-loading-spin 680ms linear infinite;
+}
+
+@keyframes editor-puppet-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .side-panel {
   position: fixed;
   top: 0;

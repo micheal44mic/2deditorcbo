@@ -141,12 +141,6 @@ window.CBO.initToolbar = function initToolbar() {
   menuButtons.forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      const pairedTool = button.previousElementSibling;
-
-      if (pairedTool?.matches("[data-tool]")) {
-        activateTool(pairedTool);
-      }
-
       closeMenus(button);
       button.classList.toggle("open");
       button.setAttribute("aria-pressed", button.classList.contains("open"));

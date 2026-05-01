@@ -139,6 +139,59 @@ test("raster snapshot rectangles clamp crop bounds safely", () => {
   });
 });
 
+test("puppet Rigid MLS writes translated and rotated mesh vertices", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const translated = new Float32Array(2);
+  const rotated = new Float32Array(2);
+
+  renderer.writeRigidMlsPoint(translated, 0, 10, 20, [
+    { restX: 4, restY: 8, x: 14, y: 3 },
+  ]);
+
+  assert.deepEqual(Array.from(translated), [20, 15]);
+
+  renderer.writeRigidMlsPoint(rotated, 0, 0, 1, [
+    { restX: 0, restY: 0, x: 0, y: 0 },
+    { restX: 1, restY: 0, x: 0, y: 1 },
+  ]);
+
+  assert.ok(Math.abs(rotated[0] - -1) < 0.00001);
+  assert.ok(Math.abs(rotated[1] - 0) < 0.00001);
+
+  const pinRotated = new Float32Array(2);
+
+  renderer.writeRigidMlsPoint(pinRotated, 0, 1, 0, [
+    { restX: 0, restY: 0, x: 0, y: 0, rotation: Math.PI / 2 },
+  ]);
+
+  assert.ok(Math.abs(pinRotated[0] - 0) < 0.00001);
+  assert.ok(Math.abs(pinRotated[1] - 1) < 0.00001);
+});
+
+test("puppet rest point resolves deformed clicks back through barycentric UVs", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.puppetMeshResourcesByLayerId = new Map([
+    ["paint-main", {
+      indices: new Uint32Array([0, 1, 2]),
+      targetHeight: 100,
+      targetWidth: 100,
+      vertices: new Float32Array([
+        10, 10, 0, 1,
+        110, 10, 1, 1,
+        10, 110, 0, 0,
+      ]),
+    }],
+  ]);
+
+  const point = renderer.getPuppetRestPoint("paint-main", 60, 60);
+
+  assert.ok(Math.abs(point.x - 50) < 0.00001);
+  assert.ok(Math.abs(point.y - 50) < 0.00001);
+});
+
 test("document renderer exposes GPU snapshot lifecycle helpers for raster history", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),
@@ -148,7 +201,39 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /createRasterSnapshot\(targetOrLayerId, rect = null, label = "raster snapshot"\)/);
   assert.match(source, /restoreRasterSnapshot\(layerId, snapshot, options = \{\}\)/);
   assert.match(source, /deleteRasterSnapshot\(snapshot\)/);
+  assert.match(source, /getRasterAlphaAtPoint\(targetOrLayerId, x, y\)/);
   assert.match(source, /gl\.blitFramebuffer\(/);
   assert.match(source, /gl\.deleteFramebuffer\(snapshot\.framebuffer\)/);
   assert.match(source, /gl\.deleteTexture\(snapshot\.texture\)/);
+});
+
+test("puppet rasterize commits the deformed mesh through snapshots", () => {
+  const rendererSource = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+  const puppetToolSource = fs.readFileSync(
+    path.join(repoRoot, "js", "puppet-transform-tool.js"),
+    "utf8",
+  );
+
+  assert.match(rendererSource, /rasterizePuppetLayer\(layer, options = \{\}\)/);
+  assert.match(rendererSource, /this\.createRasterSnapshot\(target, null, "puppet-rasterize-before"\)/);
+  assert.match(rendererSource, /sourceTexture: sourceSnapshot\.texture/);
+  assert.match(rendererSource, /this\.createRasterSnapshot\(target, null, "puppet-rasterize-after"\)/);
+  assert.match(puppetToolSource, /this\.isActive\(\) && nextTool !== PUPPET_TOOL_MODE/);
+  assert.match(puppetToolSource, /this\.rasterizeActivePuppetLayer\(\)/);
+  assert.match(puppetToolSource, /source: "history-undo-puppet-rasterize"/);
+  assert.match(puppetToolSource, /source: "history-redo-puppet-rasterize"/);
+});
+
+test("puppet pin creation is blocked outside visible alpha", () => {
+  const puppetToolSource = fs.readFileSync(
+    path.join(repoRoot, "js", "puppet-transform-tool.js"),
+    "utf8",
+  );
+
+  assert.match(puppetToolSource, /canCreatePinAtRestPoint\(layer, restPoint\)/);
+  assert.match(puppetToolSource, /getRasterAlphaAtPoint\(\s*layer\.id,\s*restPoint\.x,\s*restPoint\.y,\s*\) > PUPPET_OVERLAY_ALPHA_THRESHOLD/);
+  assert.match(puppetToolSource, /if \(!this\.canCreatePinAtRestPoint\(layer, restPoint\)\) \{\s*return;\s*\}/);
 });

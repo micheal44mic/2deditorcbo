@@ -93,6 +93,49 @@ void main() {
 }
 `;
 
+  const PUPPET_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aDestPixel;
+layout(location = 1) in vec2 aSourceUv;
+
+uniform vec2 uViewportSize;
+uniform vec2 uCameraPosition;
+uniform float uCameraZoom;
+
+out vec2 v_uv;
+
+void main() {
+  vec2 viewportPixel = uCameraPosition + aDestPixel * uCameraZoom;
+  vec2 clipPosition = vec2(
+    (viewportPixel.x / uViewportSize.x) * 2.0 - 1.0,
+    1.0 - (viewportPixel.y / uViewportSize.y) * 2.0
+  );
+
+  v_uv = aSourceUv;
+  gl_Position = vec4(clipPosition, 0.0, 1.0);
+}
+`;
+
+  const PUPPET_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform float u_opacity;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+void main() {
+  outColor = texture(u_texture, v_uv) * u_opacity;
+}
+`;
+
+  const DEFAULT_PUPPET_GRID_COLS = 256;
+  const DEFAULT_PUPPET_GRID_ROWS = 256;
+  const PUPPET_PIN_EPSILON = 0.000001;
+
   class DocumentRenderer {
     static createContext(canvas) {
       if (!(canvas instanceof HTMLCanvasElement)) {
@@ -152,7 +195,9 @@ void main() {
       this.framebuffer = null;
       this.paintLayerId = "";
       this.rasterTargetsByLayerId = new Map();
+      this.puppetMeshResourcesByLayerId = new Map();
       this.programInfo = null;
+      this.puppetProgramInfo = null;
       this.quad = null;
       this.isDisposed = false;
       this.handleLayerModelChange = this.handleLayerModelChange.bind(this);
@@ -235,6 +280,51 @@ void main() {
           gridMode: gl.getUniformLocation(program, "u_gridMode"),
         },
       };
+    }
+
+    createPuppetProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, PUPPET_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, PUPPET_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma puppet WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma puppet.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
+          cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+          viewportSize: gl.getUniformLocation(program, "uViewportSize"),
+          opacity: gl.getUniformLocation(program, "u_opacity"),
+        },
+      };
+    }
+
+    ensurePuppetProgramInfo() {
+      if (!this.puppetProgramInfo) {
+        this.puppetProgramInfo = this.createPuppetProgramInfo();
+      }
+
+      return this.puppetProgramInfo;
     }
 
     createArtboardQuad() {
@@ -646,6 +736,7 @@ void main() {
       }
 
       this.rasterTargetsByLayerId.delete(layerId);
+      this.deletePuppetMeshResource(layerId);
 
       if (options.emit !== false) {
         this.emitContentChange({ layerId, source: options.source || "delete-raster-target" });
@@ -823,6 +914,562 @@ void main() {
       }];
     }
 
+    hasPuppetLayerTransform(layer) {
+      return Array.isArray(layer?.puppet?.pins) && layer.puppet.pins.length > 0;
+    }
+
+    getPuppetGridSize(layer) {
+      return {
+        cols: DEFAULT_PUPPET_GRID_COLS,
+        rows: DEFAULT_PUPPET_GRID_ROWS,
+      };
+    }
+
+    writeRigidMlsPoint(vertices, offset, x, y, pins) {
+      if (!pins?.length) {
+        vertices[offset] = x;
+        vertices[offset + 1] = y;
+        return;
+      }
+
+      if (pins.length === 1) {
+        const pin = pins[0];
+        const rotation = Number(pin.rotation);
+        const angle = Number.isFinite(rotation) ? rotation : 0;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const dx = x - pin.restX;
+        const dy = y - pin.restY;
+
+        vertices[offset] = pin.x + dx * cos - dy * sin;
+        vertices[offset + 1] = pin.y + dx * sin + dy * cos;
+        return;
+      }
+
+      let pStarX = 0;
+      let pStarY = 0;
+      let qStarX = 0;
+      let qStarY = 0;
+      let weightSum = 0;
+
+      for (let index = 0; index < pins.length; index += 1) {
+        const pin = pins[index];
+        const dx = x - pin.restX;
+        const dy = y - pin.restY;
+        const distSq = dx * dx + dy * dy;
+
+        if (distSq < PUPPET_PIN_EPSILON) {
+          vertices[offset] = pin.x;
+          vertices[offset + 1] = pin.y;
+          return;
+        }
+
+        const weight = 1 / distSq;
+
+        weightSum += weight;
+        pStarX += weight * pin.restX;
+        pStarY += weight * pin.restY;
+        qStarX += weight * pin.x;
+        qStarY += weight * pin.y;
+      }
+
+      pStarX /= weightSum;
+      pStarY /= weightSum;
+      qStarX /= weightSum;
+      qStarY /= weightSum;
+
+      let a = 0;
+      let b = 0;
+
+      for (let index = 0; index < pins.length; index += 1) {
+        const pin = pins[index];
+        const dx = x - pin.restX;
+        const dy = y - pin.restY;
+        const weight = 1 / (dx * dx + dy * dy);
+        const phatX = pin.restX - pStarX;
+        const phatY = pin.restY - pStarY;
+        const qhatX = pin.x - qStarX;
+        const qhatY = pin.y - qStarY;
+
+        a += weight * (phatX * qhatX + phatY * qhatY);
+        b += weight * (phatX * qhatY - phatY * qhatX);
+      }
+
+      const norm = Math.sqrt(a * a + b * b);
+      const rotA = norm > PUPPET_PIN_EPSILON ? a / norm : 1;
+      const rotB = norm > PUPPET_PIN_EPSILON ? b / norm : 0;
+      const vhatX = x - pStarX;
+      const vhatY = y - pStarY;
+
+      let resultX = qStarX + vhatX * rotA - vhatY * rotB;
+      let resultY = qStarY + vhatX * rotB + vhatY * rotA;
+      let rotationDeltaX = 0;
+      let rotationDeltaY = 0;
+
+      for (let index = 0; index < pins.length; index += 1) {
+        const pin = pins[index];
+        const angle = Number(pin.rotation);
+
+        if (!Number.isFinite(angle) || Math.abs(angle) < PUPPET_PIN_EPSILON) {
+          continue;
+        }
+
+        const dx = x - pin.restX;
+        const dy = y - pin.restY;
+        const weight = 1 / (dx * dx + dy * dy);
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+
+        rotationDeltaX += weight * (dx * cos - dy * sin - dx);
+        rotationDeltaY += weight * (dx * sin + dy * cos - dy);
+      }
+
+      resultX += rotationDeltaX / weightSum;
+      resultY += rotationDeltaY / weightSum;
+
+      vertices[offset] = resultX;
+      vertices[offset + 1] = resultY;
+    }
+
+    deletePuppetMeshResource(layerId) {
+      const resource = this.puppetMeshResourcesByLayerId.get(layerId);
+
+      if (!resource) {
+        return false;
+      }
+
+      const gl = this.gl;
+
+      if (resource.vbo) {
+        gl.deleteBuffer(resource.vbo);
+      }
+
+      if (resource.ebo) {
+        gl.deleteBuffer(resource.ebo);
+      }
+
+      if (resource.vao) {
+        gl.deleteVertexArray(resource.vao);
+      }
+
+      this.puppetMeshResourcesByLayerId.delete(layerId);
+      return true;
+    }
+
+    getPuppetAlphaSamples(target, cols, rows) {
+      const samples = new Uint8Array(cols * rows);
+
+      samples.fill(255);
+
+      if (!target?.texture) {
+        return samples;
+      }
+
+      const gl = this.gl;
+      const fboRead = gl.createFramebuffer();
+      const fboWrite = gl.createFramebuffer();
+      const miniTexture = gl.createTexture();
+
+      if (!fboRead || !fboWrite || !miniTexture) {
+        if (fboRead) {
+          gl.deleteFramebuffer(fboRead);
+        }
+
+        if (fboWrite) {
+          gl.deleteFramebuffer(fboWrite);
+        }
+
+        if (miniTexture) {
+          gl.deleteTexture(miniTexture);
+        }
+
+        return samples;
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, miniTexture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cols, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fboRead);
+      gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.texture, 0);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fboWrite);
+      gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, miniTexture, 0);
+
+      const readReady = gl.checkFramebufferStatus(gl.READ_FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      const writeReady = gl.checkFramebufferStatus(gl.DRAW_FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+
+      if (readReady && writeReady) {
+        gl.blitFramebuffer(
+          0,
+          0,
+          target.width,
+          target.height,
+          0,
+          0,
+          cols,
+          rows,
+          gl.COLOR_BUFFER_BIT,
+          gl.LINEAR,
+        );
+
+        const pixels = new Uint8Array(cols * rows * 4);
+
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fboWrite);
+        gl.readPixels(0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+        for (let y = 0; y < rows; y += 1) {
+          for (let x = 0; x < cols; x += 1) {
+            const webglY = rows - 1 - y;
+            const alpha = pixels[(webglY * cols + x) * 4 + 3];
+
+            samples[y * cols + x] = alpha;
+          }
+        }
+      }
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.deleteFramebuffer(fboRead);
+      gl.deleteFramebuffer(fboWrite);
+      gl.deleteTexture(miniTexture);
+
+      return samples;
+    }
+
+    getPuppetAlphaMask(target, cols, rows, options = {}) {
+      const samples = this.getPuppetAlphaSamples(target, cols, rows);
+      const mask = new Uint8Array(cols * rows);
+      const threshold = Number.isFinite(options.threshold)
+        ? Math.max(0, Math.min(255, options.threshold))
+        : 2;
+
+      for (let index = 0; index < samples.length; index += 1) {
+        mask[index] = samples[index] > threshold ? 1 : 0;
+      }
+
+      return mask;
+    }
+
+    getRasterAlphaAtPoint(targetOrLayerId, x, y) {
+      const target = typeof targetOrLayerId === "string"
+        ? this.rasterTargetsByLayerId.get(targetOrLayerId)
+        : targetOrLayerId;
+
+      if (!target?.framebuffer || !Number.isFinite(x) || !Number.isFinite(y)) {
+        return 0;
+      }
+
+      const pixelX = Math.floor(x);
+      const pixelY = Math.floor(y);
+
+      if (
+        pixelX < 0 ||
+        pixelY < 0 ||
+        pixelX >= target.width ||
+        pixelY >= target.height
+      ) {
+        return 0;
+      }
+
+      const gl = this.gl;
+      const pixel = new Uint8Array(4);
+      const webglY = target.height - pixelY - 1;
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.framebuffer);
+      gl.readPixels(pixelX, webglY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+
+      return pixel[3];
+    }
+
+    getPuppetRestPoint(layerId, targetX, targetY) {
+      const resource = this.puppetMeshResourcesByLayerId.get(layerId);
+
+      if (!resource?.indices || !resource?.vertices) {
+        return { x: targetX, y: targetY };
+      }
+
+      const { vertices, indices } = resource;
+      const targetWidth = Math.max(1, resource.targetWidth || 1);
+      const targetHeight = Math.max(1, resource.targetHeight || 1);
+
+      for (let index = 0; index < indices.length; index += 3) {
+        const i0 = indices[index] * 4;
+        const i1 = indices[index + 1] * 4;
+        const i2 = indices[index + 2] * 4;
+        const x1 = vertices[i0];
+        const y1 = vertices[i0 + 1];
+        const x2 = vertices[i1];
+        const y2 = vertices[i1 + 1];
+        const x3 = vertices[i2];
+        const y3 = vertices[i2 + 1];
+        const det = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3);
+
+        if (Math.abs(det) < PUPPET_PIN_EPSILON) {
+          continue;
+        }
+
+        const w1 = ((y2 - y3) * (targetX - x3) + (x3 - x2) * (targetY - y3)) / det;
+        const w2 = ((y3 - y1) * (targetX - x3) + (x1 - x3) * (targetY - y3)) / det;
+        const w3 = 1 - w1 - w2;
+
+        if (w1 >= -0.05 && w2 >= -0.05 && w3 >= -0.05) {
+          const u1 = vertices[i0 + 2];
+          const v1 = vertices[i0 + 3];
+          const u2 = vertices[i1 + 2];
+          const v2 = vertices[i1 + 3];
+          const u3 = vertices[i2 + 2];
+          const v3 = vertices[i2 + 3];
+          const u = w1 * u1 + w2 * u2 + w3 * u3;
+          const v = w1 * v1 + w2 * v2 + w3 * v3;
+
+          return {
+            x: u * targetWidth,
+            y: (1 - v) * targetHeight,
+          };
+        }
+      }
+
+      return { x: targetX, y: targetY };
+    }
+
+    createPuppetMeshResource(layerId, target, cols, rows) {
+      const gl = this.gl;
+      const vao = gl.createVertexArray();
+      const vbo = gl.createBuffer();
+      const ebo = gl.createBuffer();
+      const vertices = new Float32Array((cols + 1) * (rows + 1) * 4);
+      const validIndices = [];
+
+      if (!vao || !vbo || !ebo) {
+        if (vao) {
+          gl.deleteVertexArray(vao);
+        }
+
+        if (vbo) {
+          gl.deleteBuffer(vbo);
+        }
+
+        if (ebo) {
+          gl.deleteBuffer(ebo);
+        }
+
+        throw new Error("Impossibile creare la mesh puppet WebGL2.");
+      }
+
+      for (let y = 0; y < rows; y += 1) {
+        for (let x = 0; x < cols; x += 1) {
+          const a = y * (cols + 1) + x;
+          const b = a + 1;
+          const c = a + cols + 1;
+          const d = c + 1;
+
+          validIndices.push(a, c, b, b, c, d);
+        }
+      }
+
+      const indices = new Uint32Array(validIndices);
+
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, vertices.byteLength, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+      gl.enableVertexAttribArray(1);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+      const resource = {
+        cols,
+        ebo,
+        indexCount: indices.length,
+        indices,
+        rows,
+        targetHeight: target.height,
+        targetWidth: target.width,
+        vao,
+        vbo,
+        vertices,
+      };
+
+      this.puppetMeshResourcesByLayerId.set(layerId, resource);
+      return resource;
+    }
+
+    getPuppetMeshResource(layerId, target, cols, rows) {
+      const resource = this.puppetMeshResourcesByLayerId.get(layerId);
+
+      if (
+        resource?.cols === cols &&
+        resource?.rows === rows &&
+        resource?.targetWidth === target.width &&
+        resource?.targetHeight === target.height
+      ) {
+        return resource;
+      }
+
+      this.deletePuppetMeshResource(layerId);
+      return this.createPuppetMeshResource(layerId, target, cols, rows);
+    }
+
+    updatePuppetMeshVertices(resource, layer, target) {
+      const pins = layer.puppet?.pins || [];
+      const vertices = resource.vertices;
+      const cols = resource.cols;
+      const rows = resource.rows;
+      let offset = 0;
+
+      for (let gridY = 0; gridY <= rows; gridY += 1) {
+        for (let gridX = 0; gridX <= cols; gridX += 1) {
+          const sourceX = (gridX / cols) * target.width;
+          const sourceY = (gridY / rows) * target.height;
+
+          this.writeRigidMlsPoint(vertices, offset, sourceX, sourceY, pins);
+          vertices[offset + 2] = sourceX / target.width;
+          vertices[offset + 3] = 1 - sourceY / target.height;
+          offset += 4;
+        }
+      }
+    }
+
+    getPuppetMeshSignature(layer, target) {
+      const pins = layer.puppet?.pins || [];
+      const { cols, rows } = this.getPuppetGridSize(layer);
+      const parts = [
+        target.width,
+        target.height,
+        cols,
+        rows,
+      ];
+
+      for (let index = 0; index < pins.length; index += 1) {
+        const pin = pins[index];
+
+        parts.push(pin.id, pin.restX, pin.restY, pin.x, pin.y, pin.rotation || 0);
+      }
+
+      return parts.join("|");
+    }
+
+    drawPuppetLayer(layer, target, opacity, options = {}) {
+      if (!target?.texture || !layer?.id) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { cols, rows } = this.getPuppetGridSize(layer);
+      const resource = this.getPuppetMeshResource(layer.id, target, cols, rows);
+      const camera = options.camera || { x: 0, y: 0, zoom: 1 };
+      const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
+      const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
+      const sourceTexture = options.sourceTexture || target.texture;
+      const { program, uniforms } = this.ensurePuppetProgramInfo();
+      const signature = this.getPuppetMeshSignature(layer, target);
+
+      if (resource.signature !== signature) {
+        this.updatePuppetMeshVertices(resource, layer, target);
+        gl.bindBuffer(gl.ARRAY_BUFFER, resource.vbo);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, resource.vertices);
+        resource.signature = signature;
+      }
+
+      gl.useProgram(program);
+      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+      gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+      gl.uniform1f(uniforms.opacity, opacity);
+      gl.uniform1i(uniforms.texture, 0);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.bindVertexArray(resource.vao);
+      gl.drawElements(gl.TRIANGLES, resource.indexCount, gl.UNSIGNED_INT, 0);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
+    rasterizePuppetLayer(layer, options = {}) {
+      if (!this.hasPuppetLayerTransform(layer) || !layer?.id) {
+        return null;
+      }
+
+      const target = this.rasterTargetsByLayerId.get(layer.id);
+
+      if (!target?.texture || !target?.framebuffer) {
+        return null;
+      }
+
+      const sourceSnapshot = this.createRasterSnapshot(target, null, "puppet-rasterize-before");
+
+      if (!sourceSnapshot?.texture) {
+        return null;
+      }
+
+      const gl = this.gl;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+      const didDraw = this.drawPuppetLayer(layer, target, 1, {
+        camera: { x: 0, y: 0, zoom: 1 },
+        sourceTexture: sourceSnapshot.texture,
+        viewportHeight: target.height,
+        viewportWidth: target.width,
+      });
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      if (!didDraw) {
+        this.restoreRasterSnapshot(layer.id, sourceSnapshot, {
+          emit: false,
+          source: "puppet-rasterize-rollback",
+        });
+        this.deleteRasterSnapshot(sourceSnapshot);
+        return null;
+      }
+
+      const rasterizedSnapshot = this.createRasterSnapshot(target, null, "puppet-rasterize-after");
+
+      if (!rasterizedSnapshot?.texture) {
+        this.restoreRasterSnapshot(layer.id, sourceSnapshot, {
+          emit: false,
+          source: "puppet-rasterize-rollback",
+        });
+        this.deleteRasterSnapshot(sourceSnapshot);
+        return null;
+      }
+
+      this.deletePuppetMeshResource(layer.id);
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId: layer.id,
+          source: options.source || "puppet-rasterize",
+        });
+      }
+
+      return {
+        afterSnapshot: rasterizedSnapshot,
+        beforeSnapshot: sourceSnapshot,
+        layerId: layer.id,
+      };
+    }
+
     drawToCanvas(options = {}) {
       if (this.isDisposed) {
         return;
@@ -858,6 +1505,20 @@ void main() {
         gl.uniform1f(uniforms.opacity, opacity);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       };
+      const bindArtboardProgram = () => {
+        gl.useProgram(program);
+        gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+        setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
+        gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+        gl.uniform1i(uniforms.texture, 0);
+        gl.uniform1i(uniforms.maskTexture, 1);
+        gl.uniform1f(uniforms.maskMode, 0.0);
+        gl.uniform1f(uniforms.maskRectMode, 0.0);
+        gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
+        gl.uniform1f(uniforms.gridMode, 0.0);
+        gl.bindVertexArray(this.quad.vao);
+        gl.activeTexture(gl.TEXTURE0);
+      };
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
@@ -872,17 +1533,7 @@ void main() {
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-      gl.useProgram(program);
-      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
-      setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
-      gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
-      gl.uniform1i(uniforms.texture, 0);
-      gl.uniform1i(uniforms.maskTexture, 1);
-      gl.uniform1f(uniforms.maskMode, 0.0);
-      gl.uniform1f(uniforms.maskRectMode, 0.0);
-      gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
-      gl.bindVertexArray(this.quad.vao);
-      gl.activeTexture(gl.TEXTURE0);
+      bindArtboardProgram();
 
       // Pass 1: layer documento, dal basso verso l'alto.
       gl.uniform1f(uniforms.gridMode, 0.0);
@@ -916,7 +1567,21 @@ void main() {
             gl.activeTexture(gl.TEXTURE0);
           }
 
-          drawTexture(layerTarget.texture, opacity);
+          if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
+            const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
+              camera,
+              viewportHeight,
+              viewportWidth,
+            });
+
+            bindArtboardProgram();
+
+            if (!didDrawPuppet) {
+              drawTexture(layerTarget.texture, opacity);
+            }
+          } else {
+            drawTexture(layerTarget.texture, opacity);
+          }
 
           if (eraserMaskTexture) {
             gl.uniform1f(uniforms.maskMode, 0.0);
@@ -972,6 +1637,15 @@ void main() {
       if (this.programInfo?.program) {
         gl.deleteProgram(this.programInfo.program);
         this.programInfo = null;
+      }
+
+      if (this.puppetProgramInfo?.program) {
+        gl.deleteProgram(this.puppetProgramInfo.program);
+        this.puppetProgramInfo = null;
+      }
+
+      for (const layerId of Array.from(this.puppetMeshResourcesByLayerId.keys())) {
+        this.deletePuppetMeshResource(layerId);
       }
 
       new Set(this.rasterTargetsByLayerId.values()).forEach((target) => {
