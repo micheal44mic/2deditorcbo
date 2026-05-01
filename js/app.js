@@ -17,6 +17,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.CBO.initColorDrop();
   window.CBO.initToolbar();
   window.CBO.initEditorCanvas();
+  window.CBO.initBrushShapeOutlinePreview?.();
   window.CBO.initPuppetTransformTool?.();
   window.CBO.initVectorTextRenderer();
   window.CBO.initRightSidebar();

@@ -32,6 +32,34 @@
   min-height: 0;
 }
 
+.brush-shape-outline-preview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  width: 0;
+  height: 0;
+  transform: translate(-9999px, -9999px);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.brush-shape-outline-preview[hidden] {
+  display: none;
+}
+
+.brush-shape-outline-preview-canvas {
+  position: absolute;
+  top: -100px;
+  left: -100px;
+  display: block;
+  width: 200px;
+  height: 200px;
+  transform-origin: center center;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+  will-change: transform, opacity;
+}
+
 .editor-vector-overlay {
   position: absolute;
   inset: 0;

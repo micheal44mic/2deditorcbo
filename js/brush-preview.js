@@ -45,6 +45,7 @@ window.CBO = window.CBO || {};
     "jitterLateral",
     "jitterLinear",
     "fallOff",
+    "velocityPressureEnabled",
     "taperStart",
     "taperEnd",
     "taperSize",

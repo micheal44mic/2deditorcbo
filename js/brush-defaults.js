@@ -49,6 +49,7 @@ window.CBO = window.CBO || {};
     jitterLateral: 0,
     jitterLinear: 0,
     fallOff: 0,
+    velocityPressureEnabled: false,
     taperStart: 0,
     taperEnd: 0,
     taperLinkSizes: false,
@@ -194,6 +195,7 @@ window.CBO = window.CBO || {};
     nextSettings.burntEdgesMode = normalizeBurntEdgesMode(nextSettings.burntEdgesMode);
     nextSettings.alphaThresholdEnabled = nextSettings.alphaThresholdEnabled === true;
     nextSettings.alphaThreshold = normalize01(nextSettings.alphaThreshold, settings.alphaThreshold);
+    nextSettings.velocityPressureEnabled = nextSettings.velocityPressureEnabled === true;
     nextSettings.shapeRotation = normalizeSigned(nextSettings.shapeRotation, settings.shapeRotation);
     nextSettings.grainBrightness = normalizeSigned(nextSettings.grainBrightness, settings.grainBrightness);
     nextSettings.grainContrast = normalizeSigned(nextSettings.grainContrast, settings.grainContrast);

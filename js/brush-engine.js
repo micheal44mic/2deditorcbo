@@ -9,6 +9,10 @@ window.CBO = window.CBO || {};
   const CROPPED_BRUSH_STROKES = true;
   const STROKE_ALLOCATION_QUANTUM = 128;
   const STROKE_FINAL_PADDING = 6;
+  const STROKE_SAMPLE_CLAMP_MIN_PADDING = 64;
+  const MAX_STAMPS_PER_FLUSH = 4096;
+  const VELOCITY_PRESSURE_MAX_SPEED = 5;
+  const VELOCITY_PRESSURE_SMOOTHING = 0.02;
   const RENDERING_MODE_PRESETS = Object.freeze({
     "light-glaze": { strokeBuildUp: 0 },
     "uniform-glaze": { strokeBuildUp: 0.15 },
@@ -549,6 +553,7 @@ void main() {
       this.strokeColorState = null;
       this.strokeWetRandomState = null;
       this.strokeGrainRandomState = null;
+      this.velocityPressureState = null;
       this.strokeInitialSeed = 1;
       this.strokeShapeRotation = 0;
       this.strokeGrainOffset = { x: 0, y: 0 };
@@ -1871,14 +1876,28 @@ void main() {
       };
     }
 
+    clampStrokeSamplePoint(x, y) {
+      const target = this.getPaintTarget();
+      const margin = Math.max(STROKE_SAMPLE_CLAMP_MIN_PADDING, Math.ceil(this.getBrushSize() * 2));
+      const safeX = Number.isFinite(x) ? x : 0;
+      const safeY = Number.isFinite(y) ? y : 0;
+
+      return {
+        x: this.clamp(safeX, -margin, target.width + margin),
+        y: this.clamp(safeY, -margin, target.height + margin),
+      };
+    }
+
     createPointerSample(event) {
       const { docX, docY } = this.screenToDocumentSpace(event.clientX, event.clientY);
       const isMouse = event.pointerType === "mouse";
+      const point = this.clampStrokeSamplePoint(docX, docY);
 
       return {
-        x: docX,
-        y: docY,
+        x: point.x,
+        y: point.y,
         pressure: isMouse ? 1.0 : event.pressure,
+        pointerType: event.pointerType || "",
         tiltX: isMouse ? 0 : event.tiltX,
         tiltY: isMouse ? 0 : event.tiltY,
         time: performance.now(),
@@ -1949,7 +1968,7 @@ void main() {
       const point = { x: sample.x, y: sample.y };
       const tool = this.currentStrokeTool || "brush";
       const seed = (sample.strokeSeed ?? this.createStrokeSeed(point, tool) ?? 1) >>> 0;
-      const pressure = StrokeMath?.normalizePressure
+      const inputPressure = StrokeMath?.normalizePressure
         ? StrokeMath.normalizePressure(sample.pressure)
         : sample.pressure;
 
@@ -1965,15 +1984,16 @@ void main() {
         : 0;
       this.strokeDynamicsState = StrokeMath?.createStrokeState
         ? StrokeMath.createStrokeState(point, {
-            pressure,
+            pressure: inputPressure,
             seed,
             tool,
           })
         : null;
+      this.initializeVelocityPressureState(sample);
 
       return {
         ...sample,
-        pressure,
+        pressure: this.resolveSamplePressure(sample, inputPressure),
       };
     }
 
@@ -1985,7 +2005,10 @@ void main() {
       const StrokeMath = namespace.StrokeMath;
 
       if (!this.strokeDynamicsState || !StrokeMath?.processStrokeInput) {
-        return rawSample;
+        return {
+          ...rawSample,
+          pressure: this.resolveSamplePressure(rawSample, rawSample.pressure),
+        };
       }
 
       const processed = StrokeMath.processStrokeInput(
@@ -1999,8 +2022,68 @@ void main() {
         ...rawSample,
         x: processed.point.x,
         y: processed.point.y,
-        pressure: processed.pressure,
+        pressure: this.resolveSamplePressure(rawSample, processed.pressure),
       };
+    }
+
+    shouldUseVelocityPressure(sample) {
+      const pointerType = String(sample?.pointerType || "").toLowerCase();
+
+      return (
+        this.brushState.velocityPressureEnabled === true &&
+        this.currentStrokeTool !== "eraser" &&
+        pointerType !== "pen"
+      );
+    }
+
+    initializeVelocityPressureState(sample) {
+      if (!this.shouldUseVelocityPressure(sample)) {
+        this.velocityPressureState = null;
+        return;
+      }
+
+      this.velocityPressureState = {
+        pressure: 0,
+        lastX: sample.x,
+        lastY: sample.y,
+        lastTime: sample.time,
+      };
+    }
+
+    resolveSamplePressure(sample, fallbackPressure = 1) {
+      if (!this.shouldUseVelocityPressure(sample)) {
+        return fallbackPressure;
+      }
+
+      return this.updateVelocityPressure(sample);
+    }
+
+    updateVelocityPressure(sample) {
+      if (!this.velocityPressureState) {
+        this.initializeVelocityPressureState(sample);
+      }
+
+      const state = this.velocityPressureState;
+
+      if (!state) {
+        return 1;
+      }
+
+      const sampleTime = Number(sample.time);
+      const stateTime = Number(state.lastTime);
+      const currentTime = Number.isFinite(sampleTime) ? sampleTime : (Number.isFinite(stateTime) ? stateTime + 1 : 1);
+      const lastTime = Number.isFinite(stateTime) ? stateTime : currentTime - 1;
+      const distance = Math.hypot(sample.x - state.lastX, sample.y - state.lastY);
+      const deltaTime = Math.max(1, currentTime - lastTime);
+      const speed = this.clamp(distance / deltaTime, 0, VELOCITY_PRESSURE_MAX_SPEED);
+      const targetPressure = speed / VELOCITY_PRESSURE_MAX_SPEED;
+
+      state.pressure += (targetPressure - state.pressure) * VELOCITY_PRESSURE_SMOOTHING;
+      state.lastX = sample.x;
+      state.lastY = sample.y;
+      state.lastTime = currentTime;
+
+      return this.clamp01(state.pressure);
     }
 
     parseColorToRgb01(value) {
@@ -3197,6 +3280,9 @@ void main() {
             stamp.sizeScale = 1;
             this.applyTaperToStamp(stamp);
             this.pushShapeStamps(stamp, tangent);
+            if (this.stampsBuffer.length >= MAX_STAMPS_PER_FLUSH) {
+              this.flushStamps();
+            }
             this.leftoverDistance -= stampDistance;
             this.nextStampDistance = this.getStampSpacing(stamp.sizeScale);
           }
@@ -3626,6 +3712,7 @@ void main() {
       this.strokeColorState = null;
       this.strokeWetRandomState = null;
       this.strokeGrainRandomState = null;
+      this.velocityPressureState = null;
       this.strokeChargeRadius = null;
       this.strokeGrainOffset = { x: 0, y: 0 };
       this.activeStrokeBounds = null;
@@ -3666,10 +3753,9 @@ void main() {
       const StrokeMath = namespace.StrokeMath;
       const firstSample = rawSamples[0];
       const point = { x: firstSample.x, y: firstSample.y };
-      const pressure = StrokeMath?.normalizePressure
+      const inputPressure = StrokeMath?.normalizePressure
         ? StrokeMath.normalizePressure(firstSample.pressure)
         : firstSample.pressure;
-      const startPoint = { ...firstSample, pressure };
 
       // Riusiamo il seed iniziale dello stroke originale per riprodurre l'identica
       // sequenza di jitter spaziale (lateral/linear/spacing) e colore.
@@ -3681,11 +3767,16 @@ void main() {
       this.initializeGrainDynamics(this.strokeInitialSeed);
       this.strokeDynamicsState = StrokeMath?.createStrokeState
         ? StrokeMath.createStrokeState(point, {
-            pressure,
+            pressure: inputPressure,
             seed: this.strokeInitialSeed,
             tool: "brush",
           })
         : null;
+      this.initializeVelocityPressureState(firstSample);
+      const startPoint = {
+        ...firstSample,
+        pressure: this.resolveSamplePressure(firstSample, inputPressure),
+      };
 
       this.strokeTotalLength = totalLength;
       this.taperSpacingCap = this.getTaperSpacingCap(totalLength);

@@ -1,0 +1,420 @@
+window.CBO = window.CBO || {};
+
+(function registerBrushShapeOutlinePreview(namespace) {
+  const baseSize = 200;
+  const outlineBitmapSize = 1024;
+  const alphaThreshold = 8;
+  const maxPointerHistoryPoints = 8;
+  const minDirectionalDistance = 5;
+  const pointerAngleSmoothing = 0.35;
+  const outlineColor = [223, 227, 234, 255];
+  let brushSettingsOverride = null;
+
+  function loadImage(src) {
+    if (!src) {
+      return Promise.reject(new Error("Shape alpha source mancante."));
+    }
+
+    if (namespace.ImageCache?.load) {
+      return namespace.ImageCache.load(src);
+    }
+
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error(`Impossibile caricare ${src}.`));
+      image.src = src;
+    });
+  }
+
+  function getBrushSettings() {
+    if (brushSettingsOverride) {
+      return namespace.BrushDefaults?.createSettings
+        ? namespace.BrushDefaults.createSettings(brushSettingsOverride)
+        : { ...brushSettingsOverride };
+    }
+
+    namespace.brushSettings = namespace.BrushDefaults?.createSettings
+      ? namespace.BrushDefaults.createSettings(namespace.brushSettings || {})
+      : { ...(namespace.brushSettings || {}) };
+
+    return namespace.brushSettings;
+  }
+
+  function getBrushSize(settings) {
+    const radius = Number(settings?.radius);
+
+    if (Number.isFinite(radius) && radius > 0) {
+      return radius;
+    }
+
+    const size = Number(settings?.size);
+
+    return Number.isFinite(size) && size > 0 ? size : 20;
+  }
+
+  function getBrushOpacity(settings) {
+    const opacity = Number(settings?.opacity);
+
+    return Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1;
+  }
+
+  function getShapeSource(settings) {
+    return settings?.shapeAlphaSrc || namespace.BrushDefaults?.defaultShapeAlphaSrc || "";
+  }
+
+  function getPreviewScale(settings, camera) {
+    const zoom = Math.max(0.0001, Number(camera?.zoom) || 1);
+
+    return Math.max(0.001, (zoom * getBrushSize(settings)) / baseSize);
+  }
+
+  function getShapeRotation(settings) {
+    const rotation = Number(settings?.shapeRotation);
+
+    if (!Number.isFinite(rotation)) {
+      return 0;
+    }
+
+    return Math.min(1, Math.max(-1, rotation));
+  }
+
+  function hashString(value) {
+    const text = String(value || "");
+    let hash = 2166136261;
+
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return hash >>> 0;
+  }
+
+  function getShapeBaseRotation(settings) {
+    const explicitRotation = Number(settings?.strokeShapeRotation ?? settings?.shapeBaseRotation);
+
+    if (Number.isFinite(explicitRotation)) {
+      return explicitRotation;
+    }
+
+    if (settings?.shapeRandomized === true) {
+      return (hashString(getShapeSource(settings)) / 4294967296) * Math.PI * 2 - Math.PI;
+    }
+
+    return 0;
+  }
+
+  function getCoverage(data, offset, useAlpha) {
+    if (useAlpha) {
+      return data[offset + 3];
+    }
+
+    return (data[offset] + data[offset + 1] + data[offset + 2]) / 3;
+  }
+
+  function drawImageIntoMask(sourceContext, image, settings, size, padding) {
+    const imageWidth = Math.max(1, image.naturalWidth || image.width || size);
+    const imageHeight = Math.max(1, image.naturalHeight || image.height || size);
+    const fit = Math.min((size - padding * 2) / imageWidth, (size - padding * 2) / imageHeight);
+    const drawWidth = Math.max(1, imageWidth * fit);
+    const drawHeight = Math.max(1, imageHeight * fit);
+
+    sourceContext.save();
+    sourceContext.translate(size * 0.5, size * 0.5);
+    sourceContext.scale(settings.shapeFlipX === true ? -1 : 1, settings.shapeFlipY === true ? -1 : 1);
+    sourceContext.drawImage(image, -drawWidth * 0.5, -drawHeight * 0.5, drawWidth, drawHeight);
+    sourceContext.restore();
+  }
+
+  function renderOutlineToCanvas(canvas, image, settings) {
+    const size = outlineBitmapSize;
+    const renderScale = size / baseSize;
+    const padding = Math.max(4, Math.round(5 * renderScale));
+    const sourceCanvas = document.createElement("canvas");
+    const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+    const context = canvas.getContext("2d");
+
+    if (!sourceContext || !context) {
+      return;
+    }
+
+    canvas.width = size;
+    canvas.height = size;
+    sourceCanvas.width = size;
+    sourceCanvas.height = size;
+    drawImageIntoMask(sourceContext, image, settings, size, padding);
+
+    const imageData = sourceContext.getImageData(0, 0, size, size);
+    const data = imageData.data;
+    let minAlpha = 255;
+    let maxAlpha = 0;
+
+    for (let offset = 3; offset < data.length; offset += 4) {
+      const alpha = data[offset];
+
+      minAlpha = Math.min(minAlpha, alpha);
+      maxAlpha = Math.max(maxAlpha, alpha);
+    }
+
+    const useAlpha = maxAlpha - minAlpha > alphaThreshold && minAlpha < 255 - alphaThreshold;
+    const output = context.createImageData(size, size);
+    const outputData = output.data;
+    const outlineRadius = Math.max(1, Math.round(renderScale * 0.75));
+
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const offset = (y * size + x) * 4;
+
+        if (getCoverage(data, offset, useAlpha) <= alphaThreshold) {
+          continue;
+        }
+
+        let isEdge = x === 0 || y === 0 || x === size - 1 || y === size - 1;
+
+        if (!isEdge) {
+          for (let oy = -1; oy <= 1 && !isEdge; oy += 1) {
+            for (let ox = -1; ox <= 1; ox += 1) {
+              if (ox === 0 && oy === 0) {
+                continue;
+              }
+
+              const neighborOffset = ((y + oy) * size + (x + ox)) * 4;
+
+              if (getCoverage(data, neighborOffset, useAlpha) <= alphaThreshold) {
+                isEdge = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!isEdge) {
+          continue;
+        }
+
+        for (let dy = -outlineRadius; dy <= outlineRadius; dy += 1) {
+          const py = y + dy;
+
+          if (py < 0 || py >= size) {
+            continue;
+          }
+
+          for (let dx = -outlineRadius; dx <= outlineRadius; dx += 1) {
+            const px = x + dx;
+
+            if (px < 0 || px >= size) {
+              continue;
+            }
+
+            const outputOffset = (py * size + px) * 4;
+
+            outputData[outputOffset] = outlineColor[0];
+            outputData[outputOffset + 1] = outlineColor[1];
+            outputData[outputOffset + 2] = outlineColor[2];
+            outputData[outputOffset + 3] = outlineColor[3];
+          }
+        }
+      }
+    }
+
+    context.clearRect(0, 0, size, size);
+    context.putImageData(output, 0, 0);
+  }
+
+  namespace.initBrushShapeOutlinePreview = function initBrushShapeOutlinePreview() {
+    const stage = document.querySelector(".editor-stage");
+
+    if (!stage) {
+      return;
+    }
+
+    if (stage.dataset.brushShapeOutlinePreviewReady === "true" && stage.querySelector("[data-brush-shape-outline-preview]")) {
+      return;
+    }
+
+    const wrapper = document.createElement("div");
+    const canvas = document.createElement("canvas");
+    let activeTool = false;
+    let camera = namespace.brushEngine?.camera || { zoom: 1 };
+    let currentSource = "";
+    let currentFlipX = null;
+    let currentFlipY = null;
+    let renderRequestId = 0;
+    let pointerInsideStage = false;
+    const pointerHistory = [];
+    let pointerAngle = 0;
+    let hasStablePointerAngle = false;
+
+    wrapper.className = "brush-shape-outline-preview";
+    wrapper.dataset.brushShapeOutlinePreview = "";
+    wrapper.hidden = true;
+    canvas.className = "brush-shape-outline-preview-canvas";
+    canvas.width = baseSize;
+    canvas.height = baseSize;
+    wrapper.append(canvas);
+    stage.append(wrapper);
+    stage.dataset.brushShapeOutlinePreviewReady = "true";
+
+    function syncVisibility() {
+      wrapper.hidden = !activeTool || !pointerInsideStage;
+    }
+
+    function resetPointerTracking() {
+      pointerHistory.length = 0;
+      hasStablePointerAngle = false;
+    }
+
+    function angleLerp(current, target, amount) {
+      const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+
+      return current + delta * amount;
+    }
+
+    function updatePointerAngle(x, y) {
+      pointerHistory.push({ x, y });
+
+      if (pointerHistory.length > maxPointerHistoryPoints) {
+        pointerHistory.shift();
+      }
+
+      const first = pointerHistory[0];
+      const deltaX = x - first.x;
+      const deltaY = y - first.y;
+      const distance = Math.hypot(deltaX, deltaY);
+
+      if (distance < minDirectionalDistance) {
+        return;
+      }
+
+      const targetAngle = Math.atan2(deltaY, deltaX);
+
+      if (!hasStablePointerAngle) {
+        pointerAngle = targetAngle;
+        hasStablePointerAngle = true;
+        return;
+      }
+
+      pointerAngle = angleLerp(pointerAngle, targetAngle, pointerAngleSmoothing);
+    }
+
+    function updatePointerPosition(event) {
+      const rect = stage.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const isInsideStage = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
+
+      if (isInsideStage) {
+        updatePointerAngle(x, y);
+      } else {
+        resetPointerTracking();
+      }
+
+      pointerInsideStage = isInsideStage;
+      wrapper.style.transform = `translate(${x}px, ${y}px)`;
+      updateTransform();
+      syncVisibility();
+    }
+
+    function updateTransform() {
+      const settings = getBrushSettings();
+      const rotation = getShapeBaseRotation(settings) + pointerAngle * getShapeRotation(settings);
+
+      canvas.style.opacity = String(getBrushOpacity(settings));
+      canvas.style.transform = `rotate(${rotation}rad) scale(${getPreviewScale(settings, camera)})`;
+    }
+
+    function renderIfNeeded() {
+      const settings = getBrushSettings();
+      const source = getShapeSource(settings);
+      const flipX = settings.shapeFlipX === true;
+      const flipY = settings.shapeFlipY === true;
+
+      updateTransform();
+
+      if (source === currentSource && flipX === currentFlipX && flipY === currentFlipY) {
+        return;
+      }
+
+      currentSource = source;
+      currentFlipX = flipX;
+      currentFlipY = flipY;
+      renderRequestId += 1;
+      const requestId = renderRequestId;
+
+      loadImage(source)
+        .then((image) => {
+          if (requestId !== renderRequestId) {
+            return;
+          }
+
+          renderOutlineToCanvas(canvas, image, settings);
+        })
+        .catch(() => {
+          if (requestId === renderRequestId) {
+            const context = canvas.getContext("2d");
+
+            context?.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        });
+    }
+
+    window.addEventListener("cbo:brush-settings-change", () => {
+      brushSettingsOverride = null;
+      renderIfNeeded();
+      syncVisibility();
+    });
+
+    window.addEventListener("cbo:brush-settings-preview-change", (event) => {
+      brushSettingsOverride = event.detail?.settings || null;
+      renderIfNeeded();
+      syncVisibility();
+    });
+
+    window.addEventListener("cbo:camera-change", (event) => {
+      camera = event.detail?.camera || camera;
+      updateTransform();
+    });
+
+    window.addEventListener("cbo:tool-change", (event) => {
+      const label = String(event.detail?.label || "").toUpperCase();
+      const toolMode = String(event.detail?.toolMode || "").toLowerCase();
+      const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
+
+      resetPointerTracking();
+      activeTool = label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush");
+      renderIfNeeded();
+      syncVisibility();
+    });
+
+    stage.addEventListener("pointerdown", (event) => {
+      resetPointerTracking();
+      updatePointerPosition(event);
+    }, { passive: true });
+    stage.addEventListener("pointermove", updatePointerPosition, { passive: true });
+    stage.addEventListener("pointerleave", () => {
+      pointerInsideStage = false;
+      resetPointerTracking();
+      syncVisibility();
+    });
+    stage.addEventListener("pointercancel", () => {
+      pointerInsideStage = false;
+      resetPointerTracking();
+      syncVisibility();
+    });
+
+    const activeButton = document.querySelector("[data-tool].active");
+
+    if (activeButton) {
+      const label = String(activeButton.getAttribute("aria-label") || "").toUpperCase();
+      const toolMode = String(activeButton.dataset.toolMode || "").toLowerCase();
+      const syncGroup = String(activeButton.dataset.toolSync || "").toLowerCase();
+
+      activeTool = label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush");
+    }
+
+    renderIfNeeded();
+    syncVisibility();
+  };
+})(window.CBO);

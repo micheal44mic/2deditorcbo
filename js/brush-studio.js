@@ -164,6 +164,15 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   let replayFrame = 0;
 
   function pushDraftToEngine() {
+    window.dispatchEvent(
+      new CustomEvent("cbo:brush-settings-preview-change", {
+        detail: {
+          source: "brush-studio",
+          settings: { ...draftBrushSettings },
+        },
+      }),
+    );
+
     if (!previewEngine) {
       return;
     }
@@ -1571,11 +1580,16 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       toSetting: (displayValue) => displayValue / 100,
       toDisplay: (displayValue) => Math.round(displayValue),
     });
+    const pressureToggle = createToggleSetting({
+      key: "velocityPressureEnabled",
+      label: "AUTO PRESSURE",
+    });
 
     selectedName.className = "brush-studio-selected-name";
     selectedName.textContent = selectedCategory;
     settingsPanel.replaceChildren(
       selectedName,
+      pressureToggle,
       spacingSetting,
       spacingJitterSetting,
       lateralJitterSetting,
@@ -2147,6 +2161,14 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       closeGrainEditor();
       destroyPreviewCanvas();
       brushStudio.hidden = true;
+      window.dispatchEvent(
+        new CustomEvent("cbo:brush-settings-preview-change", {
+          detail: {
+            source: "brush-studio",
+            settings: null,
+          },
+        }),
+      );
     }
   }
 
