@@ -57,6 +57,7 @@
         visible: options.visible !== false,
         locked: options.locked === true,
         opacity: Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1,
+        clippingMask: options.clippingMask === true,
       };
     }
 

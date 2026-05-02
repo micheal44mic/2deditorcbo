@@ -107,6 +107,34 @@
   line-height: 1;
 }
 
+.layer-clipping-indicator {
+  position: absolute;
+  top: -6px;
+  left: -7px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--layer-muted-color, currentColor);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.layer-clipping-indicator svg {
+  width: 14px;
+  height: 14px;
+}
+
+.layer-row.clipping-mask .layer-clipping-indicator {
+  opacity: 1;
+}
+
+.layer-row.clipping-mask .layer-icon-stack {
+  margin-left: 6px;
+}
+
 .layer-row.drop-inside {
   color: #ffffff;
   box-shadow: inset 0 0 0 2px #ffffff;
@@ -174,6 +202,16 @@
 
 .layer-entry.collapsed > .layer-row .layer-disclosure-button svg {
   transform: rotate(-90deg);
+}
+
+.layer-icon-stack {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
 }
 
 .layer-file-icon {
@@ -332,4 +370,10 @@
 
 .layer-context-menu-item[aria-checked="true"] {
   color: #7ee787;
+}
+
+.layer-context-menu-item.disabled,
+.layer-context-menu-item:disabled {
+  color: #747b88;
+  pointer-events: none;
 }

@@ -45,6 +45,7 @@ precision highp float;
 
 uniform sampler2D u_texture;
 uniform sampler2D u_maskTexture;
+uniform sampler2D u_clipTexture;
 uniform float u_opacity;
 uniform vec2 uDocumentSize;
 uniform float uCameraZoom;
@@ -52,6 +53,10 @@ uniform float u_gridMode;
 uniform float u_maskMode;
 uniform vec4 u_maskRect;
 uniform float u_maskRectMode;
+uniform float u_clipMode;
+uniform float u_clipOpacity;
+uniform vec2 u_clipTextureSize;
+uniform vec2 u_drawOrigin;
 uniform float u_previewCutMode;
 uniform vec4 u_previewCutRect;
 
@@ -100,6 +105,21 @@ void main() {
       }
 
       color *= 1.0 - eraseAlpha;
+    }
+
+    if (u_clipMode > 0.5) {
+      vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+      vec2 clipUv = vec2(
+        globalDocPixel.x / max(u_clipTextureSize.x, 1.0),
+        1.0 - globalDocPixel.y / max(u_clipTextureSize.y, 1.0)
+      );
+      float clipAlpha = 0.0;
+
+      if (clipUv.x >= 0.0 && clipUv.x <= 1.0 && clipUv.y >= 0.0 && clipUv.y <= 1.0) {
+        clipAlpha = texture(u_clipTexture, clipUv).a * clamp(u_clipOpacity, 0.0, 1.0);
+      }
+
+      color *= clipAlpha;
     }
 
     outColor = color;
@@ -347,7 +367,12 @@ void main() {
         uniforms: {
           cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
+          clipMode: gl.getUniformLocation(program, "u_clipMode"),
+          clipOpacity: gl.getUniformLocation(program, "u_clipOpacity"),
+          clipTexture: gl.getUniformLocation(program, "u_clipTexture"),
+          clipTextureSize: gl.getUniformLocation(program, "u_clipTextureSize"),
           documentSize: gl.getUniformLocation(program, "uDocumentSize"),
+          drawOrigin: gl.getUniformLocation(program, "u_drawOrigin"),
           maskMode: gl.getUniformLocation(program, "u_maskMode"),
           maskRect: gl.getUniformLocation(program, "u_maskRect"),
           maskRectMode: gl.getUniformLocation(program, "u_maskRectMode"),
@@ -1630,6 +1655,21 @@ void main() {
       }];
     }
 
+    getOrderedLayersBottomToTop() {
+      const layers = this.layerModel?.flattenTopToBottom?.();
+
+      if (Array.isArray(layers)) {
+        return layers.reverse();
+      }
+
+      return [{
+        id: this.paintLayerId || "paint-main",
+        type: "paint",
+        visible: true,
+        opacity: 1,
+      }];
+    }
+
     updatePreviewCacheIfNeeded() {
       if (!this.previewTexture || !this.previewFramebuffer) {
         return false;
@@ -1663,9 +1703,14 @@ void main() {
         gl.uniform1f(uniforms.cameraZoom, 1);
         gl.uniform1i(uniforms.texture, 0);
         gl.uniform1i(uniforms.maskTexture, 1);
+        gl.uniform1i(uniforms.clipTexture, 2);
         gl.uniform1f(uniforms.maskMode, 0.0);
         gl.uniform1f(uniforms.maskRectMode, 0.0);
         gl.uniform4f(uniforms.maskRect, 0, 0, width, height);
+        gl.uniform1f(uniforms.clipMode, 0.0);
+        gl.uniform1f(uniforms.clipOpacity, 1.0);
+        gl.uniform2f(uniforms.clipTextureSize, width, height);
+        gl.uniform2f(uniforms.drawOrigin, 0, 0);
         gl.uniform1f(uniforms.previewCutMode, 0.0);
         gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
         gl.uniform1f(uniforms.gridMode, 0.0);
@@ -1674,6 +1719,7 @@ void main() {
       };
       const drawTexture = (texture, opacity = 1) => {
         setDocumentProjection(width, height, 0, 0);
+        gl.uniform2f(uniforms.drawOrigin, 0, 0);
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, opacity);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -1749,9 +1795,14 @@ void main() {
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniform1i(uniforms.texture, 0);
       gl.uniform1i(uniforms.maskTexture, 1);
+      gl.uniform1i(uniforms.clipTexture, 2);
       gl.uniform1f(uniforms.maskMode, 0.0);
       gl.uniform1f(uniforms.maskRectMode, 0.0);
       gl.uniform4f(uniforms.maskRect, 0, 0, this.width, this.height);
+      gl.uniform1f(uniforms.clipMode, 0.0);
+      gl.uniform1f(uniforms.clipOpacity, 1.0);
+      gl.uniform2f(uniforms.clipTextureSize, this.width, this.height);
+      gl.uniform2f(uniforms.drawOrigin, 0, 0);
       gl.uniform1f(uniforms.previewCutMode, 0.0);
       gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
       gl.uniform1f(uniforms.gridMode, 0.0);
@@ -2342,7 +2393,9 @@ void main() {
         ? this.rasterTransformPreview
         : null;
       const hasActiveEraserStroke = Boolean(options.activeStrokeTexture && activeStrokeMode === "eraser");
-      const renderableLayers = this.getRenderableLayers();
+      const orderedLayers = this.getOrderedLayersBottomToTop();
+      const renderableLayers = orderedLayers.filter((layer) => layer.visible !== false);
+      const hasClippingMasks = orderedLayers.some((layer) => layer?.clippingMask === true);
       const activeStrokeLayerIndex = renderableLayers.findIndex((layer) => layer?.id === activeStrokeLayerId);
       const activeStrokeCanOverlayPreview = !options.activeStrokeTexture ||
         (
@@ -2354,6 +2407,7 @@ void main() {
       const isZoomedOut = (camera.zoom || 1) < 0.99;
       const canUsePreviewCache = Boolean(
         isZoomedOut &&
+        !hasClippingMasks &&
         !rasterTransformPreview &&
         !hasActiveEraserStroke &&
         activeStrokeCanOverlayPreview &&
@@ -2365,7 +2419,7 @@ void main() {
         gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
         gl.uniform2f(uniforms.cameraPosition, cameraX, cameraY);
       };
-      const drawTexture = (texture, opacity, rect = null) => {
+      const drawTexture = (texture, opacity, rect = null, clipBase = null) => {
         if (rect) {
           setDocumentProjection(
             rect.width,
@@ -2373,13 +2427,44 @@ void main() {
             (camera.x || 0) + rect.x * (camera.zoom || 1),
             (camera.y || 0) + rect.y * (camera.zoom || 1),
           );
+          gl.uniform2f(uniforms.drawOrigin, rect.x, rect.y);
         } else {
           setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
+          gl.uniform2f(uniforms.drawOrigin, 0, 0);
+        }
+
+        if (clipBase?.target?.texture) {
+          const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
+            ? Math.min(1, Math.max(0, clipBase.layer.opacity))
+            : 1;
+
+          gl.activeTexture(gl.TEXTURE2);
+          gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
+          gl.uniform1i(uniforms.clipTexture, 2);
+          gl.uniform1f(uniforms.clipMode, 1.0);
+          gl.uniform1f(uniforms.clipOpacity, clipOpacity);
+          gl.uniform2f(
+            uniforms.clipTextureSize,
+            clipBase.target.width || target.width,
+            clipBase.target.height || target.height,
+          );
+          gl.activeTexture(gl.TEXTURE0);
+        } else {
+          gl.uniform1f(uniforms.clipMode, 0.0);
+          gl.uniform1f(uniforms.clipOpacity, 1.0);
+          gl.uniform2f(uniforms.clipTextureSize, target.width, target.height);
         }
 
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, opacity);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        if (clipBase?.target?.texture) {
+          gl.uniform1f(uniforms.clipMode, 0.0);
+          gl.activeTexture(gl.TEXTURE2);
+          gl.bindTexture(gl.TEXTURE_2D, null);
+          gl.activeTexture(gl.TEXTURE0);
+        }
       };
       const bindArtboardProgram = () => {
         gl.useProgram(program);
@@ -2388,9 +2473,14 @@ void main() {
         gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
         gl.uniform1i(uniforms.texture, 0);
         gl.uniform1i(uniforms.maskTexture, 1);
+        gl.uniform1i(uniforms.clipTexture, 2);
         gl.uniform1f(uniforms.maskMode, 0.0);
         gl.uniform1f(uniforms.maskRectMode, 0.0);
         gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
+        gl.uniform1f(uniforms.clipMode, 0.0);
+        gl.uniform1f(uniforms.clipOpacity, 1.0);
+        gl.uniform2f(uniforms.clipTextureSize, target.width, target.height);
+        gl.uniform2f(uniforms.drawOrigin, 0, 0);
         gl.uniform1f(uniforms.previewCutMode, 0.0);
         gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
         gl.uniform1f(uniforms.gridMode, 0.0);
@@ -2459,14 +2549,42 @@ void main() {
           didDrawActiveStroke = true;
         }
       } else {
-        for (const layer of renderableLayers) {
+        let currentClipBase = null;
+        const isValidClipBaseLayer = (layer) => Boolean(
+          layer &&
+          layer.type !== "group" &&
+          layer.type !== "background" &&
+          layer.id !== "background"
+        );
+
+        for (const layer of orderedLayers) {
           const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+          const isClippingLayer = layer.clippingMask === true;
           const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
           const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
           const isRasterTransformPreviewLayer = rasterTransformPreview?.layerId === layer.id;
           const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
             ? options.activeStrokeTexture
             : null;
+          const clipBase = isClippingLayer ? currentClipBase : null;
+
+          if (!isClippingLayer) {
+            currentClipBase = isValidClipBaseLayer(layer)
+              ? {
+                  layer,
+                  target: layerTarget,
+                  visible: layer.visible !== false,
+                }
+              : null;
+          }
+
+          if (layer.visible === false) {
+            continue;
+          }
+
+          if (isClippingLayer && (!clipBase?.visible || !clipBase?.target?.texture)) {
+            continue;
+          }
 
           if (layerTarget?.texture) {
             if (isRasterTransformPreviewLayer) {
@@ -2494,19 +2612,23 @@ void main() {
             }
 
             if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
-              const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
-                camera,
-                viewportHeight,
-                viewportWidth,
-              });
+              if (isClippingLayer) {
+                drawTexture(layerTarget.texture, opacity, null, clipBase);
+              } else {
+                const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
+                  camera,
+                  viewportHeight,
+                  viewportWidth,
+                });
 
-              bindArtboardProgram();
+                bindArtboardProgram();
 
-              if (!didDrawPuppet) {
-                drawTexture(layerTarget.texture, opacity);
+                if (!didDrawPuppet) {
+                  drawTexture(layerTarget.texture, opacity);
+                }
               }
             } else {
-              drawTexture(layerTarget.texture, opacity);
+              drawTexture(layerTarget.texture, opacity, null, clipBase);
             }
 
             if (isRasterTransformPreviewLayer) {
@@ -2528,7 +2650,7 @@ void main() {
           }
 
           if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
-            drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect);
+            drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect, clipBase);
             didDrawActiveStroke = true;
           }
         }

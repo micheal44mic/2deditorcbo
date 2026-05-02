@@ -145,6 +145,28 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return Boolean(row && !isGroupRow(row) && !isBackgroundRow(row));
   }
 
+  function updateLayerDescription(row) {
+    if (!row) {
+      return;
+    }
+
+    const descriptions = [];
+
+    if (row.classList.contains("reference-layer")) {
+      descriptions.push("Reference layer for color fill");
+    }
+
+    if (row.classList.contains("clipping-mask")) {
+      descriptions.push("Clipping mask");
+    }
+
+    if (descriptions.length > 0) {
+      row.setAttribute("aria-description", descriptions.join(". "));
+    } else {
+      row.removeAttribute("aria-description");
+    }
+  }
+
   function syncReferenceLayerUi() {
     const referenceId = getReferenceLayerId();
     const hasMissingReference = referenceId && !layerModel?.findEntryById?.(referenceId);
@@ -158,11 +180,58 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       const isReference = referenceId && getLayerId(layerRow) === referenceId;
 
       layerRow.classList.toggle("reference-layer", Boolean(isReference));
-      if (isReference) {
-        layerRow.setAttribute("aria-description", "Reference layer for color fill");
-      } else {
-        layerRow.removeAttribute("aria-description");
-      }
+      updateLayerDescription(layerRow);
+    });
+  }
+
+  function getFlatContentLayersTopToBottom() {
+    return layerModel?.flattenTopToBottom?.() || [];
+  }
+
+  function getLayerBelow(layerId) {
+    const layers = getFlatContentLayersTopToBottom();
+    const index = layers.findIndex((layer) => layer.id === layerId);
+
+    return index >= 0 ? layers[index + 1] || null : null;
+  }
+
+  function isClippingMaskAllowed(layerId) {
+    const layer = layerModel?.findEntryById?.(layerId);
+    const below = getLayerBelow(layerId);
+
+    if (!layer || layer.locked === true) {
+      return false;
+    }
+
+    if (layer.type === "group" || layer.type === "background" || layer.id === "background") {
+      return false;
+    }
+
+    if (!below || below.type === "background" || below.type === "group") {
+      return false;
+    }
+
+    return true;
+  }
+
+  function toggleClippingMask(layerId) {
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!layer || layer.locked === true) {
+      return false;
+    }
+
+    const shouldClip = layer.clippingMask !== true;
+
+    if (shouldClip && !isClippingMaskAllowed(layerId)) {
+      return false;
+    }
+
+    return layerModel.updateLayer(layerId, {
+      clippingMask: shouldClip,
+    }, {
+      historyGroup: `clipping-mask-${layerId}`,
+      source: "layers-panel-clipping-mask",
     });
   }
 
@@ -450,6 +519,17 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return `<span class="layer-disclosure-spacer" aria-hidden="true"></span>`;
   }
 
+  function getClippingMaskIndicator() {
+    return `
+      <span class="layer-clipping-indicator" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m14 15-5 5-5-5" />
+          <path d="M20 4h-7a4 4 0 0 0-4 4v12" />
+        </svg>
+      </span>
+    `;
+  }
+
   function createLayerActions() {
     return `
       <div class="layer-actions">
@@ -487,14 +567,17 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const isBackground = isBackgroundRow(row);
     const isLocked = isBackground || state.locked === true;
     const isHidden = state.visible === false;
+    const isClipping = state.clippingMask === true;
 
     row.classList.toggle("locked", isLocked);
     row.classList.toggle("hidden-layer", isHidden);
+    row.classList.toggle("clipping-mask", isClipping);
     lockButton?.setAttribute("aria-pressed", String(isLocked));
     lockButton?.setAttribute("aria-label", isBackground ? "Background locked" : isLocked ? "Unlock layer" : "Lock layer");
     lockButton?.toggleAttribute("disabled", isBackground);
     visibilityButton?.setAttribute("aria-pressed", String(!isHidden));
     visibilityButton?.setAttribute("aria-label", isHidden ? "Show layer" : "Hide layer");
+    updateLayerDescription(row);
   }
 
   function createLayerEntry(layerName, type = "layer", id = "", state = {}) {
@@ -515,8 +598,11 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     row.innerHTML = `
       <div class="layer-info">
         ${getDisclosureControl(type)}
-        <span class="layer-file-icon" aria-hidden="true">
-          ${getLayerIcon(type)}
+        <span class="layer-icon-stack">
+          ${getClippingMaskIndicator()}
+          <span class="layer-file-icon" aria-hidden="true">
+            ${getLayerIcon(type)}
+          </span>
         </span>
         <span class="layer-name">${layerName}</span>
       </div>
@@ -1027,6 +1113,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     layerContextMenu.setAttribute("role", "menu");
     layerContextMenu.innerHTML = `
       <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="reference"></button>
+      <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="clipping-mask"></button>
     `;
 
     layerContextMenu.addEventListener("click", (event) => {
@@ -1052,6 +1139,12 @@ window.CBO.initLayersPanel = function initLayersPanel() {
         }
 
         syncReferenceLayerUi();
+      }
+
+      if (actionButton.dataset.layerContextAction === "clipping-mask") {
+        toggleClippingMask(contextMenuLayerId);
+        closeLayerContextMenu();
+        return;
       }
 
       closeLayerContextMenu();
@@ -1093,12 +1186,22 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
     const menu = ensureLayerContextMenu();
     const referenceButton = menu.querySelector("[data-layer-context-action='reference']");
+    const clippingButton = menu.querySelector("[data-layer-context-action='clipping-mask']");
     const layerId = getLayerId(row);
+    const layer = layerModel?.findEntryById?.(layerId);
     const isReference = layerId && getReferenceLayerId() === layerId;
+    const isClipping = layer?.clippingMask === true;
+    const canClip = layer?.locked !== true && (isClippingMaskAllowed(layerId) || isClipping);
 
     contextMenuLayerId = layerId;
     referenceButton.textContent = isReference ? "REMOVE REFERENCE" : "SET AS REFERENCE";
     referenceButton.setAttribute("aria-checked", String(isReference));
+    if (clippingButton) {
+      clippingButton.textContent = isClipping ? "RELEASE CLIPPING MASK" : "CREATE CLIPPING MASK";
+      clippingButton.setAttribute("aria-checked", String(isClipping));
+      clippingButton.disabled = !canClip;
+      clippingButton.classList.toggle("disabled", !canClip);
+    }
     positionLayerContextMenu(menu, event.clientX, event.clientY);
   }
 
