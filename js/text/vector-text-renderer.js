@@ -7,7 +7,7 @@
   const ACTIVE_TEXT_RASTER_DEBOUNCE_MS = 180;
   const TEXT_RASTER_PREVIEW_MS = 260;
   const TEXT_RASTER_BOUNDS_PADDING = 2;
-  const TEXT_RASTER_DEBUG = true;
+  const TEXT_RASTER_DEBUG = false;
 
   function createSvgElement(name, attributes = {}) {
     const element = document.createElementNS(SVG_NS, name);
@@ -1189,9 +1189,6 @@
       const stats = getRasterDebugStats(size, rasterBox);
       const stroke = options.stroke || "#ff2bd6";
       const fill = options.fill || "rgba(255, 43, 214, 0.08)";
-      const allocationBox = options.allocationBox || null;
-      const allocationCount = Math.max(1, Math.round(options.allocationCount || 1));
-      const allocationStroke = options.allocationStroke || "#ff7a00";
       const layer = options.layer || {};
       const extraRows = options.extraRows || {};
       const debugNote = options.note || "Nota: fullLayerTargetMB resta pieno; crop/dirty MB misura l'area realmente toccata.";
@@ -1202,39 +1199,6 @@
         "data-source": source,
       });
       const nodes = [];
-
-      if (allocationBox) {
-        const allocationBytes = allocationBox.width * allocationBox.height * 4;
-        const allocationRect = createSvgElement("rect", {
-          fill: "none",
-          height: allocationBox.height,
-          stroke: allocationStroke,
-          "stroke-dasharray": "36 18",
-          "stroke-linejoin": "round",
-          "stroke-width": 4,
-          "vector-effect": "non-scaling-stroke",
-          width: allocationBox.width,
-          x: allocationBox.x,
-          y: allocationBox.y,
-        });
-        const allocationText = createSvgElement("text", {
-          fill: allocationStroke,
-          "font-family": "monospace",
-          "font-size": 32,
-          "font-weight": 800,
-          "paint-order": "stroke",
-          stroke: "rgba(0, 0, 0, 0.78)",
-          "stroke-width": 7,
-          x: allocationBox.x + 18,
-          y: allocationBox.y + 42,
-        });
-
-        allocationText.textContent = `ALLOC ${allocationBox.width}x${allocationBox.height} x${allocationCount} / ${bytesToMega(allocationBytes * allocationCount)} MB`;
-        nodes.push(allocationRect, allocationText);
-        extraRows.allocationBox = `${allocationBox.width}x${allocationBox.height} @ ${allocationBox.x},${allocationBox.y}`;
-        extraRows.allocationEachMB = bytesToMega(allocationBytes);
-        extraRows.allocationTotalMB = bytesToMega(allocationBytes * allocationCount);
-      }
 
       const rect = createSvgElement("rect", {
         fill,

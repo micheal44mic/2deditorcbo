@@ -16,6 +16,8 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   let rangeAnchor = null;
   let focusedLayer = null;
   let dragState = null;
+  let layerContextMenu = null;
+  let contextMenuLayerId = "";
   let suppressNextClick = false;
   let isRenderingLayerModel = false;
   let isSyncingLayerModelFromDom = false;
@@ -113,6 +115,54 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
     getLayerRows().forEach((layerRow) => {
       layerRow.classList.toggle("active", layerRow === activeRow);
+    });
+  }
+
+  function getReferenceLayerId() {
+    return window.CBO.colorFill?.getReferenceLayerId?.() || window.CBO.colorFillReferenceLayerId || "";
+  }
+
+  function setReferenceLayerId(layerId, source = "layers-panel-reference") {
+    if (window.CBO.colorFill?.setReferenceLayerId) {
+      window.CBO.colorFill.setReferenceLayerId(layerId, { source });
+    } else {
+      window.CBO.colorFillReferenceLayerId = layerId || "";
+      window.dispatchEvent(new CustomEvent("cbo:color-fill-reference-change", {
+        detail: { layerId: layerId || null, source },
+      }));
+    }
+  }
+
+  function clearReferenceLayerId(source = "layers-panel-clear-reference") {
+    if (window.CBO.colorFill?.clearReferenceLayerId) {
+      window.CBO.colorFill.clearReferenceLayerId({ source });
+    } else {
+      setReferenceLayerId("", source);
+    }
+  }
+
+  function isReferenceableLayerRow(row) {
+    return Boolean(row && !isGroupRow(row) && !isBackgroundRow(row));
+  }
+
+  function syncReferenceLayerUi() {
+    const referenceId = getReferenceLayerId();
+    const hasMissingReference = referenceId && !layerModel?.findEntryById?.(referenceId);
+
+    if (hasMissingReference) {
+      clearReferenceLayerId("layers-panel-prune-reference");
+      return;
+    }
+
+    getLayerRows().forEach((layerRow) => {
+      const isReference = referenceId && getLayerId(layerRow) === referenceId;
+
+      layerRow.classList.toggle("reference-layer", Boolean(isReference));
+      if (isReference) {
+        layerRow.setAttribute("aria-description", "Reference layer for color fill");
+      } else {
+        layerRow.removeAttribute("aria-description");
+      }
     });
   }
 
@@ -293,6 +343,8 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     } finally {
       isSyncingLayerModelFromDom = false;
     }
+
+    syncReferenceLayerUi();
   }
 
   function insertLayerEntry(entry) {
@@ -519,6 +571,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       }
 
       syncActiveLayerUi();
+      syncReferenceLayerUi();
     } finally {
       isRenderingLayerModel = false;
     }
@@ -963,6 +1016,92 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     dragState = null;
   }
 
+  function ensureLayerContextMenu() {
+    if (layerContextMenu) {
+      return layerContextMenu;
+    }
+
+    layerContextMenu = document.createElement("div");
+    layerContextMenu.className = "layer-context-menu";
+    layerContextMenu.hidden = true;
+    layerContextMenu.setAttribute("role", "menu");
+    layerContextMenu.innerHTML = `
+      <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="reference"></button>
+    `;
+
+    layerContextMenu.addEventListener("click", (event) => {
+      const target = event.target;
+      const actionButton = target instanceof Element
+        ? target.closest("[data-layer-context-action]")
+        : null;
+
+      if (!actionButton) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (actionButton.dataset.layerContextAction === "reference") {
+        const currentReferenceId = getReferenceLayerId();
+
+        if (currentReferenceId && currentReferenceId === contextMenuLayerId) {
+          clearReferenceLayerId();
+        } else {
+          setReferenceLayerId(contextMenuLayerId);
+        }
+
+        syncReferenceLayerUi();
+      }
+
+      closeLayerContextMenu();
+    });
+
+    document.body.appendChild(layerContextMenu);
+
+    return layerContextMenu;
+  }
+
+  function closeLayerContextMenu() {
+    if (!layerContextMenu) {
+      return;
+    }
+
+    layerContextMenu.hidden = true;
+    contextMenuLayerId = "";
+  }
+
+  function positionLayerContextMenu(menu, clientX, clientY) {
+    menu.hidden = false;
+    menu.style.left = `${clientX}px`;
+    menu.style.top = `${clientY}px`;
+
+    const rect = menu.getBoundingClientRect();
+    const gap = 8;
+    const left = Math.min(clientX, window.innerWidth - rect.width - gap);
+    const top = Math.min(clientY, window.innerHeight - rect.height - gap);
+
+    menu.style.left = `${Math.max(gap, left)}px`;
+    menu.style.top = `${Math.max(gap, top)}px`;
+  }
+
+  function openLayerContextMenu(row, event) {
+    if (!isReferenceableLayerRow(row)) {
+      closeLayerContextMenu();
+      return;
+    }
+
+    const menu = ensureLayerContextMenu();
+    const referenceButton = menu.querySelector("[data-layer-context-action='reference']");
+    const layerId = getLayerId(row);
+    const isReference = layerId && getReferenceLayerId() === layerId;
+
+    contextMenuLayerId = layerId;
+    referenceButton.textContent = isReference ? "REMOVE REFERENCE" : "SET AS REFERENCE";
+    referenceButton.setAttribute("aria-checked", String(isReference));
+    positionLayerContextMenu(menu, event.clientX, event.clientY);
+  }
+
   panel.innerHTML = `
     <div class="layers-list" role="listbox" aria-label="Layers" aria-multiselectable="true"></div>
   `;
@@ -976,6 +1115,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   });
 
   renderLayerModel();
+  window.addEventListener("cbo:color-fill-reference-change", syncReferenceLayerUi);
 
   addLayerButton?.addEventListener("click", addPaintLayer);
   copyLayerButton?.addEventListener("click", copySelectedLayers);
@@ -999,6 +1139,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   });
 
   panel.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+
     const target = event.target;
 
     if (
@@ -1021,6 +1165,39 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   panel.addEventListener("pointermove", updateLayerDrag);
   panel.addEventListener("pointerup", stopLayerDrag);
   panel.addEventListener("pointercancel", stopLayerDrag);
+  panel.addEventListener("contextmenu", (event) => {
+    const target = event.target;
+    const row = target instanceof Element ? target.closest("[data-layer-row]") : null;
+
+    if (!row || !panel.contains(row)) {
+      closeLayerContextMenu();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    openLayerContextMenu(row, event);
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (
+      layerContextMenu &&
+      !layerContextMenu.hidden &&
+      event.target instanceof Node &&
+      !layerContextMenu.contains(event.target)
+    ) {
+      closeLayerContextMenu();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeLayerContextMenu();
+    }
+  });
+
+  window.addEventListener("resize", closeLayerContextMenu);
+  panel.closest(".drawer-content")?.addEventListener("scroll", closeLayerContextMenu);
 
   panel.addEventListener("dblclick", (event) => {
     const target = event.target;

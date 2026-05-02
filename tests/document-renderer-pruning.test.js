@@ -207,6 +207,21 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /gl\.deleteTexture\(snapshot\.texture\)/);
 });
 
+test("document renderer exposes mipmapped zoom-out preview cache helpers", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /createPreviewCache\(\)/);
+  assert.match(source, /updatePreviewCacheIfNeeded\(\)/);
+  assert.match(source, /drawPreviewCacheToCanvas\(options = \{\}\)/);
+  assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
+  assert.match(source, /const isZoomedOut = \(camera\.zoom \|\| 1\) < 0\.99/);
+  assert.match(source, /!hasActiveEraserStroke/);
+  assert.match(source, /!rasterTransformPreview/);
+});
+
 test("puppet rasterize commits the deformed mesh through snapshots", () => {
   const rendererSource = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),

@@ -5,7 +5,6 @@ window.CBO = window.CBO || {};
   const MAX_ZOOM = 32;
   const WHEEL_ZOOM_INTENSITY = 0.0015;
   const PINCH_ZOOM_INTENSITY = 0.01;
-  const BRUSH_RASTER_DEBUG = true;
   const CROPPED_BRUSH_STROKES = true;
   const STROKE_ALLOCATION_QUANTUM = 128;
   const STROKE_FINAL_PADDING = 6;
@@ -461,18 +460,6 @@ void main() {
   };
 
   namespace.ImageCache = ImageCache;
-
-  function bytesToMega(bytes) {
-    return Math.round((bytes / (1024 * 1024)) * 100) / 100;
-  }
-
-  function rectBytes(rect) {
-    if (!rect) {
-      return 0;
-    }
-
-    return Math.max(0, Math.round(rect.width * rect.height * 4));
-  }
 
   const GRAIN_BLEND_MODE_IDS = Object.freeze({
     multiply: 0,
@@ -3525,54 +3512,9 @@ void main() {
       }
 
       this.clearStrokeLayer();
-      this.debugBrushRaster(strokeRect, target, layerId, isEraserStroke, bakeRect);
       this.releaseStrokeLayerTarget();
+      this.documentRenderer?.invalidatePreviewCache?.("bake-stroke");
       this.requestDraw();
-    }
-
-    debugBrushRaster(strokeRect, target, layerId, isEraserStroke = false, allocationRect = null) {
-      if (!BRUSH_RASTER_DEBUG || !strokeRect || !target) {
-        return;
-      }
-
-      const fullLayerBytes = Math.max(1, Math.round(target.width * target.height * 4));
-      const dirtyBytes = rectBytes(strokeRect);
-      const allocation = allocationRect || this.getFullDocumentRect(target);
-      const allocationBytes = rectBytes(allocation) * 3;
-      const historyBytes = this.options.enableHistory ? dirtyBytes * 2 : 0;
-      const toolName = isEraserStroke ? "Eraser" : "Brush";
-
-      namespace.vectorTextRenderer?.debugRasterBox?.({
-        allocationBox: {
-          height: allocation.height,
-          width: allocation.width,
-          x: allocation.x,
-          y: allocation.y,
-        },
-        allocationCount: 3,
-        allocationStroke: "#ff7a00",
-        fill: "rgba(0, 255, 170, 0.08)",
-        layer: {
-          id: layerId,
-          name: isEraserStroke ? "Eraser stroke" : "Brush stroke",
-        },
-        rasterBox: strokeRect,
-        size: {
-          height: target.height,
-          width: target.width,
-        },
-        source: isEraserStroke ? "eraser-stroke" : "brush-stroke",
-        stroke: "#00ffaa",
-        note: this.isBrushStrokeCropped()
-          ? `${toolName} debug: green is dirty/history area; orange is the real temporary FBO allocation baked for this stroke.`
-          : `${toolName} debug: this tool still uses full-document temporary FBOs.`,
-        extraRows: {
-          dirtyAreaMB: bytesToMega(dirtyBytes),
-          strokeAllocatedFBOsMB: bytesToMega(allocationBytes),
-          oldFullStrokeFBOsMB: bytesToMega(fullLayerBytes * 3),
-          historyBeforeAfterMB: bytesToMega(historyBytes),
-        },
-      });
     }
 
     clearStrokeLayer() {

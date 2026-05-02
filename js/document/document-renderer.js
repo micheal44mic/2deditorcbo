@@ -263,6 +263,12 @@ void main() {
       this.rasterTargetsByLayerId = new Map();
       this.puppetMeshResourcesByLayerId = new Map();
       this.rasterTransformPreview = null;
+      this.previewTexture = null;
+      this.previewFramebuffer = null;
+      this.previewMipLevels = 0;
+      this.previewCacheDirty = true;
+      this.previewCacheReady = false;
+      this.previewCacheReason = "init";
       this.texturedQuad = null;
       this.programInfo = null;
       this.puppetProgramInfo = null;
@@ -270,6 +276,7 @@ void main() {
       this.quad = null;
       this.isDisposed = false;
       this.handleLayerModelChange = this.handleLayerModelChange.bind(this);
+      this.handleDocumentContentChange = this.handleDocumentContentChange.bind(this);
       this.handleHistoryChange = this.handleHistoryChange.bind(this);
 
       try {
@@ -277,12 +284,14 @@ void main() {
         this.createBaseLayerTarget();
         this.programInfo = this.createProgramInfo();
         this.quad = this.createArtboardQuad();
+        this.createPreviewCache();
       } catch (error) {
         this.dispose();
         throw error;
       }
 
       this.layerModel?.addEventListener?.("change", this.handleLayerModelChange);
+      window.addEventListener("cbo:document-content-change", this.handleDocumentContentChange);
       window.addEventListener("cbo:history-change", this.handleHistoryChange);
     }
 
@@ -710,6 +719,97 @@ void main() {
       gl.bindVertexArray(null);
 
       return { vao, buffer };
+    }
+
+    createPreviewCache() {
+      const gl = this.gl;
+      const texture = gl.createTexture();
+      const framebuffer = gl.createFramebuffer();
+
+      if (!texture || !framebuffer) {
+        if (texture) {
+          gl.deleteTexture(texture);
+        }
+
+        if (framebuffer) {
+          gl.deleteFramebuffer(framebuffer);
+        }
+
+        console.warn("Preview mipmap non disponibile: impossibile allocare la cache.");
+        return false;
+      }
+
+      const width = Math.max(1, Math.round(this.width || 1));
+      const height = Math.max(1, Math.round(this.height || 1));
+      const levels = Math.max(1, Math.floor(Math.log2(Math.max(width, height))) + 1);
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+
+      if (typeof gl.texStorage2D === "function" && gl.RGBA8) {
+        gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, width, height);
+      } else {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      }
+
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.deleteFramebuffer(framebuffer);
+        gl.deleteTexture(texture);
+        console.warn("Preview FBO incompleto: uso il rendering full-res come fallback.");
+        return false;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      this.previewTexture = texture;
+      this.previewFramebuffer = framebuffer;
+      this.previewMipLevels = levels;
+      this.previewCacheDirty = true;
+      this.previewCacheReady = false;
+      this.previewCacheReason = "init";
+
+      return true;
+    }
+
+    deletePreviewCache() {
+      const gl = this.gl;
+
+      if (this.previewFramebuffer) {
+        gl.deleteFramebuffer(this.previewFramebuffer);
+        this.previewFramebuffer = null;
+      }
+
+      if (this.previewTexture) {
+        gl.deleteTexture(this.previewTexture);
+        this.previewTexture = null;
+      }
+
+      this.previewMipLevels = 0;
+      this.previewCacheDirty = true;
+      this.previewCacheReady = false;
+    }
+
+    invalidatePreviewCache(reason = "unknown") {
+      this.previewCacheDirty = true;
+      this.previewCacheReason = reason;
+    }
+
+    getLayerOpacity(layerId, layers = this.getRenderableLayers()) {
+      const layer = Array.isArray(layers)
+        ? layers.find((entry) => entry?.id === layerId)
+        : null;
+
+      return Number.isFinite(layer?.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
     }
 
     configureDocumentSize(viewportWidth, viewportHeight) {
@@ -1362,10 +1462,16 @@ void main() {
     }
 
     handleLayerModelChange() {
+      this.invalidatePreviewCache("layers-change");
       this.pruneOrphanRasterTargets();
     }
 
+    handleDocumentContentChange(event) {
+      this.invalidatePreviewCache(event?.detail?.source || "document-content-change");
+    }
+
     handleHistoryChange() {
+      this.invalidatePreviewCache("history-change");
       this.pruneOrphanRasterTargets();
     }
 
@@ -1522,6 +1628,144 @@ void main() {
         visible: true,
         opacity: 1,
       }];
+    }
+
+    updatePreviewCacheIfNeeded() {
+      if (!this.previewTexture || !this.previewFramebuffer) {
+        return false;
+      }
+
+      if (!this.previewCacheDirty && this.previewCacheReady) {
+        return true;
+      }
+
+      return this.updatePreviewCache();
+    }
+
+    updatePreviewCache() {
+      if (!this.previewTexture || !this.previewFramebuffer || !this.programInfo || !this.quad) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const width = Math.max(1, Math.round(this.width || 1));
+      const height = Math.max(1, Math.round(this.height || 1));
+      const { program, uniforms } = this.programInfo;
+      const flatCamera = { x: 0, y: 0, zoom: 1 };
+      const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
+        gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
+        gl.uniform2f(uniforms.cameraPosition, cameraX, cameraY);
+      };
+      const bindArtboardProgram = () => {
+        gl.useProgram(program);
+        gl.uniform2f(uniforms.viewportSize, width, height);
+        setDocumentProjection(width, height, 0, 0);
+        gl.uniform1f(uniforms.cameraZoom, 1);
+        gl.uniform1i(uniforms.texture, 0);
+        gl.uniform1i(uniforms.maskTexture, 1);
+        gl.uniform1f(uniforms.maskMode, 0.0);
+        gl.uniform1f(uniforms.maskRectMode, 0.0);
+        gl.uniform4f(uniforms.maskRect, 0, 0, width, height);
+        gl.uniform1f(uniforms.previewCutMode, 0.0);
+        gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
+        gl.uniform1f(uniforms.gridMode, 0.0);
+        gl.bindVertexArray(this.quad.vao);
+        gl.activeTexture(gl.TEXTURE0);
+      };
+      const drawTexture = (texture, opacity = 1) => {
+        setDocumentProjection(width, height, 0, 0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1f(uniforms.opacity, opacity);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      };
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
+      gl.viewport(0, 0, width, height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+      bindArtboardProgram();
+
+      for (const layer of this.getRenderableLayers()) {
+        const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+        const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
+
+        if (!layerTarget?.texture) {
+          continue;
+        }
+
+        if (this.hasPuppetLayerTransform(layer)) {
+          const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
+            camera: flatCamera,
+            viewportHeight: height,
+            viewportWidth: width,
+          });
+
+          bindArtboardProgram();
+
+          if (!didDrawPuppet) {
+            drawTexture(layerTarget.texture, opacity);
+          }
+        } else {
+          drawTexture(layerTarget.texture, opacity);
+        }
+      }
+
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.useProgram(null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      this.previewCacheDirty = false;
+      this.previewCacheReady = true;
+
+      return true;
+    }
+
+    drawPreviewCacheToCanvas(options = {}) {
+      if (!this.previewTexture || !this.previewCacheReady || !this.programInfo || !this.quad) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const camera = options.camera || { x: 0, y: 0, zoom: 1 };
+      const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
+      const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
+      const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
+      const { program, uniforms } = this.programInfo;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
+      gl.viewport(0, 0, viewportWidth, viewportHeight);
+      gl.useProgram(program);
+      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.documentSize, this.width, this.height);
+      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+      gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1i(uniforms.maskTexture, 1);
+      gl.uniform1f(uniforms.maskMode, 0.0);
+      gl.uniform1f(uniforms.maskRectMode, 0.0);
+      gl.uniform4f(uniforms.maskRect, 0, 0, this.width, this.height);
+      gl.uniform1f(uniforms.previewCutMode, 0.0);
+      gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
+      gl.uniform1f(uniforms.gridMode, 0.0);
+      gl.uniform1f(uniforms.opacity, opacity);
+
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.useProgram(null);
+
+      return true;
     }
 
     hasPuppetLayerTransform(layer) {
@@ -2097,6 +2341,25 @@ void main() {
       const rasterTransformPreview = this.rasterTransformPreview?.texture
         ? this.rasterTransformPreview
         : null;
+      const hasActiveEraserStroke = Boolean(options.activeStrokeTexture && activeStrokeMode === "eraser");
+      const renderableLayers = this.getRenderableLayers();
+      const activeStrokeLayerIndex = renderableLayers.findIndex((layer) => layer?.id === activeStrokeLayerId);
+      const activeStrokeCanOverlayPreview = !options.activeStrokeTexture ||
+        (
+          activeStrokeLayerIndex >= 0 &&
+          !renderableLayers
+            .slice(activeStrokeLayerIndex + 1)
+            .some((layer) => this.rasterTargetsByLayerId.get(layer.id)?.texture)
+        );
+      const isZoomedOut = (camera.zoom || 1) < 0.99;
+      const canUsePreviewCache = Boolean(
+        isZoomedOut &&
+        !rasterTransformPreview &&
+        !hasActiveEraserStroke &&
+        activeStrokeCanOverlayPreview &&
+        this.previewTexture &&
+        this.previewFramebuffer
+      );
       let didDrawActiveStroke = false;
       const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
         gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
@@ -2163,6 +2426,10 @@ void main() {
 
         bindArtboardProgram();
       };
+      const didUpdatePreviewCache = canUsePreviewCache
+        ? this.updatePreviewCacheIfNeeded()
+        : false;
+      const usePreviewCache = canUsePreviewCache && didUpdatePreviewCache && this.previewCacheReady;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
@@ -2182,77 +2449,88 @@ void main() {
       // Pass 1: layer documento, dal basso verso l'alto.
       gl.uniform1f(uniforms.gridMode, 0.0);
 
-      for (const layer of this.getRenderableLayers()) {
-        const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
-        const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
-        const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
-        const isRasterTransformPreviewLayer = rasterTransformPreview?.layerId === layer.id;
-        const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
-          ? options.activeStrokeTexture
-          : null;
+      if (usePreviewCache) {
+        const activeStrokeOpacity = this.getLayerOpacity(activeStrokeLayerId, renderableLayers);
 
-        if (layerTarget?.texture) {
-          if (isRasterTransformPreviewLayer) {
-            setPreviewCut(rasterTransformPreview.sourceRect);
-          }
+        drawTexture(this.previewTexture, 1);
 
-          if (eraserMaskTexture) {
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, eraserMaskTexture);
-            gl.uniform1f(uniforms.maskMode, 1.0);
-            if (activeStrokeRect) {
-              gl.uniform1f(uniforms.maskRectMode, 1.0);
-              gl.uniform4f(
-                uniforms.maskRect,
-                activeStrokeRect.x,
-                activeStrokeRect.y,
-                activeStrokeRect.width,
-                activeStrokeRect.height,
-              );
-            } else {
-              gl.uniform1f(uniforms.maskRectMode, 0.0);
-              gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
+        if (options.activeStrokeTexture && activeStrokeMode !== "eraser") {
+          drawTexture(options.activeStrokeTexture, activeStrokeOpacity, activeStrokeRect);
+          didDrawActiveStroke = true;
+        }
+      } else {
+        for (const layer of renderableLayers) {
+          const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+          const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
+          const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
+          const isRasterTransformPreviewLayer = rasterTransformPreview?.layerId === layer.id;
+          const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
+            ? options.activeStrokeTexture
+            : null;
+
+          if (layerTarget?.texture) {
+            if (isRasterTransformPreviewLayer) {
+              setPreviewCut(rasterTransformPreview.sourceRect);
             }
-            gl.activeTexture(gl.TEXTURE0);
-          }
 
-          if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
-            const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
-              camera,
-              viewportHeight,
-              viewportWidth,
-            });
+            if (eraserMaskTexture) {
+              gl.activeTexture(gl.TEXTURE1);
+              gl.bindTexture(gl.TEXTURE_2D, eraserMaskTexture);
+              gl.uniform1f(uniforms.maskMode, 1.0);
+              if (activeStrokeRect) {
+                gl.uniform1f(uniforms.maskRectMode, 1.0);
+                gl.uniform4f(
+                  uniforms.maskRect,
+                  activeStrokeRect.x,
+                  activeStrokeRect.y,
+                  activeStrokeRect.width,
+                  activeStrokeRect.height,
+                );
+              } else {
+                gl.uniform1f(uniforms.maskRectMode, 0.0);
+                gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
+              }
+              gl.activeTexture(gl.TEXTURE0);
+            }
 
-            bindArtboardProgram();
+            if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
+              const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
+                camera,
+                viewportHeight,
+                viewportWidth,
+              });
 
-            if (!didDrawPuppet) {
+              bindArtboardProgram();
+
+              if (!didDrawPuppet) {
+                drawTexture(layerTarget.texture, opacity);
+              }
+            } else {
               drawTexture(layerTarget.texture, opacity);
             }
-          } else {
-            drawTexture(layerTarget.texture, opacity);
+
+            if (isRasterTransformPreviewLayer) {
+              setPreviewCut(null);
+            }
+
+            if (eraserMaskTexture) {
+              gl.uniform1f(uniforms.maskMode, 0.0);
+              gl.uniform1f(uniforms.maskRectMode, 0.0);
+              gl.activeTexture(gl.TEXTURE1);
+              gl.bindTexture(gl.TEXTURE_2D, null);
+              gl.activeTexture(gl.TEXTURE0);
+              didDrawActiveStroke = true;
+            }
           }
 
           if (isRasterTransformPreviewLayer) {
-            setPreviewCut(null);
+            drawRasterTransformPreview(opacity);
           }
 
-          if (eraserMaskTexture) {
-            gl.uniform1f(uniforms.maskMode, 0.0);
-            gl.uniform1f(uniforms.maskRectMode, 0.0);
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, null);
-            gl.activeTexture(gl.TEXTURE0);
+          if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
+            drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect);
             didDrawActiveStroke = true;
           }
-        }
-
-        if (isRasterTransformPreviewLayer) {
-          drawRasterTransformPreview(opacity);
-        }
-
-        if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
-          drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect);
-          didDrawActiveStroke = true;
         }
       }
 
@@ -2283,7 +2561,10 @@ void main() {
 
       this.isDisposed = true;
       this.layerModel?.removeEventListener?.("change", this.handleLayerModelChange);
+      window.removeEventListener("cbo:document-content-change", this.handleDocumentContentChange);
       window.removeEventListener("cbo:history-change", this.handleHistoryChange);
+
+      this.deletePreviewCache();
 
       if (this.quad) {
         gl.deleteBuffer(this.quad.buffer);

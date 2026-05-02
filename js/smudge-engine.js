@@ -182,9 +182,6 @@ void main() {
       this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = null;
       this.activeSmudgeBounds = null;
-      this.activeScratchPeakRect = null;
-      this.activeScratchPeakBytes = 0;
-      this.activeScratchDabCount = 0;
       this.historyDisabledForStroke = false;
       this.dabProgramInfo = this.createDabProgramInfo();
       this.quad = this.createQuad();
@@ -1107,9 +1104,6 @@ void main() {
       this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = target.layerId || this.documentRenderer?.layerModel?.activeLayerId || null;
       this.activeSmudgeBounds = null;
-      this.activeScratchPeakRect = null;
-      this.activeScratchPeakBytes = 0;
-      this.activeScratchDabCount = 0;
       this.historyDisabledForStroke = false;
       this.releaseScratchTarget();
       this.lastStampX = point.docX;
@@ -1253,21 +1247,6 @@ void main() {
       return { x, y, width, height };
     }
 
-    trackScratchAllocation(rect) {
-      if (!rect) {
-        return;
-      }
-
-      const bytes = rectBytes(rect);
-
-      this.activeScratchDabCount += 1;
-
-      if (!this.activeScratchPeakRect || bytes > this.activeScratchPeakBytes) {
-        this.activeScratchPeakRect = { ...rect };
-        this.activeScratchPeakBytes = bytes;
-      }
-    }
-
     renderDab(cx, cy, pressure, directionX, directionY, stepDistance) {
       const target = this.strokeTarget;
 
@@ -1303,8 +1282,6 @@ void main() {
       if (shouldCaptureHistory && !this.captureActiveHistoryBefore(target, bounds)) {
         this.historyDisabledForStroke = true;
       }
-
-      this.trackScratchAllocation(scratchRect);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, scratch.framebuffer);
       gl.viewport(0, 0, scratch.width, scratch.height);
@@ -1382,9 +1359,6 @@ void main() {
         historyBytes: this.activeHistoryBeforeSnapshot
           ? this.getSnapshotBytes(this.activeHistoryBeforeSnapshot) * 2
           : this.getHistoryDabsBytes(this.activeHistoryDabs),
-        scratchDabCount: this.activeScratchDabCount,
-        scratchPeakBytes: this.activeScratchPeakBytes,
-        scratchPeakRect: this.activeScratchPeakRect ? { ...this.activeScratchPeakRect } : null,
       };
 
       this.isDragging = false;
@@ -1393,9 +1367,6 @@ void main() {
       this.debugSmudgeRaster(smudgeRect, target, layerId, debugInfo);
       this.releaseScratchTarget();
       this.activeSmudgeBounds = null;
-      this.activeScratchPeakRect = null;
-      this.activeScratchPeakBytes = 0;
-      this.activeScratchDabCount = 0;
       this.strokeTarget = null;
     }
 
@@ -1410,9 +1381,6 @@ void main() {
       this.clearActiveHistoryDabs();
       this.releaseScratchTarget();
       this.activeSmudgeBounds = null;
-      this.activeScratchPeakRect = null;
-      this.activeScratchPeakBytes = 0;
-      this.activeScratchDabCount = 0;
       this.strokeTarget = null;
     }
 
@@ -1421,23 +1389,10 @@ void main() {
         return;
       }
 
-      const fullLayerBytes = Math.max(1, Math.round(target.width * target.height * 4));
       const dirtyBytes = rectBytes(smudgeRect);
-      const allocation = debugInfo.scratchPeakRect || this.getFullDocumentRect(target);
-      const scratchBytes = Number.isFinite(debugInfo.scratchPeakBytes)
-        ? debugInfo.scratchPeakBytes
-        : rectBytes(allocation);
       const historyBytes = Number.isFinite(debugInfo.historyBytes) ? debugInfo.historyBytes : 0;
 
       namespace.vectorTextRenderer?.debugRasterBox?.({
-        allocationBox: {
-          height: allocation.height,
-          width: allocation.width,
-          x: allocation.x,
-          y: allocation.y,
-        },
-        allocationCount: 1,
-        allocationStroke: "#ff7a00",
         fill: "rgba(64, 156, 255, 0.08)",
         layer: {
           id: layerId,
@@ -1451,14 +1406,11 @@ void main() {
         source: "smudge-stroke",
         stroke: "#409cff",
         note: CROPPED_SMUDGE_SCRATCH
-          ? "Smudge debug: blue is the whole dirty stroke; orange is the peak single scratch dab, reused during drag and released on stroke end."
-          : "Smudge debug: blue is dirty area; orange is the full-document scratch allocation.",
+          ? "Smudge debug: blue is the whole dirty stroke."
+          : "Smudge debug: blue is dirty area.",
         extraRows: {
           dirtyAreaMB: bytesToMega(dirtyBytes),
           historyBeforeAfterMB: bytesToMega(historyBytes),
-          oldFullScratchMB: bytesToMega(fullLayerBytes),
-          scratchDabCount: debugInfo.scratchDabCount || 0,
-          scratchPeakDabMB: bytesToMega(scratchBytes),
         },
       });
     }

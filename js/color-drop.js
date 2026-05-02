@@ -226,6 +226,7 @@ window.CBO.initColorDrop = function initColorDrop() {
       isDragging = true;
       suppressNextClick = true;
       button.classList.remove("tooltip-visible");
+      window.CBO.colorFill?.beginDropDrag?.();
       startGhost();
     }
 
@@ -248,7 +249,17 @@ window.CBO.initColorDrop = function initColorDrop() {
 
     if (isDragging) {
       event.preventDefault();
-      finishGhost(event.clientX, event.clientY);
+
+      const dropX = event.clientX;
+      const dropY = event.clientY;
+      const color = getActiveColor();
+
+      finishGhost(dropX, dropY);
+      try {
+        window.CBO.colorFill?.dropColorAt?.(dropX, dropY, color);
+      } finally {
+        window.CBO.colorFill?.endDropDrag?.();
+      }
     }
 
     isDragging = false;
@@ -262,6 +273,7 @@ window.CBO.initColorDrop = function initColorDrop() {
     pointerId = null;
     isDragging = false;
     suppressNextClick = false;
+    window.CBO.colorFill?.cancelDropDrag?.();
     cancelGhost();
   });
 

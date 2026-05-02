@@ -360,6 +360,13 @@ window.CBO = window.CBO || {};
         });
     }
 
+    function isBrushPreviewTool(label, toolMode, syncGroup) {
+      return label === "BRUSH" ||
+        label === "ERASER" ||
+        toolMode === "eraser" ||
+        (toolMode === "brush" && syncGroup === "brush");
+    }
+
     window.addEventListener("cbo:brush-settings-change", () => {
       brushSettingsOverride = null;
       renderIfNeeded();
@@ -383,7 +390,7 @@ window.CBO = window.CBO || {};
       const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
 
       resetPointerTracking();
-      activeTool = label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush");
+      activeTool = isBrushPreviewTool(label, toolMode, syncGroup);
       renderIfNeeded();
       syncVisibility();
     });
@@ -411,7 +418,7 @@ window.CBO = window.CBO || {};
       const toolMode = String(activeButton.dataset.toolMode || "").toLowerCase();
       const syncGroup = String(activeButton.dataset.toolSync || "").toLowerCase();
 
-      activeTool = label === "BRUSH" || (toolMode === "brush" && syncGroup === "brush");
+      activeTool = isBrushPreviewTool(label, toolMode, syncGroup);
     }
 
     renderIfNeeded();

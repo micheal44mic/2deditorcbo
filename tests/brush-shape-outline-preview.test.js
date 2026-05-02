@@ -36,7 +36,9 @@ test("brush shape outline preview extracts a single alpha outline and scales lik
   assert.match(source, /const rotation = getShapeBaseRotation\(settings\) \+ pointerAngle \* getShapeRotation\(settings\)/);
   assert.match(source, /canvas\.style\.transform = `rotate\(\$\{rotation\}rad\) scale\(\$\{getPreviewScale\(settings, camera\)\}\)`/);
   assert.match(source, /cbo:brush-settings-preview-change/);
-  assert.match(source, /label === "BRUSH" \|\| \(toolMode === "brush" && syncGroup === "brush"\)/);
+  assert.match(source, /function isBrushPreviewTool\(label, toolMode, syncGroup\)/);
+  assert.match(source, /label === "BRUSH" \|\|[\s\S]*label === "ERASER" \|\|[\s\S]*toolMode === "eraser" \|\|[\s\S]*\(toolMode === "brush" && syncGroup === "brush"\)/);
+  assert.match(source, /activeTool = isBrushPreviewTool\(label, toolMode, syncGroup\)/);
   assert.match(source, /function updatePointerPosition\(event\)/);
   assert.match(source, /wrapper\.style\.transform = `translate\(\$\{x\}px, \$\{y\}px\)`/);
   assert.match(source, /resetPointerTracking\(\);\s*updatePointerPosition\(event\)/);
