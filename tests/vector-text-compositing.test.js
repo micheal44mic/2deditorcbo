@@ -134,8 +134,11 @@ test("vector text renderer caches visual text into the matching WebGL layer targ
   assert.match(source, /rasterizer\.placeRasterImage\(image,/);
   assert.match(source, /layerId: layer\.id/);
   assert.match(source, /getTextLayerRasterBox\(layer, pathBounds, size\)/);
+  assert.match(source, /renderer\.rasterTargetsByLayerId\?\.get\?\.?\(layer\.id\)/);
+  assert.match(source, /cached\?\.signature === signature && \(!rasterBox \|\| hasRasterTarget\)/);
   assert.match(source, /x: rasterBox\.x/);
   assert.match(source, /y: rasterBox\.y/);
+  assert.match(source, /renderer\.invalidatePreviewCache\?\.\("vector-text-cache"\)/);
   assert.doesNotMatch(source, /type:\s*"paint"[\s\S]{0,120}vector-text-cache/);
 });
 

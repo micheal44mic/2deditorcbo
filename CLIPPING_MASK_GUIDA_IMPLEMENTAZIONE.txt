@@ -1,0 +1,1418 @@
+GUIDA IMPLEMENTAZIONE CLIPPING MASK - EDITOR 2D CBO
+====================================================
+
+Scopo del documento
+-------------------
+
+Questo documento spiega come implementare la CLIPPING MASK in questa app per una
+persona che vede il progetto per la prima volta e non puo' aprire i sorgenti.
+
+Non parla di layer mask dipinte. Qui parliamo della logica tipo Photoshop:
+un layer sopra viene mostrato solo dentro l'alpha del layer sotto.
+
+Esempio visivo:
+
+  Texture colore      [clipping mask ON]
+  Ombra               [clipping mask ON]
+  Forma base          [normale]
+  Background          [normale]
+
+Texture colore e Ombra restano layer indipendenti, ma si vedono solo dove
+Forma base ha pixel visibili. I pixel fuori dalla forma NON vengono cancellati:
+sono solo nascosti dal compositing.
+
+
+Glossario minimo
+----------------
+
+Layer base:
+  Il primo layer valido sotto a uno o piu' clipping layer. La sua trasparenza
+  decide dove i layer clippati si vedono.
+
+Clipping layer:
+  Un layer con flag "clippingMask: true". Si disegna normalmente nella sua
+  texture, ma in output viene moltiplicato per l'alpha del layer base.
+
+Alpha:
+  Canale trasparenza di una texture. 0 = invisibile, 1 = visibile.
+
+FBO:
+  Framebuffer WebGL. In questa app ogni layer raster ha una texture/FBO.
+
+Premultiplied alpha:
+  Questa app usa colori premoltiplicati. Se si applica una clipping mask, bisogna
+  moltiplicare tutto il vec4 colore, non solo outColor.a.
+
+
+Comportamento richiesto
+-----------------------
+
+1. L'utente fa tasto destro su un layer.
+2. Nel menu contestuale sceglie "CLIPPING MASK".
+3. Il layer selezionato riceve il flag:
+
+     clippingMask: true
+
+4. La UI del layer mostra un indicatore/freccia a sinistra della riga, cosi'
+   si capisce che quel layer e' clippato al layer sotto.
+5. Il renderer WebGL disegna quel layer usando l'alpha del layer base sotto.
+6. Se piu' layer consecutivi sopra hanno clippingMask true, tutti usano lo
+   stesso layer base sotto.
+7. Se il clipping viene disattivato, i pixel tornano visibili normalmente.
+8. Undo/redo deve funzionare per il toggle del flag, usando la history layer
+   gia' esistente.
+
+
+Regole consigliate per V1
+-------------------------
+
+Un layer puo' diventare clipping mask solo se:
+
+  - non e' un gruppo
+  - non e' il background
+  - non e' locked
+  - sotto di lui esiste un layer contenuto valido
+
+Un layer base valido e':
+
+  - paint
+  - image
+  - vector-text se ha raster target sincronizzato
+
+Per V1 e' accettabile non supportare perfettamente i confini dei gruppi:
+l'app attuale renderizza i gruppi appiattendo i layer. Se si vuole una logica
+identica a Photoshop dentro/fuori gruppo, serve un pass successivo.
+
+
+Architettura attuale dell'app
+-----------------------------
+
+L'app e' una web app vanilla JavaScript con WebGL2.
+
+Startup:
+
+  index.html carica gli script in ordine.
+  js/app.js inizializza i moduli al DOMContentLoaded.
+
+Ordine di inizializzazione importante:
+
+  window.CBO.initLayersPanel();
+  window.CBO.initTopToolbar();
+  window.CBO.initVerticalToolbar();
+  window.CBO.initToolbar();
+  window.CBO.initEditorCanvas();
+  window.CBO.initVectorTextRenderer();
+
+I file principali per la clipping mask sono:
+
+  js/document/document-layer-model.js
+    Modello dati dei layer: id, type, visible, locked, opacity, children, ecc.
+
+  js/layers-panel.js
+    UI dei layer, context menu con tasto destro, serializzazione DOM -> model.
+
+  js/document/document-renderer.js
+    Renderer WebGL2, compositing dei layer, shader, texture/FBO per layer.
+
+  js/brush-engine.js
+    Disegno brush/eraser. Serve solo per assicurarsi che il preview dello stroke
+    sul layer clippato venga mostrato clippato.
+
+  js/editor-canvas.js
+    Crea DocumentLayerModel, DocumentRenderer, BrushEngine, SmudgeEngine.
+
+  tests/*.test.js
+    Test Node statici e alcuni test VM. Vanno aggiornati o aggiunti.
+
+
+Come sono ordinati i layer oggi
+-------------------------------
+
+Nel model, la lista entries e' top-to-bottom:
+
+  entries[0] = layer piu' in alto
+  entries[entries.length - 1] = background in basso
+
+Nel renderer, invece, si disegna bottom-to-top.
+
+Codice attuale da conoscere:
+
+  // js/document/document-layer-model.js
+
+  flattenTopToBottom(entries = this.entries, ancestorsVisible = true) {
+    const result = [];
+
+    for (const entry of entries) {
+      const visible = ancestorsVisible && entry.visible !== false;
+
+      if (entry.type === "group") {
+        result.push(...this.flattenTopToBottom(entry.children || [], visible));
+        continue;
+      }
+
+      result.push({
+        ...this.cloneEntry(entry),
+        visible,
+      });
+    }
+
+    return result;
+  }
+
+  getRenderableLayers() {
+    return this.flattenTopToBottom()
+      .filter((entry) => entry.visible !== false)
+      .reverse();
+  }
+
+Nota:
+  getRenderableLayers() elimina i layer nascosti e poi inverte l'ordine.
+  Per clipping mask sarebbe meglio avere anche una lista bottom-to-top che
+  includa i layer nascosti, per evitare un bug:
+
+    se il base layer e' hidden, i clipped layer sopra NON devono saltare al
+    layer visibile ancora piu' sotto.
+
+
+Metadata layer: cosa aggiungere
+-------------------------------
+
+Il modo piu' semplice e coerente e' aggiungere un campo booleano:
+
+  clippingMask: true
+
+Esempio layer:
+
+  {
+    id: "paint-abc",
+    type: "paint",
+    name: "Texture",
+    visible: true,
+    locked: false,
+    opacity: 1,
+    clippingMask: true
+  }
+
+Per fortuna il modello attuale conserva gia' i campi extra nei layer normali.
+Questo e' il pezzo importante:
+
+  // js/document/document-layer-model.js
+
+  createBaseLayer(options = {}) {
+    const type = options.type || "layer";
+    const baseKeys = new Set([
+      "id",
+      "type",
+      "name",
+      "visible",
+      "locked",
+      "opacity",
+      "children",
+    ]);
+    const extras = Object.fromEntries(
+      Object.entries(options)
+        .filter(([key]) => !baseKeys.has(key))
+        .map(([key, value]) => [key, this.cloneValue(value)]),
+    );
+
+    return {
+      ...extras,
+      id: options.id || this.createId(type),
+      type,
+      name: options.name || this.getFallbackName(type),
+      visible: options.visible !== false,
+      locked: options.locked === true,
+      opacity: Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1,
+    };
+  }
+
+Quindi, tecnicamente, "clippingMask" puo' gia' passare come extra.
+Per chiarezza pero' e' meglio esplicitarlo:
+
+  return {
+    ...extras,
+    id: options.id || this.createId(type),
+    type,
+    name: options.name || this.getFallbackName(type),
+    visible: options.visible !== false,
+    locked: options.locked === true,
+    opacity: Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1,
+    clippingMask: options.clippingMask === true,
+  };
+
+Attenzione:
+  Per i group, normalizeEntries oggi passa solo id/name/visible/locked/opacity/children.
+  V1 non deve mettere clippingMask sui group, quindi va bene.
+
+
+UI layer panel: context menu tasto destro
+----------------------------------------
+
+Il menu tasto destro esiste gia' in js/layers-panel.js, ma oggi contiene solo
+il comando per il reference layer del color fill.
+
+Codice attuale importante:
+
+  let layerContextMenu = null;
+  let contextMenuLayerId = "";
+
+  function ensureLayerContextMenu() {
+    if (layerContextMenu) {
+      return layerContextMenu;
+    }
+
+    layerContextMenu = document.createElement("div");
+    layerContextMenu.className = "layer-context-menu";
+    layerContextMenu.hidden = true;
+    layerContextMenu.setAttribute("role", "menu");
+    layerContextMenu.innerHTML = `
+      <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="reference"></button>
+    `;
+
+    layerContextMenu.addEventListener("click", (event) => {
+      const target = event.target;
+      const actionButton = target instanceof Element
+        ? target.closest("[data-layer-context-action]")
+        : null;
+
+      if (!actionButton) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (actionButton.dataset.layerContextAction === "reference") {
+        const currentReferenceId = getReferenceLayerId();
+
+        if (currentReferenceId && currentReferenceId === contextMenuLayerId) {
+          clearReferenceLayerId();
+        } else {
+          setReferenceLayerId(contextMenuLayerId);
+        }
+
+        syncReferenceLayerUi();
+      }
+
+      closeLayerContextMenu();
+    });
+
+    document.body.appendChild(layerContextMenu);
+
+    return layerContextMenu;
+  }
+
+Da cambiare in:
+
+  layerContextMenu.innerHTML = `
+    <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="reference"></button>
+    <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="clipping-mask"></button>
+  `;
+
+Poi aggiungere funzioni helper:
+
+  function getFlatContentLayersTopToBottom() {
+    return layerModel?.flattenTopToBottom?.() || [];
+  }
+
+  function getLayerBelow(layerId) {
+    const layers = getFlatContentLayersTopToBottom();
+    const index = layers.findIndex((layer) => layer.id === layerId);
+
+    return index >= 0 ? layers[index + 1] || null : null;
+  }
+
+  function isClippingMaskAllowed(layerId) {
+    const layer = layerModel?.findEntryById?.(layerId);
+    const below = getLayerBelow(layerId);
+
+    if (!layer || layer.locked === true) {
+      return false;
+    }
+
+    if (layer.type === "group" || layer.type === "background" || layer.id === "background") {
+      return false;
+    }
+
+    if (!below || below.type === "background" || below.type === "group") {
+      return false;
+    }
+
+    return true;
+  }
+
+  function toggleClippingMask(layerId) {
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!layer || !isClippingMaskAllowed(layerId)) {
+      return false;
+    }
+
+    const nextValue = layer.clippingMask !== true;
+
+    return layerModel.updateLayer(layerId, {
+      clippingMask: nextValue,
+    }, {
+      historyGroup: `clipping-mask-${layerId}`,
+      source: "layers-panel-clipping-mask",
+    });
+  }
+
+Nel listener click del menu:
+
+  if (actionButton.dataset.layerContextAction === "clipping-mask") {
+    toggleClippingMask(contextMenuLayerId);
+    syncClippingMaskUi();
+    closeLayerContextMenu();
+    return;
+  }
+
+Nel metodo openLayerContextMenu(row, event), impostare testo e stato:
+
+  function openLayerContextMenu(row, event) {
+    if (!isReferenceableLayerRow(row)) {
+      closeLayerContextMenu();
+      return;
+    }
+
+    const menu = ensureLayerContextMenu();
+    const referenceButton = menu.querySelector("[data-layer-context-action='reference']");
+    const clippingButton = menu.querySelector("[data-layer-context-action='clipping-mask']");
+    const layerId = getLayerId(row);
+    const layer = layerModel?.findEntryById?.(layerId);
+    const isReference = layerId && getReferenceLayerId() === layerId;
+    const isClipping = layer?.clippingMask === true;
+    const canClip = isClippingMaskAllowed(layerId) || isClipping;
+
+    contextMenuLayerId = layerId;
+
+    referenceButton.textContent = isReference ? "REMOVE REFERENCE" : "SET AS REFERENCE";
+    referenceButton.setAttribute("aria-checked", String(isReference));
+
+    clippingButton.textContent = isClipping ? "RELEASE CLIPPING MASK" : "CREATE CLIPPING MASK";
+    clippingButton.setAttribute("aria-checked", String(isClipping));
+    clippingButton.disabled = !canClip;
+    clippingButton.classList.toggle("disabled", !canClip);
+
+    positionLayerContextMenu(menu, event.clientX, event.clientY);
+  }
+
+
+UI layer row: freccia a sinistra
+--------------------------------
+
+La riga layer oggi viene creata in createLayerEntry().
+
+Codice attuale da conoscere:
+
+  function createLayerEntry(layerName, type = "layer", id = "", state = {}) {
+    const entry = document.createElement("div");
+    const row = document.createElement("div");
+    const layerId = id || layerModel?.createId(type) || `${type}-${Date.now().toString(36)}`;
+
+    entry.className = `layer-entry ${type === "group" ? "layer-group-entry" : ""}`;
+    entry.dataset.layerEntry = "";
+    entry.dataset.layerId = layerId;
+    entry.dataset.layerType = type;
+    row.className = `layer-row ${type === "group" ? "layer-group-row" : ""}`;
+    row.role = "option";
+    row.tabIndex = 0;
+    row.dataset.layerRow = "";
+    row.dataset.layerId = layerId;
+    row.dataset.layerType = type;
+    row.innerHTML = `
+      <div class="layer-info">
+        ${getDisclosureControl(type)}
+        <span class="layer-file-icon" aria-hidden="true">
+          ${getLayerIcon(type)}
+        </span>
+        <span class="layer-name">${layerName}</span>
+      </div>
+      ${createLayerActions()}
+    `;
+
+    entry.append(row);
+    applyLayerState(row, state);
+
+    ...
+  }
+
+Da modificare aggiungendo un indicatore prima dell'icona:
+
+  function getClippingMaskIndicator() {
+    return `
+      <span class="layer-clipping-indicator" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 12h10" />
+          <path d="m12 8 4 4-4 4" />
+        </svg>
+      </span>
+    `;
+  }
+
+Poi:
+
+  row.innerHTML = `
+    <div class="layer-info">
+      ${getDisclosureControl(type)}
+      ${getClippingMaskIndicator()}
+      <span class="layer-file-icon" aria-hidden="true">
+        ${getLayerIcon(type)}
+      </span>
+      <span class="layer-name">${layerName}</span>
+    </div>
+    ${createLayerActions()}
+  `;
+
+In applyLayerState aggiungere la classe:
+
+  function applyLayerState(row, state = {}) {
+    const lockButton = row.querySelector("[data-layer-lock]");
+    const visibilityButton = row.querySelector("[data-layer-visibility]");
+    const isBackground = isBackgroundRow(row);
+    const isLocked = isBackground || state.locked === true;
+    const isHidden = state.visible === false;
+    const isClipping = state.clippingMask === true;
+
+    row.classList.toggle("locked", isLocked);
+    row.classList.toggle("hidden-layer", isHidden);
+    row.classList.toggle("clipping-mask", isClipping);
+    row.setAttribute("aria-description", isClipping ? "Clipping mask" : "");
+
+    ...
+  }
+
+Meglio non usare aria-description vuoto. Versione pulita:
+
+  if (isClipping) {
+    row.setAttribute("aria-description", "Clipping mask");
+  } else if (!row.classList.contains("reference-layer")) {
+    row.removeAttribute("aria-description");
+  }
+
+CSS indicativo da mettere in css/layers-panel.css:
+
+  .layer-clipping-indicator {
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    color: var(--layer-muted-color, currentColor);
+    flex: 0 0 14px;
+  }
+
+  .layer-clipping-indicator svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .layer-row.clipping-mask .layer-clipping-indicator {
+    opacity: 1;
+  }
+
+  .layer-row.clipping-mask .layer-file-icon {
+    transform: translateX(2px);
+  }
+
+Nota UI:
+  La freccia deve stare a sinistra del layer clippato, non sul layer base.
+  Deve comunicare: "questo layer si aggancia a quello sotto".
+
+
+Serializzazione layer panel
+---------------------------
+
+Il layer panel serializza il DOM nel model. Per fortuna preserva gia' i campi
+extra trovati nel model:
+
+  // js/layers-panel.js
+
+  const preservedEntry = existingEntry
+    ? Object.fromEntries(
+        Object.entries(existingEntry)
+          .filter(([key]) => !["id", "type", "name", "visible", "locked", "opacity", "children"].includes(key)),
+      )
+    : {};
+
+  const serialized = {
+    ...preservedEntry,
+    id,
+    type,
+    name: ...,
+    visible: ...,
+    locked: ...,
+    opacity: 1,
+  };
+
+Quindi clippingMask resta preservato durante rename, reorder, lock, visibility.
+Da testare bene quando si copia un layer: il clone probabilmente copia anche
+clippingMask. Questo e' corretto solo se il clone resta sopra un layer base
+valido. Se si vuole evitare casi strani, durante clone si puo' azzerare:
+
+  copiedLayer.clippingMask = false;
+
+Ma per V1 si puo' anche preservare, perche' e' comportamento simile agli editor
+grafici: duplicare un clipping layer mantiene il clipping.
+
+
+Renderer: logica di compositing
+-------------------------------
+
+Il renderer oggi disegna ogni layer raster bottom-to-top.
+
+Codice attuale importante:
+
+  // js/document/document-renderer.js
+
+  drawToCanvas(options = {}) {
+    ...
+    const renderableLayers = this.getRenderableLayers();
+    ...
+
+    for (const layer of renderableLayers) {
+      const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+      const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
+      const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
+      const isRasterTransformPreviewLayer = rasterTransformPreview?.layerId === layer.id;
+      const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
+        ? options.activeStrokeTexture
+        : null;
+
+      if (layerTarget?.texture) {
+        ...
+        drawTexture(layerTarget.texture, opacity);
+        ...
+      }
+
+      if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
+        drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect);
+        didDrawActiveStroke = true;
+      }
+    }
+  }
+
+La clipping mask va inserita qui.
+
+Concetto:
+
+  currentClipBase = ultimo layer non clippato incontrato sotto
+
+Durante il loop bottom-to-top:
+
+  - se layer.clippingMask !== true:
+      diventa il nuovo currentClipBase
+      si disegna normale
+
+  - se layer.clippingMask === true:
+      NON diventa base
+      si disegna moltiplicato per alpha di currentClipBase
+
+Esempio bottom-to-top:
+
+  Background       normale, base potenziale ma da ignorare o considerare invalido
+  Forma base       normale -> currentClipBase = Forma base
+  Ombra            clipping -> usa alpha Forma base
+  Texture          clipping -> usa alpha Forma base
+  Lineart          normale -> currentClipBase = Lineart
+  Highlight        clipping -> usa alpha Lineart
+
+
+Shader renderer: stato attuale
+------------------------------
+
+Il fragment shader del renderer ha gia' una logica "mask", ma oggi serve per
+preview eraser, cioe' sottrae alpha temporaneamente.
+
+Codice attuale importante:
+
+  uniform sampler2D u_texture;
+  uniform sampler2D u_maskTexture;
+  uniform float u_opacity;
+  uniform vec2 uDocumentSize;
+  uniform float uCameraZoom;
+  uniform float u_gridMode;
+  uniform float u_maskMode;
+  uniform vec4 u_maskRect;
+  uniform float u_maskRectMode;
+  uniform float u_previewCutMode;
+  uniform vec4 u_previewCutRect;
+
+  ...
+
+  vec4 color = texture(u_texture, v_uv) * u_opacity;
+
+  if (u_previewCutMode > 0.5) {
+    ...
+  }
+
+  if (u_maskMode > 0.5) {
+    float eraseAlpha = 0.0;
+
+    if (u_maskRectMode > 0.5) {
+      vec2 local = (v_documentPixel - u_maskRect.xy) / max(u_maskRect.zw, vec2(1.0));
+
+      if (!any(lessThan(local, vec2(0.0))) && !any(greaterThan(local, vec2(1.0)))) {
+        eraseAlpha = clamp(texture(u_maskTexture, vec2(local.x, 1.0 - local.y)).a, 0.0, 1.0);
+      }
+    } else {
+      eraseAlpha = clamp(texture(u_maskTexture, v_uv).a, 0.0, 1.0);
+    }
+
+    color *= 1.0 - eraseAlpha;
+  }
+
+  outColor = color;
+
+Non riusare u_maskMode per clipping mask, perche' quella logica e' "erase":
+
+  color *= 1.0 - eraseAlpha
+
+La clipping invece deve essere:
+
+  color *= clipAlpha
+
+Quindi servono uniform separati.
+
+
+Shader renderer: codice da aggiungere
+-------------------------------------
+
+Aggiungere uniform:
+
+  uniform sampler2D u_clipTexture;
+  uniform float u_clipMode;
+  uniform float u_clipOpacity;
+  uniform vec2 u_clipTextureSize;
+  uniform vec2 u_drawOrigin;
+
+Perche' u_drawOrigin serve:
+  Normalmente i layer sono texture grandi quanto il documento e v_uv basta.
+  Ma lo stroke attivo del brush viene disegnato come texture piccola/ritagliata
+  con activeStrokeRect. In quel caso v_documentPixel e' locale al rettangolo,
+  quindi serve ricostruire la posizione reale nel documento:
+
+    globalDocPixel = u_drawOrigin + v_documentPixel
+
+Codice shader suggerito:
+
+  if (u_clipMode > 0.5) {
+    vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+    vec2 clipUv = vec2(
+      globalDocPixel.x / max(u_clipTextureSize.x, 1.0),
+      1.0 - globalDocPixel.y / max(u_clipTextureSize.y, 1.0)
+    );
+    float clipAlpha = 0.0;
+
+    if (
+      clipUv.x >= 0.0 &&
+      clipUv.x <= 1.0 &&
+      clipUv.y >= 0.0 &&
+      clipUv.y <= 1.0
+    ) {
+      clipAlpha = texture(u_clipTexture, clipUv).a * clamp(u_clipOpacity, 0.0, 1.0);
+    }
+
+    color *= clipAlpha;
+  }
+
+Posizione nel fragment shader:
+  Applicare la clipping DOPO eventuale previewCut e DOPO eraser preview.
+  Cosi':
+
+    1. prendo colore layer
+    2. applico preview cut transform se serve
+    3. applico eraser preview se sto cancellando
+    4. applico clipping mask
+    5. outColor = color
+
+
+createProgramInfo: uniform da registrare
+----------------------------------------
+
+Nel renderer esiste createProgramInfo().
+
+Codice attuale importante:
+
+  return {
+    program,
+    uniforms: {
+      cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
+      cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
+      documentSize: gl.getUniformLocation(program, "uDocumentSize"),
+      maskMode: gl.getUniformLocation(program, "u_maskMode"),
+      maskRect: gl.getUniformLocation(program, "u_maskRect"),
+      maskRectMode: gl.getUniformLocation(program, "u_maskRectMode"),
+      maskTexture: gl.getUniformLocation(program, "u_maskTexture"),
+      previewCutMode: gl.getUniformLocation(program, "u_previewCutMode"),
+      previewCutRect: gl.getUniformLocation(program, "u_previewCutRect"),
+      texture: gl.getUniformLocation(program, "u_texture"),
+      viewportSize: gl.getUniformLocation(program, "uViewportSize"),
+      opacity: gl.getUniformLocation(program, "u_opacity"),
+      gridMode: gl.getUniformLocation(program, "u_gridMode"),
+    },
+  };
+
+Aggiungere:
+
+      clipMode: gl.getUniformLocation(program, "u_clipMode"),
+      clipOpacity: gl.getUniformLocation(program, "u_clipOpacity"),
+      clipTexture: gl.getUniformLocation(program, "u_clipTexture"),
+      clipTextureSize: gl.getUniformLocation(program, "u_clipTextureSize"),
+      drawOrigin: gl.getUniformLocation(program, "u_drawOrigin"),
+
+
+drawToCanvas: helper drawTexture da estendere
+------------------------------------------------
+
+Oggi drawTexture e':
+
+  const drawTexture = (texture, opacity, rect = null) => {
+    if (rect) {
+      setDocumentProjection(
+        rect.width,
+        rect.height,
+        (camera.x || 0) + rect.x * (camera.zoom || 1),
+        (camera.y || 0) + rect.y * (camera.zoom || 1),
+      );
+    } else {
+      setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1f(uniforms.opacity, opacity);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  };
+
+Versione suggerita:
+
+  const drawTexture = (texture, opacity, rect = null, clipBase = null) => {
+    if (rect) {
+      setDocumentProjection(
+        rect.width,
+        rect.height,
+        (camera.x || 0) + rect.x * (camera.zoom || 1),
+        (camera.y || 0) + rect.y * (camera.zoom || 1),
+      );
+      gl.uniform2f(uniforms.drawOrigin, rect.x, rect.y);
+    } else {
+      setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
+      gl.uniform2f(uniforms.drawOrigin, 0, 0);
+    }
+
+    if (clipBase?.target?.texture) {
+      const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
+        ? Math.min(1, Math.max(0, clipBase.layer.opacity))
+        : 1;
+
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
+      gl.uniform1i(uniforms.clipTexture, 2);
+      gl.uniform1f(uniforms.clipMode, 1.0);
+      gl.uniform1f(uniforms.clipOpacity, clipOpacity);
+      gl.uniform2f(
+        uniforms.clipTextureSize,
+        clipBase.target.width || target.width,
+        clipBase.target.height || target.height,
+      );
+      gl.activeTexture(gl.TEXTURE0);
+    } else {
+      gl.uniform1f(uniforms.clipMode, 0.0);
+      gl.uniform1f(uniforms.clipOpacity, 1.0);
+      gl.uniform2f(uniforms.clipTextureSize, target.width, target.height);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1f(uniforms.opacity, opacity);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    if (clipBase?.target?.texture) {
+      gl.uniform1f(uniforms.clipMode, 0.0);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.activeTexture(gl.TEXTURE0);
+    }
+  };
+
+In bindArtboardProgram inizializzare i nuovi uniform:
+
+  gl.uniform1i(uniforms.texture, 0);
+  gl.uniform1i(uniforms.maskTexture, 1);
+  gl.uniform1i(uniforms.clipTexture, 2);
+  gl.uniform1f(uniforms.clipMode, 0.0);
+  gl.uniform1f(uniforms.clipOpacity, 1.0);
+  gl.uniform2f(uniforms.clipTextureSize, target.width, target.height);
+  gl.uniform2f(uniforms.drawOrigin, 0, 0);
+
+
+drawToCanvas: loop layer suggerito
+----------------------------------
+
+Prima aggiungere helper nel class DocumentRenderer:
+
+  getOrderedLayersBottomToTop() {
+    const layers = this.layerModel?.flattenTopToBottom?.();
+
+    if (Array.isArray(layers)) {
+      return layers.reverse();
+    }
+
+    return [{
+      id: this.paintLayerId || "paint-main",
+      type: "paint",
+      visible: true,
+      opacity: 1,
+    }];
+  }
+
+Poi, dentro drawToCanvas, usare questa lista per la logica clipping:
+
+  const orderedLayers = this.getOrderedLayersBottomToTop();
+  const visibleRenderableLayers = orderedLayers.filter((layer) => layer.visible !== false);
+
+Per preview cache e activeStrokeLayerIndex si puo' usare visibleRenderableLayers.
+
+Loop robusto:
+
+  let currentClipBase = null;
+
+  for (const layer of orderedLayers) {
+    const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+    const isClippingLayer = layer.clippingMask === true;
+    const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
+    const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
+    const isRasterTransformPreviewLayer = rasterTransformPreview?.layerId === layer.id;
+    const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
+      ? options.activeStrokeTexture
+      : null;
+    const clipBase = isClippingLayer ? currentClipBase : null;
+
+    if (!isClippingLayer) {
+      currentClipBase = {
+        layer,
+        target: layerTarget,
+        visible: layer.visible !== false,
+      };
+    }
+
+    if (layer.visible === false) {
+      continue;
+    }
+
+    if (isClippingLayer && (!clipBase?.visible || !clipBase?.target?.texture)) {
+      continue;
+    }
+
+    if (layerTarget?.texture) {
+      if (isRasterTransformPreviewLayer) {
+        setPreviewCut(rasterTransformPreview.sourceRect);
+      }
+
+      if (eraserMaskTexture) {
+        // codice eraser mask attuale invariato
+      }
+
+      if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
+        // Per V1: se il layer e' clippingMask, evitare puppet clipping o
+        // implementare clipping anche nello shader puppet.
+        // Soluzione temporanea sicura:
+        if (isClippingLayer) {
+          drawTexture(layerTarget.texture, opacity, null, clipBase);
+        } else {
+          const didDrawPuppet = this.drawPuppetLayer(...);
+          ...
+        }
+      } else {
+        drawTexture(layerTarget.texture, opacity, null, clipBase);
+      }
+
+      if (isRasterTransformPreviewLayer) {
+        setPreviewCut(null);
+      }
+
+      if (eraserMaskTexture) {
+        // reset eraser mask attuale invariato
+      }
+    }
+
+    if (isRasterTransformPreviewLayer) {
+      // Per transform preview, passare clipBase se il layer e' clipping.
+      drawRasterTransformPreview(opacity, clipBase);
+    }
+
+    if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
+      drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect, clipBase);
+      didDrawActiveStroke = true;
+    }
+  }
+
+Nota importante:
+  Quando un layer e' clippingMask true, NON deve diventare currentClipBase.
+  Altrimenti il secondo clipping layer consecutivo si clipperebbe sul primo,
+  invece deve clippare sullo stesso base layer sotto.
+
+
+Preview cache zoom out
+----------------------
+
+Il renderer ha una preview cache per lo zoom out:
+
+  updatePreviewCache()
+
+Oggi ricompone tutti i layer in una texture unica, ma non conosce clipping.
+Se non viene aggiornata, a zoom out il documento puo' apparire sbagliato.
+
+Soluzione V1 piu' sicura:
+
+  disattivare preview cache quando esiste almeno un clipping layer.
+
+Codice concettuale:
+
+  const hasClippingMasks = orderedLayers.some((layer) => layer.clippingMask === true);
+
+  const canUsePreviewCache = Boolean(
+    isZoomedOut &&
+    !hasClippingMasks &&
+    !rasterTransformPreview &&
+    !hasActiveEraserStroke &&
+    activeStrokeCanOverlayPreview &&
+    this.previewTexture &&
+    this.previewFramebuffer
+  );
+
+Soluzione migliore:
+  aggiornare updatePreviewCache() con la stessa logica currentClipBase usata da
+  drawToCanvas().
+
+Il loop in updatePreviewCache oggi e':
+
+  for (const layer of this.getRenderableLayers()) {
+    const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+    const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
+
+    if (!layerTarget?.texture) {
+      continue;
+    }
+
+    if (this.hasPuppetLayerTransform(layer)) {
+      ...
+    } else {
+      drawTexture(layerTarget.texture, opacity);
+    }
+  }
+
+Va trasformato con currentClipBase come sopra.
+
+
+Puppet e raster transform
+-------------------------
+
+Ci sono due percorsi speciali:
+
+  drawPuppetLayer()
+  drawPerspectiveTexturedQuad() / drawTexturedQuad()
+
+Questi hanno shader separati. Se un layer con puppet transform e' clippingMask,
+la clipping non viene applicata automaticamente dallo shader principale.
+
+Per V1, scelta consigliata:
+
+  - se layer.clippingMask true, disegnare il layer con drawTexture normale
+    senza puppet transform, oppure disabilitare clipping per puppet layer.
+
+Ma se si vuole supporto completo:
+
+  - aggiungere u_clipTexture anche agli shader puppet/perspective
+  - passare posizione documento o UV coerenti
+  - moltiplicare outColor per clipAlpha
+
+Questo e' piu' lungo. Non farlo nel primo step se l'obiettivo e' avere clipping
+mask stabile sui layer raster normali.
+
+
+Brush active stroke su clipping layer
+-------------------------------------
+
+Il brush disegna prima su una texture temporanea "strokeTexture" e poi fa bake
+sul layer.
+
+Codice attuale importante:
+
+  // js/brush-engine.js
+
+  draw() {
+    const target = this.getPaintTarget();
+    const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
+
+    this.documentRenderer.drawToCanvas({
+      activeStrokeLayerId,
+      activeStrokeMode: this.currentStrokeTool === "eraser" ? "eraser" : "paint",
+      activeStrokeRect: this.strokeBufferRect,
+      activeStrokeTexture: this.isDrawing ? this.strokeTexture : null,
+      camera: this.camera,
+      viewportWidth: this.viewportWidth,
+      viewportHeight: this.viewportHeight,
+    });
+  }
+
+Se il layer attivo e' clippingMask true:
+
+  - il bake deve comunque scrivere normalmente nel layer
+  - solo la visualizzazione deve essere clippata
+
+Quindi non serve cambiare bakeStroke().
+Serve invece che drawToCanvas(), quando disegna activeStrokeTexture, passi lo
+stesso clipBase del layer attivo:
+
+  if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
+    drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect, clipBase);
+    didDrawActiveStroke = true;
+  }
+
+Per eraser preview:
+  il layer viene mostrato con eraser mask temporanea e poi clipping mask.
+  Ordine nello shader:
+
+    layer color -> eraser preview -> clipping mask
+
+
+Smudge
+------
+
+Smudge oggi scrive solo sui layer paint.
+
+Codice attuale importante:
+
+  // js/smudge-engine.js
+
+  getActivePaintLayerTarget() {
+    const layerModel = this.documentRenderer?.layerModel;
+    const activeId = layerModel?.activeLayerId;
+
+    if (!activeId || typeof layerModel?.findEntryById !== "function") {
+      return null;
+    }
+
+    const activeLayer = layerModel.findEntryById(activeId);
+
+    if (activeLayer?.type !== "paint") {
+      return null;
+    }
+
+    ...
+  }
+
+Per V1 non serve cambiare smudge. Se si smudge-a un layer clippato, i pixel
+fuori base restano nel layer ma non visibili. Questo e' corretto.
+
+
+Color fill
+----------
+
+Color fill scrive sul layer attivo se e' paint o image.
+
+Codice attuale importante:
+
+  const canWriteActiveLayer =
+    activeLayer &&
+    activeLayer.locked !== true &&
+    (activeLayer.type === "paint" || activeLayer.type === "image");
+
+Se si riempie un clipping layer, il fill puo' riempire anche fuori dalla base,
+ma il renderer lo nasconde. Questo e' corretto per una clipping mask non
+distruttiva.
+
+
+History / undo redo
+-------------------
+
+Il toggle clippingMask e' un cambio metadata del layer, non pixel.
+Deve quindi usare la history layer-state gia' esistente.
+
+DocumentLayerModel.updateLayer() registra history automaticamente se non viene
+passato history:false.
+
+Codice attuale importante:
+
+  updateLayer(id, patch, options = {}) {
+    const entry = this.findEntryById(id);
+
+    if (!entry || entry.type === "group") {
+      return false;
+    }
+
+    const nextPatch = typeof patch === "function" ? patch(this.cloneEntry(entry)) : patch;
+
+    if (!nextPatch || typeof nextPatch !== "object") {
+      return false;
+    }
+
+    const beforeState = this.captureHistoryState(options);
+
+    Object.assign(entry, this.cloneValue(nextPatch));
+    entry.opacity = Number.isFinite(entry.opacity) ? Math.min(1, Math.max(0, entry.opacity)) : 1;
+
+    this.emitChange(options.source || "update-layer");
+    this.recordHistoryStateChange(beforeState, options);
+
+    return true;
+  }
+
+Quindi il toggle va fatto cosi':
+
+  layerModel.updateLayer(layerId, {
+    clippingMask: true,
+  }, {
+    historyGroup: `clipping-mask-${layerId}`,
+    source: "layers-panel-clipping-mask",
+  });
+
+
+Test consigliati
+----------------
+
+Aggiungere test statici simili agli altri in tests/.
+
+1. Test model:
+   "DocumentLayerModel preserves clippingMask on normal layers"
+
+   Verifiche:
+     - createLayer({ type: "paint", clippingMask: true }) mantiene il flag
+     - getEntries() contiene clippingMask true
+     - setEntries([...]) non perde il flag
+
+2. Test layers panel:
+   "layers panel exposes clipping mask context menu action and row indicator"
+
+   Verifiche statiche sul sorgente js/layers-panel.js:
+     - contiene data-layer-context-action="clipping-mask"
+     - contiene layer-clipping-indicator
+     - contiene row.classList.toggle("clipping-mask"
+     - contiene updateLayer(... clippingMask ...)
+
+3. Test renderer:
+   "renderer samples clip texture for clipping mask layers"
+
+   Verifiche statiche:
+     - shader contiene u_clipTexture
+     - shader contiene u_clipMode
+     - shader contiene color *= clipAlpha
+     - drawToCanvas mantiene currentClipBase
+     - layer.clippingMask === true non aggiorna currentClipBase
+     - activeStrokeTexture viene disegnato con clipBase
+
+4. Test preview cache:
+   Se si sceglie V1 sicura:
+     - canUsePreviewCache include !hasClippingMasks
+
+   Se si implementa preview cache completa:
+     - updatePreviewCache contiene currentClipBase e drawTexture(... clipBase)
+
+Comando test probabile:
+
+  node --test tests/*.test.js
+
+
+Sequenza di implementazione consigliata
+---------------------------------------
+
+Step 1 - Model:
+  - rendere esplicito clippingMask in createBaseLayer()
+  - aggiungere test model
+
+Step 2 - Layers UI:
+  - aggiungere voce context menu "CREATE CLIPPING MASK"
+  - aggiungere toggleClippingMask()
+  - aggiungere indicatore/freccia sinistra nella riga layer
+  - aggiungere CSS
+  - aggiungere test UI statico
+
+Step 3 - Renderer shader:
+  - aggiungere uniform u_clipTexture/u_clipMode/u_clipOpacity/u_clipTextureSize/u_drawOrigin
+  - aggiungere logica color *= clipAlpha
+  - registrare uniform in createProgramInfo()
+  - inizializzarli in bindArtboardProgram()
+
+Step 4 - Renderer drawToCanvas:
+  - usare lista bottom-to-top che conserva anche layer hidden
+  - mantenere currentClipBase
+  - disegnare clipping layer con clipBase
+  - disegnare activeStrokeTexture con clipBase
+  - se V1: disabilitare preview cache quando esistono clipping layer
+
+Step 5 - Preview cache:
+  - o tenerla disabilitata con clipping
+  - o aggiornare updatePreviewCache con stessa logica
+
+Step 6 - QA manuale:
+  - creare base layer con forma colorata
+  - creare layer sopra con pennellate fuori sagoma
+  - tasto destro -> create clipping mask
+  - verificare che fuori sagoma sparisca
+  - disattivare clipping e verificare che i pixel fuori sagoma tornino
+  - testare due clipping layer consecutivi sopra la stessa base
+  - testare undo/redo del toggle
+  - testare painting mentre clipping e' attivo
+  - testare eraser mentre clipping e' attivo
+  - testare hide base layer: clipped layer deve sparire
+  - testare reorder: se il layer clippato si sposta sopra un altro base, cambia base
+
+
+Edge case da decidere prima di scrivere codice
+----------------------------------------------
+
+1. Background come base:
+   Consiglio: non usare background come base valida. E' opaco e renderebbe la
+   clipping mask inutile.
+
+2. Layer base nascosto:
+   Il clipping layer deve sparire, non deve clippare sul layer piu' sotto.
+   Per questo il renderer deve conoscere anche i layer hidden durante il calcolo
+   currentClipBase.
+
+3. Layer base locked:
+   Locked non importa per il rendering. Un layer locked puo' essere base.
+
+4. Layer clipping locked:
+   Se locked, non permettere toggle da UI.
+
+5. Group:
+   V1: seguire il flatten attuale.
+   V2: rispettare confini gruppo.
+
+6. Opacity del base:
+   Consiglio V1: clipAlpha = baseTextureAlpha * baseLayerOpacity.
+   Se si vuole comportamento piu' simile a certi editor, si puo' usare solo
+   baseTextureAlpha. La scelta deve essere testata visivamente.
+
+7. Opacity del clipping layer:
+   Continua ad applicarsi normalmente:
+
+     color = layerTexture * clippingLayerOpacity * baseAlpha
+
+
+Mini patch concettuale completa
+-------------------------------
+
+Questa NON e' una patch pronta da incollare al 100%, ma e' il codice chiave
+che serve per capire la modifica.
+
+MODEL:
+
+  // document-layer-model.js, dentro createBaseLayer return
+  clippingMask: options.clippingMask === true,
+
+
+LAYERS PANEL:
+
+  function getClippingMaskIndicator() {
+    return `
+      <span class="layer-clipping-indicator" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 12h10" />
+          <path d="m12 8 4 4-4 4" />
+        </svg>
+      </span>
+    `;
+  }
+
+  function toggleClippingMask(layerId) {
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!layer || !isClippingMaskAllowed(layerId)) {
+      return false;
+    }
+
+    return layerModel.updateLayer(layerId, {
+      clippingMask: layer.clippingMask !== true,
+    }, {
+      historyGroup: `clipping-mask-${layerId}`,
+      source: "layers-panel-clipping-mask",
+    });
+  }
+
+
+SHADER:
+
+  uniform sampler2D u_clipTexture;
+  uniform float u_clipMode;
+  uniform float u_clipOpacity;
+  uniform vec2 u_clipTextureSize;
+  uniform vec2 u_drawOrigin;
+
+  ...
+
+  if (u_clipMode > 0.5) {
+    vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+    vec2 clipUv = vec2(
+      globalDocPixel.x / max(u_clipTextureSize.x, 1.0),
+      1.0 - globalDocPixel.y / max(u_clipTextureSize.y, 1.0)
+    );
+    float clipAlpha = 0.0;
+
+    if (clipUv.x >= 0.0 && clipUv.x <= 1.0 && clipUv.y >= 0.0 && clipUv.y <= 1.0) {
+      clipAlpha = texture(u_clipTexture, clipUv).a * clamp(u_clipOpacity, 0.0, 1.0);
+    }
+
+    color *= clipAlpha;
+  }
+
+
+RENDER LOOP:
+
+  let currentClipBase = null;
+
+  for (const layer of orderedLayers) {
+    const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+    const isClippingLayer = layer.clippingMask === true;
+    const clipBase = isClippingLayer ? currentClipBase : null;
+
+    if (!isClippingLayer) {
+      currentClipBase = {
+        layer,
+        target: layerTarget,
+        visible: layer.visible !== false,
+      };
+    }
+
+    if (layer.visible === false) {
+      continue;
+    }
+
+    if (isClippingLayer && (!clipBase?.visible || !clipBase?.target?.texture)) {
+      continue;
+    }
+
+    if (layerTarget?.texture) {
+      drawTexture(layerTarget.texture, opacity, null, clipBase);
+    }
+
+    if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
+      drawTexture(options.activeStrokeTexture, opacity, activeStrokeRect, clipBase);
+    }
+  }
+
+
+Definizione finale
+------------------
+
+La clipping mask in questa app deve essere un flag di compositing:
+
+  layer.clippingMask === true
+
+Non deve:
+
+  - creare una texture mask separata
+  - cancellare pixel
+  - modificare il layer base
+  - fare bake automatico
+
+Deve:
+
+  - usare l'alpha del layer sotto come maschera
+  - essere reversibile
+  - funzionare con undo/redo
+  - essere visibile nella UI layer con freccia a sinistra
+  - essere attivabile/disattivabile da tasto destro sul layer
+

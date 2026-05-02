@@ -1264,9 +1264,11 @@
       const rasterBox = getTextLayerRasterBox(layer, pathBounds, size);
       const signature = getTextRasterSignature(layer, pathData, size, rasterBox);
       const cached = this.rasterLayerCache.get(layer.id);
+      const existingTarget = renderer.rasterTargetsByLayerId?.get?.(layer.id);
+      const hasRasterTarget = Boolean(existingTarget?.texture && existingTarget?.framebuffer);
 
       if (
-        cached?.signature === signature ||
+        (cached?.signature === signature && (!rasterBox || hasRasterTarget)) ||
         cached?.pendingSignature === signature ||
         cached?.queuedSignature === signature
       ) {
@@ -1333,6 +1335,7 @@
 
       if (!rasterBox) {
         renderer.clearLayer(layer.id, { emit: false });
+        renderer.invalidatePreviewCache?.("vector-text-cache");
         this.rasterLayerCache.set(layer.id, {
           generation,
           pendingSignature: "",
@@ -1370,6 +1373,7 @@
             x: rasterBox.x,
             y: rasterBox.y,
           });
+          renderer.invalidatePreviewCache?.("vector-text-cache");
           this.debugTextRaster(layer, rasterBox, size, "vector-text-cache");
 
           this.rasterLayerCache.set(layer.id, {
