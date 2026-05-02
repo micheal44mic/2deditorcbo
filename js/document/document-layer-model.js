@@ -41,6 +41,7 @@
         "visible",
         "locked",
         "opacity",
+        "effects",
         "children",
       ]);
       const extras = Object.fromEntries(
@@ -49,7 +50,7 @@
           .map(([key, value]) => [key, this.cloneValue(value)]),
       );
 
-      return {
+      const layer = {
         ...extras,
         id: options.id || this.createId(type),
         type,
@@ -59,6 +60,36 @@
         opacity: Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1,
         clippingMask: options.clippingMask === true,
       };
+      const effects = this.normalizeLayerEffects(options.effects);
+
+      if (effects.length > 0) {
+        layer.effects = effects;
+      }
+
+      return layer;
+    }
+
+    normalizeLayerEffects(effects) {
+      if (!Array.isArray(effects)) {
+        return [];
+      }
+
+      return effects
+        .filter(Boolean)
+        .map((effect) => {
+          if (effect.type !== "gaussian-blur") {
+            return this.cloneValue(effect);
+          }
+
+          const radius = Number(effect.radius);
+
+          return {
+            type: "gaussian-blur",
+            enabled: effect.enabled !== false,
+            radius: Number.isFinite(radius) ? Math.max(0, Math.min(40, radius)) : 0,
+          };
+        })
+        .filter((effect) => effect.type !== "gaussian-blur" || effect.radius > 0);
     }
 
     createLayer(options = {}) {
@@ -195,6 +226,7 @@
               visible: entry.visible,
               locked: entry.locked,
               opacity: entry.opacity,
+              effects: entry.effects,
               children: entry.children,
             });
           }
@@ -397,6 +429,15 @@
 
       Object.assign(entry, this.cloneValue(nextPatch));
       entry.opacity = Number.isFinite(entry.opacity) ? Math.min(1, Math.max(0, entry.opacity)) : 1;
+      if (Object.prototype.hasOwnProperty.call(nextPatch, "effects")) {
+        const effects = this.normalizeLayerEffects(nextPatch.effects);
+
+        if (effects.length > 0) {
+          entry.effects = effects;
+        } else {
+          delete entry.effects;
+        }
+      }
 
       this.emitChange(options.source || "update-layer");
       this.recordHistoryStateChange(beforeState, options);

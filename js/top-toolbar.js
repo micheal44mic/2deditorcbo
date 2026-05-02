@@ -310,16 +310,27 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     return layer?.type === "vector-text" || layer?.type === "text" || layer?.kind === "text";
   }
 
+  function hasRasterizableLayerEffects(layer) {
+    return window.CBO.hasRasterizableLayerEffects?.(layer) === true &&
+      typeof window.CBO.rasterizeActiveLayerEffects === "function";
+  }
+
   function syncRasterizeTextButton() {
     if (!rasterizeTextButton) {
       return;
     }
 
-    const canRasterize = isVectorTextLayer(getActiveLayer()) &&
+    const activeLayer = getActiveLayer();
+    const canRasterizeText = isVectorTextLayer(activeLayer) &&
       typeof window.CBO.rasterizeActiveVectorTextLayer === "function";
+    const canRasterizeEffects = !canRasterizeText && hasRasterizableLayerEffects(activeLayer);
+    const canRasterize = canRasterizeText || canRasterizeEffects;
+    const tooltip = canRasterizeEffects ? "RASTERIZE EFFECTS" : "RASTERIZE TEXT";
 
     rasterizeTextButton.hidden = !canRasterize;
     rasterizeTextButton.disabled = !canRasterize;
+    rasterizeTextButton.dataset.rasterizeMode = canRasterizeEffects ? "effects" : "text";
+    rasterizeTextButton.dataset.tooltip = tooltip;
   }
 
   layersButton.addEventListener("click", () => {
@@ -337,9 +348,13 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     rasterizeTextButton.classList.add("active");
 
     try {
-      await window.CBO.rasterizeActiveVectorTextLayer?.();
+      if (rasterizeTextButton.dataset.rasterizeMode === "effects") {
+        await window.CBO.rasterizeActiveLayerEffects?.();
+      } else {
+        await window.CBO.rasterizeActiveVectorTextLayer?.();
+      }
     } catch (error) {
-      console.warn("Impossibile rasterizzare il testo vettoriale.", error);
+      console.warn("Impossibile rasterizzare il layer attivo.", error);
     } finally {
       rasterizeTextButton.classList.remove("active");
       syncRasterizeTextButton();
@@ -394,6 +409,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
   window.addEventListener("cbo:document-layers-change", syncRasterizeTextButton);
   window.addEventListener("cbo:vector-text-rasterized", syncRasterizeTextButton);
+  window.addEventListener("cbo:layer-effects-rasterized", syncRasterizeTextButton);
   window.addEventListener("cbo:brush-settings-change", syncQuickControls);
   setTransformMode(selectedTransformMode, { emit: false });
   syncRasterizeTextButton();

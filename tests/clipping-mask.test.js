@@ -86,6 +86,7 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /let currentClipBase = null/);
   assert.match(source, /const clipBase = isClippingLayer \? currentClipBase : null/);
   assert.match(source, /isValidClipBaseLayer\(layer\)/);
-  assert.match(source, /drawTexture\(layerTarget\.texture, opacity, null, clipBase\)/);
+  assert.match(source, /const layerTexture = this\.getLayerRenderTexture\(layer, layerTarget\)/);
+  assert.match(source, /drawTexture\(layerTexture, opacity, null, clipBase\)/);
   assert.match(source, /drawTexture\(options\.activeStrokeTexture, opacity, activeStrokeRect, clipBase\)/);
 });

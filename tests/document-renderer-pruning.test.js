@@ -222,6 +222,31 @@ test("document renderer exposes mipmapped zoom-out preview cache helpers", () =>
   assert.match(source, /!rasterTransformPreview/);
 });
 
+test("document renderer exposes non-destructive gaussian blur layer effect helpers", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+  const previewCacheBody = source.match(/updatePreviewCache\(\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
+
+  assert.match(source, /GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /createGaussianBlurProgramInfo\(\)/);
+  assert.match(source, /ensureLayerEffectScratchTargets\(/);
+  assert.match(source, /runGaussianBlurPass\(/);
+  assert.match(source, /applyGaussianBlurTexture\(sourceTexture, radius, options = \{\}\)/);
+  assert.match(source, /getLayerRenderTexture\(layer, layerTarget\)/);
+  assert.match(source, /copyTextureToRasterTarget\(sourceTexture, target, options = \{\}\)/);
+  assert.match(source, /rasterizeLayerEffects\(layer, options = \{\}\)/);
+  assert.match(source, /layer-effects-rasterize-before/);
+  assert.match(source, /layer-effects-rasterize-after/);
+  assert.match(source, /sourceTexture: layerTexture/);
+  assert.match(source, /this\.deleteGaussianBlurResources\(\)/);
+  assert.match(previewCacheBody, /const layerTexture = this\.getLayerRenderTexture\(layer, layerTarget\)/);
+  assert.match(previewCacheBody, /sourceTexture: layerTexture/);
+  assert.doesNotMatch(previewCacheBody, /!hasLayerEffects/);
+  assert.doesNotMatch(source, /rasterTargetsByLayerId\.set\([^)]*layerEffectScratch/);
+});
+
 test("puppet rasterize commits the deformed mesh through snapshots", () => {
   const rendererSource = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),

@@ -218,9 +218,67 @@ void main() {
 }
 `;
 
+  const GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aUnitCorner;
+
+out vec2 v_uv;
+
+void main() {
+  v_uv = vec2(aUnitCorner.x, 1.0 - aUnitCorner.y);
+  gl_Position = vec4(aUnitCorner.x * 2.0 - 1.0, 1.0 - aUnitCorner.y * 2.0, 0.0, 1.0);
+}
+`;
+
+  const GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform vec2 u_texelStep;
+uniform float u_radius;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+const int MAX_RADIUS = 40;
+
+void main() {
+  float radius = clamp(u_radius, 0.0, float(MAX_RADIUS));
+
+  if (radius <= 0.01) {
+    outColor = texture(u_texture, v_uv);
+    return;
+  }
+
+  float sigma = max(radius * 0.5, 0.5);
+  float twoSigmaSq = 2.0 * sigma * sigma;
+  vec4 sum = texture(u_texture, v_uv);
+  float weightSum = 1.0;
+
+  for (int i = 1; i <= MAX_RADIUS; i++) {
+    if (float(i) > radius) {
+      break;
+    }
+
+    float x = float(i);
+    float weight = exp(-(x * x) / twoSigmaSq);
+    vec2 offset = u_texelStep * x;
+
+    sum += texture(u_texture, v_uv + offset) * weight;
+    sum += texture(u_texture, v_uv - offset) * weight;
+    weightSum += weight * 2.0;
+  }
+
+  outColor = sum / weightSum;
+}
+`;
+
   const DEFAULT_PUPPET_GRID_COLS = 256;
   const DEFAULT_PUPPET_GRID_ROWS = 256;
   const PUPPET_PIN_EPSILON = 0.000001;
+  const MAX_GAUSSIAN_BLUR_RADIUS = 40;
 
   class DocumentRenderer {
     static createContext(canvas) {
@@ -293,6 +351,9 @@ void main() {
       this.programInfo = null;
       this.puppetProgramInfo = null;
       this.perspectiveQuadProgramInfo = null;
+      this.gaussianBlurProgramInfo = null;
+      this.layerEffectScratchA = null;
+      this.layerEffectScratchB = null;
       this.quad = null;
       this.isDisposed = false;
       this.handleLayerModelChange = this.handleLayerModelChange.bind(this);
@@ -462,6 +523,41 @@ void main() {
       };
     }
 
+    createGaussianBlurProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma gaussian blur WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma gaussian blur.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          radius: gl.getUniformLocation(program, "u_radius"),
+          texelStep: gl.getUniformLocation(program, "u_texelStep"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+
     ensurePuppetProgramInfo() {
       if (!this.puppetProgramInfo) {
         this.puppetProgramInfo = this.createPuppetProgramInfo();
@@ -476,6 +572,14 @@ void main() {
       }
 
       return this.perspectiveQuadProgramInfo;
+    }
+
+    ensureGaussianBlurProgramInfo() {
+      if (!this.gaussianBlurProgramInfo) {
+        this.gaussianBlurProgramInfo = this.createGaussianBlurProgramInfo();
+      }
+
+      return this.gaussianBlurProgramInfo;
     }
 
     createTexturedQuadResource() {
@@ -835,6 +939,275 @@ void main() {
         : null;
 
       return Number.isFinite(layer?.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
+    }
+
+    getGaussianBlurRadius(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "gaussian-blur" && item.enabled !== false)
+        : effects?.gaussianBlur;
+      const radius = Number(effect?.radius);
+
+      return Number.isFinite(radius) ? Math.max(0, Math.min(MAX_GAUSSIAN_BLUR_RADIUS, radius)) : 0;
+    }
+
+    getLayerGaussianBlur(layer) {
+      const radius = this.getGaussianBlurRadius(layer);
+
+      return radius > 0
+        ? {
+            enabled: true,
+            radius,
+          }
+        : null;
+    }
+
+    hasEnabledLayerEffects(layer) {
+      return this.getGaussianBlurRadius(layer) > 0;
+    }
+
+    hasLayerVisualEffects(layer) {
+      return this.hasEnabledLayerEffects(layer);
+    }
+
+    hasAnyEnabledLayerEffects(layers = this.getOrderedLayersBottomToTop()) {
+      return Array.isArray(layers) && layers.some((layer) => this.hasEnabledLayerEffects(layer));
+    }
+
+    createLayerEffectScratchTarget(width = this.width, height = this.height) {
+      const gl = this.gl;
+      const texture = gl.createTexture();
+      const framebuffer = gl.createFramebuffer();
+      const targetWidth = Math.max(1, Math.round(width || this.width || 1));
+      const targetHeight = Math.max(1, Math.round(height || this.height || 1));
+
+      if (!texture || !framebuffer) {
+        if (texture) {
+          gl.deleteTexture(texture);
+        }
+
+        if (framebuffer) {
+          gl.deleteFramebuffer(framebuffer);
+        }
+
+        throw new Error("Impossibile creare le scratch texture per gli effetti layer.");
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        targetWidth,
+        targetHeight,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        null,
+      );
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.deleteFramebuffer(framebuffer);
+        gl.deleteTexture(texture);
+        throw new Error("Scratch FBO effetti layer incompleto.");
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return {
+        framebuffer,
+        height: targetHeight,
+        texture,
+        width: targetWidth,
+      };
+    }
+
+    deleteLayerEffectTarget(target) {
+      if (!target) {
+        return;
+      }
+
+      const gl = this.gl;
+
+      if (target.framebuffer) {
+        gl.deleteFramebuffer(target.framebuffer);
+      }
+
+      if (target.texture) {
+        gl.deleteTexture(target.texture);
+      }
+    }
+
+    deleteLayerEffectScratchTargets() {
+      this.deleteLayerEffectTarget(this.layerEffectScratchA);
+      this.deleteLayerEffectTarget(this.layerEffectScratchB);
+      this.layerEffectScratchA = null;
+      this.layerEffectScratchB = null;
+    }
+
+    deleteGaussianBlurResources() {
+      this.deleteLayerEffectScratchTargets();
+
+      if (this.gaussianBlurProgramInfo?.program) {
+        this.gl.deleteProgram(this.gaussianBlurProgramInfo.program);
+      }
+
+      this.gaussianBlurProgramInfo = null;
+    }
+
+    ensureLayerEffectScratchTargets(width = this.width, height = this.height) {
+      const targetWidth = Math.max(1, Math.round(width || this.width || 1));
+      const targetHeight = Math.max(1, Math.round(height || this.height || 1));
+      const needsScratch =
+        !this.layerEffectScratchA ||
+        !this.layerEffectScratchB ||
+        this.layerEffectScratchA.width !== targetWidth ||
+        this.layerEffectScratchA.height !== targetHeight ||
+        this.layerEffectScratchB.width !== targetWidth ||
+        this.layerEffectScratchB.height !== targetHeight;
+
+      if (needsScratch) {
+        this.deleteLayerEffectScratchTargets();
+        this.layerEffectScratchA = this.createLayerEffectScratchTarget(targetWidth, targetHeight);
+        this.layerEffectScratchB = this.createLayerEffectScratchTarget(targetWidth, targetHeight);
+      }
+
+      return {
+        scratchA: this.layerEffectScratchA,
+        scratchB: this.layerEffectScratchB,
+      };
+    }
+
+    runGaussianBlurPass({ sourceTexture, target, radius, texelStepX, texelStepY }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureGaussianBlurProgramInfo();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform2f(uniforms.texelStep, texelStepX, texelStepY);
+      gl.uniform1f(uniforms.radius, radius);
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
+    applyGaussianBlurTexture(sourceTexture, radius, options = {}) {
+      const blurRadius = Number.isFinite(radius)
+        ? Math.max(0, Math.min(MAX_GAUSSIAN_BLUR_RADIUS, radius))
+        : 0;
+
+      if (!sourceTexture || blurRadius <= 0) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const { scratchA, scratchB } = this.ensureLayerEffectScratchTargets(width, height);
+      const didHorizontalPass = this.runGaussianBlurPass({
+        radius: blurRadius,
+        sourceTexture,
+        target: scratchA,
+        texelStepX: 1 / width,
+        texelStepY: 0,
+      });
+      const didVerticalPass = didHorizontalPass && this.runGaussianBlurPass({
+        radius: blurRadius,
+        sourceTexture: scratchA.texture,
+        target: scratchB,
+        texelStepX: 0,
+        texelStepY: 1 / height,
+      });
+
+      return didVerticalPass ? scratchB.texture : sourceTexture;
+    }
+
+    getLayerRenderTexture(layer, layerTarget) {
+      if (!layerTarget?.texture) {
+        return null;
+      }
+
+      const radius = this.getGaussianBlurRadius(layer);
+
+      if (radius <= 0) {
+        return layerTarget.texture;
+      }
+
+      return this.applyGaussianBlurTexture(layerTarget.texture, radius, {
+        height: layerTarget.height || this.height,
+        width: layerTarget.width || this.width,
+      });
+    }
+
+    resolveLayerVisualTexture(layer, layerTarget, options = {}) {
+      return this.getLayerRenderTexture(layer, layerTarget, options);
+    }
+
+    copyTextureToRasterTarget(sourceTexture, target, options = {}) {
+      if (!sourceTexture || !target?.framebuffer || !target?.texture) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const readFramebuffer = gl.createFramebuffer();
+      const sourceWidth = Math.max(1, Math.round(options.width || target.width || this.width || 1));
+      const sourceHeight = Math.max(1, Math.round(options.height || target.height || this.height || 1));
+
+      if (!readFramebuffer) {
+        return false;
+      }
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, readFramebuffer);
+      gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sourceTexture, 0);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, target.framebuffer);
+
+      const canCopy =
+        gl.checkFramebufferStatus(gl.READ_FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE &&
+        gl.checkFramebufferStatus(gl.DRAW_FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+
+      if (canCopy) {
+        gl.blitFramebuffer(
+          0,
+          0,
+          sourceWidth,
+          sourceHeight,
+          0,
+          0,
+          target.width,
+          target.height,
+          gl.COLOR_BUFFER_BIT,
+          gl.NEAREST,
+        );
+      }
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.deleteFramebuffer(readFramebuffer);
+
+      return canCopy;
     }
 
     configureDocumentSize(viewportWidth, viewportHeight) {
@@ -1697,6 +2070,8 @@ void main() {
         gl.uniform2f(uniforms.cameraPosition, cameraX, cameraY);
       };
       const bindArtboardProgram = () => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
+        gl.viewport(0, 0, width, height);
         gl.useProgram(program);
         gl.uniform2f(uniforms.viewportSize, width, height);
         setDocumentProjection(width, height, 0, 0);
@@ -1716,6 +2091,9 @@ void main() {
         gl.uniform1f(uniforms.gridMode, 0.0);
         gl.bindVertexArray(this.quad.vao);
         gl.activeTexture(gl.TEXTURE0);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       };
       const drawTexture = (texture, opacity = 1) => {
         setDocumentProjection(width, height, 0, 0);
@@ -1743,9 +2121,20 @@ void main() {
           continue;
         }
 
+        const layerTexture = this.getLayerRenderTexture(layer, layerTarget);
+
+        if (!layerTexture) {
+          continue;
+        }
+
+        if (layerTexture !== layerTarget.texture) {
+          bindArtboardProgram();
+        }
+
         if (this.hasPuppetLayerTransform(layer)) {
           const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
             camera: flatCamera,
+            sourceTexture: layerTexture,
             viewportHeight: height,
             viewportWidth: width,
           });
@@ -1753,10 +2142,10 @@ void main() {
           bindArtboardProgram();
 
           if (!didDrawPuppet) {
-            drawTexture(layerTarget.texture, opacity);
+            drawTexture(layerTexture, opacity);
           }
         } else {
-          drawTexture(layerTarget.texture, opacity);
+          drawTexture(layerTexture, opacity);
         }
       }
 
@@ -2375,6 +2764,65 @@ void main() {
       };
     }
 
+    rasterizeLayerEffects(layer, options = {}) {
+      if (!this.hasEnabledLayerEffects(layer) || !layer?.id) {
+        return null;
+      }
+
+      const target = this.rasterTargetsByLayerId.get(layer.id);
+
+      if (!target?.texture || !target?.framebuffer) {
+        return null;
+      }
+
+      const beforeSnapshot = this.createRasterSnapshot(target, null, "layer-effects-rasterize-before");
+
+      if (!beforeSnapshot?.texture) {
+        return null;
+      }
+
+      const renderTexture = this.getLayerRenderTexture(layer, target);
+      const didCopy = renderTexture &&
+        renderTexture !== target.texture &&
+        this.copyTextureToRasterTarget(renderTexture, target, {
+          height: target.height,
+          width: target.width,
+        });
+
+      if (!didCopy) {
+        this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
+          emit: false,
+          source: "layer-effects-rasterize-rollback",
+        });
+        this.deleteRasterSnapshot(beforeSnapshot);
+        return null;
+      }
+
+      const afterSnapshot = this.createRasterSnapshot(target, null, "layer-effects-rasterize-after");
+
+      if (!afterSnapshot?.texture) {
+        this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
+          emit: false,
+          source: "layer-effects-rasterize-rollback",
+        });
+        this.deleteRasterSnapshot(beforeSnapshot);
+        return null;
+      }
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId: layer.id,
+          source: options.source || "layer-effects-rasterize",
+        });
+      }
+
+      return {
+        afterSnapshot,
+        beforeSnapshot,
+        layerId: layer.id,
+      };
+    }
+
     drawToCanvas(options = {}) {
       if (this.isDisposed) {
         return;
@@ -2467,6 +2915,8 @@ void main() {
         }
       };
       const bindArtboardProgram = () => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, viewportWidth, viewportHeight);
         gl.useProgram(program);
         gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
         setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
@@ -2486,6 +2936,9 @@ void main() {
         gl.uniform1f(uniforms.gridMode, 0.0);
         gl.bindVertexArray(this.quad.vao);
         gl.activeTexture(gl.TEXTURE0);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       };
       const setPreviewCut = (rect = null) => {
         if (rect) {
@@ -2587,6 +3040,13 @@ void main() {
           }
 
           if (layerTarget?.texture) {
+            const layerTexture = this.getLayerRenderTexture(layer, layerTarget);
+            const hasVisualEffects = layerTexture && layerTexture !== layerTarget.texture;
+
+            if (hasVisualEffects) {
+              bindArtboardProgram();
+            }
+
             if (isRasterTransformPreviewLayer) {
               setPreviewCut(rasterTransformPreview.sourceRect);
             }
@@ -2613,10 +3073,11 @@ void main() {
 
             if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
               if (isClippingLayer) {
-                drawTexture(layerTarget.texture, opacity, null, clipBase);
+                drawTexture(layerTexture, opacity, null, clipBase);
               } else {
                 const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
                   camera,
+                  sourceTexture: layerTexture,
                   viewportHeight,
                   viewportWidth,
                 });
@@ -2624,11 +3085,11 @@ void main() {
                 bindArtboardProgram();
 
                 if (!didDrawPuppet) {
-                  drawTexture(layerTarget.texture, opacity);
+                  drawTexture(layerTexture, opacity);
                 }
               }
             } else {
-              drawTexture(layerTarget.texture, opacity, null, clipBase);
+              drawTexture(layerTexture, opacity, null, clipBase);
             }
 
             if (isRasterTransformPreviewLayer) {
@@ -2686,6 +3147,7 @@ void main() {
       window.removeEventListener("cbo:document-content-change", this.handleDocumentContentChange);
       window.removeEventListener("cbo:history-change", this.handleHistoryChange);
 
+      this.deleteGaussianBlurResources();
       this.deletePreviewCache();
 
       if (this.quad) {

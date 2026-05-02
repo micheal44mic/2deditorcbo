@@ -116,6 +116,53 @@ test("updateLayer entries with the same historyGroup merge", async () => {
   assert.equal(model.findEntryById("paint-main").name, "Paint");
 });
 
+test("layer effects are normalized and preserved through layer state history", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory({ groupIdleMs: 1000 });
+  const model = new DocumentLayerModel();
+
+  window.CBO.documentHistory = history;
+  model.updateLayer("paint-main", {
+    effects: [
+      { type: "gaussian-blur", radius: 140, enabled: true },
+      { type: "future-effect", strength: 0.5 },
+    ],
+  }, {
+    historyGroup: "gaussian-blur-paint-main",
+    source: "gaussian-blur",
+  });
+  await waitForHistoryFlush();
+
+  assert.equal(history.undoStack.length, 1);
+  assert.equal(model.findEntryById("paint-main").effects[0].radius, 40);
+  assert.equal(model.findEntryById("paint-main").effects[1].type, "future-effect");
+
+  model.updateLayer("paint-main", {
+    effects: [{ type: "gaussian-blur", radius: 12, enabled: true }],
+  }, {
+    historyGroup: "gaussian-blur-paint-main",
+    source: "gaussian-blur",
+  });
+  await waitForHistoryFlush();
+
+  assert.equal(history.undoStack.length, 1);
+  assert.equal(model.findEntryById("paint-main").effects[0].radius, 12);
+
+  assert.equal(history.undo(), true);
+  assert.equal(model.findEntryById("paint-main").effects, undefined);
+
+  assert.equal(history.redo(), true);
+  assert.equal(model.findEntryById("paint-main").effects[0].radius, 12);
+
+  model.updateLayer("paint-main", {
+    effects: [{ type: "gaussian-blur", radius: 0, enabled: true }],
+  }, {
+    source: "gaussian-blur-clear",
+  });
+
+  assert.equal(model.findEntryById("paint-main").effects, undefined);
+});
+
 test("setActiveLayer does not record selection-only changes by default", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory();
