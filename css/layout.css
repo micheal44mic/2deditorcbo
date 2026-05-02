@@ -166,6 +166,47 @@
   pointer-events: auto;
 }
 
+.editor-raster-transform-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.editor-raster-transform-overlay[hidden] {
+  display: none;
+}
+
+.editor-raster-transform-overlay.raster-transform-tool-active {
+  pointer-events: auto;
+}
+
+.editor-raster-transform-hit-area {
+  pointer-events: all;
+}
+
+.editor-raster-transform-box {
+  fill: rgba(24, 160, 251, 0.05);
+  stroke: #18a0fb;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  cursor: move;
+  pointer-events: all;
+  vector-effect: non-scaling-stroke;
+}
+
+.editor-raster-transform-handle {
+  fill: #ffffff;
+  stroke: #18a0fb;
+  stroke-width: 1.5;
+  pointer-events: all;
+  vector-effect: non-scaling-stroke;
+}
+
 .editor-puppet-hit-area {
   pointer-events: none;
 }

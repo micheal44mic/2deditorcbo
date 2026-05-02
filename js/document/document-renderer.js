@@ -52,6 +52,8 @@ uniform float u_gridMode;
 uniform float u_maskMode;
 uniform vec4 u_maskRect;
 uniform float u_maskRectMode;
+uniform float u_previewCutMode;
+uniform vec4 u_previewCutRect;
 
 in vec2 v_uv;
 in vec2 v_documentPixel;
@@ -71,6 +73,18 @@ void main() {
     outColor = vec4(alpha, alpha, alpha, alpha);
   } else {
     vec4 color = texture(u_texture, v_uv) * u_opacity;
+
+    if (u_previewCutMode > 0.5) {
+      bool insideCutRect =
+        v_documentPixel.x >= u_previewCutRect.x &&
+        v_documentPixel.y >= u_previewCutRect.y &&
+        v_documentPixel.x <= u_previewCutRect.x + u_previewCutRect.z &&
+        v_documentPixel.y <= u_previewCutRect.y + u_previewCutRect.w;
+
+      if (insideCutRect) {
+        color = vec4(0.0);
+      }
+    }
 
     if (u_maskMode > 0.5) {
       float eraseAlpha = 0.0;
@@ -129,6 +143,58 @@ out vec4 outColor;
 
 void main() {
   outColor = texture(u_texture, v_uv) * u_opacity;
+}
+`;
+
+  const PERSPECTIVE_QUAD_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aDestPixel;
+
+uniform vec2 uViewportSize;
+uniform vec2 uCameraPosition;
+uniform float uCameraZoom;
+
+out vec2 v_destPixel;
+
+void main() {
+  vec2 viewportPixel = uCameraPosition + aDestPixel * uCameraZoom;
+  vec2 clipPosition = vec2(
+    (viewportPixel.x / uViewportSize.x) * 2.0 - 1.0,
+    1.0 - (viewportPixel.y / uViewportSize.y) * 2.0
+  );
+
+  v_destPixel = aDestPixel;
+  gl_Position = vec4(clipPosition, 0.0, 1.0);
+}
+`;
+
+  const PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform mat3 u_destToSourceUv;
+uniform float u_opacity;
+
+in vec2 v_destPixel;
+
+out vec4 outColor;
+
+void main() {
+  vec3 mapped = u_destToSourceUv * vec3(v_destPixel, 1.0);
+
+  if (abs(mapped.z) < 0.000001) {
+    discard;
+  }
+
+  vec2 unitUv = mapped.xy / mapped.z;
+
+  if (unitUv.x < 0.0 || unitUv.x > 1.0 || unitUv.y < 0.0 || unitUv.y > 1.0) {
+    discard;
+  }
+
+  vec2 uv = vec2(unitUv.x, 1.0 - unitUv.y);
+  outColor = texture(u_texture, uv) * u_opacity;
 }
 `;
 
@@ -196,8 +262,11 @@ void main() {
       this.paintLayerId = "";
       this.rasterTargetsByLayerId = new Map();
       this.puppetMeshResourcesByLayerId = new Map();
+      this.rasterTransformPreview = null;
+      this.texturedQuad = null;
       this.programInfo = null;
       this.puppetProgramInfo = null;
+      this.perspectiveQuadProgramInfo = null;
       this.quad = null;
       this.isDisposed = false;
       this.handleLayerModelChange = this.handleLayerModelChange.bind(this);
@@ -274,6 +343,8 @@ void main() {
           maskRect: gl.getUniformLocation(program, "u_maskRect"),
           maskRectMode: gl.getUniformLocation(program, "u_maskRectMode"),
           maskTexture: gl.getUniformLocation(program, "u_maskTexture"),
+          previewCutMode: gl.getUniformLocation(program, "u_previewCutMode"),
+          previewCutRect: gl.getUniformLocation(program, "u_previewCutRect"),
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
@@ -319,12 +390,292 @@ void main() {
       };
     }
 
+    createPerspectiveQuadProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, PERSPECTIVE_QUAD_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma perspective quad WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma perspective quad.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
+          cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
+          destToSourceUv: gl.getUniformLocation(program, "u_destToSourceUv"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+          viewportSize: gl.getUniformLocation(program, "uViewportSize"),
+          opacity: gl.getUniformLocation(program, "u_opacity"),
+        },
+      };
+    }
+
     ensurePuppetProgramInfo() {
       if (!this.puppetProgramInfo) {
         this.puppetProgramInfo = this.createPuppetProgramInfo();
       }
 
       return this.puppetProgramInfo;
+    }
+
+    ensurePerspectiveQuadProgramInfo() {
+      if (!this.perspectiveQuadProgramInfo) {
+        this.perspectiveQuadProgramInfo = this.createPerspectiveQuadProgramInfo();
+      }
+
+      return this.perspectiveQuadProgramInfo;
+    }
+
+    createTexturedQuadResource() {
+      const gl = this.gl;
+      const vao = gl.createVertexArray();
+      const buffer = gl.createBuffer();
+
+      if (!vao || !buffer) {
+        if (buffer) {
+          gl.deleteBuffer(buffer);
+        }
+
+        if (vao) {
+          gl.deleteVertexArray(vao);
+        }
+
+        throw new Error("Impossibile creare le risorse per il quad raster transform.");
+      }
+
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, 6 * 4 * Float32Array.BYTES_PER_ELEMENT, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 4 * Float32Array.BYTES_PER_ELEMENT, 0);
+      gl.enableVertexAttribArray(1);
+      gl.vertexAttribPointer(
+        1,
+        2,
+        gl.FLOAT,
+        false,
+        4 * Float32Array.BYTES_PER_ELEMENT,
+        2 * Float32Array.BYTES_PER_ELEMENT,
+      );
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.bindVertexArray(null);
+
+      return { buffer, vao };
+    }
+
+    ensureTexturedQuadResource() {
+      if (!this.texturedQuad) {
+        this.texturedQuad = this.createTexturedQuadResource();
+      }
+
+      return this.texturedQuad;
+    }
+
+    computeDestToSourceUvHomography(destQuad) {
+      if (!Array.isArray(destQuad) || destQuad.length < 4) {
+        return null;
+      }
+
+      const points = destQuad.map((point) => ({
+        x: Number(point?.x),
+        y: Number(point?.y),
+      }));
+
+      if (points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+        return null;
+      }
+
+      const x0 = points[0].x;
+      const y0 = points[0].y;
+      const x1 = points[1].x;
+      const y1 = points[1].y;
+      const x2 = points[2].x;
+      const y2 = points[2].y;
+      const x3 = points[3].x;
+      const y3 = points[3].y;
+      const dx1 = x1 - x2;
+      const dx2 = x3 - x2;
+      const dy1 = y1 - y2;
+      const dy2 = y3 - y2;
+      const sx = x0 - x1 + x2 - x3;
+      const sy = y0 - y1 + y2 - y3;
+      const epsilon = 0.000001;
+      let a;
+      let b;
+      let c;
+      let d;
+      let e;
+      let f;
+      let g;
+      let h;
+
+      if (Math.abs(sx) < epsilon && Math.abs(sy) < epsilon) {
+        a = x1 - x0;
+        b = x3 - x0;
+        c = x0;
+        d = y1 - y0;
+        e = y3 - y0;
+        f = y0;
+        g = 0;
+        h = 0;
+      } else {
+        const det = dx1 * dy2 - dx2 * dy1;
+
+        if (Math.abs(det) < epsilon) {
+          return null;
+        }
+
+        g = (sx * dy2 - sy * dx2) / det;
+        h = (dx1 * sy - dy1 * sx) / det;
+        a = x1 - x0 + g * x1;
+        b = x3 - x0 + h * x3;
+        c = x0;
+        d = y1 - y0 + g * y1;
+        e = y3 - y0 + h * y3;
+        f = y0;
+      }
+
+      const c00 = e - f * h;
+      const c01 = f * g - d;
+      const c02 = d * h - e * g;
+      const c10 = c * h - b;
+      const c11 = a - c * g;
+      const c12 = b * g - a * h;
+      const c20 = b * f - c * e;
+      const c21 = c * d - a * f;
+      const c22 = a * e - b * d;
+      const detM = a * c00 + b * c01 + c * c02;
+
+      if (Math.abs(detM) < epsilon) {
+        return null;
+      }
+
+      const inverseDet = 1 / detM;
+
+      return new Float32Array([
+        c00 * inverseDet, c01 * inverseDet, c02 * inverseDet,
+        c10 * inverseDet, c11 * inverseDet, c12 * inverseDet,
+        c20 * inverseDet, c21 * inverseDet, c22 * inverseDet,
+      ]);
+    }
+
+    drawTexturedQuad(texture, quad, options = {}) {
+      if (!texture || !Array.isArray(quad) || quad.length < 4) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensurePuppetProgramInfo();
+      const resource = this.ensureTexturedQuadResource();
+      const camera = options.camera || { x: 0, y: 0, zoom: 1 };
+      const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
+      const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
+      const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
+      const vertices = new Float32Array([
+        quad[0].x, quad[0].y, 0, 1,
+        quad[1].x, quad[1].y, 1, 1,
+        quad[2].x, quad[2].y, 1, 0,
+        quad[0].x, quad[0].y, 0, 1,
+        quad[2].x, quad[2].y, 1, 0,
+        quad[3].x, quad[3].y, 0, 0,
+      ]);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
+      gl.viewport(0, 0, viewportWidth, viewportHeight);
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.useProgram(program);
+      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+      gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+      gl.uniform1f(uniforms.opacity, opacity);
+      gl.uniform1i(uniforms.texture, 0);
+
+      gl.bindVertexArray(resource.vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, resource.buffer);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, vertices);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.useProgram(null);
+
+      return true;
+    }
+
+    drawPerspectiveTexturedQuad(texture, quad, options = {}) {
+      if (!texture || !Array.isArray(quad) || quad.length < 4) {
+        return false;
+      }
+
+      const matrix = this.computeDestToSourceUvHomography(quad);
+
+      if (!matrix) {
+        return this.drawTexturedQuad(texture, quad, options);
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensurePerspectiveQuadProgramInfo();
+      const resource = this.ensureTexturedQuadResource();
+      const camera = options.camera || { x: 0, y: 0, zoom: 1 };
+      const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
+      const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
+      const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
+      const vertices = new Float32Array([
+        quad[0].x, quad[0].y, 0, 1,
+        quad[1].x, quad[1].y, 1, 1,
+        quad[2].x, quad[2].y, 1, 0,
+        quad[0].x, quad[0].y, 0, 1,
+        quad[2].x, quad[2].y, 1, 0,
+        quad[3].x, quad[3].y, 0, 0,
+      ]);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
+      gl.viewport(0, 0, viewportWidth, viewportHeight);
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.useProgram(program);
+      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+      gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+      gl.uniformMatrix3fv(uniforms.destToSourceUv, false, matrix);
+      gl.uniform1f(uniforms.opacity, opacity);
+      gl.uniform1i(uniforms.texture, 0);
+
+      gl.bindVertexArray(resource.vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, resource.buffer);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, vertices);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.useProgram(null);
+
+      return true;
     }
 
     createArtboardQuad() {
@@ -708,6 +1059,265 @@ void main() {
         this.gl.deleteTexture(snapshot.texture);
         snapshot.texture = null;
       }
+    }
+
+    requestDraw() {
+      if (namespace.brushEngine?.requestDraw) {
+        namespace.brushEngine.requestDraw();
+      } else {
+        namespace.brushEngine?.draw?.();
+      }
+    }
+
+    setRasterTransformPreview(preview = null) {
+      if (!preview?.layerId || !preview?.texture || !Array.isArray(preview.quad)) {
+        this.rasterTransformPreview = null;
+      } else {
+        this.rasterTransformPreview = {
+          layerId: preview.layerId,
+          opacity: Number.isFinite(preview.opacity) ? Math.min(1, Math.max(0, preview.opacity)) : 1,
+          quad: preview.quad.map((point) => ({
+            x: Number.isFinite(point?.x) ? point.x : 0,
+            y: Number.isFinite(point?.y) ? point.y : 0,
+          })),
+          sourceRect: preview.sourceRect ? { ...preview.sourceRect } : null,
+          texture: preview.texture,
+          transformMode: String(preview.transformMode || "free").trim().toLowerCase() || "free",
+        };
+      }
+
+      this.requestDraw();
+    }
+
+    clearRasterTransformPreview(layerId = "") {
+      if (!this.rasterTransformPreview) {
+        return;
+      }
+
+      if (!layerId || this.rasterTransformPreview.layerId === layerId) {
+        this.rasterTransformPreview = null;
+        this.requestDraw();
+      }
+    }
+
+    getRasterContentBounds(layerId, options = {}) {
+      const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!layerId || !target?.framebuffer || !target?.texture) {
+        return null;
+      }
+
+      const bounds = namespace.documentBounds;
+      const targetWidth = Math.max(1, Math.round(target.width || this.width || 1));
+      const targetHeight = Math.max(1, Math.round(target.height || this.height || 1));
+      const sampleCols = Math.max(16, Math.min(512, Math.floor(options.sampleCols || 256)));
+      const sampleRows = Math.max(16, Math.min(512, Math.floor(options.sampleRows || 256)));
+      const alphaThreshold = Number.isFinite(options.alphaThreshold)
+        ? Math.max(0, Math.min(255, options.alphaThreshold))
+        : 2;
+      const samples = this.getPuppetAlphaSamples(target, sampleCols, sampleRows);
+      let minCol = sampleCols;
+      let minRow = sampleRows;
+      let maxCol = -1;
+      let maxRow = -1;
+
+      for (let row = 0; row < sampleRows; row += 1) {
+        for (let col = 0; col < sampleCols; col += 1) {
+          if (samples[row * sampleCols + col] > alphaThreshold) {
+            minCol = Math.min(minCol, col);
+            minRow = Math.min(minRow, row);
+            maxCol = Math.max(maxCol, col);
+            maxRow = Math.max(maxRow, row);
+          }
+        }
+      }
+
+      if (maxCol < 0 || maxRow < 0) {
+        return null;
+      }
+
+      const padCells = Number.isFinite(options.padCells) ? Math.max(0, Math.floor(options.padCells)) : 2;
+      const paddedMinCol = Math.max(0, minCol - padCells);
+      const paddedMinRow = Math.max(0, minRow - padCells);
+      const paddedMaxCol = Math.min(sampleCols - 1, maxCol + padCells);
+      const paddedMaxRow = Math.min(sampleRows - 1, maxRow + padCells);
+      const cellWidth = targetWidth / sampleCols;
+      const cellHeight = targetHeight / sampleRows;
+      const coarseRect = bounds?.getClampedRasterBox?.({
+        x: paddedMinCol * cellWidth,
+        y: paddedMinRow * cellHeight,
+        width: (paddedMaxCol - paddedMinCol + 1) * cellWidth,
+        height: (paddedMaxRow - paddedMinRow + 1) * cellHeight,
+      }, targetWidth, targetHeight);
+
+      if (!coarseRect) {
+        return null;
+      }
+
+      const gl = this.gl;
+      const pixels = new Uint8Array(coarseRect.width * coarseRect.height * 4);
+      const readY = targetHeight - (coarseRect.y + coarseRect.height);
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.framebuffer);
+      gl.readPixels(coarseRect.x, readY, coarseRect.width, coarseRect.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+
+      let minX = coarseRect.width;
+      let minY = coarseRect.height;
+      let maxX = -1;
+      let maxY = -1;
+
+      for (let row = 0; row < coarseRect.height; row += 1) {
+        for (let col = 0; col < coarseRect.width; col += 1) {
+          const alpha = pixels[(row * coarseRect.width + col) * 4 + 3];
+
+          if (alpha > alphaThreshold) {
+            minX = Math.min(minX, col);
+            minY = Math.min(minY, row);
+            maxX = Math.max(maxX, col);
+            maxY = Math.max(maxY, row);
+          }
+        }
+      }
+
+      if (maxX < 0 || maxY < 0) {
+        return null;
+      }
+
+      const topDownMinY = coarseRect.height - 1 - maxY;
+      const topDownMaxY = coarseRect.height - 1 - minY;
+      const padding = Number.isFinite(options.padding) ? Math.max(0, Math.floor(options.padding)) : 2;
+
+      return bounds?.getClampedRasterBox?.({
+        x: coarseRect.x + minX - padding,
+        y: coarseRect.y + topDownMinY - padding,
+        width: maxX - minX + 1 + padding * 2,
+        height: topDownMaxY - topDownMinY + 1 + padding * 2,
+      }, targetWidth, targetHeight) || null;
+    }
+
+    clearRasterRect(layerId, rect) {
+      if (!layerId || !rect) {
+        return false;
+      }
+
+      const target = this.rasterTargetsByLayerId.get(layerId);
+      const clearRect = namespace.documentBounds?.getClampedRasterBox?.(rect, target?.width, target?.height);
+
+      if (!target?.framebuffer || !clearRect) {
+        return false;
+      }
+
+      const gl = this.gl;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(clearRect.x, target.height - (clearRect.y + clearRect.height), clearRect.width, clearRect.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.disable(gl.SCISSOR_TEST);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      return true;
+    }
+
+    commitRasterTransform(options = {}) {
+      const {
+        destQuad,
+        layerId,
+        source = "raster-transform",
+        sourceRect,
+        sourceSnapshot,
+        transformMode = "free",
+      } = options;
+      const target = this.rasterTargetsByLayerId.get(layerId);
+      const bounds = namespace.documentBounds;
+
+      if (!bounds) {
+        return false;
+      }
+
+      const destBounds = bounds?.quadToBounds?.(destQuad);
+      const destRect = bounds?.boundsToRect?.(destBounds);
+      const dirtyRect = bounds?.getClampedRasterBox?.(
+        bounds.getUnionRect(sourceRect, destRect),
+        target?.width,
+        target?.height,
+      );
+
+      if (!target?.framebuffer || !sourceSnapshot?.texture || !sourceRect || !dirtyRect) {
+        return false;
+      }
+
+      const beforeSnapshot = this.createRasterSnapshot(layerId, dirtyRect, `${source}-before`);
+
+      if (!beforeSnapshot?.texture) {
+        return false;
+      }
+
+      this.clearRasterRect(layerId, sourceRect);
+
+      const drawOptions = {
+        camera: { x: 0, y: 0, zoom: 1 },
+        framebuffer: target.framebuffer,
+        opacity: 1,
+        viewportHeight: target.height,
+        viewportWidth: target.width,
+      };
+      const didDraw = String(transformMode).trim().toLowerCase() === "perspective"
+        ? this.drawPerspectiveTexturedQuad(sourceSnapshot.texture, destQuad, drawOptions)
+        : this.drawTexturedQuad(sourceSnapshot.texture, destQuad, drawOptions);
+
+      if (!didDraw) {
+        this.restoreRasterSnapshot(layerId, beforeSnapshot, {
+          emit: false,
+          source: `${source}-rollback`,
+        });
+        this.deleteRasterSnapshot(beforeSnapshot);
+        return false;
+      }
+
+      const afterSnapshot = this.createRasterSnapshot(layerId, dirtyRect, `${source}-after`);
+
+      if (!afterSnapshot?.texture) {
+        this.restoreRasterSnapshot(layerId, beforeSnapshot, {
+          emit: false,
+          source: `${source}-rollback`,
+        });
+        this.deleteRasterSnapshot(beforeSnapshot);
+        return false;
+      }
+
+      const history = namespace.documentHistory;
+      const entry = {
+        type: "custom",
+        afterSnapshot,
+        beforeSnapshot,
+        layerId,
+        source,
+        undo: () => this.restoreRasterSnapshot(layerId, beforeSnapshot, {
+          source: `history-undo-${source}`,
+        }),
+        redo: () => this.restoreRasterSnapshot(layerId, afterSnapshot, {
+          source: `history-redo-${source}`,
+        }),
+        destroy: () => {
+          this.deleteRasterSnapshot(beforeSnapshot);
+          this.deleteRasterSnapshot(afterSnapshot);
+        },
+      };
+
+      if (history?.push) {
+        history.push(entry);
+      } else {
+        entry.destroy();
+      }
+
+      this.clearRasterTransformPreview(layerId);
+      this.emitContentChange({ layerId, source });
+      this.requestDraw();
+
+      return true;
     }
 
     deleteRasterTarget(layerId, options = {}) {
@@ -1484,6 +2094,9 @@ void main() {
       const activeStrokeLayerId = options.activeStrokeLayerId || target.layerId;
       const activeStrokeMode = String(options.activeStrokeMode || "paint").toLowerCase();
       const activeStrokeRect = options.activeStrokeRect || null;
+      const rasterTransformPreview = this.rasterTransformPreview?.texture
+        ? this.rasterTransformPreview
+        : null;
       let didDrawActiveStroke = false;
       const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
         gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
@@ -1515,9 +2128,40 @@ void main() {
         gl.uniform1f(uniforms.maskMode, 0.0);
         gl.uniform1f(uniforms.maskRectMode, 0.0);
         gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
+        gl.uniform1f(uniforms.previewCutMode, 0.0);
+        gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
         gl.uniform1f(uniforms.gridMode, 0.0);
         gl.bindVertexArray(this.quad.vao);
         gl.activeTexture(gl.TEXTURE0);
+      };
+      const setPreviewCut = (rect = null) => {
+        if (rect) {
+          gl.uniform1f(uniforms.previewCutMode, 1.0);
+          gl.uniform4f(uniforms.previewCutRect, rect.x, rect.y, rect.width, rect.height);
+        } else {
+          gl.uniform1f(uniforms.previewCutMode, 0.0);
+          gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
+        }
+      };
+      const drawRasterTransformPreview = (layerOpacity = 1) => {
+        if (!rasterTransformPreview?.texture || !Array.isArray(rasterTransformPreview.quad)) {
+          return;
+        }
+
+        const drawOptions = {
+          camera,
+          opacity: rasterTransformPreview.opacity * layerOpacity,
+          viewportHeight,
+          viewportWidth,
+        };
+
+        if (rasterTransformPreview.transformMode === "perspective") {
+          this.drawPerspectiveTexturedQuad(rasterTransformPreview.texture, rasterTransformPreview.quad, drawOptions);
+        } else {
+          this.drawTexturedQuad(rasterTransformPreview.texture, rasterTransformPreview.quad, drawOptions);
+        }
+
+        bindArtboardProgram();
       };
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1542,11 +2186,16 @@ void main() {
         const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
         const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
         const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
+        const isRasterTransformPreviewLayer = rasterTransformPreview?.layerId === layer.id;
         const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
           ? options.activeStrokeTexture
           : null;
 
         if (layerTarget?.texture) {
+          if (isRasterTransformPreviewLayer) {
+            setPreviewCut(rasterTransformPreview.sourceRect);
+          }
+
           if (eraserMaskTexture) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, eraserMaskTexture);
@@ -1583,6 +2232,10 @@ void main() {
             drawTexture(layerTarget.texture, opacity);
           }
 
+          if (isRasterTransformPreviewLayer) {
+            setPreviewCut(null);
+          }
+
           if (eraserMaskTexture) {
             gl.uniform1f(uniforms.maskMode, 0.0);
             gl.uniform1f(uniforms.maskRectMode, 0.0);
@@ -1591,6 +2244,10 @@ void main() {
             gl.activeTexture(gl.TEXTURE0);
             didDrawActiveStroke = true;
           }
+        }
+
+        if (isRasterTransformPreviewLayer) {
+          drawRasterTransformPreview(opacity);
         }
 
         if (isActiveStrokeLayer && activeStrokeMode !== "eraser") {
@@ -1634,6 +2291,12 @@ void main() {
         this.quad = null;
       }
 
+      if (this.texturedQuad) {
+        gl.deleteBuffer(this.texturedQuad.buffer);
+        gl.deleteVertexArray(this.texturedQuad.vao);
+        this.texturedQuad = null;
+      }
+
       if (this.programInfo?.program) {
         gl.deleteProgram(this.programInfo.program);
         this.programInfo = null;
@@ -1642,6 +2305,11 @@ void main() {
       if (this.puppetProgramInfo?.program) {
         gl.deleteProgram(this.puppetProgramInfo.program);
         this.puppetProgramInfo = null;
+      }
+
+      if (this.perspectiveQuadProgramInfo?.program) {
+        gl.deleteProgram(this.perspectiveQuadProgramInfo.program);
+        this.perspectiveQuadProgramInfo = null;
       }
 
       for (const layerId of Array.from(this.puppetMeshResourcesByLayerId.keys())) {

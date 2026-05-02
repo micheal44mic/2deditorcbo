@@ -14,9 +14,15 @@ const TRANSFORM_MODE_ICONS = Object.freeze({
       <path d="M17.3,2H6.7c-1.2,0-2.4,1-2.5,2.3l-1.7,13.9c-.3,2.1.9,3.8,2.5,3.8h14c1.7,0,2.8-1.8,2.5-3.8l-1.7-13.9c-.2-1.3-1.3-2.3-2.5-2.3ZM18.2,4.3l.5,5.3h-5.9V3.5c0,0,4.6,0,4.6,0,.4,0,.8.4.9.8ZM6.6,3.5h4.6v6.1h-6l.5-5.3c0-.4.4-.8.9-.8ZM4.4,18.2l.7-6.6h6.1v7.8h-5.9c-.5,0-.9-.6-.8-1.2ZM18.8,19.4h-5.8v-7.8c0,0,6,0,6,0l.7,6.6c0,.7-.3,1.2-.8,1.2Z" />
     </svg>
   `,
-  freeDistort: `
-    <svg class="transform-mode-fill-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" aria-hidden="true">
-      <path d="M16.01.61l-11.27,1.42c-1.37.17-2.62,1.36-2.79,2.68L.38,17.04c-.21,1.62.91,2.75,2.48,2.49l12.87-2.11c1.47-.24,2.66-1.7,2.66-3.22l-.02-11.65c0-1.25-1.05-2.11-2.35-1.95ZM16.77,2.77l-.05,4.76-5.87.83.31-5.63,4.82-.62c.44-.06.79.24.79.66ZM4.57,3.59l4.96-.64-.39,5.66-6.07.86.57-4.98c.05-.44.47-.84.93-.9ZM2.24,16.75l.63-5.53,6.16-.9-.44,6.36-5.53.88c-.51.08-.88-.29-.82-.82ZM15.76,15.54l-5.35.85.35-6.33,5.95-.87-.06,5.28c0,.51-.4.98-.89,1.06Z" />
+  cancelTransform: `
+    <svg class="lucide lucide-x-icon lucide-x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  `,
+  acceptTransform: `
+    <svg class="lucide lucide-check-icon lucide-check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 6 9 17l-5-5" />
     </svg>
   `,
 });
@@ -48,8 +54,12 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       <button class="transform-mode-button" type="button" aria-label="PERSPECTIVE DISTORTION" aria-pressed="false" data-tooltip="PERSPECTIVE DISTORTION" data-transform-mode="perspective">
         ${TRANSFORM_MODE_ICONS.perspectiveDistort}
       </button>
-      <button class="transform-mode-button" type="button" aria-label="FREE DISTORTION" aria-pressed="false" data-tooltip="FREE DISTORTION" data-transform-mode="free-distort">
-        ${TRANSFORM_MODE_ICONS.freeDistort}
+      <div class="transform-mode-divider" aria-hidden="true" data-raster-transform-action-divider hidden></div>
+      <button class="transform-mode-button transform-action-button transform-action-cancel" type="button" aria-label="ANNULLA TRASFORMAZIONE" data-tooltip="ANNULLA TRASFORMAZIONE" data-raster-transform-action="cancel" hidden disabled>
+        ${TRANSFORM_MODE_ICONS.cancelTransform}
+      </button>
+      <button class="transform-mode-button transform-action-button transform-action-accept" type="button" aria-label="ACCETTA TRASFORMAZIONE" data-tooltip="ACCETTA TRASFORMAZIONE" data-raster-transform-action="accept" hidden disabled>
+        ${TRANSFORM_MODE_ICONS.acceptTransform}
       </button>
     </nav>
     <div class="brush-quick-controls" data-brush-quick-controls hidden>
@@ -136,10 +146,15 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const rasterizeTextButton = dock.querySelector("[data-rasterize-text]");
   const transformModeToolbar = dock.querySelector("[data-transform-mode-toolbar]");
   const transformModeButtons = dock.querySelectorAll("[data-transform-mode]");
+  const rasterTransformActionDivider = dock.querySelector("[data-raster-transform-action-divider]");
+  const rasterTransformActionButtons = dock.querySelectorAll("[data-raster-transform-action]");
   const quickControls = dock.querySelector("[data-brush-quick-controls]");
   const quickInputs = dock.querySelectorAll("[data-brush-quick-input]");
   const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
   let selectedTransformMode = "free";
+  let isResizeToolActive = false;
+  let isRasterTransformPending = false;
+  const allowedTransformModes = new Set(["free", "perspective"]);
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, Number(value) || 0));
@@ -224,11 +239,13 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   }
 
   function setTransformMode(mode, options = {}) {
-    if (!mode) {
+    const normalizedMode = String(mode || "").trim().toLowerCase();
+
+    if (!allowedTransformModes.has(normalizedMode)) {
       return;
     }
 
-    selectedTransformMode = mode;
+    selectedTransformMode = normalizedMode;
 
     transformModeButtons.forEach((button) => {
       const isActive = button.dataset.transformMode === selectedTransformMode;
@@ -256,11 +273,31 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       return;
     }
 
+    isResizeToolActive = Boolean(isVisible);
     transformModeToolbar.hidden = !isVisible;
+
+    if (!isVisible) {
+      isRasterTransformPending = false;
+    }
 
     if (isVisible) {
       setTransformMode(selectedTransformMode, { emit: false });
     }
+
+    syncRasterTransformActions();
+  }
+
+  function syncRasterTransformActions() {
+    const shouldShow = isResizeToolActive && isRasterTransformPending;
+
+    if (rasterTransformActionDivider) {
+      rasterTransformActionDivider.hidden = !shouldShow;
+    }
+
+    rasterTransformActionButtons.forEach((button) => {
+      button.hidden = !shouldShow;
+      button.disabled = !shouldShow;
+    });
   }
 
   function getActiveLayer() {
@@ -321,6 +358,23 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   });
 
+  rasterTransformActionButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.disabled) {
+        return;
+      }
+
+      window.dispatchEvent(
+        new CustomEvent("cbo:raster-transform-action", {
+          detail: {
+            action: button.dataset.rasterTransformAction,
+            source: "transform-mode-toolbar",
+          },
+        }),
+      );
+    });
+  });
+
   window.addEventListener("cbo:tool-change", (event) => {
     const label = String(event.detail?.label || "").toUpperCase();
     const toolMode = String(event.detail?.toolMode || "").toLowerCase();
@@ -330,6 +384,12 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
     showBrushQuickControls(isBrush);
     showTransformModeToolbar(isResize);
+  });
+
+  window.addEventListener("cbo:raster-transform-state-change", (event) => {
+    isResizeToolActive = Boolean(event.detail?.active);
+    isRasterTransformPending = Boolean(event.detail?.pending);
+    syncRasterTransformActions();
   });
 
   window.addEventListener("cbo:document-layers-change", syncRasterizeTextButton);

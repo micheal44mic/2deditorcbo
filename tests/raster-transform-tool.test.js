@@ -1,0 +1,81 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+
+const repoRoot = path.resolve(__dirname, "..");
+
+function readRepoFile(...parts) {
+  return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
+}
+
+test("raster transform tool is wired after the document renderer and canvas init", () => {
+  const indexSource = readRepoFile("index.html");
+  const appSource = readRepoFile("js", "app.js");
+  const boundsIndex = indexSource.indexOf("./js/document/document-bounds.js");
+  const rendererIndex = indexSource.indexOf("./js/document/document-renderer.js");
+  const rasterToolIndex = indexSource.indexOf("./js/raster-transform-tool.js");
+  const appIndex = indexSource.indexOf("./js/app.js");
+
+  assert.ok(boundsIndex > 0);
+  assert.ok(rendererIndex > boundsIndex);
+  assert.ok(rasterToolIndex > rendererIndex);
+  assert.ok(appIndex > rasterToolIndex);
+  assert.match(appSource, /window\.CBO\.initEditorCanvas\(\);[\s\S]*window\.CBO\.initRasterTransformTool\?\.\(\);/);
+});
+
+test("document bounds exposes shared bbox helpers", () => {
+  const source = readRepoFile("js", "document", "document-bounds.js");
+
+  assert.match(source, /namespace\.documentBounds = \{/);
+  assert.match(source, /rectToBounds/);
+  assert.match(source, /boundsToRect/);
+  assert.match(source, /transformBounds/);
+  assert.match(source, /getClampedRasterBox/);
+  assert.match(source, /getUnionRect/);
+  assert.match(source, /quadToBounds/);
+});
+
+test("document renderer supports raster transform preview and history commit", () => {
+  const source = readRepoFile("js", "document", "document-renderer.js");
+
+  assert.match(source, /getRasterContentBounds\(layerId, options = \{\}\)/);
+  assert.match(source, /getPuppetAlphaSamples\(target, sampleCols, sampleRows\)/);
+  assert.match(source, /gl\.readPixels\(coarseRect\.x, readY, coarseRect\.width, coarseRect\.height/);
+  assert.match(source, /setRasterTransformPreview\(preview = null\)/);
+  assert.match(source, /u_previewCutMode/);
+  assert.match(source, /drawTexturedQuad\(texture, quad, options = \{\}\)/);
+  assert.match(source, /computeDestToSourceUvHomography\(destQuad\)/);
+  assert.match(source, /drawPerspectiveTexturedQuad\(texture, quad, options = \{\}\)/);
+  assert.match(source, /u_destToSourceUv/);
+  assert.match(source, /commitRasterTransform\(options = \{\}\)/);
+  assert.match(source, /namespace\.documentHistory/);
+  assert.doesNotMatch(source, /window\.CBO\.history/);
+});
+
+test("raster transform tool uses SVG overlay, resize activation, and deferred commit", () => {
+  const source = readRepoFile("js", "raster-transform-tool.js");
+  const cssSource = readRepoFile("css", "layout.css");
+
+  assert.match(source, /document\.createElementNS\(SVG_NS/);
+  assert.match(source, /class: "editor-raster-transform-overlay"/);
+  assert.match(source, /isResizeToolDetail\(detail = \{\}\)/);
+  assert.match(source, /this\.documentRenderer\?\.getRasterContentBounds\?\.\(layer\.id\)/);
+  assert.match(source, /this\.documentRenderer\?\.setRasterTransformPreview\?\.\(/);
+  assert.match(source, /this\.documentRenderer\?\.commitRasterTransform\?\.\(/);
+  assert.match(source, /pickLayerAtClient\(clientX, clientY\)/);
+  assert.match(source, /handlePointerUp\(event\) \{/);
+  assert.match(source, /this\.updatePreview\(\);[\s\S]*this\.render\(\);/);
+  assert.match(source, /if \(this\.isActive\(\)\) \{\s*this\.commitTransform\(\);/);
+  assert.match(source, /if \(!handle && !box\) \{\s*if \(this\.hasPendingTransform\(\)\) \{\s*return;/);
+  assert.match(source, /setSvgElementVisible\(element, isVisible\)/);
+  assert.match(source, /HANDLE_TO_CORNERS/);
+  assert.match(source, /normalizeTransformMode\(mode\)/);
+  assert.match(source, /transformMode: this\.transformMode/);
+  assert.match(source, /hasPendingTransform\(\)/);
+  assert.match(source, /handleRasterTransformAction\(event\)/);
+  assert.match(source, /cbo:raster-transform-state-change/);
+  assert.match(cssSource, /\.editor-raster-transform-overlay/);
+  assert.match(cssSource, /\.editor-raster-transform-box/);
+  assert.match(cssSource, /\.editor-raster-transform-handle/);
+});
