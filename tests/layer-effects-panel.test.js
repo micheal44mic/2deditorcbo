@@ -64,9 +64,12 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /angle: nextAngle/);
   assert.match(source, /amount: nextAmount/);
   assert.match(source, /pins: nextPins/);
-  assert.match(source, /centerX: normalizePercent\(centerX\)/);
-  assert.match(source, /centerY: normalizePercent\(centerY\)/);
+  assert.match(source, /centerX: normalizePercent\(centerX, defaultCenter\.centerX\)/);
+  assert.match(source, /centerY: normalizePercent\(centerY, defaultCenter\.centerY\)/);
   assert.match(source, /mode: normalizeRadialBlurMode\(mode\)/);
+  assert.match(source, /getRasterContentBounds\?\.\(layer\.id/);
+  assert.match(source, /getLayerEffectCenterPoint\(getActiveLayer\(\)\)/);
+  assert.match(source, /defaultToLayerCenter: activeEffectType === "radial-blur"/);
   assert.match(source, /layerModel\.updateLayer\(layerId,/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `gaussian-blur-\$\{layerId\}`/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `motion-blur-\$\{layerId\}`/);
@@ -111,7 +114,11 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /event\.altKey && pinId/);
   assert.match(source, /fieldBlurOverlay\.addEventListener\("dblclick", handleFieldBlurOverlayDoubleClick\)/);
   assert.match(source, /fieldBlurOverlay\.addEventListener\("pointermove", handleFieldBlurOverlayPointerMove\)/);
+  assert.match(source, /fieldBlurOverlay\.addEventListener\("wheel", handleFieldBlurOverlayWheel, \{ passive: false \}\)/);
+  assert.match(source, /brushEngine\.handleWheel\(event\)/);
   assert.match(source, /moveFieldBlurPin\(fieldBlurDrag\.pinId, clientToFieldBlurPoint\(event\.clientX, event\.clientY\)\)/);
+  assert.match(source, /scheduleFieldBlurPreview\(\)/);
+  assert.match(source, /event\?\.detail\?\.source === "layer-effects-preview"/);
   assert.match(source, /namespace\.setLayerFieldBlurPins/);
   assert.match(source, /source: "layer-effects-preview"/);
   assert.match(source, /activeEffectType === "field-blur"/);
@@ -297,6 +304,58 @@ test("radial blur preview writes bypass document history", () => {
     JSON.stringify([{ type: "radial-blur", enabled: true, amount: 32, centerX: 100, centerY: 0, mode: "zoom" }]),
   );
   assert.deepEqual(calls, [
+    "update:paint-main:layer-effects-preview:false:radial-blur-paint-main",
+    "draw",
+  ]);
+});
+
+test("blur effect defaults use active layer content center", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const calls = [];
+  const layer = {
+    id: "paint-main",
+    type: "paint",
+  };
+
+  namespace.documentLayerModel = {
+    findEntryById(id) {
+      return id === layer.id ? layer : null;
+    },
+    updateLayer(id, patch, options = {}) {
+      calls.push(`update:${id}:${options.source}:${options.history}:${options.historyGroup}`);
+      layer.effects = patch.effects;
+      return true;
+    },
+  };
+  namespace.documentRenderer = {
+    height: 800,
+    width: 1000,
+    getRasterContentBounds(id) {
+      calls.push(`bounds:${id}`);
+      return { height: 100, width: 300, x: 100, y: 200 };
+    },
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  assert.equal(JSON.stringify(namespace.getLayerEffectCenterPoint(layer)), JSON.stringify({ x: 250, y: 250 }));
+  assert.equal(
+    JSON.stringify(namespace.getLayerEffectCenterPercent(layer)),
+    JSON.stringify({ centerX: 25, centerY: 31.25 }),
+  );
+  assert.equal(namespace.setLayerRadialBlur(layer.id, 32, undefined, undefined, "zoom", {
+    history: false,
+    source: "layer-effects-preview",
+  }), true);
+  assert.equal(
+    JSON.stringify(layer.effects),
+    JSON.stringify([{ type: "radial-blur", enabled: true, amount: 32, centerX: 25, centerY: 31.25, mode: "zoom" }]),
+  );
+  assert.deepEqual(calls, [
+    "bounds:paint-main",
+    "bounds:paint-main",
+    "bounds:paint-main",
     "update:paint-main:layer-effects-preview:false:radial-blur-paint-main",
     "draw",
   ]);

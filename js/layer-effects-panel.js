@@ -71,6 +71,66 @@ window.CBO = window.CBO || {};
     return Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : fallback;
   }
 
+  function getRendererDocumentSize() {
+    const renderer = namespace.documentRenderer;
+
+    return {
+      height: Math.max(1, Number(renderer?.height) || 4000),
+      width: Math.max(1, Number(renderer?.width) || 4000),
+    };
+  }
+
+  function getLayerEffectCenterPoint(layer) {
+    const renderer = namespace.documentRenderer;
+    const { height, width } = getRendererDocumentSize();
+    const contentBounds = layer?.id
+      ? renderer?.getRasterContentBounds?.(layer.id, {
+          padCells: 0,
+          padding: 0,
+          sampleCols: 256,
+          sampleRows: 256,
+        })
+      : null;
+
+    if (
+      contentBounds &&
+      Number.isFinite(contentBounds.x) &&
+      Number.isFinite(contentBounds.y) &&
+      Number.isFinite(contentBounds.width) &&
+      Number.isFinite(contentBounds.height) &&
+      contentBounds.width > 0 &&
+      contentBounds.height > 0
+    ) {
+      return {
+        x: clamp(contentBounds.x + contentBounds.width * 0.5, 0, width),
+        y: clamp(contentBounds.y + contentBounds.height * 0.5, 0, height),
+      };
+    }
+
+    return {
+      x: width * 0.5,
+      y: height * 0.5,
+    };
+  }
+
+  function getLayerEffectCenterPercent(layer) {
+    const { height, width } = getRendererDocumentSize();
+    const center = getLayerEffectCenterPoint(layer);
+
+    return {
+      centerX: clamp((center.x / width) * 100, 0, 100),
+      centerY: clamp((center.y / height) * 100, 0, 100),
+    };
+  }
+
+  function findLayerEffect(layer, type, legacyKey = "") {
+    const effects = layer?.effects;
+
+    return Array.isArray(effects)
+      ? effects.find((item) => item && item.type === type && item.enabled !== false)
+      : effects?.[legacyKey];
+  }
+
   function normalizeRadialBlurMode(value) {
     return String(value || "").trim().toLowerCase() === "zoom" ? "zoom" : "spin";
   }
@@ -332,18 +392,20 @@ window.CBO = window.CBO || {};
     };
   }
 
-  function getRadialBlur(layer) {
-    const effects = layer?.effects;
-    const effect = Array.isArray(effects)
-      ? effects.find((item) => item && item.type === "radial-blur" && item.enabled !== false)
-      : effects?.radialBlur;
+  function getRadialBlur(layer, options = {}) {
+    const effect = findLayerEffect(layer, "radial-blur", "radialBlur");
     const amount = Number(effect?.amount);
     const centerFallback = effect?.center;
+    const defaultCenter = effect
+      ? { centerX: 50, centerY: 50 }
+      : (options.defaultToLayerCenter === true
+        ? getLayerEffectCenterPercent(layer)
+        : { centerX: 50, centerY: 50 });
 
     return {
       amount: Number.isFinite(amount) ? Math.max(0, Math.min(MAX_RADIAL_BLUR_AMOUNT, amount)) : 0,
-      centerX: normalizePercent(effect?.centerX ?? centerFallback),
-      centerY: normalizePercent(effect?.centerY ?? centerFallback),
+      centerX: normalizePercent(effect?.centerX ?? centerFallback, defaultCenter.centerX),
+      centerY: normalizePercent(effect?.centerY ?? centerFallback, defaultCenter.centerY),
       mode: normalizeRadialBlurMode(effect?.mode),
     };
   }
@@ -406,6 +468,7 @@ window.CBO = window.CBO || {};
 
   function getNextRadialBlurEffects(layer, amount, centerX, centerY, mode = "spin") {
     const nextAmount = clamp(amount, 0, MAX_RADIAL_BLUR_AMOUNT);
+    const defaultCenter = getLayerEffectCenterPercent(layer);
     const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
     const effects = existingEffects
       .filter((effect) => effect && effect.type !== "radial-blur")
@@ -416,8 +479,8 @@ window.CBO = window.CBO || {};
         type: "radial-blur",
         enabled: true,
         amount: nextAmount,
-        centerX: normalizePercent(centerX),
-        centerY: normalizePercent(centerY),
+        centerX: normalizePercent(centerX, defaultCenter.centerX),
+        centerY: normalizePercent(centerY, defaultCenter.centerY),
         mode: normalizeRadialBlurMode(mode),
       });
     }
@@ -485,6 +548,8 @@ window.CBO = window.CBO || {};
   }
 
   namespace.getLayerGaussianBlurRadius = getGaussianBlurRadius;
+  namespace.getLayerEffectCenterPoint = getLayerEffectCenterPoint;
+  namespace.getLayerEffectCenterPercent = getLayerEffectCenterPercent;
   namespace.getLayerMotionBlur = getMotionBlur;
   namespace.getLayerFieldBlur = getFieldBlur;
   namespace.getLayerRadialBlur = getRadialBlur;
@@ -942,6 +1007,7 @@ window.CBO = window.CBO || {};
     let activeFieldBlurPinId = "";
     let fieldBlurOverlay = null;
     let fieldBlurPinIdSequence = 0;
+    let fieldBlurPreviewFrame = 0;
     let fieldBlurPins = [];
     let previewSession = null;
 
@@ -975,23 +1041,19 @@ window.CBO = window.CBO || {};
       return layerModel?.findEntryById?.(layerModel.activeLayerId) || null;
     }
 
-    function getDocumentCenterPoint() {
-      const renderer = namespace.documentRenderer;
-
-      return {
-        x: Math.max(1, Number(renderer?.width) || 4000) * 0.5,
-        y: Math.max(1, Number(renderer?.height) || 4000) * 0.5,
-      };
+    function getDefaultFieldBlurPoint() {
+      return getLayerEffectCenterPoint(getActiveLayer());
     }
 
-    function createFieldBlurPin(point = getDocumentCenterPoint(), blur = 0, id = "") {
+    function createFieldBlurPin(point = getDefaultFieldBlurPoint(), blur = 0, id = "") {
       fieldBlurPinIdSequence += 1;
+      const fallbackPoint = getDefaultFieldBlurPoint();
 
       return {
         blur: clamp(blur, 0, MAX_FIELD_BLUR_RADIUS),
         id: typeof id === "string" && id.trim() ? id : `field-blur-pin-${fieldBlurPinIdSequence}`,
-        x: Number.isFinite(point?.x) ? point.x : getDocumentCenterPoint().x,
-        y: Number.isFinite(point?.y) ? point.y : getDocumentCenterPoint().y,
+        x: Number.isFinite(point?.x) ? point.x : fallbackPoint.x,
+        y: Number.isFinite(point?.y) ? point.y : fallbackPoint.y,
       };
     }
 
@@ -1053,7 +1115,7 @@ window.CBO = window.CBO || {};
           return;
         }
 
-        const pin = createFieldBlurPin(getDocumentCenterPoint(), 0);
+        const pin = createFieldBlurPin(getDefaultFieldBlurPoint(), 0);
 
         fieldBlurPins = [pin];
         activeFieldBlurPinId = pin.id;
@@ -1139,7 +1201,12 @@ window.CBO = window.CBO || {};
       acceptButton.disabled = !isBlurEligibleLayer(getActiveLayer()) || !hasFieldBlurAmount(fieldBlurPins);
     }
 
-    function applyFieldBlurPins() {
+    function flushFieldBlurPreview() {
+      if (fieldBlurPreviewFrame) {
+        window.cancelAnimationFrame?.(fieldBlurPreviewFrame);
+        fieldBlurPreviewFrame = 0;
+      }
+
       const layer = getActiveLayer();
 
       if (!isBlurEligibleLayer(layer)) {
@@ -1160,6 +1227,22 @@ window.CBO = window.CBO || {};
       });
     }
 
+    function scheduleFieldBlurPreview() {
+      if (fieldBlurPreviewFrame) {
+        return;
+      }
+
+      if (typeof window.requestAnimationFrame !== "function") {
+        flushFieldBlurPreview();
+        return;
+      }
+
+      fieldBlurPreviewFrame = window.requestAnimationFrame(() => {
+        fieldBlurPreviewFrame = 0;
+        flushFieldBlurPreview();
+      });
+    }
+
     function addFieldBlurPin(point) {
       if (fieldBlurPins.length >= MAX_FIELD_BLUR_PINS) {
         return;
@@ -1169,7 +1252,7 @@ window.CBO = window.CBO || {};
 
       fieldBlurPins = [...fieldBlurPins, pin];
       setActiveFieldBlurPin(pin.id);
-      applyFieldBlurPins();
+      scheduleFieldBlurPreview();
       syncFieldBlurAcceptState();
     }
 
@@ -1177,7 +1260,7 @@ window.CBO = window.CBO || {};
       fieldBlurPins = fieldBlurPins.filter((pin) => pin.id !== pinId);
       activeFieldBlurPinId = fieldBlurPins[0]?.id || "";
       syncFieldBlurUi();
-      applyFieldBlurPins();
+      scheduleFieldBlurPreview();
       syncFieldBlurAcceptState();
     }
 
@@ -1187,7 +1270,7 @@ window.CBO = window.CBO || {};
       );
       activeFieldBlurPinId = pinId;
       renderFieldBlurPins();
-      applyFieldBlurPins();
+      scheduleFieldBlurPreview();
       syncFieldBlurAcceptState();
     }
 
@@ -1213,8 +1296,21 @@ window.CBO = window.CBO || {};
       activeFieldBlurPinId = pinId;
       renderFieldBlurPins();
       updateFieldBlurPinControlValue(pinId, nextBlur);
-      applyFieldBlurPins();
+      scheduleFieldBlurPreview();
       syncFieldBlurAcceptState();
+    }
+
+    function handleFieldBlurOverlayWheel(event) {
+      if (activeEffectType !== "field-blur") {
+        return;
+      }
+
+      const brushEngine = namespace.brushEngine;
+
+      if (typeof brushEngine?.handleWheel === "function") {
+        event.stopPropagation();
+        brushEngine.handleWheel(event);
+      }
     }
 
     function handleFieldBlurOverlayPointerDown(event) {
@@ -1300,6 +1396,7 @@ window.CBO = window.CBO || {};
         fieldBlurOverlay.addEventListener("pointermove", handleFieldBlurOverlayPointerMove);
         fieldBlurOverlay.addEventListener("pointerup", stopFieldBlurDrag);
         fieldBlurOverlay.addEventListener("pointercancel", stopFieldBlurDrag);
+        fieldBlurOverlay.addEventListener("wheel", handleFieldBlurOverlayWheel, { passive: false });
         stage.append(fieldBlurOverlay);
       }
 
@@ -1323,6 +1420,10 @@ window.CBO = window.CBO || {};
       }
 
       fieldBlurDrag = null;
+      if (fieldBlurPreviewFrame) {
+        window.cancelAnimationFrame?.(fieldBlurPreviewFrame);
+        fieldBlurPreviewFrame = 0;
+      }
       activeFieldBlurPinId = "";
       fieldBlurPins = [];
     }
@@ -1493,7 +1594,7 @@ window.CBO = window.CBO || {};
       const motionBlur = isEligible ? getMotionBlur(layer) : { angle: 0, distance: 0 };
       const fieldBlur = isEligible ? getFieldBlur(layer) : { pins: [] };
       const radialBlur = isEligible
-        ? getRadialBlur(layer)
+        ? getRadialBlur(layer, { defaultToLayerCenter: activeEffectType === "radial-blur" })
         : { amount: 0, centerX: 50, centerY: 50, mode: "spin" };
       const hasActiveFieldBlur = hasFieldBlurAmount(
         activeEffectType === "field-blur" ? fieldBlurPins : fieldBlur.pins,
@@ -1640,7 +1741,7 @@ window.CBO = window.CBO || {};
       });
     }
 
-    function handleLayerChange() {
+    function handleLayerChange(event) {
       if (panel.hidden) {
         return;
       }
@@ -1649,6 +1750,12 @@ window.CBO = window.CBO || {};
 
       if (previewSession?.layerId && layer?.id !== previewSession.layerId) {
         showEffectPicker({ cancel: true });
+        return;
+      }
+
+      if (activeEffectType === "field-blur" && event?.detail?.source === "layer-effects-preview") {
+        renderFieldBlurPins();
+        syncFieldBlurAcceptState();
         return;
       }
 
@@ -1771,6 +1878,10 @@ window.CBO = window.CBO || {};
     acceptButton.addEventListener("click", () => {
       if (acceptButton.disabled) {
         return;
+      }
+
+      if (activeEffectType === "field-blur") {
+        flushFieldBlurPreview();
       }
 
       const didRasterize = namespace.rasterizeActiveLayerEffects?.({
