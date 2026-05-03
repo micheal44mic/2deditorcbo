@@ -1,14 +1,17 @@
 window.CBO = window.CBO || {};
 
 (function registerLayerEffectsPanel(namespace) {
-  const MAX_GAUSSIAN_BLUR_RADIUS = 40;
+  const MAX_GAUSSIAN_BLUR_RADIUS = 200;
+  const MAX_MOTION_BLUR_DISTANCE = 300;
+  const MAX_RADIAL_BLUR_AMOUNT = 200;
+  const RASTERIZABLE_EFFECT_TYPES = Object.freeze(["gaussian-blur", "motion-blur", "radial-blur"]);
   const EFFECT_GROUPS = Object.freeze([
     {
       label: "Blur",
       items: Object.freeze([
         { implemented: true, icon: "blur", label: "Gaussian Blur", type: "gaussian-blur" },
-        { implemented: false, icon: "motion", label: "Motion Blur", type: "motion-blur" },
-        { implemented: false, icon: "radial", label: "Radial Blur", type: "radial-blur" },
+        { implemented: true, icon: "motion", label: "Motion Blur", type: "motion-blur" },
+        { implemented: true, icon: "radial", label: "Radial Blur", type: "radial-blur" },
       ]),
     },
     {
@@ -43,6 +46,30 @@ window.CBO = window.CBO || {};
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : min;
+  }
+
+  function normalizeAngle(value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+      return 0;
+    }
+
+    return ((number % 360) + 360) % 360;
+  }
+
+  function getDisplayAngle(value) {
+    return Math.round(normalizeAngle(value)) % 360;
+  }
+
+  function normalizePercent(value, fallback = 50) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : fallback;
+  }
+
+  function normalizeRadialBlurMode(value) {
+    return String(value || "").trim().toLowerCase() === "zoom" ? "zoom" : "spin";
   }
 
   function cloneValue(value) {
@@ -161,7 +188,11 @@ window.CBO = window.CBO || {};
   }
 
   function getEffectEditorMarkup(effect) {
-    if (effect.type === "gaussian-blur") {
+    if (
+      effect.type === "gaussian-blur" ||
+      effect.type === "motion-blur" ||
+      effect.type === "radial-blur"
+    ) {
       return "";
     }
 
@@ -208,10 +239,6 @@ window.CBO = window.CBO || {};
       pixelate: [
         getAdjustmentControlMarkup("Size", 18),
       ],
-      "radial-blur": [
-        getAdjustmentControlMarkup("Amount", 22),
-        getAdjustmentControlMarkup("Center", 50),
-      ],
       threshold: [
         getAdjustmentControlMarkup("Level", 50),
       ],
@@ -246,6 +273,35 @@ window.CBO = window.CBO || {};
     return Number.isFinite(radius) ? Math.max(0, Math.min(MAX_GAUSSIAN_BLUR_RADIUS, radius)) : 0;
   }
 
+  function getMotionBlur(layer) {
+    const effects = layer?.effects;
+    const effect = Array.isArray(effects)
+      ? effects.find((item) => item && item.type === "motion-blur" && item.enabled !== false)
+      : effects?.motionBlur;
+    const distance = Number(effect?.distance);
+
+    return {
+      angle: normalizeAngle(effect?.angle),
+      distance: Number.isFinite(distance) ? Math.max(0, Math.min(MAX_MOTION_BLUR_DISTANCE, distance)) : 0,
+    };
+  }
+
+  function getRadialBlur(layer) {
+    const effects = layer?.effects;
+    const effect = Array.isArray(effects)
+      ? effects.find((item) => item && item.type === "radial-blur" && item.enabled !== false)
+      : effects?.radialBlur;
+    const amount = Number(effect?.amount);
+    const centerFallback = effect?.center;
+
+    return {
+      amount: Number.isFinite(amount) ? Math.max(0, Math.min(MAX_RADIAL_BLUR_AMOUNT, amount)) : 0,
+      centerX: normalizePercent(effect?.centerX ?? centerFallback),
+      centerY: normalizePercent(effect?.centerY ?? centerFallback),
+      mode: normalizeRadialBlurMode(effect?.mode),
+    };
+  }
+
   function getNextEffects(layer, radius) {
     const nextRadius = clamp(radius, 0, MAX_GAUSSIAN_BLUR_RADIUS);
     const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
@@ -262,6 +318,81 @@ window.CBO = window.CBO || {};
     }
 
     return effects;
+  }
+
+  function getNextMotionBlurEffects(layer, distance, angle) {
+    const nextDistance = clamp(distance, 0, MAX_MOTION_BLUR_DISTANCE);
+    const nextAngle = normalizeAngle(angle);
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "motion-blur")
+      .map((effect) => cloneValue(effect));
+
+    if (nextDistance > 0) {
+      effects.push({
+        type: "motion-blur",
+        enabled: true,
+        distance: nextDistance,
+        angle: nextAngle,
+      });
+    }
+
+    return effects;
+  }
+
+  function getNextRadialBlurEffects(layer, amount, centerX, centerY, mode = "spin") {
+    const nextAmount = clamp(amount, 0, MAX_RADIAL_BLUR_AMOUNT);
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "radial-blur")
+      .map((effect) => cloneValue(effect));
+
+    if (nextAmount > 0) {
+      effects.push({
+        type: "radial-blur",
+        enabled: true,
+        amount: nextAmount,
+        centerX: normalizePercent(centerX),
+        centerY: normalizePercent(centerY),
+        mode: normalizeRadialBlurMode(mode),
+      });
+    }
+
+    return effects;
+  }
+
+  function isRenderableEffect(effect) {
+    if (!effect || effect.enabled === false || !RASTERIZABLE_EFFECT_TYPES.includes(effect.type)) {
+      return false;
+    }
+
+    if (effect.type === "gaussian-blur") {
+      return getGaussianBlurRadius({ effects: [effect] }) > 0;
+    }
+
+    if (effect.type === "motion-blur") {
+      return getMotionBlur({ effects: [effect] }).distance > 0;
+    }
+
+    if (effect.type === "radial-blur") {
+      return getRadialBlur({ effects: [effect] }).amount > 0;
+    }
+
+    return false;
+  }
+
+  function getRenderableEffects(layer) {
+    return Array.isArray(layer?.effects)
+      ? layer.effects.filter(isRenderableEffect)
+      : [];
+  }
+
+  function getEffectsAfterRasterize(layer) {
+    return Array.isArray(layer?.effects)
+      ? layer.effects
+          .filter((effect) => effect && !RASTERIZABLE_EFFECT_TYPES.includes(effect.type))
+          .map((effect) => cloneValue(effect))
+      : [];
   }
 
   function isBlurEligibleLayer(layer) {
@@ -286,13 +417,15 @@ window.CBO = window.CBO || {};
   }
 
   namespace.getLayerGaussianBlurRadius = getGaussianBlurRadius;
+  namespace.getLayerMotionBlur = getMotionBlur;
+  namespace.getLayerRadialBlur = getRadialBlur;
 
   namespace.hasRasterizableLayerEffects = function hasRasterizableLayerEffects(layerOrId) {
     const layer = typeof layerOrId === "string"
       ? namespace.documentLayerModel?.findEntryById?.(layerOrId)
       : layerOrId;
 
-    return isBlurEligibleLayer(layer) && getGaussianBlurRadius(layer) > 0;
+    return isBlurEligibleLayer(layer) && getRenderableEffects(layer).length > 0;
   };
 
   namespace.setLayerGaussianBlurRadius = function setLayerGaussianBlurRadius(layerId, radius, options = {}) {
@@ -314,6 +447,71 @@ window.CBO = window.CBO || {};
 
     const didUpdate = layerModel.updateLayer(layerId, {
       effects: getNextEffects(layer, radius),
+    }, updateOptions);
+
+    if (didUpdate) {
+      namespace.documentRenderer?.requestDraw?.();
+    }
+
+    return didUpdate;
+  };
+
+  namespace.setLayerMotionBlur = function setLayerMotionBlur(layerId, distance, angle, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const updateOptions = {
+      historyGroup: options.historyGroup || `motion-blur-${layerId}`,
+      source: options.source || "layer-effects-motion-blur",
+    };
+
+    if (options.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = layerModel.updateLayer(layerId, {
+      effects: getNextMotionBlurEffects(layer, distance, angle),
+    }, updateOptions);
+
+    if (didUpdate) {
+      namespace.documentRenderer?.requestDraw?.();
+    }
+
+    return didUpdate;
+  };
+
+  namespace.setLayerRadialBlur = function setLayerRadialBlur(
+    layerId,
+    amount,
+    centerX,
+    centerY,
+    mode = "spin",
+    options = {},
+  ) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+    const updateMode = mode && typeof mode === "object" ? "spin" : mode;
+    const updateOptionsSource = mode && typeof mode === "object" ? mode : options;
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const updateOptions = {
+      historyGroup: updateOptionsSource.historyGroup || `radial-blur-${layerId}`,
+      source: updateOptionsSource.source || "layer-effects-radial-blur",
+    };
+
+    if (updateOptionsSource.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = layerModel.updateLayer(layerId, {
+      effects: getNextRadialBlurEffects(layer, amount, centerX, centerY, updateMode),
     }, updateOptions);
 
     if (didUpdate) {
@@ -425,7 +623,7 @@ window.CBO = window.CBO || {};
     }
 
     const didUpdateLayer = layerModel.updateLayer(layer.id, {
-      effects: getNextEffects(layer, 0),
+      effects: getEffectsAfterRasterize(layer),
     }, {
       history: false,
       source: "layer-effects-rasterize",
@@ -541,9 +739,58 @@ window.CBO = window.CBO || {};
               <span class="layer-effects-label">Gaussian Blur</span>
               <output class="layer-effects-value" data-layer-blur-value>0 px</output>
             </div>
-            <input class="layer-effects-range" type="range" min="0" max="40" step="1" value="0" aria-label="Gaussian blur radius" data-layer-blur-input />
+            <input class="layer-effects-range" type="range" min="0" max="200" step="1" value="0" aria-label="Gaussian blur radius" data-layer-blur-input />
             <div class="layer-effects-actions">
               <button class="layer-effects-icon-button" type="button" aria-label="Reset gaussian blur" data-layer-blur-reset>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          <section class="layer-effects-section" aria-label="Motion blur" data-layer-effects-editor="motion-blur" hidden>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Distance</span>
+              <output class="layer-effects-value" data-layer-motion-distance-value>0 px</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="300" step="1" value="0" aria-label="Motion blur distance" data-layer-motion-distance-input />
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Angle</span>
+              <output class="layer-effects-value" data-layer-motion-angle-value>0 deg</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="359" step="1" value="0" aria-label="Motion blur angle" data-layer-motion-angle-input />
+            <div class="layer-effects-actions">
+              <button class="layer-effects-icon-button" type="button" aria-label="Reset motion blur" data-layer-motion-reset>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          <section class="layer-effects-section" aria-label="Radial blur" data-layer-effects-editor="radial-blur" hidden>
+            <div class="layer-effects-mode-toggle" role="group" aria-label="Radial blur mode">
+              <button class="layer-effects-mode-button active" type="button" data-layer-radial-mode-button="spin">Spin</button>
+              <button class="layer-effects-mode-button" type="button" data-layer-radial-mode-button="zoom">Zoom</button>
+            </div>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Amount</span>
+              <output class="layer-effects-value" data-layer-radial-amount-value>0</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="200" step="1" value="0" aria-label="Radial blur amount" data-layer-radial-amount-input />
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Center X</span>
+              <output class="layer-effects-value" data-layer-radial-center-x-value>50%</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="100" step="1" value="50" aria-label="Radial blur center X" data-layer-radial-center-x-input />
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Center Y</span>
+              <output class="layer-effects-value" data-layer-radial-center-y-value>50%</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="100" step="1" value="50" aria-label="Radial blur center Y" data-layer-radial-center-y-input />
+            <div class="layer-effects-actions">
+              <button class="layer-effects-icon-button" type="button" aria-label="Reset radial blur" data-layer-radial-reset>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                   <path d="M3 3v5h5" />
@@ -567,14 +814,45 @@ window.CBO = window.CBO || {};
     const backButton = panel.querySelector("[data-layer-effects-back]");
     const blurInput = panel.querySelector("[data-layer-blur-input]");
     const blurValue = panel.querySelector("[data-layer-blur-value]");
+    const motionDistanceInput = panel.querySelector("[data-layer-motion-distance-input]");
+    const motionDistanceValue = panel.querySelector("[data-layer-motion-distance-value]");
+    const motionAngleInput = panel.querySelector("[data-layer-motion-angle-input]");
+    const motionAngleValue = panel.querySelector("[data-layer-motion-angle-value]");
+    const radialAmountInput = panel.querySelector("[data-layer-radial-amount-input]");
+    const radialAmountValue = panel.querySelector("[data-layer-radial-amount-value]");
+    const radialCenterXInput = panel.querySelector("[data-layer-radial-center-x-input]");
+    const radialCenterXValue = panel.querySelector("[data-layer-radial-center-x-value]");
+    const radialCenterYInput = panel.querySelector("[data-layer-radial-center-y-input]");
+    const radialCenterYValue = panel.querySelector("[data-layer-radial-center-y-value]");
+    const radialModeButtons = panel.querySelectorAll("[data-layer-radial-mode-button]");
     const acceptButton = panel.querySelector("[data-layer-effects-accept]");
     const resetButton = panel.querySelector("[data-layer-blur-reset]");
+    const motionResetButton = panel.querySelector("[data-layer-motion-reset]");
+    const radialResetButton = panel.querySelector("[data-layer-radial-reset]");
     const closeButton = panel.querySelector("[data-layer-effects-close]");
     const panelCloseButton = panel.querySelector("[data-layer-effects-panel-close]");
     let activeEffectType = "";
     let previewSession = null;
 
     document.body.append(panel);
+
+    function setRadialModeButtonState(mode) {
+      const nextMode = normalizeRadialBlurMode(mode);
+
+      radialModeButtons.forEach((modeButton) => {
+        const isActive = modeButton.dataset.layerRadialModeButton === nextMode;
+
+        modeButton.classList.toggle("active", isActive);
+        modeButton.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+    }
+
+    function getSelectedRadialMode() {
+      const activeModeButton = Array.from(radialModeButtons)
+        .find((modeButton) => modeButton.classList.contains("active"));
+
+      return normalizeRadialBlurMode(activeModeButton?.dataset.layerRadialModeButton);
+    }
 
     function getLayerModel() {
       return namespace.documentLayerModel;
@@ -680,6 +958,10 @@ window.CBO = window.CBO || {};
       syncControls();
       if (effectType === "gaussian-blur") {
         blurInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "motion-blur") {
+        motionDistanceInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "radial-blur") {
+        radialAmountInput?.focus?.({ preventScroll: true });
       }
     }
 
@@ -736,6 +1018,10 @@ window.CBO = window.CBO || {};
       const layer = getActiveLayer();
       const isEligible = isBlurEligibleLayer(layer);
       const radius = isEligible ? getGaussianBlurRadius(layer) : 0;
+      const motionBlur = isEligible ? getMotionBlur(layer) : { angle: 0, distance: 0 };
+      const radialBlur = isEligible
+        ? getRadialBlur(layer)
+        : { amount: 0, centerX: 50, centerY: 50, mode: "spin" };
 
       const layerName = isEligible ? layer.name || "Layer" : "No layer";
 
@@ -749,12 +1035,35 @@ window.CBO = window.CBO || {};
         option.setAttribute("aria-disabled", isEnabled ? "false" : "true");
       });
       blurInput.disabled = !isEligible;
+      motionDistanceInput.disabled = !isEligible;
+      motionAngleInput.disabled = !isEligible;
+      radialAmountInput.disabled = !isEligible;
+      radialCenterXInput.disabled = !isEligible;
+      radialCenterYInput.disabled = !isEligible;
+      radialModeButtons.forEach((modeButton) => {
+        modeButton.disabled = !isEligible;
+      });
       acceptButton.disabled = !isEligible ||
         !isImplementedEffect(activeEffectType) ||
-        (activeEffectType === "gaussian-blur" && radius <= 0);
+        (activeEffectType === "gaussian-blur" && radius <= 0) ||
+        (activeEffectType === "motion-blur" && motionBlur.distance <= 0) ||
+        (activeEffectType === "radial-blur" && radialBlur.amount <= 0);
       resetButton.disabled = !isEligible || radius <= 0;
+      motionResetButton.disabled = !isEligible || motionBlur.distance <= 0;
+      radialResetButton.disabled = !isEligible || radialBlur.amount <= 0;
       blurInput.value = String(radius);
       blurValue.textContent = `${Math.round(radius)} px`;
+      motionDistanceInput.value = String(motionBlur.distance);
+      motionDistanceValue.textContent = `${Math.round(motionBlur.distance)} px`;
+      motionAngleInput.value = String(getDisplayAngle(motionBlur.angle));
+      motionAngleValue.textContent = `${getDisplayAngle(motionBlur.angle)} deg`;
+      radialAmountInput.value = String(radialBlur.amount);
+      radialAmountValue.textContent = String(Math.round(radialBlur.amount));
+      radialCenterXInput.value = String(radialBlur.centerX);
+      radialCenterXValue.textContent = `${Math.round(radialBlur.centerX)}%`;
+      radialCenterYInput.value = String(radialBlur.centerY);
+      radialCenterYValue.textContent = `${Math.round(radialBlur.centerY)}%`;
+      setRadialModeButtonState(radialBlur.mode);
       panel.classList.toggle("disabled", !isEligible);
     }
 
@@ -770,6 +1079,63 @@ window.CBO = window.CBO || {};
 
       blurValue.textContent = `${Math.round(nextRadius)} px`;
       namespace.setLayerGaussianBlurRadius(layer.id, nextRadius, {
+        history: false,
+        source: "layer-effects-preview",
+      });
+    }
+
+    function applyMotionBlur(distance, angle = motionAngleInput?.value) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextDistance = clamp(distance, 0, MAX_MOTION_BLUR_DISTANCE);
+      const nextAngle = normalizeAngle(angle);
+      const currentMotionBlur = getMotionBlur(layer);
+
+      motionDistanceValue.textContent = `${Math.round(nextDistance)} px`;
+      motionAngleValue.textContent = `${getDisplayAngle(nextAngle)} deg`;
+      if (nextDistance <= 0 && currentMotionBlur.distance <= 0) {
+        return;
+      }
+
+      namespace.setLayerMotionBlur(layer.id, nextDistance, nextAngle, {
+        history: false,
+        source: "layer-effects-preview",
+      });
+    }
+
+    function applyRadialBlur(
+      amount,
+      centerX = radialCenterXInput?.value,
+      centerY = radialCenterYInput?.value,
+      mode = getSelectedRadialMode(),
+    ) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextAmount = clamp(amount, 0, MAX_RADIAL_BLUR_AMOUNT);
+      const nextCenterX = normalizePercent(centerX);
+      const nextCenterY = normalizePercent(centerY);
+      const nextMode = normalizeRadialBlurMode(mode);
+      const currentRadialBlur = getRadialBlur(layer);
+
+      radialAmountValue.textContent = String(Math.round(nextAmount));
+      radialCenterXValue.textContent = `${Math.round(nextCenterX)}%`;
+      radialCenterYValue.textContent = `${Math.round(nextCenterY)}%`;
+      if (nextAmount <= 0 && currentRadialBlur.amount <= 0) {
+        return;
+      }
+
+      setRadialModeButtonState(nextMode);
+      namespace.setLayerRadialBlur(layer.id, nextAmount, nextCenterX, nextCenterY, nextMode, {
         history: false,
         source: "layer-effects-preview",
       });
@@ -842,6 +1208,65 @@ window.CBO = window.CBO || {};
     resetButton.addEventListener("click", () => {
       blurInput.value = "0";
       applyRadius(0);
+    });
+
+    motionDistanceInput.addEventListener("input", () => {
+      applyMotionBlur(motionDistanceInput.value, motionAngleInput.value);
+    });
+
+    motionAngleInput.addEventListener("input", () => {
+      applyMotionBlur(motionDistanceInput.value, motionAngleInput.value);
+    });
+
+    motionResetButton.addEventListener("click", () => {
+      motionDistanceInput.value = "0";
+      applyMotionBlur(0, motionAngleInput.value);
+    });
+
+    radialAmountInput.addEventListener("input", () => {
+      applyRadialBlur(
+        radialAmountInput.value,
+        radialCenterXInput.value,
+        radialCenterYInput.value,
+        getSelectedRadialMode(),
+      );
+    });
+
+    radialCenterXInput.addEventListener("input", () => {
+      applyRadialBlur(
+        radialAmountInput.value,
+        radialCenterXInput.value,
+        radialCenterYInput.value,
+        getSelectedRadialMode(),
+      );
+    });
+
+    radialCenterYInput.addEventListener("input", () => {
+      applyRadialBlur(
+        radialAmountInput.value,
+        radialCenterXInput.value,
+        radialCenterYInput.value,
+        getSelectedRadialMode(),
+      );
+    });
+
+    radialModeButtons.forEach((modeButton) => {
+      modeButton.addEventListener("click", () => {
+        const nextMode = normalizeRadialBlurMode(modeButton.dataset.layerRadialModeButton);
+
+        setRadialModeButtonState(nextMode);
+        applyRadialBlur(
+          radialAmountInput.value,
+          radialCenterXInput.value,
+          radialCenterYInput.value,
+          nextMode,
+        );
+      });
+    });
+
+    radialResetButton.addEventListener("click", () => {
+      radialAmountInput.value = "0";
+      applyRadialBlur(0, radialCenterXInput.value, radialCenterYInput.value, getSelectedRadialMode());
     });
 
     acceptButton.addEventListener("click", () => {

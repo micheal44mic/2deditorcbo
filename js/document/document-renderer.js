@@ -242,7 +242,7 @@ in vec2 v_uv;
 
 out vec4 outColor;
 
-const int MAX_RADIUS = 40;
+const int MAX_RADIUS = 200;
 
 void main() {
   float radius = clamp(u_radius, 0.0, float(MAX_RADIUS));
@@ -268,6 +268,152 @@ void main() {
 
     sum += texture(u_texture, v_uv + offset) * weight;
     sum += texture(u_texture, v_uv - offset) * weight;
+    weightSum += weight * 2.0;
+  }
+
+  outColor = sum / weightSum;
+}
+`;
+
+  const MOTION_BLUR_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aUnitCorner;
+
+out vec2 v_uv;
+
+void main() {
+  v_uv = vec2(aUnitCorner.x, 1.0 - aUnitCorner.y);
+  gl_Position = vec4(aUnitCorner.x * 2.0 - 1.0, 1.0 - aUnitCorner.y * 2.0, 0.0, 1.0);
+}
+`;
+
+  const MOTION_BLUR_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform vec2 u_directionTexelStep;
+uniform float u_distance;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+const int MAX_DISTANCE = 300;
+
+void main() {
+  float distance = clamp(u_distance, 0.0, float(MAX_DISTANCE));
+
+  if (distance <= 0.01) {
+    outColor = texture(u_texture, v_uv);
+    return;
+  }
+
+  vec4 sum = texture(u_texture, v_uv);
+  float weightSum = 1.0;
+
+  for (int i = 1; i <= MAX_DISTANCE; i++) {
+    if (float(i) > distance) {
+      break;
+    }
+
+    vec2 offset = u_directionTexelStep * float(i);
+
+    sum += texture(u_texture, v_uv + offset);
+    sum += texture(u_texture, v_uv - offset);
+    weightSum += 2.0;
+  }
+
+  outColor = sum / weightSum;
+}
+`;
+
+  const RADIAL_BLUR_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aUnitCorner;
+
+out vec2 v_uv;
+
+void main() {
+  v_uv = vec2(aUnitCorner.x, 1.0 - aUnitCorner.y);
+  gl_Position = vec4(aUnitCorner.x * 2.0 - 1.0, 1.0 - aUnitCorner.y * 2.0, 0.0, 1.0);
+}
+`;
+
+  const RADIAL_BLUR_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform vec2 u_texelSize;
+uniform vec2 u_center;
+uniform float u_amount;
+uniform float u_mode;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+const int MAX_AMOUNT = 200;
+
+void main() {
+  float amount = clamp(u_amount, 0.0, float(MAX_AMOUNT));
+  vec4 base = texture(u_texture, v_uv);
+
+  if (amount <= 0.01) {
+    outColor = base;
+    return;
+  }
+
+  vec2 texelSize = max(u_texelSize, vec2(0.000001));
+  vec2 center = clamp(u_center, vec2(0.0), vec2(1.0));
+  vec2 radialVector = v_uv - center;
+  float radialDistance = length(radialVector / texelSize);
+
+  if (radialDistance <= 0.001) {
+    outColor = base;
+    return;
+  }
+
+  vec4 sum = base;
+  float weightSum = 1.0;
+  float angleRange = amount * 0.0062831853;
+  float zoomRange = amount * 0.0025;
+
+  for (int i = 1; i <= MAX_AMOUNT; i++) {
+    if (float(i) > amount) {
+      break;
+    }
+
+    float sampleRatio = float(i) / (amount + 1.0);
+    float weight = 1.0 - sampleRatio;
+    vec2 sampleA;
+    vec2 sampleB;
+
+    if (u_mode > 0.5) {
+      float zoomOffset = sampleRatio * zoomRange;
+
+      sampleA = v_uv - radialVector * zoomOffset;
+      sampleB = v_uv + radialVector * zoomOffset;
+    } else {
+      float angleOffset = sampleRatio * angleRange;
+      float rotationCos = cos(angleOffset);
+      float rotationSin = sin(angleOffset);
+      vec2 rotatedClockwise = vec2(
+        radialVector.x * rotationCos - radialVector.y * rotationSin,
+        radialVector.x * rotationSin + radialVector.y * rotationCos
+      );
+      vec2 rotatedCounterClockwise = vec2(
+        radialVector.x * rotationCos + radialVector.y * rotationSin,
+        -radialVector.x * rotationSin + radialVector.y * rotationCos
+      );
+
+      sampleA = center + rotatedClockwise;
+      sampleB = center + rotatedCounterClockwise;
+    }
+
+    sum += texture(u_texture, sampleA) * weight;
+    sum += texture(u_texture, sampleB) * weight;
     weightSum += weight * 2.0;
   }
 
@@ -411,7 +557,29 @@ void main() {
   const DEFAULT_PUPPET_GRID_COLS = 256;
   const DEFAULT_PUPPET_GRID_ROWS = 256;
   const PUPPET_PIN_EPSILON = 0.000001;
-  const MAX_GAUSSIAN_BLUR_RADIUS = 40;
+  const MAX_GAUSSIAN_BLUR_RADIUS = 200;
+  const MAX_MOTION_BLUR_DISTANCE = 300;
+  const MAX_RADIAL_BLUR_AMOUNT = 200;
+
+  function normalizeAngle(value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+      return 0;
+    }
+
+    return ((number % 360) + 360) % 360;
+  }
+
+  function normalizePercent(value, fallback = 50) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : fallback;
+  }
+
+  function normalizeRadialBlurMode(value) {
+    return String(value || "").trim().toLowerCase() === "zoom" ? "zoom" : "spin";
+  }
 
   class DocumentRenderer {
     static createContext(canvas) {
@@ -485,6 +653,8 @@ void main() {
       this.puppetProgramInfo = null;
       this.perspectiveQuadProgramInfo = null;
       this.gaussianBlurProgramInfo = null;
+      this.motionBlurProgramInfo = null;
+      this.radialBlurProgramInfo = null;
       this.layerBlendProgramInfo = null;
       this.layerBlendBackdropTexture = null;
       this.layerBlendBackdropWidth = 0;
@@ -696,6 +866,78 @@ void main() {
       };
     }
 
+    createMotionBlurProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, MOTION_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, MOTION_BLUR_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma motion blur WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma motion blur.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          directionTexelStep: gl.getUniformLocation(program, "u_directionTexelStep"),
+          distance: gl.getUniformLocation(program, "u_distance"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+
+    createRadialBlurProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, RADIAL_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, RADIAL_BLUR_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma radial blur WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma radial blur.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          amount: gl.getUniformLocation(program, "u_amount"),
+          center: gl.getUniformLocation(program, "u_center"),
+          mode: gl.getUniformLocation(program, "u_mode"),
+          texelSize: gl.getUniformLocation(program, "u_texelSize"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+
     createLayerBlendProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, ARTBOARD_VERTEX_SHADER_SOURCE);
@@ -770,6 +1012,22 @@ void main() {
       }
 
       return this.gaussianBlurProgramInfo;
+    }
+
+    ensureMotionBlurProgramInfo() {
+      if (!this.motionBlurProgramInfo) {
+        this.motionBlurProgramInfo = this.createMotionBlurProgramInfo();
+      }
+
+      return this.motionBlurProgramInfo;
+    }
+
+    ensureRadialBlurProgramInfo() {
+      if (!this.radialBlurProgramInfo) {
+        this.radialBlurProgramInfo = this.createRadialBlurProgramInfo();
+      }
+
+      return this.radialBlurProgramInfo;
     }
 
     ensureLayerBlendProgramInfo() {
@@ -1160,8 +1418,67 @@ void main() {
         : null;
     }
 
+    getMotionBlur(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "motion-blur" && item.enabled !== false)
+        : effects?.motionBlur;
+      const distance = Number(effect?.distance);
+
+      return {
+        angle: normalizeAngle(effect?.angle),
+        distance: Number.isFinite(distance) ? Math.max(0, Math.min(MAX_MOTION_BLUR_DISTANCE, distance)) : 0,
+      };
+    }
+
+    getLayerMotionBlur(layer) {
+      const motionBlur = this.getMotionBlur(layer);
+
+      return motionBlur.distance > 0
+        ? {
+            enabled: true,
+            distance: motionBlur.distance,
+            angle: motionBlur.angle,
+          }
+        : null;
+    }
+
+    getRadialBlur(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "radial-blur" && item.enabled !== false)
+        : effects?.radialBlur;
+      const amount = Number(effect?.amount);
+      const centerFallback = effect?.center;
+
+      return {
+        amount: Number.isFinite(amount) ? Math.max(0, Math.min(MAX_RADIAL_BLUR_AMOUNT, amount)) : 0,
+        centerX: normalizePercent(effect?.centerX ?? centerFallback),
+        centerY: normalizePercent(effect?.centerY ?? centerFallback),
+        mode: normalizeRadialBlurMode(effect?.mode),
+      };
+    }
+
+    getLayerRadialBlur(layer) {
+      const radialBlur = this.getRadialBlur(layer);
+
+      return radialBlur.amount > 0
+        ? {
+            enabled: true,
+            amount: radialBlur.amount,
+            centerX: radialBlur.centerX,
+            centerY: radialBlur.centerY,
+            mode: radialBlur.mode,
+          }
+        : null;
+    }
+
     hasEnabledLayerEffects(layer) {
-      return this.getGaussianBlurRadius(layer) > 0;
+      return (
+        this.getGaussianBlurRadius(layer) > 0 ||
+        this.getMotionBlur(layer).distance > 0 ||
+        this.getRadialBlur(layer).amount > 0
+      );
     }
 
     hasLayerVisualEffects(layer) {
@@ -1354,6 +1671,22 @@ void main() {
       this.gaussianBlurProgramInfo = null;
     }
 
+    deleteMotionBlurResources() {
+      if (this.motionBlurProgramInfo?.program) {
+        this.gl.deleteProgram(this.motionBlurProgramInfo.program);
+      }
+
+      this.motionBlurProgramInfo = null;
+    }
+
+    deleteRadialBlurResources() {
+      if (this.radialBlurProgramInfo?.program) {
+        this.gl.deleteProgram(this.radialBlurProgramInfo.program);
+      }
+
+      this.radialBlurProgramInfo = null;
+    }
+
     ensureLayerEffectScratchTargets(width = this.width, height = this.height) {
       const targetWidth = Math.max(1, Math.round(width || this.width || 1));
       const targetHeight = Math.max(1, Math.round(height || this.height || 1));
@@ -1375,6 +1708,12 @@ void main() {
         scratchA: this.layerEffectScratchA,
         scratchB: this.layerEffectScratchB,
       };
+    }
+
+    getLayerEffectWriteTarget(sourceTexture, width = this.width, height = this.height) {
+      const { scratchA, scratchB } = this.ensureLayerEffectScratchTargets(width, height);
+
+      return sourceTexture === scratchA.texture ? scratchB : scratchA;
     }
 
     deleteActiveStrokeScratchTarget() {
@@ -1494,6 +1833,62 @@ void main() {
       return true;
     }
 
+    runMotionBlurPass({ sourceTexture, target, distance, texelStepX, texelStepY }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureMotionBlurProgramInfo();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform2f(uniforms.directionTexelStep, texelStepX, texelStepY);
+      gl.uniform1f(uniforms.distance, distance);
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
+    runRadialBlurPass({ sourceTexture, target, amount, centerX, centerY, mode = "spin" }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureRadialBlurProgramInfo();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform2f(uniforms.texelSize, 1 / target.width, 1 / target.height);
+      gl.uniform2f(uniforms.center, centerX, centerY);
+      gl.uniform1f(uniforms.mode, normalizeRadialBlurMode(mode) === "zoom" ? 1 : 0);
+      gl.uniform1f(uniforms.amount, amount);
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
     applyGaussianBlurTexture(sourceTexture, radius, options = {}) {
       const blurRadius = Number.isFinite(radius)
         ? Math.max(0, Math.min(MAX_GAUSSIAN_BLUR_RADIUS, radius))
@@ -1506,22 +1901,79 @@ void main() {
       const width = Math.max(1, Math.round(options.width || this.width || 1));
       const height = Math.max(1, Math.round(options.height || this.height || 1));
       const { scratchA, scratchB } = this.ensureLayerEffectScratchTargets(width, height);
+      const firstTarget = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const secondTarget = firstTarget === scratchA ? scratchB : scratchA;
       const didHorizontalPass = this.runGaussianBlurPass({
         radius: blurRadius,
         sourceTexture,
-        target: scratchA,
+        target: firstTarget,
         texelStepX: 1 / width,
         texelStepY: 0,
       });
       const didVerticalPass = didHorizontalPass && this.runGaussianBlurPass({
         radius: blurRadius,
-        sourceTexture: scratchA.texture,
-        target: scratchB,
+        sourceTexture: firstTarget.texture,
+        target: secondTarget,
         texelStepX: 0,
         texelStepY: 1 / height,
       });
 
-      return didVerticalPass ? scratchB.texture : sourceTexture;
+      return didVerticalPass ? secondTarget.texture : sourceTexture;
+    }
+
+    applyMotionBlurTexture(sourceTexture, distance, angle, options = {}) {
+      const blurDistance = Number.isFinite(distance)
+        ? Math.max(0, Math.min(MAX_MOTION_BLUR_DISTANCE, distance))
+        : 0;
+
+      if (!sourceTexture || blurDistance <= 0) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const angleRad = normalizeAngle(angle) * Math.PI / 180;
+      const didMotionPass = this.runMotionBlurPass({
+        distance: blurDistance,
+        sourceTexture,
+        target,
+        texelStepX: Math.cos(angleRad) / width,
+        texelStepY: Math.sin(angleRad) / height,
+      });
+
+      return didMotionPass ? target.texture : sourceTexture;
+    }
+
+    applyRadialBlurTexture(
+      sourceTexture,
+      amount,
+      centerX = 50,
+      centerY = 50,
+      mode = "spin",
+      options = {},
+    ) {
+      const blurAmount = Number.isFinite(amount)
+        ? Math.max(0, Math.min(MAX_RADIAL_BLUR_AMOUNT, amount))
+        : 0;
+
+      if (!sourceTexture || blurAmount <= 0) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const didRadialPass = this.runRadialBlurPass({
+        amount: blurAmount,
+        centerX: normalizePercent(centerX) / 100,
+        centerY: 1 - normalizePercent(centerY) / 100,
+        mode,
+        sourceTexture,
+        target,
+      });
+
+      return didRadialPass ? target.texture : sourceTexture;
     }
 
     getLayerRenderTexture(layer, layerTarget) {
@@ -1529,16 +1981,69 @@ void main() {
         return null;
       }
 
-      const radius = this.getGaussianBlurRadius(layer);
+      const width = layerTarget.width || this.width;
+      const height = layerTarget.height || this.height;
+      let texture = layerTarget.texture;
 
-      if (radius <= 0) {
-        return layerTarget.texture;
+      if (Array.isArray(layer?.effects)) {
+        for (const effect of layer.effects) {
+          if (!effect || effect.enabled === false) {
+            continue;
+          }
+
+          if (effect.type === "gaussian-blur") {
+            const radius = this.getGaussianBlurRadius({ effects: [effect] });
+
+            texture = this.applyGaussianBlurTexture(texture, radius, { height, width });
+          } else if (effect.type === "motion-blur") {
+            const motionBlur = this.getLayerMotionBlur({ effects: [effect] });
+
+            if (motionBlur) {
+              texture = this.applyMotionBlurTexture(texture, motionBlur.distance, motionBlur.angle, { height, width });
+            }
+          } else if (effect.type === "radial-blur") {
+            const radialBlur = this.getLayerRadialBlur({ effects: [effect] });
+
+            if (radialBlur) {
+              texture = this.applyRadialBlurTexture(
+                texture,
+                radialBlur.amount,
+                radialBlur.centerX,
+                radialBlur.centerY,
+                radialBlur.mode,
+                { height, width },
+              );
+            }
+          }
+        }
+
+        return texture;
       }
 
-      return this.applyGaussianBlurTexture(layerTarget.texture, radius, {
-        height: layerTarget.height || this.height,
-        width: layerTarget.width || this.width,
-      });
+      const radius = this.getGaussianBlurRadius(layer);
+      const motionBlur = this.getLayerMotionBlur(layer);
+      const radialBlur = this.getLayerRadialBlur(layer);
+
+      if (radius > 0) {
+        texture = this.applyGaussianBlurTexture(texture, radius, { height, width });
+      }
+
+      if (motionBlur) {
+        texture = this.applyMotionBlurTexture(texture, motionBlur.distance, motionBlur.angle, { height, width });
+      }
+
+      if (radialBlur) {
+        texture = this.applyRadialBlurTexture(
+          texture,
+          radialBlur.amount,
+          radialBlur.centerX,
+          radialBlur.centerY,
+          radialBlur.mode,
+          { height, width },
+        );
+      }
+
+      return texture;
     }
 
     resolveLayerVisualTexture(layer, layerTarget, options = {}) {
@@ -3748,6 +4253,8 @@ void main() {
       window.removeEventListener("cbo:history-change", this.handleHistoryChange);
 
       this.deleteGaussianBlurResources();
+      this.deleteMotionBlurResources();
+      this.deleteRadialBlurResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteLayerBlendResources();
       this.deletePreviewCache();

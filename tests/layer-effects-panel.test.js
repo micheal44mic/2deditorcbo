@@ -35,6 +35,7 @@ function loadLayerEffectsNamespace() {
 test("layer effects panel is loaded after the vertical toolbar", () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
   const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
+  const cssSource = fs.readFileSync(path.join(repoRoot, "css", "layer-effects-panel.css"), "utf8");
 
   assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layer-effects-panel\.css" \/>/);
   assert.match(
@@ -42,6 +43,9 @@ test("layer effects panel is loaded after the vertical toolbar", () => {
     /<script src="\.\/js\/vertical-toolbar\.js"><\/script>\s*<script src="\.\/js\/layer-effects-panel\.js"><\/script>/,
   );
   assert.match(appSource, /window\.CBO\.initVerticalToolbar\(\);\s*window\.CBO\.initLayerEffectsPanel\?\.\(\);/);
+  assert.match(cssSource, /\.layer-effects-popover[\s\S]*?overflow: hidden;/);
+  assert.match(cssSource, /\.layer-effects-detail[\s\S]*?min-width: 0;/);
+  assert.match(cssSource, /\.layer-effects-range[\s\S]*?max-width: 100%;/);
 });
 
 test("layer effects panel writes gaussian blur as layer-state metadata", () => {
@@ -49,9 +53,19 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   const topToolbarSource = fs.readFileSync(path.join(repoRoot, "js", "top-toolbar.js"), "utf8");
 
   assert.match(source, /type: "gaussian-blur"/);
+  assert.match(source, /\{ implemented: true, icon: "motion", label: "Motion Blur", type: "motion-blur" \}/);
+  assert.match(source, /\{ implemented: true, icon: "radial", label: "Radial Blur", type: "radial-blur" \}/);
   assert.match(source, /radius: nextRadius/);
+  assert.match(source, /distance: nextDistance/);
+  assert.match(source, /angle: nextAngle/);
+  assert.match(source, /amount: nextAmount/);
+  assert.match(source, /centerX: normalizePercent\(centerX\)/);
+  assert.match(source, /centerY: normalizePercent\(centerY\)/);
+  assert.match(source, /mode: normalizeRadialBlurMode\(mode\)/);
   assert.match(source, /layerModel\.updateLayer\(layerId,/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `gaussian-blur-\$\{layerId\}`/);
+  assert.match(source, /historyGroup: options\.historyGroup \|\| `motion-blur-\$\{layerId\}`/);
+  assert.match(source, /historyGroup: updateOptionsSource\.historyGroup \|\| `radial-blur-\$\{layerId\}`/);
   assert.match(source, /namespace\.documentRenderer\?\.requestDraw\?\.\(\)/);
   assert.match(source, /layer\.type !== "background"/);
   assert.match(source, /EFFECT_GROUPS/);
@@ -79,6 +93,15 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /!isImplementedEffect\(activeEffectType\)/);
   assert.match(source, /data-layer-effects-accept/);
   assert.match(source, /data-layer-effects-back/);
+  assert.match(source, /data-layer-motion-distance-input/);
+  assert.match(source, /data-layer-motion-angle-input/);
+  assert.match(source, /data-layer-radial-amount-input/);
+  assert.match(source, /data-layer-radial-center-x-input/);
+  assert.match(source, /data-layer-radial-center-y-input/);
+  assert.match(source, /data-layer-radial-mode-button="spin"/);
+  assert.match(source, /data-layer-radial-mode-button="zoom"/);
+  assert.match(source, /namespace\.setLayerMotionBlur/);
+  assert.match(source, /namespace\.setLayerRadialBlur/);
   assert.match(source, /namespace\.rasterizeActiveLayerEffects/);
   assert.match(source, /renderer\.rasterizeLayerEffects\(layer,/);
   assert.match(source, /function restorePreviewSession\(\)/);
@@ -132,7 +155,83 @@ test("gaussian blur preview writes bypass document history", () => {
   ]);
 });
 
-test("layer effects rasterizer bakes blur and clears only gaussian blur metadata", () => {
+test("motion blur preview writes bypass document history", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const calls = [];
+  const layer = {
+    id: "paint-main",
+    type: "paint",
+  };
+
+  namespace.documentLayerModel = {
+    findEntryById(id) {
+      return id === layer.id ? layer : null;
+    },
+    updateLayer(id, patch, options = {}) {
+      calls.push(`update:${id}:${options.source}:${options.history}:${options.historyGroup}`);
+      layer.effects = patch.effects;
+      return true;
+    },
+  };
+  namespace.documentRenderer = {
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  assert.equal(namespace.setLayerMotionBlur(layer.id, 24, -45, {
+    history: false,
+    source: "layer-effects-preview",
+  }), true);
+  assert.equal(
+    JSON.stringify(layer.effects),
+    JSON.stringify([{ type: "motion-blur", enabled: true, distance: 24, angle: 315 }]),
+  );
+  assert.deepEqual(calls, [
+    "update:paint-main:layer-effects-preview:false:motion-blur-paint-main",
+    "draw",
+  ]);
+});
+
+test("radial blur preview writes bypass document history", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const calls = [];
+  const layer = {
+    id: "paint-main",
+    type: "paint",
+  };
+
+  namespace.documentLayerModel = {
+    findEntryById(id) {
+      return id === layer.id ? layer : null;
+    },
+    updateLayer(id, patch, options = {}) {
+      calls.push(`update:${id}:${options.source}:${options.history}:${options.historyGroup}`);
+      layer.effects = patch.effects;
+      return true;
+    },
+  };
+  namespace.documentRenderer = {
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  assert.equal(namespace.setLayerRadialBlur(layer.id, 32, 120, -5, "zoom", {
+    history: false,
+    source: "layer-effects-preview",
+  }), true);
+  assert.equal(
+    JSON.stringify(layer.effects),
+    JSON.stringify([{ type: "radial-blur", enabled: true, amount: 32, centerX: 100, centerY: 0, mode: "zoom" }]),
+  );
+  assert.deepEqual(calls, [
+    "update:paint-main:layer-effects-preview:false:radial-blur-paint-main",
+    "draw",
+  ]);
+});
+
+test("layer effects rasterizer bakes blur and clears rasterizable metadata", () => {
   const namespace = loadLayerEffectsNamespace();
   const calls = [];
   const beforeSnapshot = { framebuffer: {}, texture: {} };
@@ -144,6 +243,8 @@ test("layer effects rasterizer bakes blur and clears only gaussian blur metadata
   const layer = {
     effects: [
       { type: "gaussian-blur", radius: 8, enabled: true },
+      { type: "motion-blur", distance: 18, angle: 30, enabled: true },
+      { type: "radial-blur", amount: 28, centerX: 40, centerY: 60, mode: "zoom", enabled: true },
       { strength: 0.5, type: "future-effect" },
     ],
     id: "paint-main",
@@ -182,7 +283,7 @@ test("layer effects rasterizer bakes blur and clears only gaussian blur metadata
       calls.push(`content:${detail.source}:${detail.layerId}`);
     },
     rasterizeLayerEffects(inputLayer, options = {}) {
-      calls.push(`bake:${inputLayer.id}:${inputLayer.effects[0].radius}:${options.emit}`);
+      calls.push(`bake:${inputLayer.id}:${inputLayer.effects.map((effect) => effect.type).join(",")}:${options.emit}`);
       return {
         afterSnapshot,
         beforeSnapshot,
@@ -205,7 +306,7 @@ test("layer effects rasterizer bakes blur and clears only gaussian blur metadata
   assert.deepEqual(history.entry.beforeEntries, beforeState.entries);
   assert.deepEqual(calls, [
     "flush:true",
-    "bake:paint-main:8:false",
+    "bake:paint-main:gaussian-blur,motion-blur,radial-blur,future-effect:false",
     "update:paint-main:1:layer-effects-rasterize:false",
     "snapshot:1",
     "push:layer-effects-rasterize",

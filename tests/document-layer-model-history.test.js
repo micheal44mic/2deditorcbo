@@ -129,7 +129,9 @@ test("layer effects are normalized and preserved through layer state history", a
   window.CBO.documentHistory = history;
   model.updateLayer("paint-main", {
     effects: [
-      { type: "gaussian-blur", radius: 140, enabled: true },
+      { type: "gaussian-blur", radius: 240, enabled: true },
+      { type: "motion-blur", distance: 340, angle: -45, enabled: true },
+      { type: "radial-blur", amount: 260, centerX: 125, centerY: -25, mode: "zoom", enabled: true },
       { type: "future-effect", strength: 0.5 },
     ],
   }, {
@@ -139,8 +141,14 @@ test("layer effects are normalized and preserved through layer state history", a
   await waitForHistoryFlush();
 
   assert.equal(history.undoStack.length, 1);
-  assert.equal(model.findEntryById("paint-main").effects[0].radius, 40);
-  assert.equal(model.findEntryById("paint-main").effects[1].type, "future-effect");
+  assert.equal(model.findEntryById("paint-main").effects[0].radius, 200);
+  assert.equal(model.findEntryById("paint-main").effects[1].distance, 300);
+  assert.equal(model.findEntryById("paint-main").effects[1].angle, 315);
+  assert.equal(model.findEntryById("paint-main").effects[2].amount, 200);
+  assert.equal(model.findEntryById("paint-main").effects[2].centerX, 100);
+  assert.equal(model.findEntryById("paint-main").effects[2].centerY, 0);
+  assert.equal(model.findEntryById("paint-main").effects[2].mode, "zoom");
+  assert.equal(model.findEntryById("paint-main").effects[3].type, "future-effect");
 
   model.updateLayer("paint-main", {
     effects: [{ type: "gaussian-blur", radius: 12, enabled: true }],
@@ -163,6 +171,22 @@ test("layer effects are normalized and preserved through layer state history", a
     effects: [{ type: "gaussian-blur", radius: 0, enabled: true }],
   }, {
     source: "gaussian-blur-clear",
+  });
+
+  assert.equal(model.findEntryById("paint-main").effects, undefined);
+
+  model.updateLayer("paint-main", {
+    effects: [{ type: "motion-blur", distance: 0, angle: 90, enabled: true }],
+  }, {
+    source: "motion-blur-clear",
+  });
+
+  assert.equal(model.findEntryById("paint-main").effects, undefined);
+
+  model.updateLayer("paint-main", {
+    effects: [{ type: "radial-blur", amount: 0, centerX: 50, centerY: 50, enabled: true }],
+  }, {
+    source: "radial-blur-clear",
   });
 
   assert.equal(model.findEntryById("paint-main").effects, undefined);

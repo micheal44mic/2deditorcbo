@@ -1,6 +1,9 @@
 (function registerDocumentLayerModel(namespace) {
   const BACKGROUND_LAYER_ID = "background";
   const VECTOR_TEXT_TYPE = "vector-text";
+  const MAX_GAUSSIAN_BLUR_RADIUS = 200;
+  const MAX_MOTION_BLUR_DISTANCE = 300;
+  const MAX_RADIAL_BLUR_AMOUNT = 200;
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
     fill: "#f8efe2",
     stroke: "#1b1713",
@@ -14,6 +17,26 @@
       opacity: 1,
     },
   });
+
+  function normalizeAngle(value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+      return 0;
+    }
+
+    return ((number % 360) + 360) % 360;
+  }
+
+  function normalizePercent(value, fallback = 50) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : fallback;
+  }
+
+  function normalizeRadialBlurMode(value) {
+    return String(value || "").trim().toLowerCase() === "zoom" ? "zoom" : "spin";
+  }
 
   class DocumentLayerModel extends EventTarget {
     constructor(options = {}) {
@@ -80,19 +103,48 @@
       return effects
         .filter(Boolean)
         .map((effect) => {
-          if (effect.type !== "gaussian-blur") {
-            return this.cloneValue(effect);
+          if (effect.type === "gaussian-blur") {
+            const radius = Number(effect.radius);
+
+            return {
+              type: "gaussian-blur",
+              enabled: effect.enabled !== false,
+              radius: Number.isFinite(radius) ? Math.max(0, Math.min(MAX_GAUSSIAN_BLUR_RADIUS, radius)) : 0,
+            };
           }
 
-          const radius = Number(effect.radius);
+          if (effect.type === "motion-blur") {
+            const distance = Number(effect.distance);
 
-          return {
-            type: "gaussian-blur",
-            enabled: effect.enabled !== false,
-            radius: Number.isFinite(radius) ? Math.max(0, Math.min(40, radius)) : 0,
-          };
+            return {
+              type: "motion-blur",
+              enabled: effect.enabled !== false,
+              distance: Number.isFinite(distance) ? Math.max(0, Math.min(MAX_MOTION_BLUR_DISTANCE, distance)) : 0,
+              angle: normalizeAngle(effect.angle),
+            };
+          }
+
+          if (effect.type === "radial-blur") {
+            const amount = Number(effect.amount);
+            const centerFallback = effect.center;
+
+            return {
+              type: "radial-blur",
+              enabled: effect.enabled !== false,
+              amount: Number.isFinite(amount) ? Math.max(0, Math.min(MAX_RADIAL_BLUR_AMOUNT, amount)) : 0,
+              centerX: normalizePercent(effect.centerX ?? centerFallback),
+              centerY: normalizePercent(effect.centerY ?? centerFallback),
+              mode: normalizeRadialBlurMode(effect.mode),
+            };
+          }
+
+          return this.cloneValue(effect);
         })
-        .filter((effect) => effect.type !== "gaussian-blur" || effect.radius > 0);
+        .filter((effect) =>
+          (effect.type !== "gaussian-blur" || effect.radius > 0) &&
+          (effect.type !== "motion-blur" || effect.distance > 0) &&
+          (effect.type !== "radial-blur" || effect.amount > 0),
+        );
     }
 
     createLayer(options = {}) {
