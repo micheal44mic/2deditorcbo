@@ -199,6 +199,19 @@ test("manual vector text rasterization uses the cropped renderer asset when avai
   assert.doesNotMatch(source, /rasterizer\.placeRasterImage\(canvas,[\s\S]{0,120}x:\s*0,[\s\S]{0,80}y:\s*0/);
 });
 
+test("text rasterization uses a document-scale drop shadow filter region", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+  const filterBody = source.match(/createDropShadowFilter\(layer, options = \{\}\) \{([\s\S]*?)\n    createTextLayerNode/)?.[1] || "";
+
+  assert.match(filterBody, /options\.ignoreInteraction === true/);
+  assert.match(filterBody, /filterUnits: "userSpaceOnUse"/);
+  assert.match(filterBody, /size\.width \* 3 \+ pad \* 2/);
+  assert.match(filterBody, /size\.height \* 3 \+ pad \* 2/);
+});
+
 test("manual vector text rasterization records one custom entry for layer and pixel state", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "text", "vector-text-rasterizer.js"),

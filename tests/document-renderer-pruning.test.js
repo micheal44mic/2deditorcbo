@@ -192,6 +192,154 @@ test("puppet rest point resolves deformed clicks back through barycentric UVs", 
   assert.ok(Math.abs(point.y - 50) < 0.00001);
 });
 
+test("puppet mesh converts cropped layer pins between document and local coordinates", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const target = {
+    height: 40,
+    width: 50,
+    x: 100,
+    y: 200,
+  };
+  const layer = {
+    puppet: {
+      pins: [{ restX: 110, restY: 210, x: 120, y: 230 }],
+    },
+  };
+  const resource = {
+    cols: 1,
+    rows: 1,
+    vertices: new Float32Array(16),
+  };
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.updatePuppetMeshVertices(resource, layer, target);
+
+  assert.deepEqual(Array.from(resource.vertices.slice(0, 4)), [110, 220, 0, 1]);
+
+  renderer.puppetMeshResourcesByLayerId = new Map([
+    ["image-1", {
+      indices: new Uint32Array([0, 1, 2]),
+      targetHeight: 40,
+      targetWidth: 50,
+      targetX: 100,
+      targetY: 200,
+      vertices: new Float32Array([
+        100, 200, 0, 1,
+        150, 200, 1, 1,
+        100, 240, 0, 0,
+      ]),
+    }],
+  ]);
+
+  const restPoint = renderer.getPuppetRestPoint("image-1", 125, 220);
+
+  assert.ok(Math.abs(restPoint.x - 125) < 0.00001);
+  assert.ok(Math.abs(restPoint.y - 220) < 0.00001);
+});
+
+test("field blur maps document pins into cropped effect target coordinates", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  let captured = null;
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.getLayerEffectWriteTarget = () => ({ framebuffer: {}, texture: "field-output" });
+  renderer.runFieldBlurPass = (options) => {
+    captured = options;
+    return true;
+  };
+
+  const result = renderer.applyFieldBlurTexture("field-source", [
+    { blur: 50, x: 1600, y: 1700 },
+  ], {
+    height: 408,
+    originX: 1500,
+    originY: 1600,
+    width: 508,
+  });
+
+  assert.equal(result, "field-output");
+  assert.equal(captured.pins[0].x, 100);
+  assert.equal(captured.pins[0].y, 100);
+});
+
+test("radial blur expands cropped effect output and keeps its document center stable", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+
+  const sourceRect = { x: 100, y: 120, width: 80, height: 60 };
+  const outputRect = renderer.getLayerEffectOutputRect({
+    effects: [{
+      amount: 100,
+      centerX: 50,
+      centerY: 50,
+      enabled: true,
+      mode: "zoom",
+      type: "radial-blur",
+    }],
+  }, sourceRect);
+
+  assert.ok(outputRect.x < sourceRect.x);
+  assert.ok(outputRect.y < sourceRect.y);
+  assert.ok(outputRect.width > sourceRect.width);
+  assert.ok(outputRect.height > sourceRect.height);
+
+  const center = renderer.resolveRadialBlurCenter(0, 100, {
+    height: outputRect.height,
+    outputRect,
+    sourceRect,
+    width: outputRect.width,
+  });
+
+  assert.ok(center.x > 0 && center.x < 1);
+  assert.ok(center.y > 0 && center.y < 1);
+  assert.ok(Math.abs((outputRect.x + center.x * outputRect.width) - sourceRect.x) < 0.00001);
+  assert.ok(Math.abs((outputRect.y + (1 - center.y) * outputRect.height) - (sourceRect.y + sourceRect.height)) < 0.00001);
+});
+
+test("puppet deformed bounds include pixels moved outside a cropped target", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const target = {
+    height: 40,
+    texture: {},
+    width: 50,
+    x: 100,
+    y: 200,
+  };
+  const layer = {
+    id: "image-1",
+    puppet: {
+      pins: [{ restX: 100, restY: 200, x: 80, y: 180 }],
+    },
+  };
+  const resource = {
+    cols: 1,
+    rows: 1,
+    vertices: new Float32Array(16),
+  };
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.getPuppetGridSize = () => ({ cols: 1, rows: 1 });
+  renderer.getPuppetMeshResource = () => resource;
+
+  const bounds = renderer.getPuppetDeformedBounds(layer, target);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(bounds)), {
+    height: 44,
+    width: 54,
+    x: 78,
+    y: 178,
+  });
+});
+
 test("document renderer exposes GPU snapshot lifecycle helpers for raster history", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),
@@ -272,6 +420,9 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /applyMotionBlurTexture\(sourceTexture, distance, angle, options = \{\}\)/);
   assert.match(source, /applyFieldBlurTexture\(sourceTexture, pins, options = \{\}\)/);
   assert.match(source, /applyRadialBlurTexture\(\s*sourceTexture,\s*amount,\s*centerX = 50,\s*centerY = 50,\s*mode = "spin",\s*options = \{\},/);
+  assert.match(source, /getLayerEffectOutputRect\(layer, targetRect\)/);
+  assert.match(source, /getRadialBlurOutputRect\(radialBlur, outputRect, targetRect\)/);
+  assert.match(source, /sourceRect: targetRect/);
   assert.match(source, /getLayerMotionBlur\(layer\)/);
   assert.match(source, /getLayerFieldBlur\(layer\)/);
   assert.match(source, /getLayerRadialBlur\(layer\)/);
@@ -281,7 +432,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /u_pins\[8\]/);
   assert.match(source, /resolveFieldBlurRadius\(v_uv\)/);
   assert.match(source, /FIELD_BLUR_SAMPLE_COUNT/);
-  assert.match(source, /pinValues\[offset \+ 1\] = 1 - Math\.max\(0, Math\.min\(height, pin\.y\)\) \/ height/);
+  assert.match(source, /pinValues\[offset \+ 1\] = 1 - pin\.y \/ height/);
   assert.match(source, /u_texelSize/);
   assert.match(source, /u_center/);
   assert.match(source, /u_mode/);
@@ -293,12 +444,13 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /sampleB = center \+ rotatedCounterClockwise/);
   assert.match(source, /Math\.cos\(angleRad\) \/ width/);
   assert.match(source, /Math\.sin\(angleRad\) \/ height/);
-  assert.match(source, /centerY: 1 - normalizePercent\(centerY\) \/ 100/);
+  assert.match(source, /centerY: resolvedCenter\.y/);
   assert.match(source, /copyTextureToRasterTarget\(sourceTexture, target, options = \{\}\)/);
   assert.match(source, /rasterizeLayerEffects\(layer, options = \{\}\)/);
   assert.match(source, /layer-effects-rasterize-before/);
   assert.match(source, /layer-effects-rasterize-after/);
   assert.match(source, /sourceTexture: layerTexture/);
+  assert.doesNotMatch(source, /this\.hasPuppetLayerTransform\(layer\) \? 0 : this\.getLayerEffectPadding\(layer\)/);
   assert.match(source, /this\.deleteGaussianBlurResources\(\)/);
   assert.match(source, /this\.deleteMotionBlurResources\(\)/);
   assert.match(source, /this\.deleteFieldBlurResources\(\)/);
@@ -321,8 +473,11 @@ test("puppet rasterize commits the deformed mesh through snapshots", () => {
 
   assert.match(rendererSource, /rasterizePuppetLayer\(layer, options = \{\}\)/);
   assert.match(rendererSource, /this\.createRasterSnapshot\(target, null, "puppet-rasterize-before"\)/);
+  assert.match(rendererSource, /const outputRect = this\.getPuppetDeformedBounds\(layer, target\)/);
+  assert.match(rendererSource, /this\.createRasterTargetForRect\(outputRect\)/);
+  assert.match(rendererSource, /this\.createRasterSnapshot\(destinationTarget, null, "puppet-rasterize-after"\)/);
+  assert.match(rendererSource, /this\.replaceRasterTarget\(layer\.id, destinationTarget,/);
   assert.match(rendererSource, /sourceTexture: sourceSnapshot\.texture/);
-  assert.match(rendererSource, /this\.createRasterSnapshot\(target, null, "puppet-rasterize-after"\)/);
   assert.match(puppetToolSource, /this\.isActive\(\) && nextTool !== PUPPET_TOOL_MODE/);
   assert.match(puppetToolSource, /this\.rasterizeActivePuppetLayer\(\)/);
   assert.match(puppetToolSource, /source: "history-undo-puppet-rasterize"/);

@@ -763,6 +763,18 @@
       }
 
       const { cols, rows } = this.getGridSize(layer, puppet);
+      const targetRect = this.documentRenderer.getRasterTargetDocumentRect?.(target) || {
+        x: Number.isFinite(target.x) ? target.x : 0,
+        y: Number.isFinite(target.y) ? target.y : 0,
+      };
+      const localPins = this.documentRenderer.getPuppetLocalPins?.(layer, target) ||
+        puppet.pins.map((pin) => ({
+          ...pin,
+          restX: (Number.isFinite(pin.restX) ? pin.restX : 0) - targetRect.x,
+          restY: (Number.isFinite(pin.restY) ? pin.restY : 0) - targetRect.y,
+          x: (Number.isFinite(pin.x) ? pin.x : 0) - targetRect.x,
+          y: (Number.isFinite(pin.y) ? pin.y : 0) - targetRect.y,
+        }));
       const sampleCols = cols * PUPPET_OVERLAY_ALPHA_SAMPLE_SCALE + 1;
       const sampleRows = rows * PUPPET_OVERLAY_ALPHA_SAMPLE_SCALE + 1;
       let alphaSamples = this.documentRenderer.getPuppetAlphaSamples
@@ -789,7 +801,9 @@
           const sourceX = (gridX / cols) * target.width;
           const sourceY = (gridY / rows) * target.height;
 
-          this.documentRenderer.writeRigidMlsPoint(vertices, vertexOffset, sourceX, sourceY, puppet.pins);
+          this.documentRenderer.writeRigidMlsPoint(vertices, vertexOffset, sourceX, sourceY, localPins);
+          vertices[vertexOffset] += targetRect.x;
+          vertices[vertexOffset + 1] += targetRect.y;
           vertexOffset += 2;
         }
       }

@@ -2078,8 +2078,8 @@ void main() {
       normalizedPins.forEach((pin, index) => {
         const offset = index * 3;
 
-        pinValues[offset] = Math.max(0, Math.min(width, pin.x)) / width;
-        pinValues[offset + 1] = 1 - Math.max(0, Math.min(height, pin.y)) / height;
+        pinValues[offset] = pin.x / width;
+        pinValues[offset + 1] = 1 - pin.y / height;
         pinValues[offset + 2] = pin.blur;
       });
 
@@ -2197,9 +2197,16 @@ void main() {
 
       const width = Math.max(1, Math.round(options.width || this.width || 1));
       const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const originX = Number.isFinite(options.originX) ? options.originX : 0;
+      const originY = Number.isFinite(options.originY) ? options.originY : 0;
+      const localPins = nextPins.map((pin) => ({
+        ...pin,
+        x: pin.x - originX,
+        y: pin.y - originY,
+      }));
       const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
       const didFieldPass = this.runFieldBlurPass({
-        pins: nextPins,
+        pins: localPins,
         sourceTexture,
         target,
       });
@@ -2225,17 +2232,205 @@ void main() {
 
       const width = Math.max(1, Math.round(options.width || this.width || 1));
       const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const resolvedCenter = this.resolveRadialBlurCenter(centerX, centerY, {
+        height,
+        outputRect: options.rect || null,
+        sourceRect: options.sourceRect || null,
+        width,
+      });
       const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
       const didRadialPass = this.runRadialBlurPass({
         amount: blurAmount,
-        centerX: normalizePercent(centerX) / 100,
-        centerY: 1 - normalizePercent(centerY) / 100,
+        centerX: resolvedCenter.x,
+        centerY: resolvedCenter.y,
         mode,
         sourceTexture,
         target,
       });
 
       return didRadialPass ? target.texture : sourceTexture;
+    }
+
+    resolveRadialBlurCenter(centerX, centerY, options = {}) {
+      const outputRect = options.outputRect;
+      const sourceRect = options.sourceRect || outputRect;
+      const width = Math.max(1, Math.round(options.width || outputRect?.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || outputRect?.height || this.height || 1));
+
+      if (outputRect && sourceRect) {
+        const centerDocX = sourceRect.x + sourceRect.width * normalizePercent(centerX) / 100;
+        const centerDocY = sourceRect.y + sourceRect.height * normalizePercent(centerY) / 100;
+
+        return {
+          x: (centerDocX - outputRect.x) / width,
+          y: 1 - (centerDocY - outputRect.y) / height,
+        };
+      }
+
+      return {
+        x: normalizePercent(centerX) / 100,
+        y: 1 - normalizePercent(centerY) / 100,
+      };
+    }
+
+    getRadialBlurDocumentCenter(radialBlur, sourceRect) {
+      if (!radialBlur || !sourceRect) {
+        return null;
+      }
+
+      return {
+        x: sourceRect.x + sourceRect.width * normalizePercent(radialBlur.centerX) / 100,
+        y: sourceRect.y + sourceRect.height * normalizePercent(radialBlur.centerY) / 100,
+      };
+    }
+
+    includePointInBounds(bounds, point) {
+      if (!bounds || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+        return bounds;
+      }
+
+      bounds.x1 = Math.min(bounds.x1, point.x);
+      bounds.y1 = Math.min(bounds.y1, point.y);
+      bounds.x2 = Math.max(bounds.x2, point.x);
+      bounds.y2 = Math.max(bounds.y2, point.y);
+
+      return bounds;
+    }
+
+    isAngleWithinRange(angle, start, end) {
+      const fullTurn = Math.PI * 2;
+      const normalize = (value) => {
+        let next = value % fullTurn;
+
+        if (next < 0) {
+          next += fullTurn;
+        }
+
+        return next;
+      };
+      const nextAngle = normalize(angle);
+      const nextStart = normalize(start);
+      const nextEnd = normalize(end);
+
+      return nextStart <= nextEnd
+        ? nextAngle >= nextStart && nextAngle <= nextEnd
+        : nextAngle >= nextStart || nextAngle <= nextEnd;
+    }
+
+    getRadialBlurOutputRect(radialBlur, inputRect, centerSourceRect = inputRect) {
+      if (!radialBlur || !inputRect) {
+        return inputRect || null;
+      }
+
+      const amount = Number(radialBlur.amount);
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return inputRect;
+      }
+
+      const center = this.getRadialBlurDocumentCenter(radialBlur, centerSourceRect);
+
+      if (!center) {
+        return inputRect;
+      }
+
+      const corners = [
+        { x: inputRect.x, y: inputRect.y },
+        { x: inputRect.x + inputRect.width, y: inputRect.y },
+        { x: inputRect.x + inputRect.width, y: inputRect.y + inputRect.height },
+        { x: inputRect.x, y: inputRect.y + inputRect.height },
+      ];
+      const bounds = {
+        x1: inputRect.x,
+        y1: inputRect.y,
+        x2: inputRect.x + inputRect.width,
+        y2: inputRect.y + inputRect.height,
+      };
+
+      if (normalizeRadialBlurMode(radialBlur.mode) === "zoom") {
+        const zoomRange = Math.min(0.95, Math.max(0, amount) * 0.0025);
+        const scale = 1 / Math.max(0.05, 1 - zoomRange);
+
+        for (const corner of corners) {
+          this.includePointInBounds(bounds, {
+            x: center.x + (corner.x - center.x) * scale,
+            y: center.y + (corner.y - center.y) * scale,
+          });
+        }
+      } else {
+        const angleRange = Math.max(0, amount) * 0.0062831853;
+        const criticalAngles = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+
+        for (const corner of corners) {
+          const dx = corner.x - center.x;
+          const dy = corner.y - center.y;
+          const radius = Math.hypot(dx, dy);
+
+          if (radius <= 0) {
+            continue;
+          }
+
+          const baseAngle = Math.atan2(dy, dx);
+          const start = baseAngle - angleRange;
+          const end = baseAngle + angleRange;
+          const candidateAngles = [start, baseAngle, end];
+
+          for (const angle of criticalAngles) {
+            if (this.isAngleWithinRange(angle, start, end)) {
+              candidateAngles.push(angle);
+            }
+          }
+
+          for (const angle of candidateAngles) {
+            this.includePointInBounds(bounds, {
+              x: center.x + Math.cos(angle) * radius,
+              y: center.y + Math.sin(angle) * radius,
+            });
+          }
+        }
+      }
+
+      return this.getClampedDocumentRect({
+        x: bounds.x1,
+        y: bounds.y1,
+        width: bounds.x2 - bounds.x1,
+        height: bounds.y2 - bounds.y1,
+      }, CROPPED_TARGET_EDGE_PADDING) || inputRect;
+    }
+
+    getLayerEffectOutputRect(layer, targetRect) {
+      if (!targetRect) {
+        return null;
+      }
+
+      let outputRect = targetRect;
+      const padding = this.getLayerEffectPadding(layer);
+
+      if (padding > 0) {
+        outputRect = this.getClampedDocumentRect(outputRect, padding) || outputRect;
+      }
+
+      if (Array.isArray(layer?.effects)) {
+        for (const effect of layer.effects) {
+          if (!effect || effect.enabled === false || effect.type !== "radial-blur") {
+            continue;
+          }
+
+          const radialBlur = this.getLayerRadialBlur({ effects: [effect] });
+
+          if (radialBlur) {
+            outputRect = this.getRadialBlurOutputRect(radialBlur, outputRect, targetRect) || outputRect;
+          }
+        }
+      } else {
+        const radialBlur = this.getLayerRadialBlur(layer);
+
+        if (radialBlur) {
+          outputRect = this.getRadialBlurOutputRect(radialBlur, outputRect, targetRect) || outputRect;
+        }
+      }
+
+      return outputRect;
     }
 
     getLayerEffectPadding(layer) {
@@ -2358,6 +2553,18 @@ void main() {
 
       const width = Math.max(1, Math.round(options.width || this.width || 1));
       const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const effectRect = options.rect || null;
+      const sourceRect = options.sourceRect || effectRect;
+      const effectOriginX = Number.isFinite(effectRect?.x) ? effectRect.x : 0;
+      const effectOriginY = Number.isFinite(effectRect?.y) ? effectRect.y : 0;
+      const effectOptions = {
+        height,
+        originX: effectOriginX,
+        originY: effectOriginY,
+        rect: effectRect,
+        sourceRect,
+        width,
+      };
       let texture = sourceTexture;
 
       if (Array.isArray(layer?.effects)) {
@@ -2369,18 +2576,18 @@ void main() {
           if (effect.type === "gaussian-blur") {
             const radius = this.getGaussianBlurRadius({ effects: [effect] });
 
-            texture = this.applyGaussianBlurTexture(texture, radius, { height, width });
+            texture = this.applyGaussianBlurTexture(texture, radius, effectOptions);
           } else if (effect.type === "motion-blur") {
             const motionBlur = this.getLayerMotionBlur({ effects: [effect] });
 
             if (motionBlur) {
-              texture = this.applyMotionBlurTexture(texture, motionBlur.distance, motionBlur.angle, { height, width });
+              texture = this.applyMotionBlurTexture(texture, motionBlur.distance, motionBlur.angle, effectOptions);
             }
           } else if (effect.type === "field-blur") {
             const fieldBlur = this.getLayerFieldBlur({ effects: [effect] });
 
             if (fieldBlur) {
-              texture = this.applyFieldBlurTexture(texture, fieldBlur.pins, { height, width });
+              texture = this.applyFieldBlurTexture(texture, fieldBlur.pins, effectOptions);
             }
           } else if (effect.type === "radial-blur") {
             const radialBlur = this.getLayerRadialBlur({ effects: [effect] });
@@ -2392,7 +2599,7 @@ void main() {
                 radialBlur.centerX,
                 radialBlur.centerY,
                 radialBlur.mode,
-                { height, width },
+                effectOptions,
               );
             }
           }
@@ -2407,15 +2614,15 @@ void main() {
       const radialBlur = this.getLayerRadialBlur(layer);
 
       if (radius > 0) {
-        texture = this.applyGaussianBlurTexture(texture, radius, { height, width });
+        texture = this.applyGaussianBlurTexture(texture, radius, effectOptions);
       }
 
       if (motionBlur) {
-        texture = this.applyMotionBlurTexture(texture, motionBlur.distance, motionBlur.angle, { height, width });
+        texture = this.applyMotionBlurTexture(texture, motionBlur.distance, motionBlur.angle, effectOptions);
       }
 
       if (fieldBlur) {
-        texture = this.applyFieldBlurTexture(texture, fieldBlur.pins, { height, width });
+        texture = this.applyFieldBlurTexture(texture, fieldBlur.pins, effectOptions);
       }
 
       if (radialBlur) {
@@ -2425,7 +2632,7 @@ void main() {
           radialBlur.centerX,
           radialBlur.centerY,
           radialBlur.mode,
-          { height, width },
+          effectOptions,
         );
       }
 
@@ -2442,12 +2649,11 @@ void main() {
       let height = Math.max(1, Math.round(layerTarget.height || this.height || 1));
       let rect = this.isCroppedRasterTarget(layerTarget) ? targetRect : null;
       let texture = layerTarget.texture;
-      const effectPadding = this.hasPuppetLayerTransform(layer) ? 0 : this.getLayerEffectPadding(layer);
-      const paddedRect = effectPadding > 0 && this.isCroppedRasterTarget(layerTarget)
-        ? this.getClampedDocumentRect(targetRect, effectPadding)
+      const paddedRect = this.isCroppedRasterTarget(layerTarget)
+        ? this.getLayerEffectOutputRect(layer, targetRect)
         : targetRect;
 
-      if (effectPadding > 0 && paddedRect && !this.areDocumentRectsEqual(paddedRect, targetRect)) {
+      if (paddedRect && !this.areDocumentRectsEqual(paddedRect, targetRect)) {
         const paddedSource = this.createLayerEffectPaddedSource(texture, targetRect, paddedRect);
 
         if (paddedSource?.texture) {
@@ -2458,7 +2664,7 @@ void main() {
         }
       }
 
-      texture = this.applyLayerEffectsToTexture(layer, texture, { height, width });
+      texture = this.applyLayerEffectsToTexture(layer, texture, { height, rect, sourceRect: targetRect, width });
 
       return {
         height,
@@ -2474,6 +2680,22 @@ void main() {
 
     resolveLayerVisualTexture(layer, layerTarget, options = {}) {
       return this.getLayerRenderTexture(layer, layerTarget, options);
+    }
+
+    getPuppetVisualTarget(layerTarget, renderResult) {
+      if (!layerTarget || !renderResult?.texture || !renderResult.rect) {
+        return layerTarget;
+      }
+
+      return {
+        ...layerTarget,
+        cropped: this.isCroppedRect(renderResult.rect),
+        height: renderResult.height,
+        texture: renderResult.texture,
+        width: renderResult.width,
+        x: renderResult.rect.x,
+        y: renderResult.rect.y,
+      };
     }
 
     copyTextureToRasterTarget(sourceTexture, target, options = {}) {
@@ -3941,7 +4163,8 @@ void main() {
         }
 
         if (this.hasPuppetLayerTransform(layer)) {
-          const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
+          const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
+          const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
             camera: flatCamera,
             sourceTexture: layerTexture,
             viewportHeight: height,
@@ -4026,6 +4249,19 @@ void main() {
         cols: DEFAULT_PUPPET_GRID_COLS,
         rows: DEFAULT_PUPPET_GRID_ROWS,
       };
+    }
+
+    getPuppetLocalPins(layer, target) {
+      const targetRect = this.getRasterTargetDocumentRect(target) || { x: 0, y: 0 };
+      const pins = layer?.puppet?.pins || [];
+
+      return pins.map((pin) => ({
+        ...pin,
+        restX: (Number.isFinite(pin.restX) ? pin.restX : 0) - targetRect.x,
+        restY: (Number.isFinite(pin.restY) ? pin.restY : 0) - targetRect.y,
+        x: (Number.isFinite(pin.x) ? pin.x : 0) - targetRect.x,
+        y: (Number.isFinite(pin.y) ? pin.y : 0) - targetRect.y,
+      }));
     }
 
     writeRigidMlsPoint(vertices, offset, x, y, pins) {
@@ -4301,6 +4537,8 @@ void main() {
       const { vertices, indices } = resource;
       const targetWidth = Math.max(1, resource.targetWidth || 1);
       const targetHeight = Math.max(1, resource.targetHeight || 1);
+      const originX = Number.isFinite(resource.targetX) ? resource.targetX : 0;
+      const originY = Number.isFinite(resource.targetY) ? resource.targetY : 0;
 
       for (let index = 0; index < indices.length; index += 3) {
         const i0 = indices[index] * 4;
@@ -4333,8 +4571,8 @@ void main() {
           const v = w1 * v1 + w2 * v2 + w3 * v3;
 
           return {
-            x: u * targetWidth,
-            y: (1 - v) * targetHeight,
+            x: originX + u * targetWidth,
+            y: originY + (1 - v) * targetHeight,
           };
         }
       }
@@ -4349,6 +4587,7 @@ void main() {
       const ebo = gl.createBuffer();
       const vertices = new Float32Array((cols + 1) * (rows + 1) * 4);
       const validIndices = [];
+      const targetRect = this.getRasterTargetDocumentRect(target);
 
       if (!vao || !vbo || !ebo) {
         if (vao) {
@@ -4399,6 +4638,8 @@ void main() {
         rows,
         targetHeight: target.height,
         targetWidth: target.width,
+        targetX: targetRect?.x || 0,
+        targetY: targetRect?.y || 0,
         vao,
         vbo,
         vertices,
@@ -4415,7 +4656,9 @@ void main() {
         resource?.cols === cols &&
         resource?.rows === rows &&
         resource?.targetWidth === target.width &&
-        resource?.targetHeight === target.height
+        resource?.targetHeight === target.height &&
+        resource?.targetX === (this.getRasterTargetDocumentRect(target)?.x || 0) &&
+        resource?.targetY === (this.getRasterTargetDocumentRect(target)?.y || 0)
       ) {
         return resource;
       }
@@ -4425,7 +4668,8 @@ void main() {
     }
 
     updatePuppetMeshVertices(resource, layer, target) {
-      const pins = layer.puppet?.pins || [];
+      const pins = this.getPuppetLocalPins(layer, target);
+      const targetRect = this.getRasterTargetDocumentRect(target) || { x: 0, y: 0 };
       const vertices = resource.vertices;
       const cols = resource.cols;
       const rows = resource.rows;
@@ -4437,6 +4681,8 @@ void main() {
           const sourceY = (gridY / rows) * target.height;
 
           this.writeRigidMlsPoint(vertices, offset, sourceX, sourceY, pins);
+          vertices[offset] += targetRect.x;
+          vertices[offset + 1] += targetRect.y;
           vertices[offset + 2] = sourceX / target.width;
           vertices[offset + 3] = 1 - sourceY / target.height;
           offset += 4;
@@ -4444,10 +4690,59 @@ void main() {
       }
     }
 
+    getPuppetDeformedBounds(layer, target) {
+      if (!this.hasPuppetLayerTransform(layer) || !target?.texture) {
+        return this.getRasterTargetDocumentRect(target);
+      }
+
+      const { cols, rows } = this.getPuppetGridSize(layer);
+      const resource = this.getPuppetMeshResource(layer.id, target, cols, rows);
+
+      if (!resource?.vertices?.length) {
+        return this.getRasterTargetDocumentRect(target);
+      }
+
+      this.updatePuppetMeshVertices(resource, layer, target);
+
+      const vertices = resource.vertices;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (let offset = 0; offset < vertices.length; offset += 4) {
+        const x = vertices[offset];
+        const y = vertices[offset + 1];
+
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          continue;
+        }
+
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+        return this.getRasterTargetDocumentRect(target);
+      }
+
+      return this.getClampedDocumentRect({
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+      }, CROPPED_TARGET_EDGE_PADDING) || this.getRasterTargetDocumentRect(target);
+    }
+
     getPuppetMeshSignature(layer, target) {
       const pins = layer.puppet?.pins || [];
       const { cols, rows } = this.getPuppetGridSize(layer);
+      const targetRect = this.getRasterTargetDocumentRect(target) || { x: 0, y: 0 };
       const parts = [
+        targetRect.x,
+        targetRect.y,
         target.width,
         target.height,
         cols,
@@ -4519,10 +4814,23 @@ void main() {
         return null;
       }
 
-      const gl = this.gl;
+      const targetRect = this.getRasterTargetDocumentRect(target) || { x: 0, y: 0 };
+      const outputRect = this.getPuppetDeformedBounds(layer, target) || targetRect;
+      const needsTargetSwap = outputRect && !this.areDocumentRectsEqual(outputRect, targetRect);
+      const destinationTarget = needsTargetSwap
+        ? this.createRasterTargetForRect(outputRect)
+        : target;
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-      gl.viewport(0, 0, target.width, target.height);
+      if (!destinationTarget?.framebuffer || !destinationTarget?.texture) {
+        this.deleteRasterSnapshot(sourceSnapshot);
+        return null;
+      }
+
+      const gl = this.gl;
+      const destinationRect = this.getRasterTargetDocumentRect(destinationTarget) || targetRect;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, destinationTarget.framebuffer);
+      gl.viewport(0, 0, destinationTarget.width, destinationTarget.height);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.enable(gl.BLEND);
@@ -4530,15 +4838,19 @@ void main() {
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
       const didDraw = this.drawPuppetLayer(layer, target, 1, {
-        camera: { x: 0, y: 0, zoom: 1 },
+        camera: { x: -destinationRect.x, y: -destinationRect.y, zoom: 1 },
         sourceTexture: sourceSnapshot.texture,
-        viewportHeight: target.height,
-        viewportWidth: target.width,
+        viewportHeight: destinationTarget.height,
+        viewportWidth: destinationTarget.width,
       });
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
       if (!didDraw) {
+        if (needsTargetSwap) {
+          this.deleteRasterTargetObject(destinationTarget);
+        }
+
         this.restoreRasterSnapshot(layer.id, sourceSnapshot, {
           emit: false,
           source: "puppet-rasterize-rollback",
@@ -4547,9 +4859,29 @@ void main() {
         return null;
       }
 
-      const rasterizedSnapshot = this.createRasterSnapshot(target, null, "puppet-rasterize-after");
+      this.markRasterTargetDirty(destinationTarget);
+
+      const rasterizedSnapshot = this.createRasterSnapshot(destinationTarget, null, "puppet-rasterize-after");
 
       if (!rasterizedSnapshot?.texture) {
+        if (needsTargetSwap) {
+          this.deleteRasterTargetObject(destinationTarget);
+        }
+
+        this.restoreRasterSnapshot(layer.id, sourceSnapshot, {
+          emit: false,
+          source: "puppet-rasterize-rollback",
+        });
+        this.deleteRasterSnapshot(sourceSnapshot);
+        return null;
+      }
+
+      if (needsTargetSwap && !this.replaceRasterTarget(layer.id, destinationTarget, {
+        emit: false,
+        source: options.source || "puppet-rasterize",
+      })) {
+        this.deleteRasterTargetObject(destinationTarget);
+        this.deleteRasterSnapshot(rasterizedSnapshot);
         this.restoreRasterSnapshot(layer.id, sourceSnapshot, {
           emit: false,
           source: "puppet-rasterize-rollback",
@@ -5084,7 +5416,8 @@ void main() {
               if (isClippingLayer) {
                 drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
               } else {
-                const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
+                const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
+                const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
                   camera,
                   sourceTexture: layerTexture,
                   viewportHeight,

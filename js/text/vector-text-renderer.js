@@ -1525,13 +1525,28 @@
       const angle = (toFiniteNumber(layer.shadowAngle, 0) * Math.PI) / 180;
       const distance = Math.max(0, toFiniteNumber(layer.shadowDistance, 0));
       const id = `cbo-vector-shadow-${safeDomId(layer.id)}`;
-      const filter = createSvgElement("filter", {
+      const filterAttributes = {
         height: "300%",
         id,
         width: "300%",
         x: "-100%",
         y: "-100%",
-      });
+      };
+
+      if (options.ignoreInteraction === true) {
+        const size = this.getDocumentTextureSize();
+        const pad = Math.ceil(distance + blur * 3 + TEXT_RASTER_BOUNDS_PADDING + 16);
+
+        Object.assign(filterAttributes, {
+          filterUnits: "userSpaceOnUse",
+          height: size.height * 3 + pad * 2,
+          width: size.width * 3 + pad * 2,
+          x: -size.width - pad,
+          y: -size.height - pad,
+        });
+      }
+
+      const filter = createSvgElement("filter", filterAttributes);
       const dropShadow = createSvgElement("feDropShadow", {
         dx: Math.cos(angle) * distance,
         dy: Math.sin(angle) * distance,
