@@ -3,6 +3,8 @@
   const VECTOR_TEXT_TYPE = "vector-text";
   const MAX_GAUSSIAN_BLUR_RADIUS = 200;
   const MAX_MOTION_BLUR_DISTANCE = 300;
+  const MAX_FIELD_BLUR_RADIUS = 200;
+  const MAX_FIELD_BLUR_PINS = 8;
   const MAX_RADIAL_BLUR_AMOUNT = 200;
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
     fill: "#f8efe2",
@@ -36,6 +38,36 @@
 
   function normalizeRadialBlurMode(value) {
     return String(value || "").trim().toLowerCase() === "zoom" ? "zoom" : "spin";
+  }
+
+  function normalizeFieldBlurPins(pins) {
+    if (!Array.isArray(pins)) {
+      return [];
+    }
+
+    return pins
+      .filter(Boolean)
+      .slice(0, MAX_FIELD_BLUR_PINS)
+      .map((pin) => {
+        const x = Number(pin.x);
+        const y = Number(pin.y);
+        const blur = Number(pin.blur);
+        const nextPin = {
+          blur: Number.isFinite(blur) ? Math.max(0, Math.min(MAX_FIELD_BLUR_RADIUS, blur)) : 0,
+          x: Number.isFinite(x) ? x : 0,
+          y: Number.isFinite(y) ? y : 0,
+        };
+
+        if (typeof pin.id === "string" && pin.id.trim()) {
+          nextPin.id = pin.id;
+        }
+
+        return nextPin;
+      });
+  }
+
+  function hasFieldBlurAmount(pins) {
+    return normalizeFieldBlurPins(pins).some((pin) => pin.blur > 0);
   }
 
   class DocumentLayerModel extends EventTarget {
@@ -124,6 +156,14 @@
             };
           }
 
+          if (effect.type === "field-blur") {
+            return {
+              type: "field-blur",
+              enabled: effect.enabled !== false,
+              pins: normalizeFieldBlurPins(effect.pins),
+            };
+          }
+
           if (effect.type === "radial-blur") {
             const amount = Number(effect.amount);
             const centerFallback = effect.center;
@@ -143,6 +183,7 @@
         .filter((effect) =>
           (effect.type !== "gaussian-blur" || effect.radius > 0) &&
           (effect.type !== "motion-blur" || effect.distance > 0) &&
+          (effect.type !== "field-blur" || hasFieldBlurAmount(effect.pins)) &&
           (effect.type !== "radial-blur" || effect.amount > 0),
         );
     }

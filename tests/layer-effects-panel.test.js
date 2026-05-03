@@ -46,6 +46,9 @@ test("layer effects panel is loaded after the vertical toolbar", () => {
   assert.match(cssSource, /\.layer-effects-popover[\s\S]*?overflow: hidden;/);
   assert.match(cssSource, /\.layer-effects-detail[\s\S]*?min-width: 0;/);
   assert.match(cssSource, /\.layer-effects-range[\s\S]*?max-width: 100%;/);
+  assert.match(cssSource, /\.field-blur-pin-overlay[\s\S]*?pointer-events: auto;/);
+  assert.match(cssSource, /\.field-blur-pin-ring[\s\S]*?conic-gradient/);
+  assert.match(cssSource, /\.field-blur-guide[\s\S]*?font-style: italic;/);
 });
 
 test("layer effects panel writes gaussian blur as layer-state metadata", () => {
@@ -54,17 +57,20 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
 
   assert.match(source, /type: "gaussian-blur"/);
   assert.match(source, /\{ implemented: true, icon: "motion", label: "Motion Blur", type: "motion-blur" \}/);
+  assert.match(source, /\{ implemented: true, icon: "field", label: "Field Blur", type: "field-blur" \}/);
   assert.match(source, /\{ implemented: true, icon: "radial", label: "Radial Blur", type: "radial-blur" \}/);
   assert.match(source, /radius: nextRadius/);
   assert.match(source, /distance: nextDistance/);
   assert.match(source, /angle: nextAngle/);
   assert.match(source, /amount: nextAmount/);
+  assert.match(source, /pins: nextPins/);
   assert.match(source, /centerX: normalizePercent\(centerX\)/);
   assert.match(source, /centerY: normalizePercent\(centerY\)/);
   assert.match(source, /mode: normalizeRadialBlurMode\(mode\)/);
   assert.match(source, /layerModel\.updateLayer\(layerId,/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `gaussian-blur-\$\{layerId\}`/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `motion-blur-\$\{layerId\}`/);
+  assert.match(source, /historyGroup: options\.historyGroup \|\| `field-blur-\$\{layerId\}`/);
   assert.match(source, /historyGroup: updateOptionsSource\.historyGroup \|\| `radial-blur-\$\{layerId\}`/);
   assert.match(source, /namespace\.documentRenderer\?\.requestDraw\?\.\(\)/);
   assert.match(source, /layer\.type !== "background"/);
@@ -95,12 +101,29 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /data-layer-effects-back/);
   assert.match(source, /data-layer-motion-distance-input/);
   assert.match(source, /data-layer-motion-angle-input/);
+  assert.match(source, /data-field-blur-pin-list/);
+  assert.match(source, /data-field-blur-guide/);
+  assert.match(source, /data-field-blur-pin-overlay/);
+  assert.match(source, /data-field-blur-pin-input/);
+  assert.match(source, /Double-click canvas: add pin/);
+  assert.match(source, /Drag pin: move/);
+  assert.match(source, /Alt-click pin: remove/);
+  assert.match(source, /event\.altKey && pinId/);
+  assert.match(source, /fieldBlurOverlay\.addEventListener\("dblclick", handleFieldBlurOverlayDoubleClick\)/);
+  assert.match(source, /fieldBlurOverlay\.addEventListener\("pointermove", handleFieldBlurOverlayPointerMove\)/);
+  assert.match(source, /moveFieldBlurPin\(fieldBlurDrag\.pinId, clientToFieldBlurPoint\(event\.clientX, event\.clientY\)\)/);
+  assert.match(source, /namespace\.setLayerFieldBlurPins/);
+  assert.match(source, /source: "layer-effects-preview"/);
+  assert.match(source, /activeEffectType === "field-blur"/);
+  assert.match(source, /event\.target\.closest\?\.\("\.editor-stage"\)/);
+  assert.match(source, /activeEffectType === "field-blur" && !hasActiveFieldBlur/);
   assert.match(source, /data-layer-radial-amount-input/);
   assert.match(source, /data-layer-radial-center-x-input/);
   assert.match(source, /data-layer-radial-center-y-input/);
   assert.match(source, /data-layer-radial-mode-button="spin"/);
   assert.match(source, /data-layer-radial-mode-button="zoom"/);
   assert.match(source, /namespace\.setLayerMotionBlur/);
+  assert.match(source, /namespace\.setLayerFieldBlurPins/);
   assert.match(source, /namespace\.setLayerRadialBlur/);
   assert.match(source, /namespace\.rasterizeActiveLayerEffects/);
   assert.match(source, /renderer\.rasterizeLayerEffects\(layer,/);
@@ -193,6 +216,54 @@ test("motion blur preview writes bypass document history", () => {
   ]);
 });
 
+test("field blur preview writes bypass document history", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const calls = [];
+  const layer = {
+    id: "paint-main",
+    type: "paint",
+  };
+
+  namespace.documentLayerModel = {
+    findEntryById(id) {
+      return id === layer.id ? layer : null;
+    },
+    updateLayer(id, patch, options = {}) {
+      calls.push(`update:${id}:${options.source}:${options.history}:${options.historyGroup}`);
+      layer.effects = patch.effects;
+      return true;
+    },
+  };
+  namespace.documentRenderer = {
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  assert.equal(namespace.setLayerFieldBlurPins(layer.id, [
+    { blur: 260, x: 20, y: 30 },
+    { blur: 0, x: 80, y: 90 },
+  ], {
+    history: false,
+    source: "layer-effects-preview",
+  }), true);
+  assert.equal(
+    JSON.stringify(layer.effects),
+    JSON.stringify([{
+      type: "field-blur",
+      enabled: true,
+      pins: [
+        { blur: 200, x: 20, y: 30 },
+        { blur: 0, x: 80, y: 90 },
+      ],
+    }]),
+  );
+  assert.deepEqual(calls, [
+    "update:paint-main:layer-effects-preview:false:field-blur-paint-main",
+    "draw",
+  ]);
+});
+
 test("radial blur preview writes bypass document history", () => {
   const namespace = loadLayerEffectsNamespace();
   const calls = [];
@@ -244,6 +315,7 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
     effects: [
       { type: "gaussian-blur", radius: 8, enabled: true },
       { type: "motion-blur", distance: 18, angle: 30, enabled: true },
+      { type: "field-blur", pins: [{ blur: 40, x: 120, y: 140 }, { blur: 0, x: 220, y: 240 }], enabled: true },
       { type: "radial-blur", amount: 28, centerX: 40, centerY: 60, mode: "zoom", enabled: true },
       { strength: 0.5, type: "future-effect" },
     ],
@@ -306,7 +378,7 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
   assert.deepEqual(history.entry.beforeEntries, beforeState.entries);
   assert.deepEqual(calls, [
     "flush:true",
-    "bake:paint-main:gaussian-blur,motion-blur,radial-blur,future-effect:false",
+    "bake:paint-main:gaussian-blur,motion-blur,field-blur,radial-blur,future-effect:false",
     "update:paint-main:1:layer-effects-rasterize:false",
     "snapshot:1",
     "push:layer-effects-rasterize",

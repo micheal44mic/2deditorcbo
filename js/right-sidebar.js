@@ -273,15 +273,15 @@ window.CBO.initRightSidebar = function initRightSidebar() {
             <h2 class="layer-sidebar-title">Align</h2>
           </div>
           <div class="layer-sidebar-align-placeholder" aria-label="Layer align controls" data-layer-align-placeholder>
-            <div class="layer-sidebar-align-row" role="group" aria-label="Vertical align controls">
-              <button class="layer-sidebar-align-button" type="button" aria-label="Align start vertical">
+            <div class="layer-sidebar-align-row" role="group" aria-label="Horizontal align controls">
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align left" data-layer-align-axis="x" data-layer-align-position="start">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect width="9" height="6" x="6" y="14" rx="2" />
                   <rect width="16" height="6" x="6" y="4" rx="2" />
                   <path d="M2 2v20" />
                 </svg>
               </button>
-              <button class="layer-sidebar-align-button" type="button" aria-label="Align center vertical">
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align horizontal center" data-layer-align-axis="x" data-layer-align-position="center">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M12 2v20" />
                   <path d="M8 10H4a2 2 0 0 1-2-2V6c0-1.1.9-2 2-2h4" />
@@ -290,7 +290,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
                   <path d="M16 14h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1" />
                 </svg>
               </button>
-              <button class="layer-sidebar-align-button" type="button" aria-label="Align end vertical">
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align right" data-layer-align-axis="x" data-layer-align-position="end">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect width="16" height="6" x="2" y="4" rx="2" />
                   <rect width="9" height="6" x="9" y="14" rx="2" />
@@ -298,15 +298,15 @@ window.CBO.initRightSidebar = function initRightSidebar() {
                 </svg>
               </button>
             </div>
-            <div class="layer-sidebar-align-row" role="group" aria-label="Horizontal align controls">
-              <button class="layer-sidebar-align-button" type="button" aria-label="Align start horizontal">
+            <div class="layer-sidebar-align-row" role="group" aria-label="Vertical align controls">
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align top" data-layer-align-axis="y" data-layer-align-position="start">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect width="6" height="16" x="4" y="6" rx="2" />
                   <rect width="6" height="9" x="14" y="6" rx="2" />
                   <path d="M22 2H2" />
                 </svg>
               </button>
-              <button class="layer-sidebar-align-button" type="button" aria-label="Align center horizontal">
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align vertical center" data-layer-align-axis="y" data-layer-align-position="center">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M2 12h20" />
                   <path d="M10 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4" />
@@ -315,7 +315,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
                   <path d="M14 8V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v1" />
                 </svg>
               </button>
-              <button class="layer-sidebar-align-button" type="button" aria-label="Align end horizontal">
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align bottom" data-layer-align-axis="y" data-layer-align-position="end">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect width="6" height="16" x="4" y="2" rx="2" />
                   <rect width="6" height="9" x="14" y="9" rx="2" />
@@ -373,6 +373,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const pressureButton = panel.querySelector("[data-smudge-pressure]");
   const textSidebar = panel.querySelector("[data-text-sidebar]");
   const layerSidebar = panel.querySelector("[data-layer-sidebar]");
+  const layerAlignButtons = panel.querySelectorAll("[data-layer-align-axis][data-layer-align-position]");
   const layerOpacityInput = panel.querySelector("[data-layer-opacity]");
   const layerOpacityValue = panel.querySelector("[data-layer-opacity-value]");
   const layerBlendOutline = panel.querySelector("[data-layer-blend-outline]");
@@ -500,6 +501,264 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       layer.type !== "background" &&
       layer.id !== "background",
     );
+  }
+
+  function normalizeLayerAlignAxis(value) {
+    const axis = String(value || "").trim().toLowerCase();
+
+    return axis === "x" || axis === "y" ? axis : "";
+  }
+
+  function normalizeLayerAlignPosition(value) {
+    const position = String(value || "").trim().toLowerCase();
+
+    return ["start", "center", "end"].includes(position) ? position : "";
+  }
+
+  function isRasterAlignLayer(layer) {
+    return layer?.type === "paint" || layer?.type === "image";
+  }
+
+  function hasFiniteRect(rect) {
+    return Boolean(
+      rect &&
+        Number.isFinite(rect.x) &&
+        Number.isFinite(rect.y) &&
+        Number.isFinite(rect.width) &&
+        Number.isFinite(rect.height) &&
+        rect.width > 0 &&
+        rect.height > 0,
+    );
+  }
+
+  function getDocumentAlignRect() {
+    const renderer = window.CBO.documentRenderer;
+    const width = Number(renderer?.width || renderer?.options?.documentWidth);
+    const height = Number(renderer?.height || renderer?.options?.documentHeight);
+
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return null;
+    }
+
+    return {
+      height,
+      width,
+      x: 0,
+      y: 0,
+    };
+  }
+
+  function getRectAlignCoordinate(rect, axis, position) {
+    const origin = axis === "x" ? rect.x : rect.y;
+    const size = axis === "x" ? rect.width : rect.height;
+
+    if (position === "center") {
+      return origin + size / 2;
+    }
+
+    if (position === "end") {
+      return origin + size;
+    }
+
+    return origin;
+  }
+
+  function getLayerAlignDelta(rect, axis, position) {
+    const targetRect = getDocumentAlignRect();
+
+    if (!hasFiniteRect(rect) || !hasFiniteRect(targetRect)) {
+      return null;
+    }
+
+    const desired = getRectAlignCoordinate(targetRect, axis, position);
+    const current = getRectAlignCoordinate(rect, axis, position);
+    const delta = desired - current;
+
+    if (Math.abs(delta) < 0.01) {
+      return null;
+    }
+
+    return {
+      dx: axis === "x" ? delta : 0,
+      dy: axis === "y" ? delta : 0,
+    };
+  }
+
+  function rectToQuad(rect) {
+    return [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y + rect.height },
+      { x: rect.x, y: rect.y + rect.height },
+    ];
+  }
+
+  function transformTextLayerPoint(layer, point) {
+    const scaleX = toFiniteNumber(layer.scaleX, 1);
+    const scaleY = toFiniteNumber(layer.scaleY, 1);
+    const radians = (toFiniteNumber(layer.rotation, 0) * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const x = point.x * scaleX;
+    const y = point.y * scaleY;
+
+    return {
+      x: toFiniteNumber(layer.x, 0) + x * cos - y * sin,
+      y: toFiniteNumber(layer.y, 0) + x * sin + y * cos,
+    };
+  }
+
+  function getTextLayerDocumentRect(layer, font) {
+    const bounds = getWarpedTextBounds(layer, font);
+
+    if (
+      !bounds ||
+      !Number.isFinite(bounds.x1) ||
+      !Number.isFinite(bounds.y1) ||
+      !Number.isFinite(bounds.x2) ||
+      !Number.isFinite(bounds.y2) ||
+      bounds.x2 <= bounds.x1 ||
+      bounds.y2 <= bounds.y1
+    ) {
+      return null;
+    }
+
+    const points = [
+      transformTextLayerPoint(layer, { x: bounds.x1, y: bounds.y1 }),
+      transformTextLayerPoint(layer, { x: bounds.x2, y: bounds.y1 }),
+      transformTextLayerPoint(layer, { x: bounds.x2, y: bounds.y2 }),
+      transformTextLayerPoint(layer, { x: bounds.x1, y: bounds.y2 }),
+    ];
+    const documentBounds = points.reduce(
+      (next, point) => ({
+        x1: Math.min(next.x1, point.x),
+        y1: Math.min(next.y1, point.y),
+        x2: Math.max(next.x2, point.x),
+        y2: Math.max(next.y2, point.y),
+      }),
+      { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity },
+    );
+
+    return {
+      height: documentBounds.y2 - documentBounds.y1,
+      width: documentBounds.x2 - documentBounds.x1,
+      x: documentBounds.x1,
+      y: documentBounds.y1,
+    };
+  }
+
+  function alignRasterLayerToDocument(layer, axis, position) {
+    const renderer = window.CBO.documentRenderer;
+
+    if (
+      !renderer?.getRasterContentBounds ||
+      !renderer?.createRasterSnapshot ||
+      !renderer?.commitRasterTransform
+    ) {
+      return false;
+    }
+
+    const sourceRect = renderer.getRasterContentBounds(layer.id);
+    const delta = getLayerAlignDelta(sourceRect, axis, position);
+
+    if (!delta) {
+      return false;
+    }
+
+    const sourceSnapshot = renderer.createRasterSnapshot(layer.id, sourceRect, "layer-sidebar-align-source");
+
+    if (!sourceSnapshot?.texture) {
+      renderer.deleteRasterSnapshot?.(sourceSnapshot);
+      return false;
+    }
+
+    const destRect = {
+      ...sourceRect,
+      x: sourceRect.x + delta.dx,
+      y: sourceRect.y + delta.dy,
+    };
+
+    try {
+      return renderer.commitRasterTransform({
+        destQuad: rectToQuad(destRect),
+        layerId: layer.id,
+        source: "layer-sidebar-align",
+        sourceRect,
+        sourceSnapshot,
+        transformMode: "free",
+      }) === true;
+    } finally {
+      renderer.deleteRasterSnapshot?.(sourceSnapshot);
+    }
+  }
+
+  async function alignVectorTextLayerToDocument(layer, axis, position) {
+    const layerModel = getLayerModel();
+    const engine = window.CBO.VectorTextEngine;
+
+    if (!layerModel?.updateLayer || !engine?.loadOpenTypeFont) {
+      return false;
+    }
+
+    const layerId = layer.id;
+    const fontUrl = layer.fontUrl || engine.DEFAULT_FONT_URL;
+
+    try {
+      const font = await engine.loadOpenTypeFont(fontUrl);
+      const currentLayer = layerModel.findEntryById(layerId);
+
+      if (!isLayerSidebarEligible(currentLayer) || !isVectorTextLayer(currentLayer)) {
+        return false;
+      }
+
+      if ((currentLayer.fontUrl || engine.DEFAULT_FONT_URL) !== fontUrl) {
+        return false;
+      }
+
+      const documentRect = getTextLayerDocumentRect(currentLayer, font);
+      const delta = getLayerAlignDelta(documentRect, axis, position);
+
+      if (!delta) {
+        return false;
+      }
+
+      const didUpdate = layerModel.updateLayer(currentLayer.id, {
+        x: toFiniteNumber(currentLayer.x, 0) + delta.dx,
+        y: toFiniteNumber(currentLayer.y, 0) + delta.dy,
+      }, {
+        historyGroup: getLayerHistoryGroup(`align-${axis}-${position}`, currentLayer),
+        source: "layer-sidebar-align",
+      });
+
+      if (didUpdate) {
+        window.CBO.documentRenderer?.requestDraw?.();
+      }
+
+      return didUpdate;
+    } catch (error) {
+      console.warn("Impossibile allineare il layer testo al foglio.", error);
+      return false;
+    }
+  }
+
+  function alignActiveLayerToDocument(axisValue, positionValue) {
+    const axis = normalizeLayerAlignAxis(axisValue);
+    const position = normalizeLayerAlignPosition(positionValue);
+    const layer = getActiveLayer();
+
+    if (!axis || !position || !isLayerSidebarEligible(layer)) {
+      return Promise.resolve(false);
+    }
+
+    if (isVectorTextLayer(layer)) {
+      return alignVectorTextLayerToDocument(layer, axis, position);
+    }
+
+    if (isRasterAlignLayer(layer)) {
+      return Promise.resolve(alignRasterLayerToDocument(layer, axis, position));
+    }
+
+    return Promise.resolve(false);
   }
 
   function getDefaultSmudgeSettings() {
@@ -1898,6 +2157,12 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   bindTextHistoryGroup(textShadowAngleInput, "shadow-angle");
   bindTextHistoryGroup(textShadowBlurInput, "shadow-blur");
   bindTextHistoryGroup(textTransformAmountInput, "transform-amount");
+
+  layerAlignButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      void alignActiveLayerToDocument(button.dataset.layerAlignAxis, button.dataset.layerAlignPosition);
+    });
+  });
 
   layerOpacityInput?.addEventListener("input", () => {
     updateLayerOpacityProgress();

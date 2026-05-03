@@ -328,6 +328,95 @@ void main() {
 }
 `;
 
+  const FIELD_BLUR_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aUnitCorner;
+
+out vec2 v_uv;
+
+void main() {
+  v_uv = vec2(aUnitCorner.x, 1.0 - aUnitCorner.y);
+  gl_Position = vec4(aUnitCorner.x * 2.0 - 1.0, 1.0 - aUnitCorner.y * 2.0, 0.0, 1.0);
+}
+`;
+
+  const FIELD_BLUR_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform vec2 u_texelSize;
+uniform int u_pinCount;
+uniform vec3 u_pins[8];
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+const int MAX_FIELD_BLUR_PINS = 8;
+const int FIELD_BLUR_SAMPLE_COUNT = 64;
+const float MAX_FIELD_BLUR_RADIUS = 200.0;
+
+float hash(vec2 co) {
+  return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+float resolveFieldBlurRadius(vec2 uv) {
+  int pinCount = clamp(u_pinCount, 0, MAX_FIELD_BLUR_PINS);
+
+  if (pinCount <= 0) {
+    return 0.0;
+  }
+
+  vec2 texelSize = max(u_texelSize, vec2(0.000001));
+  float blurSum = 0.0;
+  float weightSum = 0.0;
+
+  for (int i = 0; i < MAX_FIELD_BLUR_PINS; i++) {
+    if (i >= pinCount) {
+      break;
+    }
+
+    vec3 pin = u_pins[i];
+    float distancePx = length((uv - pin.xy) / texelSize);
+    float weight = 1.0 / (distancePx * distancePx + 0.01);
+
+    blurSum += clamp(pin.z, 0.0, MAX_FIELD_BLUR_RADIUS) * weight;
+    weightSum += weight;
+  }
+
+  return clamp(blurSum / max(weightSum, 0.000001), 0.0, MAX_FIELD_BLUR_RADIUS);
+}
+
+void main() {
+  vec4 base = texture(u_texture, v_uv);
+  float radius = resolveFieldBlurRadius(v_uv);
+
+  if (radius <= 0.01) {
+    outColor = base;
+    return;
+  }
+
+  vec4 sum = vec4(0.0);
+  float weightSum = 0.0;
+  float randomOffset = hash(gl_FragCoord.xy) * 6.28318530718;
+
+  for (int i = 0; i < FIELD_BLUR_SAMPLE_COUNT; i++) {
+    float sampleIndex = float(i) + 0.5;
+    float angle = sampleIndex * 2.39996323 + randomOffset;
+    float progress = sampleIndex / float(FIELD_BLUR_SAMPLE_COUNT);
+    float sampleRadius = sqrt(progress) * radius;
+    vec2 offset = vec2(cos(angle), sin(angle)) * sampleRadius * u_texelSize;
+    float weight = exp(-3.0 * progress);
+
+    sum += texture(u_texture, v_uv + offset) * weight;
+    weightSum += weight;
+  }
+
+  outColor = sum / weightSum;
+}
+`;
+
   const RADIAL_BLUR_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -559,6 +648,8 @@ void main() {
   const PUPPET_PIN_EPSILON = 0.000001;
   const MAX_GAUSSIAN_BLUR_RADIUS = 200;
   const MAX_MOTION_BLUR_DISTANCE = 300;
+  const MAX_FIELD_BLUR_RADIUS = 200;
+  const MAX_FIELD_BLUR_PINS = 8;
   const MAX_RADIAL_BLUR_AMOUNT = 200;
 
   function normalizeAngle(value) {
@@ -579,6 +670,31 @@ void main() {
 
   function normalizeRadialBlurMode(value) {
     return String(value || "").trim().toLowerCase() === "zoom" ? "zoom" : "spin";
+  }
+
+  function normalizeFieldBlurPins(pins) {
+    if (!Array.isArray(pins)) {
+      return [];
+    }
+
+    return pins
+      .filter(Boolean)
+      .slice(0, MAX_FIELD_BLUR_PINS)
+      .map((pin) => {
+        const x = Number(pin.x);
+        const y = Number(pin.y);
+        const blur = Number(pin.blur);
+
+        return {
+          blur: Number.isFinite(blur) ? Math.max(0, Math.min(MAX_FIELD_BLUR_RADIUS, blur)) : 0,
+          x: Number.isFinite(x) ? x : 0,
+          y: Number.isFinite(y) ? y : 0,
+        };
+      });
+  }
+
+  function hasFieldBlurAmount(pins) {
+    return normalizeFieldBlurPins(pins).some((pin) => pin.blur > 0);
   }
 
   class DocumentRenderer {
@@ -654,6 +770,7 @@ void main() {
       this.perspectiveQuadProgramInfo = null;
       this.gaussianBlurProgramInfo = null;
       this.motionBlurProgramInfo = null;
+      this.fieldBlurProgramInfo = null;
       this.radialBlurProgramInfo = null;
       this.layerBlendProgramInfo = null;
       this.layerBlendBackdropTexture = null;
@@ -901,6 +1018,42 @@ void main() {
       };
     }
 
+    createFieldBlurProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, FIELD_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, FIELD_BLUR_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma field blur WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma field blur.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          pinCount: gl.getUniformLocation(program, "u_pinCount"),
+          pins: gl.getUniformLocation(program, "u_pins[0]"),
+          texelSize: gl.getUniformLocation(program, "u_texelSize"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+
     createRadialBlurProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, RADIAL_BLUR_VERTEX_SHADER_SOURCE);
@@ -1020,6 +1173,14 @@ void main() {
       }
 
       return this.motionBlurProgramInfo;
+    }
+
+    ensureFieldBlurProgramInfo() {
+      if (!this.fieldBlurProgramInfo) {
+        this.fieldBlurProgramInfo = this.createFieldBlurProgramInfo();
+      }
+
+      return this.fieldBlurProgramInfo;
     }
 
     ensureRadialBlurProgramInfo() {
@@ -1443,6 +1604,28 @@ void main() {
         : null;
     }
 
+    getFieldBlur(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "field-blur" && item.enabled !== false)
+        : effects?.fieldBlur;
+
+      return {
+        pins: normalizeFieldBlurPins(effect?.pins),
+      };
+    }
+
+    getLayerFieldBlur(layer) {
+      const fieldBlur = this.getFieldBlur(layer);
+
+      return hasFieldBlurAmount(fieldBlur.pins)
+        ? {
+            enabled: true,
+            pins: fieldBlur.pins,
+          }
+        : null;
+    }
+
     getRadialBlur(layer) {
       const effects = layer?.effects;
       const effect = Array.isArray(effects)
@@ -1477,6 +1660,7 @@ void main() {
       return (
         this.getGaussianBlurRadius(layer) > 0 ||
         this.getMotionBlur(layer).distance > 0 ||
+        hasFieldBlurAmount(this.getFieldBlur(layer).pins) ||
         this.getRadialBlur(layer).amount > 0
       );
     }
@@ -1679,6 +1863,14 @@ void main() {
       this.motionBlurProgramInfo = null;
     }
 
+    deleteFieldBlurResources() {
+      if (this.fieldBlurProgramInfo?.program) {
+        this.gl.deleteProgram(this.fieldBlurProgramInfo.program);
+      }
+
+      this.fieldBlurProgramInfo = null;
+    }
+
     deleteRadialBlurResources() {
       if (this.radialBlurProgramInfo?.program) {
         this.gl.deleteProgram(this.radialBlurProgramInfo.program);
@@ -1860,6 +2052,46 @@ void main() {
       return true;
     }
 
+    runFieldBlurPass({ sourceTexture, target, pins }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureFieldBlurProgramInfo();
+      const width = Math.max(1, target.width || this.width || 1);
+      const height = Math.max(1, target.height || this.height || 1);
+      const pinValues = new Float32Array(MAX_FIELD_BLUR_PINS * 3);
+      const normalizedPins = normalizeFieldBlurPins(pins);
+
+      normalizedPins.forEach((pin, index) => {
+        const offset = index * 3;
+
+        pinValues[offset] = Math.max(0, Math.min(width, pin.x)) / width;
+        pinValues[offset + 1] = 1 - Math.max(0, Math.min(height, pin.y)) / height;
+        pinValues[offset + 2] = pin.blur;
+      });
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform2f(uniforms.texelSize, 1 / width, 1 / height);
+      gl.uniform1i(uniforms.pinCount, normalizedPins.length);
+      gl.uniform3fv(uniforms.pins, pinValues);
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
     runRadialBlurPass({ sourceTexture, target, amount, centerX, centerY, mode = "spin" }) {
       if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
         return false;
@@ -1945,6 +2177,25 @@ void main() {
       return didMotionPass ? target.texture : sourceTexture;
     }
 
+    applyFieldBlurTexture(sourceTexture, pins, options = {}) {
+      const nextPins = normalizeFieldBlurPins(pins);
+
+      if (!sourceTexture || !hasFieldBlurAmount(nextPins)) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const didFieldPass = this.runFieldBlurPass({
+        pins: nextPins,
+        sourceTexture,
+        target,
+      });
+
+      return didFieldPass ? target.texture : sourceTexture;
+    }
+
     applyRadialBlurTexture(
       sourceTexture,
       amount,
@@ -2001,6 +2252,12 @@ void main() {
             if (motionBlur) {
               texture = this.applyMotionBlurTexture(texture, motionBlur.distance, motionBlur.angle, { height, width });
             }
+          } else if (effect.type === "field-blur") {
+            const fieldBlur = this.getLayerFieldBlur({ effects: [effect] });
+
+            if (fieldBlur) {
+              texture = this.applyFieldBlurTexture(texture, fieldBlur.pins, { height, width });
+            }
           } else if (effect.type === "radial-blur") {
             const radialBlur = this.getLayerRadialBlur({ effects: [effect] });
 
@@ -2022,6 +2279,7 @@ void main() {
 
       const radius = this.getGaussianBlurRadius(layer);
       const motionBlur = this.getLayerMotionBlur(layer);
+      const fieldBlur = this.getLayerFieldBlur(layer);
       const radialBlur = this.getLayerRadialBlur(layer);
 
       if (radius > 0) {
@@ -2030,6 +2288,10 @@ void main() {
 
       if (motionBlur) {
         texture = this.applyMotionBlurTexture(texture, motionBlur.distance, motionBlur.angle, { height, width });
+      }
+
+      if (fieldBlur) {
+        texture = this.applyFieldBlurTexture(texture, fieldBlur.pins, { height, width });
       }
 
       if (radialBlur) {
@@ -4254,6 +4516,7 @@ void main() {
 
       this.deleteGaussianBlurResources();
       this.deleteMotionBlurResources();
+      this.deleteFieldBlurResources();
       this.deleteRadialBlurResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteLayerBlendResources();

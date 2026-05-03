@@ -3,14 +3,17 @@ window.CBO = window.CBO || {};
 (function registerLayerEffectsPanel(namespace) {
   const MAX_GAUSSIAN_BLUR_RADIUS = 200;
   const MAX_MOTION_BLUR_DISTANCE = 300;
+  const MAX_FIELD_BLUR_RADIUS = 200;
+  const MAX_FIELD_BLUR_PINS = 8;
   const MAX_RADIAL_BLUR_AMOUNT = 200;
-  const RASTERIZABLE_EFFECT_TYPES = Object.freeze(["gaussian-blur", "motion-blur", "radial-blur"]);
+  const RASTERIZABLE_EFFECT_TYPES = Object.freeze(["gaussian-blur", "motion-blur", "field-blur", "radial-blur"]);
   const EFFECT_GROUPS = Object.freeze([
     {
       label: "Blur",
       items: Object.freeze([
         { implemented: true, icon: "blur", label: "Gaussian Blur", type: "gaussian-blur" },
         { implemented: true, icon: "motion", label: "Motion Blur", type: "motion-blur" },
+        { implemented: true, icon: "field", label: "Field Blur", type: "field-blur" },
         { implemented: true, icon: "radial", label: "Radial Blur", type: "radial-blur" },
       ]),
     },
@@ -107,6 +110,7 @@ window.CBO = window.CBO || {};
       bloom: '<circle cx="12" cy="12" r="3" /><path d="M12 2v3" /><path d="M12 19v3" /><path d="M2 12h3" /><path d="M19 12h3" /><path d="m4.9 4.9 2.1 2.1" /><path d="m17 17 2.1 2.1" /><path d="m19.1 4.9-2.1 2.1" /><path d="m7 17-2.1 2.1" />',
       blur: '<circle cx="12" cy="12" r="1" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="9" />',
       curves: '<path d="M4 19c5 0 4-14 9-14 4 0 3 14 7 14" /><path d="M4 19h16" /><path d="M4 5v14" />',
+      field: '<circle cx="12" cy="12" r="2" /><circle cx="12" cy="12" r="6" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="M2 12h2" /><path d="M20 12h2" />',
       glow: '<path d="M12 3v4" /><path d="M12 17v4" /><path d="M3 12h4" /><path d="M17 12h4" /><circle cx="12" cy="12" r="4" />',
       grain: '<circle cx="7" cy="7" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="11" cy="12" r="1" /><circle cx="18" cy="14" r="1" /><circle cx="6" cy="17" r="1" />',
       halftone: '<circle cx="6" cy="6" r="2" /><circle cx="14" cy="5" r="1.5" /><circle cx="20" cy="8" r="1" /><circle cx="9" cy="14" r="1.5" /><circle cx="17" cy="16" r="2" /><circle cx="5" cy="20" r="1" />',
@@ -191,6 +195,7 @@ window.CBO = window.CBO || {};
     if (
       effect.type === "gaussian-blur" ||
       effect.type === "motion-blur" ||
+      effect.type === "field-blur" ||
       effect.type === "radial-blur"
     ) {
       return "";
@@ -286,6 +291,47 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function normalizeFieldBlurPin(pin) {
+    const x = Number(pin?.x);
+    const y = Number(pin?.y);
+    const blur = Number(pin?.blur);
+    const nextPin = {
+      blur: Number.isFinite(blur) ? Math.max(0, Math.min(MAX_FIELD_BLUR_RADIUS, blur)) : 0,
+      x: Number.isFinite(x) ? x : 0,
+      y: Number.isFinite(y) ? y : 0,
+    };
+
+    if (typeof pin?.id === "string" && pin.id.trim()) {
+      nextPin.id = pin.id;
+    }
+
+    return nextPin;
+  }
+
+  function normalizeFieldBlurPins(pins) {
+    return Array.isArray(pins)
+      ? pins
+          .filter(Boolean)
+          .slice(0, MAX_FIELD_BLUR_PINS)
+          .map((pin) => normalizeFieldBlurPin(pin))
+      : [];
+  }
+
+  function hasFieldBlurAmount(pins) {
+    return normalizeFieldBlurPins(pins).some((pin) => pin.blur > 0);
+  }
+
+  function getFieldBlur(layer) {
+    const effects = layer?.effects;
+    const effect = Array.isArray(effects)
+      ? effects.find((item) => item && item.type === "field-blur" && item.enabled !== false)
+      : effects?.fieldBlur;
+
+    return {
+      pins: normalizeFieldBlurPins(effect?.pins),
+    };
+  }
+
   function getRadialBlur(layer) {
     const effects = layer?.effects;
     const effect = Array.isArray(effects)
@@ -340,6 +386,24 @@ window.CBO = window.CBO || {};
     return effects;
   }
 
+  function getNextFieldBlurEffects(layer, pins) {
+    const nextPins = normalizeFieldBlurPins(pins);
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "field-blur")
+      .map((effect) => cloneValue(effect));
+
+    if (hasFieldBlurAmount(nextPins)) {
+      effects.push({
+        type: "field-blur",
+        enabled: true,
+        pins: nextPins,
+      });
+    }
+
+    return effects;
+  }
+
   function getNextRadialBlurEffects(layer, amount, centerX, centerY, mode = "spin") {
     const nextAmount = clamp(amount, 0, MAX_RADIAL_BLUR_AMOUNT);
     const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
@@ -372,6 +436,10 @@ window.CBO = window.CBO || {};
 
     if (effect.type === "motion-blur") {
       return getMotionBlur({ effects: [effect] }).distance > 0;
+    }
+
+    if (effect.type === "field-blur") {
+      return hasFieldBlurAmount(getFieldBlur({ effects: [effect] }).pins);
     }
 
     if (effect.type === "radial-blur") {
@@ -418,6 +486,7 @@ window.CBO = window.CBO || {};
 
   namespace.getLayerGaussianBlurRadius = getGaussianBlurRadius;
   namespace.getLayerMotionBlur = getMotionBlur;
+  namespace.getLayerFieldBlur = getFieldBlur;
   namespace.getLayerRadialBlur = getRadialBlur;
 
   namespace.hasRasterizableLayerEffects = function hasRasterizableLayerEffects(layerOrId) {
@@ -475,6 +544,34 @@ window.CBO = window.CBO || {};
 
     const didUpdate = layerModel.updateLayer(layerId, {
       effects: getNextMotionBlurEffects(layer, distance, angle),
+    }, updateOptions);
+
+    if (didUpdate) {
+      namespace.documentRenderer?.requestDraw?.();
+    }
+
+    return didUpdate;
+  };
+
+  namespace.setLayerFieldBlurPins = function setLayerFieldBlurPins(layerId, pins, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const updateOptions = {
+      historyGroup: options.historyGroup || `field-blur-${layerId}`,
+      source: options.source || "layer-effects-field-blur",
+    };
+
+    if (options.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = layerModel.updateLayer(layerId, {
+      effects: getNextFieldBlurEffects(layer, pins),
     }, updateOptions);
 
     if (didUpdate) {
@@ -769,6 +866,14 @@ window.CBO = window.CBO || {};
               </button>
             </div>
           </section>
+          <section class="layer-effects-section" aria-label="Field blur" data-layer-effects-editor="field-blur" hidden>
+            <div class="field-blur-pin-list" data-field-blur-pin-list></div>
+            <p class="field-blur-guide" data-field-blur-guide>
+              <span>Double-click canvas: add pin</span>
+              <span>Drag pin: move</span>
+              <span>Alt-click pin: remove</span>
+            </p>
+          </section>
           <section class="layer-effects-section" aria-label="Radial blur" data-layer-effects-editor="radial-blur" hidden>
             <div class="layer-effects-mode-toggle" role="group" aria-label="Radial blur mode">
               <button class="layer-effects-mode-button active" type="button" data-layer-radial-mode-button="spin">Spin</button>
@@ -818,6 +923,7 @@ window.CBO = window.CBO || {};
     const motionDistanceValue = panel.querySelector("[data-layer-motion-distance-value]");
     const motionAngleInput = panel.querySelector("[data-layer-motion-angle-input]");
     const motionAngleValue = panel.querySelector("[data-layer-motion-angle-value]");
+    const fieldBlurPinList = panel.querySelector("[data-field-blur-pin-list]");
     const radialAmountInput = panel.querySelector("[data-layer-radial-amount-input]");
     const radialAmountValue = panel.querySelector("[data-layer-radial-amount-value]");
     const radialCenterXInput = panel.querySelector("[data-layer-radial-center-x-input]");
@@ -832,6 +938,11 @@ window.CBO = window.CBO || {};
     const closeButton = panel.querySelector("[data-layer-effects-close]");
     const panelCloseButton = panel.querySelector("[data-layer-effects-panel-close]");
     let activeEffectType = "";
+    let fieldBlurDrag = null;
+    let activeFieldBlurPinId = "";
+    let fieldBlurOverlay = null;
+    let fieldBlurPinIdSequence = 0;
+    let fieldBlurPins = [];
     let previewSession = null;
 
     document.body.append(panel);
@@ -862,6 +973,358 @@ window.CBO = window.CBO || {};
       const layerModel = getLayerModel();
 
       return layerModel?.findEntryById?.(layerModel.activeLayerId) || null;
+    }
+
+    function getDocumentCenterPoint() {
+      const renderer = namespace.documentRenderer;
+
+      return {
+        x: Math.max(1, Number(renderer?.width) || 4000) * 0.5,
+        y: Math.max(1, Number(renderer?.height) || 4000) * 0.5,
+      };
+    }
+
+    function createFieldBlurPin(point = getDocumentCenterPoint(), blur = 0, id = "") {
+      fieldBlurPinIdSequence += 1;
+
+      return {
+        blur: clamp(blur, 0, MAX_FIELD_BLUR_RADIUS),
+        id: typeof id === "string" && id.trim() ? id : `field-blur-pin-${fieldBlurPinIdSequence}`,
+        x: Number.isFinite(point?.x) ? point.x : getDocumentCenterPoint().x,
+        y: Number.isFinite(point?.y) ? point.y : getDocumentCenterPoint().y,
+      };
+    }
+
+    function syncFieldBlurPinsFromLayer(layer) {
+      const fieldBlur = getFieldBlur(layer);
+
+      if (fieldBlur.pins.length === 0) {
+        return false;
+      }
+
+      fieldBlurPins = fieldBlur.pins.map((pin) =>
+        createFieldBlurPin({ x: pin.x, y: pin.y }, pin.blur, pin.id),
+      );
+      activeFieldBlurPinId = fieldBlurPins[0]?.id || "";
+
+      return true;
+    }
+
+    function clientToFieldBlurPoint(clientX, clientY) {
+      const stage = document.querySelector(".editor-stage");
+      const renderer = namespace.documentRenderer;
+      const brushEngine = namespace.brushEngine;
+      const brushPoint = brushEngine?.screenToDocumentSpace?.(clientX, clientY);
+      const width = Math.max(1, Number(renderer?.width) || 4000);
+      const height = Math.max(1, Number(renderer?.height) || 4000);
+
+      if (brushPoint) {
+        return {
+          x: clamp(brushPoint.docX, 0, width),
+          y: clamp(brushPoint.docY, 0, height),
+        };
+      }
+
+      const rect = stage?.getBoundingClientRect?.();
+      const x = rect ? clientX - rect.left : width * 0.5;
+      const y = rect ? clientY - rect.top : height * 0.5;
+
+      return {
+        x: clamp(x, 0, width),
+        y: clamp(y, 0, height),
+      };
+    }
+
+    function documentToFieldBlurStagePoint(pin) {
+      const brushEngine = namespace.brushEngine;
+      const camera = brushEngine?.camera || { x: 0, y: 0, zoom: 1 };
+      const dpr = Math.max(0.0001, Number(brushEngine?.dpr) || window.devicePixelRatio || 1);
+      const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
+
+      return {
+        x: ((pin.x || 0) * zoom + (camera.x || 0)) / dpr,
+        y: ((pin.y || 0) * zoom + (camera.y || 0)) / dpr,
+      };
+    }
+
+    function ensureFieldBlurPins() {
+      if (fieldBlurPins.length === 0) {
+        if (syncFieldBlurPinsFromLayer(getActiveLayer())) {
+          return;
+        }
+
+        const pin = createFieldBlurPin(getDocumentCenterPoint(), 0);
+
+        fieldBlurPins = [pin];
+        activeFieldBlurPinId = pin.id;
+      } else if (!fieldBlurPins.some((pin) => pin.id === activeFieldBlurPinId)) {
+        activeFieldBlurPinId = fieldBlurPins[0]?.id || "";
+      }
+    }
+
+    function renderFieldBlurPins() {
+      if (!fieldBlurOverlay || activeEffectType !== "field-blur") {
+        return;
+      }
+
+      fieldBlurOverlay.innerHTML = fieldBlurPins.map((pin) => {
+        const point = documentToFieldBlurStagePoint(pin);
+        const progress = clamp(pin.blur / MAX_FIELD_BLUR_RADIUS, 0, 1);
+        const isActive = pin.id === activeFieldBlurPinId;
+
+        return `
+          <button
+            class="field-blur-pin${isActive ? " active" : ""}"
+            type="button"
+            aria-label="Field blur pin"
+            data-field-blur-pin="${pin.id}"
+            style="left: ${point.x}px; top: ${point.y}px; --field-blur-degrees: ${Math.round(progress * 360)}deg;"
+          >
+            <span class="field-blur-pin-ring" aria-hidden="true"></span>
+            <span class="field-blur-pin-core" aria-hidden="true"></span>
+          </button>
+        `;
+      }).join("");
+    }
+
+    function renderFieldBlurPinControls() {
+      if (!fieldBlurPinList) {
+        return;
+      }
+
+      if (fieldBlurPins.length === 0) {
+        fieldBlurPinList.innerHTML = "";
+        return;
+      }
+
+      fieldBlurPinList.innerHTML = fieldBlurPins.map((pin, index) => `
+        <div class="field-blur-pin-control${pin.id === activeFieldBlurPinId ? " active" : ""}" data-field-blur-pin-control="${pin.id}">
+          <div class="layer-effects-control-header">
+            <span class="layer-effects-label">Pin ${index + 1}</span>
+            <output class="layer-effects-value" data-field-blur-pin-value="${pin.id}">${Math.round(pin.blur)} px</output>
+          </div>
+          <input
+            class="layer-effects-range"
+            type="range"
+            min="0"
+            max="${MAX_FIELD_BLUR_RADIUS}"
+            step="1"
+            value="${pin.blur}"
+            aria-label="Field blur pin ${index + 1}"
+            data-field-blur-pin-input="${pin.id}"
+          />
+        </div>
+      `).join("");
+    }
+
+    function syncFieldBlurUi() {
+      if (activeEffectType !== "field-blur") {
+        return;
+      }
+
+      renderFieldBlurPins();
+      renderFieldBlurPinControls();
+    }
+
+    function setActiveFieldBlurPin(pinId) {
+      activeFieldBlurPinId = pinId;
+      syncFieldBlurUi();
+    }
+
+    function syncFieldBlurAcceptState() {
+      if (activeEffectType !== "field-blur") {
+        return;
+      }
+
+      acceptButton.disabled = !isBlurEligibleLayer(getActiveLayer()) || !hasFieldBlurAmount(fieldBlurPins);
+    }
+
+    function applyFieldBlurPins() {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextPins = normalizeFieldBlurPins(fieldBlurPins);
+      const currentPins = getFieldBlur(layer).pins;
+
+      if (!hasFieldBlurAmount(nextPins) && !hasFieldBlurAmount(currentPins)) {
+        return;
+      }
+
+      namespace.setLayerFieldBlurPins(layer.id, nextPins, {
+        history: false,
+        source: "layer-effects-preview",
+      });
+    }
+
+    function addFieldBlurPin(point) {
+      if (fieldBlurPins.length >= MAX_FIELD_BLUR_PINS) {
+        return;
+      }
+
+      const pin = createFieldBlurPin(point, 0);
+
+      fieldBlurPins = [...fieldBlurPins, pin];
+      setActiveFieldBlurPin(pin.id);
+      applyFieldBlurPins();
+      syncFieldBlurAcceptState();
+    }
+
+    function removeFieldBlurPin(pinId) {
+      fieldBlurPins = fieldBlurPins.filter((pin) => pin.id !== pinId);
+      activeFieldBlurPinId = fieldBlurPins[0]?.id || "";
+      syncFieldBlurUi();
+      applyFieldBlurPins();
+      syncFieldBlurAcceptState();
+    }
+
+    function moveFieldBlurPin(pinId, point) {
+      fieldBlurPins = fieldBlurPins.map((pin) =>
+        pin.id === pinId ? { ...pin, x: point.x, y: point.y } : pin,
+      );
+      activeFieldBlurPinId = pinId;
+      renderFieldBlurPins();
+      applyFieldBlurPins();
+      syncFieldBlurAcceptState();
+    }
+
+    function updateFieldBlurPinControlValue(pinId, blur) {
+      fieldBlurPinList.querySelectorAll("[data-field-blur-pin-control]").forEach((control) => {
+        const isActive = control.dataset.fieldBlurPinControl === pinId;
+
+        control.classList.toggle("active", isActive);
+      });
+      fieldBlurPinList.querySelectorAll("[data-field-blur-pin-value]").forEach((output) => {
+        if (output.dataset.fieldBlurPinValue === pinId) {
+          output.textContent = `${Math.round(blur)} px`;
+        }
+      });
+    }
+
+    function setFieldBlurPinBlur(pinId, blur) {
+      const nextBlur = clamp(blur, 0, MAX_FIELD_BLUR_RADIUS);
+
+      fieldBlurPins = fieldBlurPins.map((pin) =>
+        pin.id === pinId ? { ...pin, blur: nextBlur } : pin,
+      );
+      activeFieldBlurPinId = pinId;
+      renderFieldBlurPins();
+      updateFieldBlurPinControlValue(pinId, nextBlur);
+      applyFieldBlurPins();
+      syncFieldBlurAcceptState();
+    }
+
+    function handleFieldBlurOverlayPointerDown(event) {
+      if (activeEffectType !== "field-blur") {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.button !== 0) {
+        return;
+      }
+
+      const pinElement = event.target?.closest?.("[data-field-blur-pin]");
+      const pinId = pinElement?.dataset.fieldBlurPin || "";
+
+      if (event.altKey && pinId) {
+        removeFieldBlurPin(pinId);
+        return;
+      }
+
+      if (pinId) {
+        setActiveFieldBlurPin(pinId);
+        fieldBlurDrag = {
+          pinId,
+          pointerId: event.pointerId,
+        };
+        fieldBlurOverlay?.setPointerCapture?.(event.pointerId);
+        return;
+      }
+    }
+
+    function handleFieldBlurOverlayPointerMove(event) {
+      if (activeEffectType !== "field-blur" || !fieldBlurDrag || fieldBlurDrag.pointerId !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      moveFieldBlurPin(fieldBlurDrag.pinId, clientToFieldBlurPoint(event.clientX, event.clientY));
+    }
+
+    function stopFieldBlurDrag(event) {
+      if (!fieldBlurDrag || fieldBlurDrag.pointerId !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      fieldBlurOverlay?.releasePointerCapture?.(event.pointerId);
+      fieldBlurDrag = null;
+    }
+
+    function handleFieldBlurOverlayDoubleClick(event) {
+      if (activeEffectType !== "field-blur") {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const pinElement = event.target?.closest?.("[data-field-blur-pin]");
+
+      if (!pinElement && !event.altKey) {
+        addFieldBlurPin(clientToFieldBlurPoint(event.clientX, event.clientY));
+      }
+    }
+
+    function ensureFieldBlurOverlay() {
+      const stage = document.querySelector(".editor-stage");
+
+      if (!stage) {
+        return null;
+      }
+
+      if (!fieldBlurOverlay || !fieldBlurOverlay.isConnected) {
+        fieldBlurOverlay = document.createElement("div");
+        fieldBlurOverlay.className = "field-blur-pin-overlay";
+        fieldBlurOverlay.setAttribute("data-field-blur-pin-overlay", "");
+        fieldBlurOverlay.addEventListener("dblclick", handleFieldBlurOverlayDoubleClick);
+        fieldBlurOverlay.addEventListener("pointerdown", handleFieldBlurOverlayPointerDown);
+        fieldBlurOverlay.addEventListener("pointermove", handleFieldBlurOverlayPointerMove);
+        fieldBlurOverlay.addEventListener("pointerup", stopFieldBlurDrag);
+        fieldBlurOverlay.addEventListener("pointercancel", stopFieldBlurDrag);
+        stage.append(fieldBlurOverlay);
+      }
+
+      return fieldBlurOverlay;
+    }
+
+    function activateFieldBlurUi() {
+      if (!isBlurEligibleLayer(getActiveLayer())) {
+        return;
+      }
+
+      ensureFieldBlurPins();
+      ensureFieldBlurOverlay();
+      syncFieldBlurUi();
+    }
+
+    function deactivateFieldBlurUi() {
+      if (fieldBlurOverlay) {
+        fieldBlurOverlay.remove();
+        fieldBlurOverlay = null;
+      }
+
+      fieldBlurDrag = null;
+      activeFieldBlurPinId = "";
+      fieldBlurPins = [];
     }
 
     function startPreviewSession(effectType) {
@@ -915,6 +1378,7 @@ window.CBO = window.CBO || {};
       const definition = getEffectDefinition(effectType);
       const isEditor = Boolean(definition);
       const isImplemented = isImplementedEffect(effectType);
+      const wasFieldBlur = activeEffectType === "field-blur";
 
       activeEffectType = isEditor ? effectType : "";
       picker.hidden = isEditor;
@@ -931,6 +1395,12 @@ window.CBO = window.CBO || {};
           : "Apply effect",
       );
       panel.dataset.activeEffect = activeEffectType;
+
+      if (activeEffectType === "field-blur") {
+        activateFieldBlurUi();
+      } else if (wasFieldBlur) {
+        deactivateFieldBlurUi();
+      }
     }
 
     function showEffectPicker(options = {}) {
@@ -960,6 +1430,8 @@ window.CBO = window.CBO || {};
         blurInput?.focus?.({ preventScroll: true });
       } else if (effectType === "motion-blur") {
         motionDistanceInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "field-blur") {
+        fieldBlurPinList?.querySelector?.("[data-field-blur-pin-input]")?.focus?.({ preventScroll: true });
       } else if (effectType === "radial-blur") {
         radialAmountInput?.focus?.({ preventScroll: true });
       }
@@ -1019,9 +1491,13 @@ window.CBO = window.CBO || {};
       const isEligible = isBlurEligibleLayer(layer);
       const radius = isEligible ? getGaussianBlurRadius(layer) : 0;
       const motionBlur = isEligible ? getMotionBlur(layer) : { angle: 0, distance: 0 };
+      const fieldBlur = isEligible ? getFieldBlur(layer) : { pins: [] };
       const radialBlur = isEligible
         ? getRadialBlur(layer)
         : { amount: 0, centerX: 50, centerY: 50, mode: "spin" };
+      const hasActiveFieldBlur = hasFieldBlurAmount(
+        activeEffectType === "field-blur" ? fieldBlurPins : fieldBlur.pins,
+      );
 
       const layerName = isEligible ? layer.name || "Layer" : "No layer";
 
@@ -1040,6 +1516,9 @@ window.CBO = window.CBO || {};
       radialAmountInput.disabled = !isEligible;
       radialCenterXInput.disabled = !isEligible;
       radialCenterYInput.disabled = !isEligible;
+      fieldBlurPinList.querySelectorAll("[data-field-blur-pin-input]").forEach((input) => {
+        input.disabled = !isEligible;
+      });
       radialModeButtons.forEach((modeButton) => {
         modeButton.disabled = !isEligible;
       });
@@ -1047,6 +1526,7 @@ window.CBO = window.CBO || {};
         !isImplementedEffect(activeEffectType) ||
         (activeEffectType === "gaussian-blur" && radius <= 0) ||
         (activeEffectType === "motion-blur" && motionBlur.distance <= 0) ||
+        (activeEffectType === "field-blur" && !hasActiveFieldBlur) ||
         (activeEffectType === "radial-blur" && radialBlur.amount <= 0);
       resetButton.disabled = !isEligible || radius <= 0;
       motionResetButton.disabled = !isEligible || motionBlur.distance <= 0;
@@ -1064,6 +1544,7 @@ window.CBO = window.CBO || {};
       radialCenterYInput.value = String(radialBlur.centerY);
       radialCenterYValue.textContent = `${Math.round(radialBlur.centerY)}%`;
       setRadialModeButtonState(radialBlur.mode);
+      syncFieldBlurUi();
       panel.classList.toggle("disabled", !isEligible);
     }
 
@@ -1269,6 +1750,24 @@ window.CBO = window.CBO || {};
       applyRadialBlur(0, radialCenterXInput.value, radialCenterYInput.value, getSelectedRadialMode());
     });
 
+    fieldBlurPinList.addEventListener("click", (event) => {
+      const control = event.target?.closest?.("[data-field-blur-pin-control]");
+      const pinId = control?.dataset.fieldBlurPinControl || "";
+
+      if (pinId) {
+        setActiveFieldBlurPin(pinId);
+      }
+    });
+
+    fieldBlurPinList.addEventListener("input", (event) => {
+      const input = event.target?.closest?.("[data-field-blur-pin-input]");
+      const pinId = input?.dataset.fieldBlurPinInput || "";
+
+      if (pinId) {
+        setFieldBlurPinBlur(pinId, input.value);
+      }
+    });
+
     acceptButton.addEventListener("click", () => {
       if (acceptButton.disabled) {
         return;
@@ -1296,7 +1795,11 @@ window.CBO = window.CBO || {};
     document.addEventListener("pointerdown", (event) => {
       if (
         panel.hidden ||
-        event.target instanceof Node && (panel.contains(event.target) || button.contains(event.target))
+        event.target instanceof Node && (
+          panel.contains(event.target) ||
+          button.contains(event.target) ||
+          (activeEffectType === "field-blur" && event.target.closest?.(".editor-stage"))
+        )
       ) {
         return;
       }
@@ -1311,6 +1814,8 @@ window.CBO = window.CBO || {};
     });
 
     window.addEventListener("resize", positionPanel);
+    window.addEventListener("resize", renderFieldBlurPins);
+    window.addEventListener("cbo:camera-change", renderFieldBlurPins);
     window.addEventListener("cbo:document-layers-change", handleLayerChange);
     window.addEventListener("cbo:layer-effects-rasterized", handleLayerChange);
     setEffectView("");

@@ -11,6 +11,21 @@ test("right sidebar shows layer controls for the selection tool", () => {
 
   assert.match(source, /data-layer-sidebar/);
   assert.match(source, /data-layer-align-placeholder/);
+  assert.match(source, /data-layer-align-axis="x" data-layer-align-position="start"/);
+  assert.match(source, /data-layer-align-axis="x" data-layer-align-position="center"/);
+  assert.match(source, /data-layer-align-axis="x" data-layer-align-position="end"/);
+  assert.match(source, /data-layer-align-axis="y" data-layer-align-position="start"/);
+  assert.match(source, /data-layer-align-axis="y" data-layer-align-position="center"/);
+  assert.match(source, /data-layer-align-axis="y" data-layer-align-position="end"/);
+  assert.match(source, /const layerAlignButtons = panel\.querySelectorAll\("\[data-layer-align-axis\]\[data-layer-align-position\]"\)/);
+  assert.match(source, /function alignActiveLayerToDocument\(axisValue, positionValue\)/);
+  assert.match(source, /function alignRasterLayerToDocument\(layer, axis, position\)/);
+  assert.match(source, /function alignVectorTextLayerToDocument\(layer, axis, position\)/);
+  assert.match(source, /renderer\.getRasterContentBounds\(layer\.id\)/);
+  assert.match(source, /renderer\.commitRasterTransform\(\{/);
+  assert.match(source, /engine\.loadOpenTypeFont\(fontUrl\)/);
+  assert.match(source, /source: "layer-sidebar-align"/);
+  assert.match(source, /layerAlignButtons\.forEach\(\(button\) => \{/);
   assert.match(source, /data-layer-opacity/);
   assert.match(source, /data-layer-blend-outline/);
   assert.match(source, /function shouldShowLayerSettings\(activeTool = currentToolName\)/);

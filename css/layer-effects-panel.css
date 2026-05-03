@@ -249,6 +249,116 @@
   opacity: 0.38;
 }
 
+.field-blur-pin-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field-blur-pin-control {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+}
+
+.field-blur-pin-control.active {
+  background: rgba(246, 247, 251, 0.1);
+  border-color: rgba(246, 247, 251, 0.28);
+}
+
+.field-blur-guide {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  color: #ffffff;
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1.25;
+}
+
+.field-blur-pin-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: block;
+  overflow: hidden;
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.field-blur-pin {
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  color: #2c78d6;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: grab;
+  transform: translate(-50%, -50%);
+}
+
+.field-blur-pin:active {
+  cursor: grabbing;
+}
+
+.field-blur-pin-ring {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background:
+    conic-gradient(
+      #f5f8ff var(--field-blur-degrees, 0deg),
+      rgba(255, 255, 255, 0.34) 0
+    );
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.4);
+}
+
+.field-blur-pin-ring::after {
+  position: absolute;
+  inset: 6px;
+  background: rgba(48, 48, 48, 0.86);
+  border-radius: 50%;
+  content: "";
+}
+
+.field-blur-pin-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  background: #f6f8ff;
+  border: 2px solid #91bdf3;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.38);
+  transform: translate(-50%, -50%);
+}
+
+.field-blur-pin-core::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  background: #2c78d6;
+  border-radius: 50%;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.field-blur-pin.active .field-blur-pin-ring,
+.field-blur-pin:hover .field-blur-pin-ring,
+.field-blur-pin:focus-visible .field-blur-pin-ring {
+  outline: 2px solid rgba(145, 189, 243, 0.8);
+  outline-offset: 2px;
+}
+
 .layer-effects-control-header {
   display: flex;
   align-items: center;
