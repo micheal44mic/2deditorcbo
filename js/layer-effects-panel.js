@@ -2,6 +2,42 @@ window.CBO = window.CBO || {};
 
 (function registerLayerEffectsPanel(namespace) {
   const MAX_GAUSSIAN_BLUR_RADIUS = 40;
+  const EFFECT_GROUPS = Object.freeze([
+    {
+      label: "Blur",
+      items: Object.freeze([
+        { implemented: true, icon: "blur", label: "Gaussian Blur", type: "gaussian-blur" },
+        { implemented: false, icon: "motion", label: "Motion Blur", type: "motion-blur" },
+        { implemented: false, icon: "radial", label: "Radial Blur", type: "radial-blur" },
+      ]),
+    },
+    {
+      label: "Color",
+      items: Object.freeze([
+        { implemented: false, icon: "curves", label: "Curves", type: "curves" },
+        { implemented: false, icon: "levels", label: "Levels", type: "levels" },
+        { implemented: false, icon: "threshold", label: "Threshold", type: "threshold" },
+        { implemented: false, icon: "hue", label: "Hue/Saturation", type: "hue-saturation" },
+      ]),
+    },
+    {
+      label: "Texture",
+      items: Object.freeze([
+        { implemented: false, icon: "noise", label: "Noise", type: "noise" },
+        { implemented: false, icon: "grain", label: "Grain", type: "grain" },
+        { implemented: false, icon: "halftone", label: "Halftone", type: "halftone" },
+        { implemented: false, icon: "pixelate", label: "Pixelate", type: "pixelate" },
+      ]),
+    },
+    {
+      label: "Light",
+      items: Object.freeze([
+        { implemented: false, icon: "bloom", label: "Bloom", type: "bloom" },
+        { implemented: false, icon: "glow", label: "Glow", type: "glow" },
+        { implemented: false, icon: "vignette", label: "Vignette", type: "vignette" },
+      ]),
+    },
+  ]);
 
   function clamp(value, min, max) {
     const number = Number(value);
@@ -21,6 +57,183 @@ window.CBO = window.CBO || {};
     }
 
     return value;
+  }
+
+  function getEffectDefinition(type) {
+    for (const group of EFFECT_GROUPS) {
+      const item = group.items.find((effect) => effect.type === type);
+
+      if (item) {
+        return item;
+      }
+    }
+
+    return null;
+  }
+
+  function isImplementedEffect(type) {
+    return getEffectDefinition(type)?.implemented === true;
+  }
+
+  function getEffectIconMarkup(icon) {
+    const pathsByIcon = {
+      bloom: '<circle cx="12" cy="12" r="3" /><path d="M12 2v3" /><path d="M12 19v3" /><path d="M2 12h3" /><path d="M19 12h3" /><path d="m4.9 4.9 2.1 2.1" /><path d="m17 17 2.1 2.1" /><path d="m19.1 4.9-2.1 2.1" /><path d="m7 17-2.1 2.1" />',
+      blur: '<circle cx="12" cy="12" r="1" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="9" />',
+      curves: '<path d="M4 19c5 0 4-14 9-14 4 0 3 14 7 14" /><path d="M4 19h16" /><path d="M4 5v14" />',
+      glow: '<path d="M12 3v4" /><path d="M12 17v4" /><path d="M3 12h4" /><path d="M17 12h4" /><circle cx="12" cy="12" r="4" />',
+      grain: '<circle cx="7" cy="7" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="11" cy="12" r="1" /><circle cx="18" cy="14" r="1" /><circle cx="6" cy="17" r="1" />',
+      halftone: '<circle cx="6" cy="6" r="2" /><circle cx="14" cy="5" r="1.5" /><circle cx="20" cy="8" r="1" /><circle cx="9" cy="14" r="1.5" /><circle cx="17" cy="16" r="2" /><circle cx="5" cy="20" r="1" />',
+      hue: '<circle cx="12" cy="12" r="8" /><path d="M12 4v16" /><path d="M4 12h16" />',
+      levels: '<path d="M4 19h16" /><path d="M6 19V9" /><path d="M12 19V5" /><path d="M18 19v-7" />',
+      motion: '<path d="M4 8h9" /><path d="M4 12h16" /><path d="M4 16h9" /><path d="m16 8 4 4-4 4" />',
+      noise: '<path d="M4 7h1" /><path d="M9 7h1" /><path d="M14 7h1" /><path d="M19 7h1" /><path d="M6 12h1" /><path d="M11 12h1" /><path d="M16 12h1" /><path d="M4 17h1" /><path d="M9 17h1" /><path d="M14 17h1" /><path d="M19 17h1" />',
+      pixelate: '<path d="M4 4h6v6H4z" /><path d="M14 4h6v6h-6z" /><path d="M4 14h6v6H4z" /><path d="M14 14h6v6h-6z" />',
+      radial: '<circle cx="12" cy="12" r="8" /><path d="M12 4v4" /><path d="M12 16v4" /><path d="M4 12h4" /><path d="M16 12h4" />',
+      threshold: '<path d="M4 19h16" /><path d="M4 5h16" /><path d="M12 5v14" /><path d="M8 9h8" /><path d="M8 15h8" />',
+      vignette: '<rect x="4" y="5" width="16" height="14" rx="2" /><circle cx="12" cy="12" r="4" />',
+    };
+
+    return `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        ${pathsByIcon[icon] || pathsByIcon.blur}
+      </svg>
+    `;
+  }
+
+  function getEffectPickerMarkup() {
+    return EFFECT_GROUPS.map((group) => `
+      <section class="layer-effects-menu-group" data-layer-effects-menu-group>
+        <div class="layer-effects-menu-title">${group.label}</div>
+        <div class="layer-effects-menu-options">
+          ${group.items.map((effect) => `
+            <button
+              class="layer-effect-option"
+              type="button"
+              data-effect-label="${effect.label.toLowerCase()}"
+              data-layer-effect-option="${effect.type}"
+              aria-disabled="false"
+            >
+              <span class="layer-effect-option-icon">${getEffectIconMarkup(effect.icon)}</span>
+              <span class="layer-effect-option-label">${effect.label}</span>
+            </button>
+          `).join("")}
+        </div>
+      </section>
+    `).join("");
+  }
+
+  function getAdjustmentControlMarkup(label, value, input = "range") {
+    if (input === "checkbox") {
+      return `
+        <label class="layer-effects-check-row">
+          <span class="layer-effects-label">${label}</span>
+          <input class="layer-effects-check" type="checkbox" ${value ? "checked" : ""} disabled />
+        </label>
+      `;
+    }
+
+    return `
+      <label class="layer-effects-control-row">
+        <span class="layer-effects-label">${label}</span>
+        <input class="layer-effects-range" type="range" min="0" max="100" step="1" value="${value}" disabled />
+      </label>
+    `;
+  }
+
+  function getCurvesEditorMarkup() {
+    return `
+      <div class="layer-effects-tabs" aria-label="Curve channel">
+        <button class="layer-effects-tab active" type="button" disabled>RGB</button>
+        <button class="layer-effects-tab" type="button" disabled>R</button>
+        <button class="layer-effects-tab" type="button" disabled>G</button>
+        <button class="layer-effects-tab" type="button" disabled>B</button>
+      </div>
+      <div class="layer-effects-curve-box" aria-hidden="true">
+        <svg viewBox="0 0 100 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 56H100M0 38H100M0 20H100M24 2V72M50 2V72M76 2V72" />
+          <path class="curve-line" d="M5 65C30 62 33 18 52 18C72 18 72 53 95 8" />
+          <circle cx="5" cy="65" r="3" />
+          <circle cx="52" cy="18" r="3" />
+          <circle cx="95" cy="8" r="3" />
+        </svg>
+      </div>
+    `;
+  }
+
+  function getEffectEditorMarkup(effect) {
+    if (effect.type === "gaussian-blur") {
+      return "";
+    }
+
+    const controlsByType = {
+      bloom: [
+        getAdjustmentControlMarkup("Threshold", 72),
+        getAdjustmentControlMarkup("Radius", 28),
+        getAdjustmentControlMarkup("Intensity", 34),
+      ],
+      glow: [
+        getAdjustmentControlMarkup("Radius", 18),
+        getAdjustmentControlMarkup("Intensity", 40),
+        getAdjustmentControlMarkup("Spread", 24),
+      ],
+      grain: [
+        getAdjustmentControlMarkup("Amount", 18),
+        getAdjustmentControlMarkup("Scale", 42),
+        getAdjustmentControlMarkup("Monochrome", true, "checkbox"),
+      ],
+      halftone: [
+        getAdjustmentControlMarkup("Size", 34),
+        getAdjustmentControlMarkup("Angle", 45),
+        getAdjustmentControlMarkup("Contrast", 62),
+      ],
+      "hue-saturation": [
+        getAdjustmentControlMarkup("Hue", 50),
+        getAdjustmentControlMarkup("Saturation", 50),
+        getAdjustmentControlMarkup("Lightness", 50),
+      ],
+      levels: [
+        getAdjustmentControlMarkup("Shadows", 8),
+        getAdjustmentControlMarkup("Midtones", 50),
+        getAdjustmentControlMarkup("Highlights", 92),
+      ],
+      "motion-blur": [
+        getAdjustmentControlMarkup("Distance", 26),
+        getAdjustmentControlMarkup("Angle", 38),
+      ],
+      noise: [
+        getAdjustmentControlMarkup("Amount", 14),
+        getAdjustmentControlMarkup("Scale", 28),
+        getAdjustmentControlMarkup("Monochrome", true, "checkbox"),
+      ],
+      pixelate: [
+        getAdjustmentControlMarkup("Size", 18),
+      ],
+      "radial-blur": [
+        getAdjustmentControlMarkup("Amount", 22),
+        getAdjustmentControlMarkup("Center", 50),
+      ],
+      threshold: [
+        getAdjustmentControlMarkup("Level", 50),
+      ],
+      vignette: [
+        getAdjustmentControlMarkup("Amount", 35),
+        getAdjustmentControlMarkup("Size", 68),
+        getAdjustmentControlMarkup("Feather", 44),
+      ],
+    };
+
+    return `
+      <section class="layer-effects-section layer-effects-disabled-editor" aria-label="${effect.label}" data-layer-effects-editor="${effect.type}" hidden>
+        ${effect.type === "curves" ? getCurvesEditorMarkup() : (controlsByType[effect.type] || []).join("")}
+      </section>
+    `;
+  }
+
+  function getEffectEditorsMarkup() {
+    return EFFECT_GROUPS
+      .flatMap((group) => group.items)
+      .map((effect) => getEffectEditorMarkup(effect))
+      .join("");
   }
 
   function getGaussianBlurRadius(layer) {
@@ -277,48 +490,88 @@ window.CBO = window.CBO || {};
     panel.hidden = true;
     panel.dataset.layerEffectsPanel = "";
     panel.innerHTML = `
-      <div class="layer-effects-header">
-        <div class="layer-effects-heading">
-          <span class="layer-effects-title">Effects</span>
-          <span class="layer-effects-target" data-layer-effects-target>Layer</span>
-        </div>
-        <div class="layer-effects-header-actions">
-          <button class="layer-effects-icon-button" type="button" aria-label="Apply gaussian blur" data-layer-effects-accept>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M20 6 9 17l-5-5" />
-            </svg>
-          </button>
-          <button class="layer-effects-icon-button" type="button" aria-label="Close effects" data-layer-effects-close>
+      <div class="layer-effects-picker" data-layer-effects-picker>
+        <div class="layer-effects-header">
+          <div class="layer-effects-heading">
+            <span class="layer-effects-title">Effects</span>
+            <span class="layer-effects-target" data-layer-effects-picker-target>Layer</span>
+          </div>
+          <button class="layer-effects-icon-button" type="button" aria-label="Close effects" data-layer-effects-panel-close>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18 6 6 18" />
               <path d="m6 6 12 12" />
             </svg>
           </button>
         </div>
-      </div>
-      <section class="layer-effects-section" aria-label="Gaussian blur">
-        <div class="layer-effects-control-header">
-          <span class="layer-effects-label">Gaussian Blur</span>
-          <output class="layer-effects-value" data-layer-blur-value>0 px</output>
+        <label class="layer-effects-search">
+          <input class="layer-effects-search-input" type="search" placeholder="Search effects" aria-label="Search effects" data-layer-effects-search />
+        </label>
+        <div class="layer-effects-menu" data-layer-effects-menu>
+          ${getEffectPickerMarkup()}
         </div>
-        <input class="layer-effects-range" type="range" min="0" max="40" step="1" value="0" aria-label="Gaussian blur radius" data-layer-blur-input />
-        <div class="layer-effects-actions">
-          <button class="layer-effects-icon-button" type="button" aria-label="Reset gaussian blur" data-layer-blur-reset>
+      </div>
+      <div class="layer-effects-detail" data-layer-effects-detail hidden>
+        <div class="layer-effects-header">
+          <button class="layer-effects-icon-button layer-effects-back-button" type="button" aria-label="Back to effects" data-layer-effects-back>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
+              <path d="m15 18-6-6 6-6" />
             </svg>
           </button>
+          <div class="layer-effects-heading">
+            <span class="layer-effects-title" data-layer-effects-title>Effect</span>
+            <span class="layer-effects-target" data-layer-effects-target>Layer</span>
+          </div>
+          <div class="layer-effects-header-actions">
+            <button class="layer-effects-icon-button" type="button" aria-label="Apply effect" data-layer-effects-accept>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            </button>
+            <button class="layer-effects-icon-button" type="button" aria-label="Cancel effects" data-layer-effects-close>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </section>
+        <div class="layer-effects-detail-body">
+          <section class="layer-effects-section" aria-label="Gaussian blur" data-layer-effects-editor="gaussian-blur" hidden>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Gaussian Blur</span>
+              <output class="layer-effects-value" data-layer-blur-value>0 px</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="40" step="1" value="0" aria-label="Gaussian blur radius" data-layer-blur-input />
+            <div class="layer-effects-actions">
+              <button class="layer-effects-icon-button" type="button" aria-label="Reset gaussian blur" data-layer-blur-reset>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          ${getEffectEditorsMarkup()}
+        </div>
+      </div>
     `;
 
+    const title = panel.querySelector("[data-layer-effects-title]");
     const targetName = panel.querySelector("[data-layer-effects-target]");
+    const pickerTargetName = panel.querySelector("[data-layer-effects-picker-target]");
+    const picker = panel.querySelector("[data-layer-effects-picker]");
+    const detail = panel.querySelector("[data-layer-effects-detail]");
+    const menu = panel.querySelector("[data-layer-effects-menu]");
+    const searchInput = panel.querySelector("[data-layer-effects-search]");
+    const effectEditors = panel.querySelectorAll("[data-layer-effects-editor]");
+    const backButton = panel.querySelector("[data-layer-effects-back]");
     const blurInput = panel.querySelector("[data-layer-blur-input]");
     const blurValue = panel.querySelector("[data-layer-blur-value]");
     const acceptButton = panel.querySelector("[data-layer-effects-accept]");
     const resetButton = panel.querySelector("[data-layer-blur-reset]");
     const closeButton = panel.querySelector("[data-layer-effects-close]");
+    const panelCloseButton = panel.querySelector("[data-layer-effects-panel-close]");
+    let activeEffectType = "";
     let previewSession = null;
 
     document.body.append(panel);
@@ -333,14 +586,16 @@ window.CBO = window.CBO || {};
       return layerModel?.findEntryById?.(layerModel.activeLayerId) || null;
     }
 
-    function startPreviewSession() {
+    function startPreviewSession(effectType) {
       const layerModel = getLayerModel();
       const layer = getActiveLayer();
+      const effect = getEffectDefinition(effectType);
 
-      previewSession = isBlurEligibleLayer(layer)
+      previewSession = effect?.implemented && isBlurEligibleLayer(layer)
         ? {
             beforeState: namespace.documentHistory?.getLayerSnapshot?.(layerModel) ||
               getLayerStateSnapshot(layerModel),
+            effectType,
             effects: Array.isArray(layer.effects) ? cloneValue(layer.effects) : [],
             layerId: layer.id,
           }
@@ -378,6 +633,56 @@ window.CBO = window.CBO || {};
       return didRestore;
     }
 
+    function setEffectView(effectType = "") {
+      const definition = getEffectDefinition(effectType);
+      const isEditor = Boolean(definition);
+      const isImplemented = isImplementedEffect(effectType);
+
+      activeEffectType = isEditor ? effectType : "";
+      picker.hidden = isEditor;
+      detail.hidden = !isEditor;
+      effectEditors.forEach((editor) => {
+        editor.hidden = editor.dataset.layerEffectsEditor !== activeEffectType;
+      });
+      title.textContent = isEditor ? definition.label : "Effects";
+      closeButton.setAttribute("aria-label", isEditor ? "Cancel effect" : "Close effects");
+      acceptButton.setAttribute(
+        "aria-label",
+        isEditor
+          ? (isImplemented ? `Apply ${definition.label}` : `${definition.label} unavailable`)
+          : "Apply effect",
+      );
+      panel.dataset.activeEffect = activeEffectType;
+    }
+
+    function showEffectPicker(options = {}) {
+      if (options.cancel !== false) {
+        restorePreviewSession();
+      } else {
+        previewSession = null;
+      }
+
+      setEffectView("");
+      syncControls();
+      searchInput?.focus?.({ preventScroll: true });
+    }
+
+    function openEffectEditor(effectType) {
+      const definition = getEffectDefinition(effectType);
+
+      if (!definition) {
+        return;
+      }
+
+      restorePreviewSession();
+      setEffectView(effectType);
+      startPreviewSession(effectType);
+      syncControls();
+      if (effectType === "gaussian-blur") {
+        blurInput?.focus?.({ preventScroll: true });
+      }
+    }
+
     function closePanel(options = {}) {
       const shouldCancel = options.cancel !== false;
 
@@ -387,6 +692,7 @@ window.CBO = window.CBO || {};
         previewSession = null;
       }
 
+      setEffectView("");
       panel.hidden = true;
       button.classList.remove("active");
       button.setAttribute("aria-pressed", "false");
@@ -398,10 +704,11 @@ window.CBO = window.CBO || {};
         return;
       }
 
-      startPreviewSession();
-      panel.hidden = !isOpen;
-      button.classList.toggle("active", isOpen);
-      button.setAttribute("aria-pressed", isOpen ? "true" : "false");
+      previewSession = null;
+      setEffectView("");
+      panel.hidden = false;
+      button.classList.add("active");
+      button.setAttribute("aria-pressed", "true");
 
       syncControls();
       positionPanel();
@@ -430,9 +737,21 @@ window.CBO = window.CBO || {};
       const isEligible = isBlurEligibleLayer(layer);
       const radius = isEligible ? getGaussianBlurRadius(layer) : 0;
 
-      targetName.textContent = isEligible ? layer.name || "Layer" : "No layer";
+      const layerName = isEligible ? layer.name || "Layer" : "No layer";
+
+      targetName.textContent = layerName;
+      pickerTargetName.textContent = layerName;
+      menu.querySelectorAll("[data-layer-effect-option]").forEach((option) => {
+        const definition = getEffectDefinition(option.dataset.layerEffectOption);
+        const isEnabled = Boolean(definition && isEligible);
+
+        option.disabled = !isEnabled;
+        option.setAttribute("aria-disabled", isEnabled ? "false" : "true");
+      });
       blurInput.disabled = !isEligible;
-      acceptButton.disabled = !isEligible || radius <= 0;
+      acceptButton.disabled = !isEligible ||
+        !isImplementedEffect(activeEffectType) ||
+        (activeEffectType === "gaussian-blur" && radius <= 0);
       resetButton.disabled = !isEligible || radius <= 0;
       blurInput.value = String(radius);
       blurValue.textContent = `${Math.round(radius)} px`;
@@ -456,10 +775,65 @@ window.CBO = window.CBO || {};
       });
     }
 
+    function filterEffectMenu() {
+      const query = String(searchInput?.value || "").trim().toLowerCase();
+
+      menu.querySelectorAll("[data-layer-effects-menu-group]").forEach((group) => {
+        let hasVisibleOption = false;
+
+        group.querySelectorAll("[data-layer-effect-option]").forEach((option) => {
+          const label = option.dataset.effectLabel || "";
+          const isVisible = !query || label.includes(query);
+
+          option.hidden = !isVisible;
+          hasVisibleOption = hasVisibleOption || isVisible;
+        });
+
+        group.hidden = !hasVisibleOption;
+      });
+    }
+
+    function handleLayerChange() {
+      if (panel.hidden) {
+        return;
+      }
+
+      const layer = getActiveLayer();
+
+      if (previewSession?.layerId && layer?.id !== previewSession.layerId) {
+        showEffectPicker({ cancel: true });
+        return;
+      }
+
+      syncControls();
+    }
+
     button.addEventListener("click", (event) => {
       event.preventDefault();
+      if (panel.hidden) {
+        if (searchInput) {
+          searchInput.value = "";
+          filterEffectMenu();
+        }
+      }
       setOpen(panel.hidden);
     });
+
+    backButton.addEventListener("click", () => {
+      showEffectPicker({ cancel: true });
+    });
+
+    menu.addEventListener("click", (event) => {
+      const option = event.target?.closest?.("[data-layer-effect-option]");
+
+      if (!option || option.disabled) {
+        return;
+      }
+
+      openEffectEditor(option.dataset.layerEffectOption);
+    });
+
+    searchInput?.addEventListener("input", filterEffectMenu);
 
     blurInput.addEventListener("input", () => {
       applyRadius(blurInput.value);
@@ -490,6 +864,10 @@ window.CBO = window.CBO || {};
       closePanel({ cancel: true });
     });
 
+    panelCloseButton.addEventListener("click", () => {
+      closePanel({ cancel: true });
+    });
+
     document.addEventListener("pointerdown", (event) => {
       if (
         panel.hidden ||
@@ -508,8 +886,10 @@ window.CBO = window.CBO || {};
     });
 
     window.addEventListener("resize", positionPanel);
-    window.addEventListener("cbo:document-layers-change", syncControls);
-    window.addEventListener("cbo:layer-effects-rasterized", syncControls);
+    window.addEventListener("cbo:document-layers-change", handleLayerChange);
+    window.addEventListener("cbo:layer-effects-rasterized", handleLayerChange);
+    setEffectView("");
+    filterEffectMenu();
     syncControls();
   };
 })(window.CBO = window.CBO || {});

@@ -24,6 +24,7 @@ window.CBO.initDragScroll = function initDragScroll() {
           "[data-layer-row]",
           ".brush-studio-taper-slider",
           ".brush-studio-grain-blend-outline-box",
+          ".layer-sidebar-blend-outline",
         ].join(","),
       ),
     );

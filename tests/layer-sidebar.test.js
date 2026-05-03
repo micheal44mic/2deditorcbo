@@ -1,0 +1,45 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+
+const repoRoot = path.resolve(__dirname, "..");
+
+test("right sidebar shows layer controls for the selection tool", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "right-sidebar.js"), "utf8");
+  const css = fs.readFileSync(path.join(repoRoot, "css", "right-sidebar.css"), "utf8");
+
+  assert.match(source, /data-layer-sidebar/);
+  assert.match(source, /data-layer-align-placeholder/);
+  assert.match(source, /data-layer-opacity/);
+  assert.match(source, /data-layer-blend-outline/);
+  assert.match(source, /function shouldShowLayerSettings\(activeTool = currentToolName\)/);
+  assert.match(source, /activeTool === "selection" && isLayerSidebarEligible\(getActiveLayer\(\)\)/);
+  assert.match(source, /normalized === "rect select"/);
+  assert.match(source, /normalized === "lasso select"/);
+  assert.match(source, /syncRightSidebarPanels\(activeTool\)/);
+  assert.match(css, /\.layer-sidebar-align-placeholder/);
+  assert.match(css, /--layer-sidebar-range-progress/);
+});
+
+test("layer sidebar blend menu persists blend mode metadata", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "right-sidebar.js"), "utf8");
+  const dragScrollSource = fs.readFileSync(path.join(repoRoot, "js", "drag-scroll.js"), "utf8");
+  const css = fs.readFileSync(path.join(repoRoot, "css", "right-sidebar.css"), "utf8");
+
+  assert.match(source, /const layerBlendModeOptions = \[/);
+  assert.match(source, /label: "Normal"/);
+  assert.match(source, /label: "Linear Dodge \(Add\)"/);
+  assert.match(source, /label: "Luminosity"/);
+  assert.match(source, /function populateLayerBlendModes\(\)/);
+  assert.match(source, /document\.createElement\("button"\)/);
+  assert.match(source, /option\.dataset\.layerBlendMode = mode\.key/);
+  assert.match(source, /option\.type = "button"/);
+  assert.match(source, /option\.addEventListener\("pointerdown"/);
+  assert.match(source, /\{ blendMode: mode\.key \}/);
+  assert.match(source, /source,\s*\}\)/);
+  assert.match(dragScrollSource, /\.layer-sidebar-blend-outline/);
+  assert.match(css, /\.layer-sidebar-blend-word-list/);
+  assert.match(css, /\.layer-sidebar-blend-divider/);
+  assert.match(css, /\.layer-sidebar-blend-word\.is-selected/);
+});

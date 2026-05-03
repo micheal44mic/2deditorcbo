@@ -1,7 +1,7 @@
 .layer-effects-popover {
   position: fixed;
   z-index: 1300;
-  width: 228px;
+  width: 272px;
   padding: 12px;
   color: #f6f7fb;
   background: rgba(18, 20, 25, 0.96);
@@ -23,6 +23,7 @@
 }
 
 .layer-effects-heading {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -42,7 +43,7 @@
 
 .layer-effects-target {
   display: block;
-  max-width: 158px;
+  max-width: 172px;
   margin-top: 4px;
   overflow: hidden;
   color: rgba(246, 247, 251, 0.58);
@@ -78,9 +79,140 @@
   height: 15px;
 }
 
+.layer-effects-back-button {
+  flex: 0 0 auto;
+}
+
+.layer-effects-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.layer-effects-picker[hidden],
+.layer-effects-detail[hidden] {
+  display: none;
+}
+
+.layer-effects-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.layer-effects-detail-body {
+  display: grid;
+  gap: 9px;
+}
+
+.layer-effects-search {
+  display: block;
+}
+
+.layer-effects-search-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  color: #f6f7fb;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 30px;
+  outline: none;
+}
+
+.layer-effects-search-input:focus {
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
+.layer-effects-search-input::placeholder {
+  color: rgba(246, 247, 251, 0.38);
+}
+
+.layer-effects-menu {
+  display: grid;
+  gap: 12px;
+  max-height: min(460px, calc(100vh - 180px));
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.layer-effects-menu-group {
+  display: grid;
+  gap: 6px;
+}
+
+.layer-effects-menu-title {
+  color: rgba(246, 247, 251, 0.46);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.layer-effects-menu-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.layer-effect-option {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  color: rgba(246, 247, 251, 0.84);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 7px;
+  cursor: pointer;
+  gap: 7px;
+}
+
+.layer-effect-option:hover,
+.layer-effect-option:focus-visible {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+  outline: none;
+}
+
+.layer-effect-option:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.layer-effect-option-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.layer-effect-option-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.layer-effect-option-label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .layer-effects-section {
   display: grid;
   gap: 9px;
+}
+
+.layer-effects-section[hidden] {
+  display: none;
+}
+
+.layer-effects-disabled-editor {
+  opacity: 0.72;
 }
 
 .layer-effects-control-header {
@@ -101,6 +233,17 @@
   white-space: nowrap;
 }
 
+.layer-effects-control-row,
+.layer-effects-check-row {
+  display: grid;
+  gap: 7px;
+}
+
+.layer-effects-check-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
 .layer-effects-value {
   flex: 0 0 auto;
   min-width: 42px;
@@ -117,6 +260,60 @@
 
 .layer-effects-range:disabled {
   opacity: 0.36;
+}
+
+.layer-effects-check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #f2f6ff;
+}
+
+.layer-effects-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.layer-effects-tab {
+  height: 26px;
+  color: rgba(246, 247, 251, 0.7);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.layer-effects-tab.active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.layer-effects-curve-box {
+  height: 138px;
+  padding: 9px;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 7px;
+}
+
+.layer-effects-curve-box svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.layer-effects-curve-box path {
+  stroke: rgba(246, 247, 251, 0.16);
+}
+
+.layer-effects-curve-box .curve-line {
+  stroke: rgba(246, 247, 251, 0.82);
+}
+
+.layer-effects-curve-box circle {
+  fill: rgba(246, 247, 251, 0.86);
 }
 
 .layer-effects-actions {

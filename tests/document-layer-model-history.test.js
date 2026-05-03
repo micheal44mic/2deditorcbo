@@ -163,6 +163,34 @@ test("layer effects are normalized and preserved through layer state history", a
   assert.equal(model.findEntryById("paint-main").effects, undefined);
 });
 
+test("layer opacity and blend mode changes are preserved through layer state history", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory({ groupIdleMs: 1000 });
+  const model = new DocumentLayerModel();
+
+  window.CBO.documentHistory = history;
+  model.updateLayer("paint-main", {
+    blendMode: "multiply",
+    opacity: 0.46,
+  }, {
+    historyGroup: "layer-sidebar-paint-main",
+    source: "layer-sidebar",
+  });
+  await waitForHistoryFlush();
+
+  assert.equal(history.undoStack.length, 1);
+  assert.equal(model.findEntryById("paint-main").blendMode, "multiply");
+  assert.equal(model.findEntryById("paint-main").opacity, 0.46);
+
+  assert.equal(history.undo(), true);
+  assert.equal(model.findEntryById("paint-main").blendMode, undefined);
+  assert.equal(model.findEntryById("paint-main").opacity, 1);
+
+  assert.equal(history.redo(), true);
+  assert.equal(model.findEntryById("paint-main").blendMode, "multiply");
+  assert.equal(model.findEntryById("paint-main").opacity, 0.46);
+});
+
 test("setActiveLayer does not record selection-only changes by default", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory();

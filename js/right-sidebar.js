@@ -267,6 +267,87 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           </div>
         </section>
       </div>
+      <div class="layer-sidebar" aria-label="Layer settings" data-layer-sidebar hidden>
+        <section class="layer-sidebar-section" aria-label="Layer alignment">
+          <div class="layer-sidebar-heading-row">
+            <h2 class="layer-sidebar-title">Align</h2>
+          </div>
+          <div class="layer-sidebar-align-placeholder" aria-label="Layer align controls" data-layer-align-placeholder>
+            <div class="layer-sidebar-align-row" role="group" aria-label="Vertical align controls">
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align start vertical">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="9" height="6" x="6" y="14" rx="2" />
+                  <rect width="16" height="6" x="6" y="4" rx="2" />
+                  <path d="M2 2v20" />
+                </svg>
+              </button>
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align center vertical">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 2v20" />
+                  <path d="M8 10H4a2 2 0 0 1-2-2V6c0-1.1.9-2 2-2h4" />
+                  <path d="M16 10h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-4" />
+                  <path d="M8 20H7a2 2 0 0 1-2-2v-2c0-1.1.9-2 2-2h1" />
+                  <path d="M16 14h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1" />
+                </svg>
+              </button>
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align end vertical">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="16" height="6" x="2" y="4" rx="2" />
+                  <rect width="9" height="6" x="9" y="14" rx="2" />
+                  <path d="M22 22V2" />
+                </svg>
+              </button>
+            </div>
+            <div class="layer-sidebar-align-row" role="group" aria-label="Horizontal align controls">
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align start horizontal">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="6" height="16" x="4" y="6" rx="2" />
+                  <rect width="6" height="9" x="14" y="6" rx="2" />
+                  <path d="M22 2H2" />
+                </svg>
+              </button>
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align center horizontal">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M2 12h20" />
+                  <path d="M10 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4" />
+                  <path d="M10 8V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v4" />
+                  <path d="M20 16v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1" />
+                  <path d="M14 8V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v1" />
+                </svg>
+              </button>
+              <button class="layer-sidebar-align-button" type="button" aria-label="Align end horizontal">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="6" height="16" x="4" y="2" rx="2" />
+                  <rect width="6" height="9" x="14" y="9" rx="2" />
+                  <path d="M22 22H2" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </section>
+        <section class="layer-sidebar-section" aria-label="Layer opacity">
+          <label class="layer-sidebar-range-field">
+            <span class="layer-sidebar-control-header">
+              <span class="layer-sidebar-label">Opacity</span>
+              <output class="layer-sidebar-value-pill" data-layer-opacity-value>100%</output>
+            </span>
+            <input class="layer-sidebar-range" type="range" min="0" max="100" step="1" value="100" aria-label="Layer opacity" data-layer-opacity />
+          </label>
+        </section>
+        <section class="layer-sidebar-section" aria-label="Layer blend mode">
+          <div class="layer-sidebar-heading-row">
+            <h2 class="layer-sidebar-title">Blend Mode</h2>
+          </div>
+          <div class="layer-sidebar-blend-outline" data-layer-blend-outline>
+            <button class="layer-sidebar-blend-outline-box" type="button" aria-haspopup="listbox" aria-expanded="false" data-layer-blend-toggle>
+              <span data-layer-blend-selected>Normal</span>
+            </button>
+            <div class="layer-sidebar-blend-hover-layer" aria-hidden="true"></div>
+            <div class="layer-sidebar-blend-fill-layer" aria-hidden="true"></div>
+            <div class="layer-sidebar-blend-word-list" role="listbox" aria-label="Layer blend mode" data-layer-blend-list></div>
+          </div>
+        </section>
+      </div>
       <section class="smudge-sidebar right-sidebar-section" aria-label="Smudge settings" data-smudge-sidebar hidden>
         <div class="smudge-sidebar-header">
           <h2 class="smudge-sidebar-title">SMUDGE</h2>
@@ -284,12 +365,20 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   `;
 
   const projectInput = panel.querySelector(".right-sidebar-project-input");
+  const rightSidebarContent = panel.querySelector(".right-sidebar-content");
   const globalSections = panel.querySelectorAll("[data-right-sidebar-global], [data-right-sidebar-project]");
   const smudgeSidebar = panel.querySelector("[data-smudge-sidebar]");
   const smudgeControls = panel.querySelector("[data-smudge-controls]");
   const smudgeReset = panel.querySelector("[data-smudge-reset]");
   const pressureButton = panel.querySelector("[data-smudge-pressure]");
   const textSidebar = panel.querySelector("[data-text-sidebar]");
+  const layerSidebar = panel.querySelector("[data-layer-sidebar]");
+  const layerOpacityInput = panel.querySelector("[data-layer-opacity]");
+  const layerOpacityValue = panel.querySelector("[data-layer-opacity-value]");
+  const layerBlendOutline = panel.querySelector("[data-layer-blend-outline]");
+  const layerBlendToggle = panel.querySelector("[data-layer-blend-toggle]");
+  const layerBlendSelected = panel.querySelector("[data-layer-blend-selected]");
+  const layerBlendList = panel.querySelector("[data-layer-blend-list]");
   const textContentInput = panel.querySelector("[data-text-content]");
   const textOpacityInput = panel.querySelector("[data-text-opacity]");
   const textOpacityValue = panel.querySelector("[data-text-opacity-value]");
@@ -351,6 +440,44 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     { key: "drag", label: "DRAG", min: 0, max: 100, step: 1, unit: "%", fromDisplay: (value) => value / 100, toDisplay: (value) => Math.round(value * 100) },
   ];
   const smudgeControlElements = new Map();
+  const layerBlendModeOptions = [
+    { key: "normal", label: "Normal" },
+    { key: "dissolve", label: "Dissolve" },
+    { divider: true },
+    { key: "darken", label: "Darken" },
+    { key: "multiply", label: "Multiply" },
+    { key: "color-burn", label: "Color Burn" },
+    { key: "linear-burn", label: "Linear Burn" },
+    { key: "darker-color", label: "Darker Color" },
+    { divider: true },
+    { key: "lighten", label: "Lighten" },
+    { key: "screen", label: "Screen" },
+    { key: "color-dodge", label: "Color Dodge" },
+    { key: "linear-dodge", label: "Linear Dodge (Add)" },
+    { key: "lighter-color", label: "Lighter Color" },
+    { divider: true },
+    { key: "overlay", label: "Overlay" },
+    { key: "soft-light", label: "Soft Light" },
+    { key: "hard-light", label: "Hard Light" },
+    { key: "vivid-light", label: "Vivid Light" },
+    { key: "linear-light", label: "Linear Light" },
+    { key: "pin-light", label: "Pin Light" },
+    { key: "hard-mix", label: "Hard Mix" },
+    { divider: true },
+    { key: "difference", label: "Difference" },
+    { key: "exclusion", label: "Exclusion" },
+    { key: "subtract", label: "Subtract" },
+    { key: "divide", label: "Divide" },
+    { divider: true },
+    { key: "hue", label: "Hue" },
+    { key: "saturation", label: "Saturation" },
+    { key: "color", label: "Color" },
+    { key: "luminosity", label: "Luminosity" },
+  ];
+  const layerBlendModeItems = layerBlendModeOptions.filter((option) => !option.divider);
+  const layerBlendModeKeys = new Set(layerBlendModeItems.map((option) => option.key));
+  let layerBlendModeOpen = false;
+  let layerBlendModeScrollIndex = 0;
 
   if (projectInput) {
     projectInput.value = window.localStorage.getItem(storageKey) || "";
@@ -361,6 +488,33 @@ window.CBO.initRightSidebar = function initRightSidebar() {
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, Number(value) || 0));
+  }
+
+  function normalizeLayerBlendMode(value) {
+    const mode = String(value || "").trim().toLowerCase();
+
+    return layerBlendModeKeys.has(mode) ? mode : "normal";
+  }
+
+  function getLayerBlendModeLabel(mode) {
+    return layerBlendModeOptions.find((option) => option.key === mode)?.label || "Normal";
+  }
+
+  function getActiveLayer() {
+    const layerModel = getLayerModel();
+    const activeLayer = layerModel?.findEntryById?.(layerModel.activeLayerId);
+
+    return activeLayer || null;
+  }
+
+  function isLayerSidebarEligible(layer) {
+    return Boolean(
+      layer &&
+      layer.locked !== true &&
+      layer.type !== "group" &&
+      layer.type !== "background" &&
+      layer.id !== "background",
+    );
   }
 
   function getDefaultSmudgeSettings() {
@@ -486,6 +640,256 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     if (isVisible) {
       syncSmudgeControls();
     }
+  }
+
+  function getLayerHistoryGroup(suffix, layer = getActiveLayer()) {
+    const key = String(suffix || "").trim();
+
+    return key && layer?.id ? `layer-${key}-${layer.id}` : "";
+  }
+
+  function getLayerHistoryOptions(suffix) {
+    const historyGroup = getLayerHistoryGroup(suffix);
+
+    return historyGroup ? { historyGroup } : {};
+  }
+
+  function bindLayerHistoryGroup(control, suffix) {
+    if (!control) {
+      return;
+    }
+
+    let activeGroup = "";
+
+    control.addEventListener("focus", () => {
+      activeGroup = getLayerHistoryGroup(suffix);
+      window.CBO.documentHistory?.beginGroup?.(activeGroup);
+    });
+
+    control.addEventListener("blur", () => {
+      window.CBO.documentHistory?.endGroup?.(activeGroup);
+      activeGroup = "";
+    });
+  }
+
+  function updateGlobalSectionVisibility() {
+    globalSections.forEach((section) => {
+      section.hidden = false;
+    });
+  }
+
+  function updateLayerOpacityProgress() {
+    if (!layerOpacityInput) {
+      return;
+    }
+
+    const min = Number(layerOpacityInput.min) || 0;
+    const max = Number(layerOpacityInput.max) || 100;
+    const value = clamp(layerOpacityInput.value, min, max);
+    const progress = ((value - min) / (max - min)) * 100;
+
+    layerOpacityInput.style.setProperty("--layer-sidebar-range-progress", `${progress}%`);
+
+    if (layerOpacityValue) {
+      layerOpacityValue.textContent = `${Math.round(value)}%`;
+    }
+  }
+
+  function closeLayerBlendMode() {
+    layerBlendModeOpen = false;
+    layerBlendOutline?.classList.remove("active");
+    layerBlendToggle?.setAttribute("aria-expanded", "false");
+  }
+
+  function getLayerBlendModeIndex(mode = normalizeLayerBlendMode(getActiveLayer()?.blendMode)) {
+    const index = layerBlendModeItems.findIndex((option) => option.key === normalizeLayerBlendMode(mode));
+
+    return index >= 0 ? index : 0;
+  }
+
+  function updateLayerBlendBoxAnchor() {
+    if (!layerBlendOutline || !layerBlendToggle) {
+      return;
+    }
+
+    const rect = layerBlendToggle.getBoundingClientRect();
+
+    layerBlendOutline.style.setProperty("--layer-blend-box-top", `${rect.top}px`);
+    layerBlendOutline.style.setProperty("--layer-blend-box-left", `${rect.left}px`);
+    layerBlendOutline.style.setProperty("--layer-blend-box-width", `${rect.width}px`);
+  }
+
+  function setLayerBlendModeOpen(isOpen) {
+    if (!layerBlendOutline || !layerBlendToggle) {
+      return;
+    }
+
+    layerBlendModeOpen = Boolean(isOpen);
+
+    if (layerBlendModeOpen) {
+      updateLayerBlendBoxAnchor();
+    }
+
+    layerBlendOutline.classList.toggle("active", layerBlendModeOpen);
+    layerBlendToggle.setAttribute("aria-expanded", String(layerBlendModeOpen));
+  }
+
+  function syncLayerBlendMode(mode = normalizeLayerBlendMode(getActiveLayer()?.blendMode)) {
+    const normalizedMode = normalizeLayerBlendMode(mode);
+
+    layerBlendModeScrollIndex = getLayerBlendModeIndex(normalizedMode);
+    layerBlendOutline?.style.setProperty("--layer-blend-scroll-index", String(layerBlendModeScrollIndex));
+
+    if (layerBlendSelected) {
+      layerBlendSelected.textContent = getLayerBlendModeLabel(normalizedMode);
+    }
+
+    layerBlendList?.querySelectorAll("[data-layer-blend-mode]").forEach((option) => {
+      const isSelected = option.dataset.layerBlendMode === normalizedMode;
+
+      option.classList.toggle("is-selected", isSelected);
+      option.setAttribute("aria-selected", String(isSelected));
+    });
+  }
+
+  function selectLayerBlendMode(value) {
+    const mode = { key: normalizeLayerBlendMode(value) };
+
+    syncLayerBlendMode(mode.key);
+    patchActiveLayer(
+      { blendMode: mode.key },
+      "layer-sidebar-blend-mode",
+      getLayerHistoryOptions("blend-mode"),
+    );
+  }
+
+  function getNextLayerBlendModeIndex(currentIndex, direction) {
+    const nextIndex = Math.min(layerBlendModeItems.length - 1, Math.max(0, currentIndex + direction));
+
+    return Number.isFinite(nextIndex) ? nextIndex : currentIndex;
+  }
+
+  function populateLayerBlendModes() {
+    if (!layerBlendList) {
+      return;
+    }
+
+    layerBlendList.replaceChildren();
+    layerBlendOutline?.style.setProperty("--layer-blend-list-height", `${layerBlendModeItems.length * 38}px`);
+
+    layerBlendModeOptions.forEach((mode) => {
+      if (mode.divider) {
+        const divider = document.createElement("div");
+
+        divider.className = "layer-sidebar-blend-divider";
+        divider.setAttribute("role", "separator");
+        layerBlendList.append(divider);
+        return;
+      }
+
+      const option = document.createElement("button");
+
+      option.className = "layer-sidebar-blend-word";
+      option.dataset.layerBlendMode = mode.key;
+      option.type = "button";
+      option.setAttribute("role", "option");
+      option.textContent = mode.label;
+      const chooseOption = (event) => {
+        if (!layerBlendModeOpen) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (mode.key !== normalizeLayerBlendMode(getActiveLayer()?.blendMode)) {
+          selectLayerBlendMode(mode.key);
+        }
+
+        closeLayerBlendMode();
+      };
+
+      option.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+
+        chooseOption(event);
+      });
+      option.addEventListener("click", chooseOption);
+      layerBlendList.append(option);
+    });
+
+    syncLayerBlendMode();
+  }
+
+  function patchActiveLayer(patch, source = "layer-sidebar", historyOptions = {}) {
+    const layerModel = getLayerModel();
+    const layer = getActiveLayer();
+
+    if (!isLayerSidebarEligible(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const didUpdate = layerModel.updateLayer(layer.id, patch, {
+      ...historyOptions,
+      source,
+    });
+
+    if (didUpdate) {
+      window.CBO.documentRenderer?.requestDraw?.();
+    }
+
+    return didUpdate;
+  }
+
+  function syncLayerControlsFromLayer() {
+    const layer = getActiveLayer();
+
+    if (!isLayerSidebarEligible(layer)) {
+      return;
+    }
+
+    if (layerOpacityInput) {
+      layerOpacityInput.value = String(Math.round((Number.isFinite(layer.opacity) ? layer.opacity : 1) * 100));
+      updateLayerOpacityProgress();
+    }
+
+    syncLayerBlendMode(layer.blendMode);
+  }
+
+  function showLayerSettings(isVisible) {
+    if (!layerSidebar) {
+      return;
+    }
+
+    const wasHidden = layerSidebar.hidden;
+    const willBeHidden = !isVisible;
+
+    layerSidebar.hidden = willBeHidden;
+
+    if (wasHidden !== willBeHidden) {
+      closeLayerBlendMode();
+    }
+
+    updateGlobalSectionVisibility();
+
+    if (isVisible) {
+      syncLayerControlsFromLayer();
+    }
+  }
+
+  function shouldShowLayerSettings(activeTool = currentToolName) {
+    return activeTool === "selection" && isLayerSidebarEligible(getActiveLayer());
+  }
+
+  function syncRightSidebarPanels(activeTool = currentToolName) {
+    const showLayer = shouldShowLayerSettings(activeTool);
+    const showText = !showLayer && shouldShowTextSettings(activeTool);
+
+    showLayerSettings(showLayer);
+    showTextSettings(showText);
+    showSmudgeSettings(activeTool === "smudge");
   }
 
   let currentToolName = "";
@@ -1442,9 +1846,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     }
 
     textSidebar.hidden = !isVisible;
-    globalSections.forEach((section) => {
-      section.hidden = isVisible;
-    });
+    updateGlobalSectionVisibility();
 
     if (isVisible) {
       if (getActiveTextLayer()) {
@@ -1466,12 +1868,23 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       return "text";
     }
 
+    if (
+      normalized === "selection" ||
+      normalized === "rect select" ||
+      normalized === "circle select" ||
+      normalized === "lasso select" ||
+      normalized === "pen select"
+    ) {
+      return "selection";
+    }
+
     return "";
   }
 
   smudgeControlDefs.forEach((definition) => {
     smudgeControls?.append(createSmudgeControl(definition));
   });
+  populateLayerBlendModes();
 
   pressureButton?.addEventListener("click", () => {
     const settings = getSmudgeSettings();
@@ -1487,6 +1900,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   });
 
   bindTextHistoryGroup(textContentInput, "content");
+  bindLayerHistoryGroup(layerOpacityInput, "opacity");
   bindTextHistoryGroup(textOpacityInput, "opacity");
   bindTextHistoryGroup(textColorInput, "fill-color");
   bindTextHistoryGroup(textBorderColorInput, "stroke-color");
@@ -1499,6 +1913,84 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   bindTextHistoryGroup(textShadowAngleInput, "shadow-angle");
   bindTextHistoryGroup(textShadowBlurInput, "shadow-blur");
   bindTextHistoryGroup(textTransformAmountInput, "transform-amount");
+
+  layerOpacityInput?.addEventListener("input", () => {
+    updateLayerOpacityProgress();
+    patchActiveLayer(
+      { opacity: clamp(layerOpacityInput.value, 0, 100) / 100 },
+      "layer-sidebar-opacity",
+      getLayerHistoryOptions("opacity"),
+    );
+  });
+  layerBlendToggle?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setLayerBlendModeOpen(true);
+  });
+  layerBlendOutline?.addEventListener(
+    "wheel",
+    (event) => {
+      if (!layerBlendModeOpen) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const direction = event.deltaY > 0 ? 1 : -1;
+      const nextIndex = getNextLayerBlendModeIndex(layerBlendModeScrollIndex, direction);
+
+      if (nextIndex === layerBlendModeScrollIndex) {
+        return;
+      }
+
+      selectLayerBlendMode(layerBlendModeItems[nextIndex]?.key);
+    },
+    { passive: false },
+  );
+  layerBlendToggle?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeLayerBlendMode();
+      layerBlendToggle.focus();
+      return;
+    }
+
+    if (!layerBlendModeOpen || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const nextIndex = getNextLayerBlendModeIndex(layerBlendModeScrollIndex, direction);
+
+    if (nextIndex !== layerBlendModeScrollIndex) {
+      selectLayerBlendMode(layerBlendModeItems[nextIndex]?.key);
+    }
+  });
+  rightSidebarContent?.addEventListener("scroll", () => {
+    if (layerBlendModeOpen) {
+      updateLayerBlendBoxAnchor();
+    }
+  });
+  window.addEventListener("resize", () => {
+    if (layerBlendModeOpen) {
+      updateLayerBlendBoxAnchor();
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!layerBlendModeOpen) {
+      return;
+    }
+
+    const target = event.target;
+
+    if (target instanceof Element && target.closest("[data-layer-blend-outline]")) {
+      return;
+    }
+
+    closeLayerBlendMode();
+  });
 
   textContentInput?.addEventListener("input", () => {
     patchActiveTextLayer(
@@ -1707,15 +2199,19 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     const activeTool = normalizeToolName(event.detail?.toolMode || event.detail?.label);
 
     currentToolName = activeTool;
-    showTextSettings(shouldShowTextSettings(activeTool));
-    showSmudgeSettings(activeTool === "smudge");
+    syncRightSidebarPanels(activeTool);
   });
 
   window.addEventListener("cbo:document-layers-change", () => {
-    showTextSettings(shouldShowTextSettings());
+    syncRightSidebarPanels();
     syncTextControlsFromLayer();
+    syncLayerControlsFromLayer();
   });
 
+  const activeToolButton = document.querySelector("[data-tool].active");
+  currentToolName = normalizeToolName(activeToolButton?.dataset.toolMode || activeToolButton?.getAttribute("aria-label"));
   syncSmudgeControls();
   syncTextControls();
+  syncLayerControlsFromLayer();
+  syncRightSidebarPanels();
 };
