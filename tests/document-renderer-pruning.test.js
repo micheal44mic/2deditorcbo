@@ -222,6 +222,29 @@ test("document renderer exposes mipmapped zoom-out preview cache helpers", () =>
   assert.match(source, /!rasterTransformPreview/);
 });
 
+test("document renderer composites supported layer blend modes in shader", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+  const previewCacheBody = source.match(/updatePreviewCache\(\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
+  const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
+
+  assert.match(source, /LAYER_BLEND_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /uniform sampler2D u_backdropTexture/);
+  assert.match(source, /vec3 applyBlendMode\(vec3 baseColor, vec3 sourceColor, int blendMode\)/);
+  assert.match(source, /source\.rgb \/ sourceAlpha/);
+  assert.match(source, /backdrop\.rgb \/ backdropAlpha/);
+  assert.match(source, /copyCurrentFramebufferToLayerBlendBackdrop\(width, height\)/);
+  assert.match(source, /gl\.copyTexSubImage2D/);
+  assert.match(source, /createLayerBlendProgramInfo\(\)/);
+  assert.match(source, /ensureLayerBlendProgramInfo\(\)/);
+  assert.match(source, /renderLayerWithActiveStrokeTexture\(layerTexture, strokeTexture, strokeRect = null\)/);
+  assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\)\)/);
+  assert.match(drawToCanvasBody, /activeStrokeNeedsFullStack/);
+  assert.match(drawToCanvasBody, /drawBlendTexture\(layerTexture, opacity, null, clipBase, blendModeId\)/);
+});
+
 test("document renderer exposes non-destructive gaussian blur layer effect helpers", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),

@@ -440,40 +440,19 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     { key: "drag", label: "DRAG", min: 0, max: 100, step: 1, unit: "%", fromDisplay: (value) => value / 100, toDisplay: (value) => Math.round(value * 100) },
   ];
   const smudgeControlElements = new Map();
-  const layerBlendModeOptions = [
-    { key: "normal", label: "Normal" },
-    { key: "dissolve", label: "Dissolve" },
-    { divider: true },
-    { key: "darken", label: "Darken" },
-    { key: "multiply", label: "Multiply" },
-    { key: "color-burn", label: "Color Burn" },
-    { key: "linear-burn", label: "Linear Burn" },
-    { key: "darker-color", label: "Darker Color" },
-    { divider: true },
-    { key: "lighten", label: "Lighten" },
-    { key: "screen", label: "Screen" },
-    { key: "color-dodge", label: "Color Dodge" },
-    { key: "linear-dodge", label: "Linear Dodge (Add)" },
-    { key: "lighter-color", label: "Lighter Color" },
-    { divider: true },
-    { key: "overlay", label: "Overlay" },
-    { key: "soft-light", label: "Soft Light" },
-    { key: "hard-light", label: "Hard Light" },
-    { key: "vivid-light", label: "Vivid Light" },
-    { key: "linear-light", label: "Linear Light" },
-    { key: "pin-light", label: "Pin Light" },
-    { key: "hard-mix", label: "Hard Mix" },
-    { divider: true },
-    { key: "difference", label: "Difference" },
-    { key: "exclusion", label: "Exclusion" },
-    { key: "subtract", label: "Subtract" },
-    { key: "divide", label: "Divide" },
-    { divider: true },
-    { key: "hue", label: "Hue" },
-    { key: "saturation", label: "Saturation" },
-    { key: "color", label: "Color" },
-    { key: "luminosity", label: "Luminosity" },
-  ];
+  const blendModeApi = window.CBO.BlendModes || {};
+  const layerBlendModeOptions = Array.isArray(blendModeApi.supportedModes)
+    ? blendModeApi.supportedModes.map((mode) => ({ key: mode.key, label: mode.label }))
+    : [
+        { key: "normal", label: "Normal" },
+        { key: "multiply", label: "Multiply" },
+        { key: "screen", label: "Screen" },
+        { key: "overlay", label: "Overlay" },
+        { key: "darken", label: "Darken" },
+        { key: "lighten", label: "Lighten" },
+        { key: "difference", label: "Difference" },
+        { key: "exclusion", label: "Exclusion" },
+      ];
   const layerBlendModeItems = layerBlendModeOptions.filter((option) => !option.divider);
   const layerBlendModeKeys = new Set(layerBlendModeItems.map((option) => option.key));
   let layerBlendModeOpen = false;
@@ -491,13 +470,19 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   }
 
   function normalizeLayerBlendMode(value) {
+    if (blendModeApi.normalizeLayerBlendMode) {
+      return blendModeApi.normalizeLayerBlendMode(value);
+    }
+
     const mode = String(value || "").trim().toLowerCase();
 
     return layerBlendModeKeys.has(mode) ? mode : "normal";
   }
 
   function getLayerBlendModeLabel(mode) {
-    return layerBlendModeOptions.find((option) => option.key === mode)?.label || "Normal";
+    return blendModeApi.getLayerBlendModeLabel?.(mode) ||
+      layerBlendModeOptions.find((option) => option.key === mode)?.label ||
+      "Normal";
   }
 
   function getActiveLayer() {

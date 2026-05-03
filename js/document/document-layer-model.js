@@ -41,9 +41,11 @@
         "visible",
         "locked",
         "opacity",
+        "blendMode",
         "effects",
         "children",
       ]);
+      const blendModes = window.CBO?.BlendModes;
       const extras = Object.fromEntries(
         Object.entries(options)
           .filter(([key]) => !baseKeys.has(key))
@@ -58,6 +60,7 @@
         visible: options.visible !== false,
         locked: options.locked === true,
         opacity: Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1,
+        blendMode: blendModes?.normalizeLayerBlendMode?.(options.blendMode) || "normal",
         clippingMask: options.clippingMask === true,
       };
       const effects = this.normalizeLayerEffects(options.effects);
@@ -429,6 +432,7 @@
 
       Object.assign(entry, this.cloneValue(nextPatch));
       entry.opacity = Number.isFinite(entry.opacity) ? Math.min(1, Math.max(0, entry.opacity)) : 1;
+      entry.blendMode = window.CBO?.BlendModes?.normalizeLayerBlendMode?.(entry.blendMode) || "normal";
       if (Object.prototype.hasOwnProperty.call(nextPatch, "effects")) {
         const effects = this.normalizeLayerEffects(nextPatch.effects);
 

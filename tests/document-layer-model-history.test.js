@@ -11,6 +11,10 @@ function loadDocumentModules() {
     path.join(repoRoot, "js", "document", "document-history.js"),
     "utf8",
   );
+  const blendModesSource = fs.readFileSync(
+    path.join(repoRoot, "js", "blend-modes.js"),
+    "utf8",
+  );
   const layerModelSource = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-layer-model.js"),
     "utf8",
@@ -43,6 +47,7 @@ function loadDocumentModules() {
     window,
   });
 
+  vm.runInContext(blendModesSource, context);
   vm.runInContext(historySource, context);
   vm.runInContext(layerModelSource, context);
 
@@ -183,7 +188,7 @@ test("layer opacity and blend mode changes are preserved through layer state his
   assert.equal(model.findEntryById("paint-main").opacity, 0.46);
 
   assert.equal(history.undo(), true);
-  assert.equal(model.findEntryById("paint-main").blendMode, undefined);
+  assert.equal(model.findEntryById("paint-main").blendMode, "normal");
   assert.equal(model.findEntryById("paint-main").opacity, 1);
 
   assert.equal(history.redo(), true);

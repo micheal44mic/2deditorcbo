@@ -23,14 +23,19 @@ test("right sidebar shows layer controls for the selection tool", () => {
 });
 
 test("layer sidebar blend menu persists blend mode metadata", () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
+  const blendModesSource = fs.readFileSync(path.join(repoRoot, "js", "blend-modes.js"), "utf8");
   const source = fs.readFileSync(path.join(repoRoot, "js", "right-sidebar.js"), "utf8");
   const dragScrollSource = fs.readFileSync(path.join(repoRoot, "js", "drag-scroll.js"), "utf8");
   const css = fs.readFileSync(path.join(repoRoot, "css", "right-sidebar.css"), "utf8");
 
-  assert.match(source, /const layerBlendModeOptions = \[/);
+  assert.match(indexSource, /<script src="\.\/js\/blend-modes\.js"><\/script>\s*<script src="\.\/js\/document\/document-bounds\.js"><\/script>/);
+  assert.match(blendModesSource, /supportedModes = Object\.freeze\(\[/);
   assert.match(source, /label: "Normal"/);
-  assert.match(source, /label: "Linear Dodge \(Add\)"/);
-  assert.match(source, /label: "Luminosity"/);
+  assert.match(source, /label: "Exclusion"/);
+  assert.doesNotMatch(source, /label: "Linear Dodge \(Add\)"/);
+  assert.doesNotMatch(source, /label: "Luminosity"/);
+  assert.match(source, /blendModeApi\.supportedModes/);
   assert.match(source, /function populateLayerBlendModes\(\)/);
   assert.match(source, /document\.createElement\("button"\)/);
   assert.match(source, /option\.dataset\.layerBlendMode = mode\.key/);
