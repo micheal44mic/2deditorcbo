@@ -1,0 +1,2204 @@
+AUDIT E PROPOSTA TECNICA
+Ottimizzazione memoria raster: immagini, layer brush, resize e blur
+
+Data: 2026-05-03
+Workspace: editor 2d cbos - aggiunti brush
+
+
+1. Scopo del documento
+----------------------
+
+Questo documento spiega un problema di memoria/GPU nell'app di editing 2D e propone
+come migliorarlo. E' scritto per una persona che non ha mai visto l'app e che non
+puo' aprire il codice sorgente.
+
+L'obiettivo e' capire:
+
+- cosa occupa memoria oggi;
+- perche' un layer piccolo puo' comunque costare quanto un canvas intero;
+- cosa succede quando si importa un'immagine;
+- cosa succede quando si dipinge con i brush;
+- cosa succede quando si usa il resize/transform;
+- cosa succede con blur e altri effetti;
+- quale modifica introdurre per fare in modo che la memoria dipenda davvero dalla
+  grandezza reale del contenuto.
+
+Questo documento e' solo progettazione/audit. Non contiene modifiche gia'
+applicate al codice dell'app.
+
+
+2. Glossario minimo
+-------------------
+
+Canvas/documento
+  L'area totale del progetto. In questa app il documento principale e' 4000x4000
+  pixel.
+
+Layer
+  Un livello dell'immagine, ad esempio un layer dipinto col brush, un'immagine
+  importata o un layer di testo rasterizzato.
+
+Raster target
+  Il buffer GPU dove vengono salvati i pixel di un layer. Tecnicamente e' composto
+  da una texture WebGL e da un framebuffer.
+
+Texture
+  Memoria GPU che contiene pixel. In formato RGBA ogni pixel usa 4 byte.
+
+Framebuffer
+  Oggetto WebGL che permette di disegnare dentro una texture.
+
+VRAM
+  Memoria video/GPU. Se creiamo tante texture grandi, consumiamo VRAM.
+
+Scratch texture
+  Texture temporanea usata per calcoli intermedi, ad esempio blur o preview.
+
+History snapshot
+  Copia dei pixel prima/dopo una modifica, usata per undo/redo.
+
+Dirty rect
+  Rettangolo minimo, o quasi minimo, dell'area toccata da un'operazione.
+
+Cropped target
+  Target raster piu' piccolo del documento, con un offset nel documento. Esempio:
+  una texture 800x600 posizionata a x=1200, y=900 dentro un documento 4000x4000.
+
+
+3. Formula memoria
+------------------
+
+Le texture RGBA occupano:
+
+  larghezza * altezza * 4 byte
+
+Esempi:
+
+  4000x4000 = 16.000.000 pixel * 4 = 64.000.000 byte = circa 61 MiB
+  2000x2000 =  4.000.000 pixel * 4 = 16.000.000 byte = circa 15.3 MiB
+  1000x1000 =  1.000.000 pixel * 4 =  4.000.000 byte = circa 3.8 MiB
+   500x500  =    250.000 pixel * 4 =  1.000.000 byte = circa 1.0 MiB
+
+La cosa importante: non conta quanto "sembra grande" il contenuto sul canvas.
+Conta quanto e' grande la texture che lo contiene.
+
+Se il contenuto visibile e' 500x500 ma il layer vive dentro una texture 4000x4000,
+quel layer occupa comunque circa 61 MiB.
+
+
+4. Stato attuale dell'app
+-------------------------
+
+L'app oggi e' ottimizzata in alcune parti, ma non nei target persistenti dei layer.
+
+In breve:
+
+- brush stroke temporanei: ottimizzati, usano buffer ritagliati;
+- history delle pennellate: ottimizzata, salva solo l'area toccata;
+- history del resize: parzialmente ottimizzata, salva la dirty rect;
+- layer persistenti paint/image: non ottimizzati, quasi sempre full canvas;
+- blur/effects su layer full canvas: pesanti, usano scratch texture full canvas;
+- resize finale: non ricompatta il layer, disegna dentro lo stesso target grande.
+
+
+5. Comportamento attuale: immagini importate
+--------------------------------------------
+
+Quando l'utente importa un'immagine, l'app crea un layer di tipo "image" e poi
+disegna il file importato dentro il raster target del layer.
+
+Il percorso logico e':
+
+  placeUploadedImageOnCanvas(...)
+    -> crea layer type: "image"
+    -> rasterizer.placeBlob(blob, { layerId })
+    -> ImageRasterizer.placeRasterImage(...)
+    -> DocumentRenderer.getRasterTarget(layerId)
+    -> createPaintTarget()
+    -> createRasterTarget(...)
+
+Il problema e' che createRasterTarget oggi alloca sempre la dimensione del
+documento intero.
+
+Estratto semplificato del comportamento attuale:
+
+  createRasterTarget(clearColor = [0, 0, 0, 0]) {
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      this.width,
+      this.height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      null,
+    );
+
+    return {
+      framebuffer,
+      texture,
+      width: this.width,
+      height: this.height,
+      clearColor,
+    };
+  }
+
+Con un documento 4000x4000, ogni immagine importata diventa quindi una texture
+4000x4000 anche se l'immagine visibile e' molto piu' piccola.
+
+Esempio:
+
+  Immagine importata: 800x600
+  Memoria teorica necessaria: 800 * 600 * 4 = circa 1.8 MiB
+  Memoria usata oggi come layer: 4000 * 4000 * 4 = circa 61 MiB
+
+Quindi, per le immagini importate, oggi stiamo sprecando molta memoria.
+
+
+6. Comportamento attuale: brush layer
+-------------------------------------
+
+Per i brush esistono gia' ottimizzazioni importanti, ma solo durante la pennellata
+e nella history della pennellata.
+
+L'app ha una modalita' cropped per lo stroke:
+
+  const CROPPED_BRUSH_STROKES = true;
+  const STROKE_ALLOCATION_QUANTUM = 128;
+  const STROKE_FINAL_PADDING = 6;
+
+Quando l'utente dipinge, l'app non crea piu' buffer temporanei grandi quanto tutto
+il documento. Crea invece target temporanei in base all'area dello stroke.
+
+Estratto semplificato:
+
+  createStrokeLayerTarget(rect = null) {
+    const nextRect = rect || {
+      x: 0,
+      y: 0,
+      width: documentTarget.width,
+      height: documentTarget.height,
+    };
+
+    targets.push(createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height));
+    targets.push(createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height));
+    targets.push(createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height));
+
+    this.strokeBufferRect = { ...nextRect };
+  }
+
+Questo significa che una pennellata piccola non usa tre texture 4000x4000 come
+buffer temporanei. Usa tre texture proporzionali alla zona dipinta.
+
+Anche la history della pennellata e' cropped:
+
+  createHistorySnapshot(target, rect, label = "history snapshot") {
+    const x = clamp(rect.x, 0, target.width - 1);
+    const y = clamp(rect.y, 0, target.height - 1);
+    const width = clamp(rect.width, 1, target.width - x);
+    const height = clamp(rect.height, 1, target.height - y);
+
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.copyTexSubImage2D(..., x, target.height - (y + height), width, height);
+
+    return {
+      texture,
+      rect: { x, y, width, height },
+    };
+  }
+
+Questa parte e' buona.
+
+Pero' alla fine della pennellata lo stroke viene "baked", cioe' scritto dentro il
+target persistente del layer paint.
+
+Estratto semplificato:
+
+  bakeStroke() {
+    const target = documentRenderer.getRasterTarget(layerId);
+    const strokeRect = getActiveStrokeRect();
+
+    compactStrokeLayerTargetForRect(strokeRect, target);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+    gl.viewport(
+      bakeRect.x,
+      target.height - (bakeRect.y + bakeRect.height),
+      bakeRect.width,
+      bakeRect.height,
+    );
+
+    gl.drawArrays(...);
+  }
+
+Il bake scrive solo nella zona giusta, ma il target persistente "target" e' ancora
+full canvas. Quindi:
+
+  Layer paint finale oggi: sempre circa 61 MiB
+  Anche se contiene una sola macchia 500x500.
+
+
+7. Comportamento attuale: resize/transform su un layer brush
+------------------------------------------------------------
+
+Domanda specifica: se dipingo su un layer brush e poi uso resize per rimpicciolirlo
+o ingrandirlo, dovrebbe occupare meno?
+
+Risposta: visivamente si ridimensiona, ma oggi la memoria persistente del layer non
+cambia.
+
+Il resize usa questo flusso:
+
+  RasterTransformTool.activateLayer(...)
+    -> getRasterContentBounds(layer.id)
+    -> contentRect = bounds del contenuto visibile
+
+  createSourceSnapshot()
+    -> createRasterSnapshot(activeLayerId, contentRect, "raster-transform-preview")
+
+  updatePreview()
+    -> setRasterTransformPreview({ texture: snapshot.texture, quad: currentQuad })
+
+  commitTransform()
+    -> commitRasterTransform({
+         layerId,
+         sourceRect: contentRect,
+         sourceSnapshot,
+         destQuad,
+       })
+
+Durante la preview viene usata una texture snapshot grande quanto il contenuto, non
+quanto tutto il canvas. Questo e' buono.
+
+Durante il commit, il renderer calcola una dirtyRect:
+
+  const destBounds = quadToBounds(destQuad);
+  const destRect = boundsToRect(destBounds);
+  const dirtyRect = getClampedRasterBox(
+    getUnionRect(sourceRect, destRect),
+    target.width,
+    target.height,
+  );
+
+  const beforeSnapshot = createRasterSnapshot(layerId, dirtyRect, "before");
+  clearRasterRect(layerId, sourceRect);
+  drawTexturedQuad(sourceSnapshot.texture, destQuad, { framebuffer: target.framebuffer });
+  const afterSnapshot = createRasterSnapshot(layerId, dirtyRect, "after");
+
+Quindi:
+
+- sourceSnapshot per la preview: scala con il contenuto;
+- before/after snapshot per undo: scalano con la dirtyRect;
+- target persistente finale: resta full canvas.
+
+Esempio A: layer paint con contenuto 2000x2000, ridotto a 500x500
+
+  Prima:
+    target persistente = 4000x4000 = circa 61 MiB
+
+  Durante resize:
+    source snapshot = 2000x2000 = circa 15.3 MiB
+    dirtyRect circa area vecchia + nuova = spesso vicino a 2000x2000 o piu'
+    before snapshot = circa 15.3 MiB
+    after snapshot = circa 15.3 MiB
+
+  Dopo commit:
+    target persistente = ancora 4000x4000 = circa 61 MiB
+
+  Conclusione:
+    visivamente e' piu' piccolo, ma il layer non occupa meno.
+
+Esempio B: layer paint con contenuto 500x500, ingrandito a 2000x2000
+
+  Prima:
+    target persistente = 4000x4000 = circa 61 MiB
+
+  Durante resize:
+    source snapshot = 500x500 = circa 1.0 MiB
+    dirtyRect circa area vecchia + nuova = spesso vicino a 2000x2000
+    before snapshot = circa 15.3 MiB
+    after snapshot = circa 15.3 MiB
+
+  Dopo commit:
+    target persistente = ancora 4000x4000 = circa 61 MiB
+
+  Conclusione:
+    visivamente e' piu' grande, ma il layer costava gia' 61 MiB anche prima.
+
+
+8. Comportamento attuale: blur su un layer brush
+------------------------------------------------
+
+Il blur e gli effetti layer vengono applicati usando texture temporanee chiamate
+scratch target.
+
+Il renderer calcola la dimensione degli effetti a partire dalla dimensione del
+layerTarget:
+
+  getLayerRenderTexture(layer, layerTarget) {
+    const width = layerTarget.width || this.width;
+    const height = layerTarget.height || this.height;
+    let texture = layerTarget.texture;
+
+    if (effect.type === "gaussian-blur") {
+      texture = applyGaussianBlurTexture(texture, radius, { width, height });
+    }
+
+    return texture;
+  }
+
+Per il Gaussian Blur vengono creati due scratch target:
+
+  ensureLayerEffectScratchTargets(width, height) {
+    if (needsScratch) {
+      deleteLayerEffectScratchTargets();
+      layerEffectScratchA = createLayerEffectScratchTarget(width, height);
+      layerEffectScratchB = createLayerEffectScratchTarget(width, height);
+    }
+
+    return { scratchA, scratchB };
+  }
+
+  applyGaussianBlurTexture(sourceTexture, radius, { width, height }) {
+    const { scratchA, scratchB } = ensureLayerEffectScratchTargets(width, height);
+
+    runGaussianBlurPass({
+      sourceTexture,
+      target: scratchA,
+      texelStepX: 1 / width,
+      texelStepY: 0,
+    });
+
+    runGaussianBlurPass({
+      sourceTexture: scratchA.texture,
+      target: scratchB,
+      texelStepX: 0,
+      texelStepY: 1 / height,
+    });
+
+    return scratchB.texture;
+  }
+
+Se il layer paint e' 4000x4000, anche gli scratch per il blur sono 4000x4000.
+
+Costo indicativo su documento 4000x4000:
+
+  layer paint persistente: circa 61 MiB
+  scratch blur A: circa 61 MiB
+  scratch blur B: circa 61 MiB
+
+Totale temporaneo durante blur: circa 122 MiB extra, oltre al layer.
+
+Se l'effetto rimane live, questi scratch sono riutilizzati dal renderer ma restano
+comunque costosi quando servono.
+
+Se l'utente rasterizza/applica definitivamente l'effetto, il codice fa snapshot
+prima/dopo del target:
+
+  rasterizeLayerEffects(layer) {
+    const target = rasterTargetsByLayerId.get(layer.id);
+    const beforeSnapshot = createRasterSnapshot(target, null, "before");
+    const renderTexture = getLayerRenderTexture(layer, target);
+    copyTextureToRasterTarget(renderTexture, target, { width: target.width, height: target.height });
+    const afterSnapshot = createRasterSnapshot(target, null, "after");
+  }
+
+Il rect null significa "tutto il target". Se il target e' 4000x4000:
+
+  before snapshot = circa 61 MiB
+  after snapshot = circa 61 MiB
+
+Quindi rasterizzare un blur su paint layer puo' aggiungere circa 122 MiB alla
+history, piu' gli scratch temporanei.
+
+
+9. Sintesi del problema
+-----------------------
+
+Il problema non e' che l'app non abbia ottimizzazioni. Le ha, ma sono concentrate
+sulle operazioni temporanee.
+
+Oggi sono ottimizzati:
+
+- buffer temporanei degli stroke brush;
+- snapshot di history delle pennellate;
+- snapshot di preview del transform;
+- snapshot before/after del transform, perche' usano la dirtyRect.
+
+Oggi NON sono ottimizzati:
+
+- target persistenti dei layer image;
+- target persistenti dei layer paint;
+- effetti live quando il layer target e' full canvas;
+- rasterizzazione effetti quando il target e' full canvas;
+- risultato finale del resize, perche' non ricompatta il target.
+
+La frase piu' importante:
+
+  Abbiamo ottimizzato il gesto, ma non ancora il contenitore permanente.
+
+
+10. Obiettivo della modifica
+----------------------------
+
+Vogliamo introdurre raster target persistenti ritagliati.
+
+Invece di dire:
+
+  ogni layer e' una texture 4000x4000
+
+vogliamo poter dire:
+
+  ogni layer ha una texture grande quanto il contenuto che contiene, piu' eventuale
+  padding tecnico, e possiede un offset nel documento.
+
+Esempio:
+
+  Documento: 4000x4000
+  Immagine importata: 800x600
+  Posizione sul documento: x=1600, y=1700
+
+Target attuale:
+
+  {
+    width: 4000,
+    height: 4000,
+    x: 0,
+    y: 0,
+    cropped: false
+  }
+
+Target desiderato:
+
+  {
+    width: 800,
+    height: 600,
+    x: 1600,
+    y: 1700,
+    cropped: true
+  }
+
+In memoria:
+
+  attuale: circa 61 MiB
+  desiderato: circa 1.8 MiB
+
+
+11. Nuovo modello dati proposto per RasterTarget
+------------------------------------------------
+
+Ogni target raster dovrebbe avere coordinate documento esplicite.
+
+Proposta:
+
+  type RasterTarget = {
+    framebuffer: WebGLFramebuffer,
+    texture: WebGLTexture,
+
+    // dimensione reale della texture
+    width: number,
+    height: number,
+
+    // posizione top-left nel documento
+    x: number,
+    y: number,
+
+    // true se width/height sono minori del documento o se x/y non sono 0
+    cropped: boolean,
+
+    clearColor: [number, number, number, number],
+  };
+
+Target full canvas:
+
+  {
+    width: documentWidth,
+    height: documentHeight,
+    x: 0,
+    y: 0,
+    cropped: false
+  }
+
+Target cropped:
+
+  {
+    width: contentWidth,
+    height: contentHeight,
+    x: contentX,
+    y: contentY,
+    cropped: true
+  }
+
+
+12. API renderer da aggiungere
+------------------------------
+
+La modifica va implementata principalmente nel DocumentRenderer, non solo nel
+rasterizer delle immagini.
+
+Servono helper centrali:
+
+  createRasterTarget(clearColor, options = {})
+  createRasterTargetForRect(rect, clearColor)
+  getRasterTargetDocumentRect(target)
+  isCroppedRasterTarget(target)
+  replaceRasterTarget(layerId, target, options)
+  materializeRasterTarget(layerId, options)
+  ensureRasterTargetCoversRect(layerId, rect, options)
+
+Pseudocodice:
+
+  createRasterTarget(clearColor = [0, 0, 0, 0], options = {}) {
+    const width = clampTextureSize(options.width ?? this.width);
+    const height = clampTextureSize(options.height ?? this.height);
+    const x = Number.isFinite(options.x) ? Math.round(options.x) : 0;
+    const y = Number.isFinite(options.y) ? Math.round(options.y) : 0;
+    const cropped = options.cropped === true ||
+      width !== this.width ||
+      height !== this.height ||
+      x !== 0 ||
+      y !== 0;
+
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      width,
+      height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      null,
+    );
+
+    return {
+      framebuffer,
+      texture,
+      width,
+      height,
+      x,
+      y,
+      cropped,
+      clearColor,
+    };
+  }
+
+  createRasterTargetForRect(rect, clearColor = [0, 0, 0, 0]) {
+    return createRasterTarget(clearColor, {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      cropped: true,
+    });
+  }
+
+  getRasterTargetDocumentRect(target) {
+    return {
+      x: target.x || 0,
+      y: target.y || 0,
+      width: target.width,
+      height: target.height,
+    };
+  }
+
+  isCroppedRasterTarget(target) {
+    return Boolean(
+      target &&
+      (
+        target.cropped === true ||
+        target.x !== 0 ||
+        target.y !== 0 ||
+        target.width !== this.width ||
+        target.height !== this.height
+      )
+    );
+  }
+
+  replaceRasterTarget(layerId, nextTarget, options = {}) {
+    const previous = rasterTargetsByLayerId.get(layerId);
+
+    rasterTargetsByLayerId.set(layerId, nextTarget);
+
+    if (previous && previous !== nextTarget) {
+      deleteFramebufferAndTexture(previous);
+    }
+
+    invalidatePreviewCache(options.source || "replace-raster-target");
+    requestDraw();
+  }
+
+
+13. Materializzazione: fallback di sicurezza
+--------------------------------------------
+
+Alcuni strumenti oggi assumono che un layer parta da x=0,y=0 e sia grande quanto
+tutto il documento. Per non riscrivere tutto subito, conviene introdurre un fallback:
+
+  materializeRasterTarget(layerId)
+
+Materializzare significa:
+
+  - creare un nuovo target 4000x4000;
+  - disegnare la texture cropped dentro il nuovo target alla posizione x/y corretta;
+  - sostituire il target cropped con il target full;
+  - da quel momento gli strumenti vecchi possono continuare a funzionare.
+
+Pseudocodice:
+
+  materializeRasterTarget(layerId) {
+    const source = rasterTargetsByLayerId.get(layerId);
+
+    if (!source || !isCroppedRasterTarget(source)) {
+      return source;
+    }
+
+    const full = createRasterTarget([0, 0, 0, 0], {
+      x: 0,
+      y: 0,
+      width: this.width,
+      height: this.height,
+      cropped: false,
+    });
+
+    drawTextureIntoTarget({
+      sourceTexture: source.texture,
+      target: full,
+      destRect: {
+        x: source.x,
+        y: source.y,
+        width: source.width,
+        height: source.height,
+      },
+    });
+
+    replaceRasterTarget(layerId, full, { source: "materialize-raster-target" });
+
+    return full;
+  }
+
+Uso consigliato nella prima fase:
+
+- color fill su cropped target: materializza prima;
+- eraser su image/paint cropped se non ancora supportato: materializza prima;
+- smudge se esteso a image/cropped target: materializza prima;
+- puppet: materializza prima;
+- clipping masks non ancora aggiornate: materializza prima;
+- effects non ancora cropped-safe: materializza prima.
+
+Questo permette una fase 1 sicura: immagini cropped senza rompere strumenti
+complessi.
+
+
+14. Rendering con target cropped
+--------------------------------
+
+Il renderer deve disegnare una texture cropped solo nella sua posizione del
+documento, non stirarla su tutto il canvas.
+
+Il codice esistente ha gia' una forma utile: drawTexture/drawBlendTexture accettano
+un rect opzionale.
+
+Idea:
+
+  const targetRect = getRasterTargetDocumentRect(layerTarget);
+  const drawRect = isCroppedRasterTarget(layerTarget) ? targetRect : null;
+
+  drawBlendTexture(layerTexture, opacity, drawRect, clipBase, blendModeId);
+
+Se drawRect e' null:
+
+  - comportamento vecchio;
+  - texture full canvas;
+  - drawOrigin = 0,0.
+
+Se drawRect e' presente:
+
+  - document projection usa rect.width/rect.height;
+  - camera viene compensata con rect.x/rect.y;
+  - drawOrigin = rect.x, rect.y;
+  - shader sa dove si trova la texture nel documento globale.
+
+Pseudocodice:
+
+  function drawLayer(layer, layerTarget) {
+    const layerTexture = getLayerRenderTexture(layer, layerTarget);
+    const rect = isCroppedRasterTarget(layerTarget)
+      ? getRasterTargetDocumentRect(layerTarget)
+      : null;
+
+    drawBlendTexture(
+      layerTexture,
+      layer.opacity,
+      rect,
+      clipBase,
+      getLayerBlendModeId(layer),
+    );
+  }
+
+Attenzione: anche la preview cache deve essere aggiornata. Oggi la preview cache
+disegna le texture layer come se fossero full canvas. Se non si aggiorna questa
+parte, i target cropped possono apparire stirati o posizionati male nello zoom-out.
+
+
+15. Clipping masks
+------------------
+
+Le clipping mask sono un punto delicato.
+
+Oggi lo shader calcola la UV della clip texture cosi':
+
+  vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+  vec2 clipUv = vec2(
+    globalDocPixel.x / u_clipTextureSize.x,
+    1.0 - globalDocPixel.y / u_clipTextureSize.y
+  );
+
+Questo funziona se la clip texture parte da x=0,y=0 ed e' grande quanto il
+documento. Non funziona correttamente se la clip texture e' cropped e parte, ad
+esempio, da x=1600,y=1700.
+
+Serve aggiungere un origin anche per la clip texture:
+
+  uniform vec2 u_clipOrigin;
+
+  vec2 clipLocalPixel = globalDocPixel - u_clipOrigin;
+  vec2 clipUv = vec2(
+    clipLocalPixel.x / u_clipTextureSize.x,
+    1.0 - clipLocalPixel.y / u_clipTextureSize.y
+  );
+
+Pseudocodice lato JS:
+
+  gl.uniform2f(
+    uniforms.clipOrigin,
+    clipBase.target.x || 0,
+    clipBase.target.y || 0,
+  );
+
+  gl.uniform2f(
+    uniforms.clipTextureSize,
+    clipBase.target.width,
+    clipBase.target.height,
+  );
+
+Fase 1 piu' sicura:
+
+  Se un layer cropped entra in una clipping mask e lo shader non e' ancora
+  aggiornato, materializzare i target coinvolti.
+
+
+16. Snapshot e history con target cropped
+-----------------------------------------
+
+Regola proposta:
+
+  Tutte le API pubbliche devono parlare in coordinate documento.
+
+Esempio:
+
+  createRasterSnapshot(layerId, { x: 1600, y: 1700, width: 800, height: 600 })
+
+deve significare "copia questa area del documento", anche se il target interno e'
+una texture locale 800x600 con x=1600,y=1700.
+
+Serve quindi convertire:
+
+  document coords -> target local coords
+
+Pseudocodice:
+
+  function docRectToTargetLocalRect(target, docRect) {
+    const targetDocRect = getRasterTargetDocumentRect(target);
+    const intersection = intersectRects(docRect, targetDocRect);
+
+    if (!intersection) {
+      return null;
+    }
+
+    return {
+      docRect: intersection,
+      localRect: {
+        x: intersection.x - targetDocRect.x,
+        y: intersection.y - targetDocRect.y,
+        width: intersection.width,
+        height: intersection.height,
+      },
+    };
+  }
+
+  createRasterSnapshot(layerId, docRect, label) {
+    const target = getExistingRasterTarget(layerId);
+    const mapped = docRectToTargetLocalRect(target, docRect || getRasterTargetDocumentRect(target));
+
+    if (!mapped) {
+      return null;
+    }
+
+    copyPixelsFromTargetLocalRect(target, mapped.localRect);
+
+    return {
+      texture,
+      framebuffer,
+      rect: mapped.docRect,       // coordinate documento
+      localRect: mapped.localRect // utile per debug, non necessario pubblicamente
+    };
+  }
+
+Restore:
+
+  restoreRasterSnapshot(layerId, snapshot) {
+    let target = getExistingRasterTarget(layerId);
+
+    if (!targetCoversDocRect(target, snapshot.rect)) {
+      target = expandOrMaterializeTargetToCover(layerId, snapshot.rect);
+    }
+
+    const localRect = docRectToTargetLocalRect(target, snapshot.rect).localRect;
+    blitSnapshotIntoTargetLocalRect(snapshot, target, localRect);
+  }
+
+Per il resize, potrebbe essere ancora meglio registrare nella history un cambio
+intero di target:
+
+  undo:
+    ripristina target precedente, con texture e rect precedente
+
+  redo:
+    ripristina target successivo, con texture e rect successiva
+
+Questo e' piu' semplice e robusto quando il transform riduce o ingrandisce
+drasticamente il target.
+
+
+17. Import immagini: implementazione proposta
+---------------------------------------------
+
+L'import immagini e' il primo caso da ottimizzare perche':
+
+- una immagine importata e' gia' una regione rettangolare;
+- non richiede subito brush engine cropped-aware;
+- il risparmio memoria e' enorme;
+- il rischio e' controllabile se aggiungiamo rendering e snapshot cropped-aware.
+
+Flusso desiderato:
+
+  placeUploadedImageOnCanvas(detail)
+    -> crea layer image
+    -> decodedImage = decode blob
+    -> sourceSize = getRasterSourceSize(decodedImage)
+    -> rect = posizione centrata nel documento
+    -> target = renderer.createRasterTargetForRect(rect)
+    -> renderer.replaceRasterTarget(layerId, target)
+    -> rasterizer.placeRasterImage(decodedImage, { target, x: 0, y: 0 })
+
+Pseudocodice:
+
+  async function placeBlobAsCroppedLayer(blob, { layerId }) {
+    const decoded = await decodeImageBlob(blob);
+    const size = getRasterSourceSize(decoded.source);
+
+    const rect = {
+      x: Math.round((renderer.width - size.width) * 0.5),
+      y: Math.round((renderer.height - size.height) * 0.5),
+      width: size.width,
+      height: size.height,
+    };
+
+    const target = renderer.createRasterTargetForRect(rect);
+    renderer.replaceRasterTarget(layerId, target, { source: "image-upload" });
+
+    placeRasterImage(decoded.source, {
+      target,
+      x: 0,
+      y: 0,
+      source: "image-upload",
+    });
+  }
+
+Nota: nel metodo placeRasterImage, quando si passa un target cropped, x/y devono
+essere coordinate locali del target, non coordinate documento.
+
+
+18. Resize/transform con target cropped
+---------------------------------------
+
+Il resize e' uno dei motivi principali per cui il target cropped deve essere
+persistente.
+
+Obiettivo:
+
+  Se un layer di contenuto 2000x2000 viene ridotto a 500x500, dopo il commit il
+  target persistente deve diventare circa 500x500, non restare 4000x4000.
+
+Flusso desiderato per un target cropped:
+
+  commitRasterTransform(...)
+    -> calcola destBounds dal destQuad
+    -> crea nextRect basato sul bounding box finale
+    -> crea nuovo target cropped nextRect
+    -> disegna sourceSnapshot nel nuovo target, usando coordinate locali
+    -> sostituisce il target vecchio con il nuovo
+    -> registra history come target swap before/after
+
+Esempio:
+
+  Prima:
+    target = { x: 1000, y: 1000, width: 2000, height: 2000 }
+
+  Utente riduce a:
+    destBounds = { x: 1500, y: 1500, width: 500, height: 500 }
+
+  Dopo:
+    target = { x: 1500, y: 1500, width: 500, height: 500 }
+
+Memoria:
+
+  prima: circa 15.3 MiB
+  dopo: circa 1.0 MiB
+
+Pseudocodice:
+
+  commitRasterTransformCropped({ layerId, sourceSnapshot, sourceRect, destQuad, transformMode }) {
+    const destRect = boundsToRect(quadToBounds(destQuad));
+    const nextRect = clampRectToDocument(padRect(destRect, transformPadding));
+
+    const nextTarget = createRasterTargetForRect(nextRect);
+
+    const localDestQuad = destQuad.map((point) => ({
+      x: point.x - nextRect.x,
+      y: point.y - nextRect.y,
+    }));
+
+    const didDraw = transformMode === "perspective"
+      ? drawPerspectiveTexturedQuad(sourceSnapshot.texture, localDestQuad, {
+          framebuffer: nextTarget.framebuffer,
+          viewportWidth: nextTarget.width,
+          viewportHeight: nextTarget.height,
+          camera: { x: 0, y: 0, zoom: 1 },
+        })
+      : drawTexturedQuad(sourceSnapshot.texture, localDestQuad, {
+          framebuffer: nextTarget.framebuffer,
+          viewportWidth: nextTarget.width,
+          viewportHeight: nextTarget.height,
+          camera: { x: 0, y: 0, zoom: 1 },
+        });
+
+    if (!didDraw) {
+      deleteRasterTargetObject(nextTarget);
+      return false;
+    }
+
+    const beforeTargetSnapshot = snapshotEntireTargetWithRect(oldTarget);
+    const afterTargetSnapshot = snapshotEntireTargetWithRect(nextTarget);
+
+    replaceRasterTarget(layerId, nextTarget);
+
+    history.push({
+      undo: () => restoreTargetSnapshot(layerId, beforeTargetSnapshot),
+      redo: () => restoreTargetSnapshot(layerId, afterTargetSnapshot),
+    });
+
+    return true;
+  }
+
+Per target full canvas nella fase iniziale si puo' mantenere il comportamento
+attuale, oppure aggiungere una opzione "compact after transform" che calcola i
+bounds finali e sostituisce anche i paint layer.
+
+
+19. Paint/brush layer cropped: due livelli di ambizione
+-------------------------------------------------------
+
+Ci sono due modi per estendere l'ottimizzazione ai layer brush/paint.
+
+Opzione A: sicura, progressiva
+
+  - inizialmente solo image layer cropped;
+  - paint layer restano full canvas;
+  - se uno strumento complesso incontra target cropped, materializza;
+  - non si rischia di rompere il brush engine.
+
+Pro:
+
+  - piu' semplice;
+  - grande risparmio sulle immagini importate;
+  - meno regressioni.
+
+Contro:
+
+  - un layer brush ridimensionato piccolo continua a pesare 61 MiB;
+  - blur su paint layer continua a essere pesante.
+
+Opzione B: completa
+
+  - anche i paint layer diventano cropped persistenti;
+  - il target paint si espande quando dipingi fuori dai bounds correnti;
+  - il resize puo' ricompattare il target paint;
+  - blur/effects lavorano sulla dimensione reale del paint layer.
+
+Pro:
+
+  - memoria molto piu' efficiente;
+  - resize su brush layer riduce davvero la memoria;
+  - blur su piccoli layer brush diventa molto piu' leggero.
+
+Contro:
+
+  - molto piu' delicato;
+  - brush engine, eraser, color fill, smudge e hit test vanno adattati a coordinate locali;
+  - history deve ripristinare anche rect/offset del target, non solo pixel.
+
+Consiglio:
+
+  Fase 1: image layer cropped.
+  Fase 2: transform cropped-aware.
+  Fase 3: effects cropped-aware.
+  Fase 4: paint layer cropped persistenti.
+
+
+20. Brush engine cropped-aware per paint layer
+----------------------------------------------
+
+Per rendere cropped anche i paint layer, il brush engine deve sapere che il target
+persistente puo' non partire da x=0,y=0.
+
+Oggi la pennellata usa coordinate documento e poi bakes nello stesso target:
+
+  gl.viewport(
+    bakeRect.x,
+    target.height - (bakeRect.y + bakeRect.height),
+    bakeRect.width,
+    bakeRect.height,
+  );
+
+Con target cropped, bakeRect deve essere convertito in coordinate locali:
+
+  localBakeRect = {
+    x: bakeRect.x - target.x,
+    y: bakeRect.y - target.y,
+    width: bakeRect.width,
+    height: bakeRect.height,
+  };
+
+  gl.viewport(
+    localBakeRect.x,
+    target.height - (localBakeRect.y + localBakeRect.height),
+    localBakeRect.width,
+    localBakeRect.height,
+  );
+
+Prima di fare bake, il target deve coprire la zona dello stroke:
+
+  ensureRasterTargetCoversRect(layerId, strokeRect)
+
+Se lo stroke esce dai bounds correnti:
+
+  - creare un target piu' grande;
+  - copiare il vecchio contenuto nella posizione corretta;
+  - aggiornare x/y/width/height;
+  - poi fare bake.
+
+Pseudocodice:
+
+  ensureRasterTargetCoversRect(layerId, docRect) {
+    const target = getExistingRasterTarget(layerId);
+    const current = getRasterTargetDocumentRect(target);
+
+    if (rectContains(current, docRect)) {
+      return target;
+    }
+
+    const nextRect = clampRectToDocument(unionRects(current, docRect));
+    const nextTarget = createRasterTargetForRect(nextRect);
+
+    drawTextureIntoTarget({
+      sourceTexture: target.texture,
+      target: nextTarget,
+      destRect: {
+        x: current.x - nextRect.x,
+        y: current.y - nextRect.y,
+        width: current.width,
+        height: current.height,
+      },
+      coordinates: "local",
+    });
+
+    replaceRasterTarget(layerId, nextTarget, { source: "expand-paint-target" });
+
+    return nextTarget;
+  }
+
+Questa e' la modifica necessaria per fare in modo che un layer brush piccolo
+occupi davvero poco, anche dopo resize.
+
+
+21. Blur/effects con target cropped
+-----------------------------------
+
+Una volta che il target del layer e' cropped, gli effetti possono diventare molto
+piu' efficienti quasi automaticamente, perche' getLayerRenderTexture usa:
+
+  const width = layerTarget.width || this.width;
+  const height = layerTarget.height || this.height;
+
+Quindi se layerTarget e':
+
+  500x500
+
+gli scratch blur diventano:
+
+  500x500
+
+e non:
+
+  4000x4000
+
+Costo Gaussian Blur su target 500x500:
+
+  layer persistente: circa 1.0 MiB
+  scratch A: circa 1.0 MiB
+  scratch B: circa 1.0 MiB
+
+Invece di:
+
+  layer persistente: circa 61 MiB
+  scratch A: circa 61 MiB
+  scratch B: circa 61 MiB
+
+Problema tecnico: il blur espande visivamente i pixel fuori dai bordi originali.
+
+Se il target cropped e' esattamente attorno al contenuto, un Gaussian Blur puo'
+essere tagliato ai bordi. Inoltre, con texture CLAMP_TO_EDGE, i bordi possono
+spalmare il colore invece di sfumare verso trasparente se non esiste padding
+trasparente intorno.
+
+Soluzione:
+
+  Quando si renderizza o rasterizza un blur su target cropped, il target effettivo
+  deve includere padding trasparente.
+
+Padding indicativo:
+
+  gaussian blur: almeno ceil(radius), meglio una funzione legata al kernel reale;
+  motion blur: almeno ceil(distance);
+  field blur: max blur dei pin;
+  radial blur: dipende dall'amount e dal centro, spesso richiede stima piu' ampia
+  o fallback full/materialize nella prima fase.
+
+Pseudocodice:
+
+  getEffectPadding(layer) {
+    let padding = 0;
+
+    for (const effect of layer.effects) {
+      if (effect.type === "gaussian-blur") {
+        padding = Math.max(padding, Math.ceil(effect.radius));
+      }
+
+      if (effect.type === "motion-blur") {
+        padding = Math.max(padding, Math.ceil(effect.distance));
+      }
+
+      if (effect.type === "field-blur") {
+        padding = Math.max(padding, Math.ceil(maxPinBlur(effect.pins)));
+      }
+
+      if (effect.type === "radial-blur") {
+        padding = Math.max(padding, estimateRadialBlurPadding(effect));
+      }
+    }
+
+    return padding;
+  }
+
+  prepareTargetForLayerEffects(layer, target) {
+    const padding = getEffectPadding(layer);
+
+    if (padding <= 0) {
+      return target;
+    }
+
+    const paddedRect = clampRectToDocument(
+      padRect(getRasterTargetDocumentRect(target), padding),
+    );
+
+    if (rectEquals(paddedRect, getRasterTargetDocumentRect(target))) {
+      return target;
+    }
+
+    return expandTargetToRect(layer.id, paddedRect);
+  }
+
+Per la fase iniziale:
+
+  - Gaussian Blur e Motion Blur possono diventare cropped-aware con padding;
+  - Field/Radial Blur si possono prima materializzare se il rischio e' alto;
+  - poi si ottimizzano in un secondo passaggio.
+
+
+22. Color fill, eraser, smudge, puppet
+--------------------------------------
+
+Questi strumenti sono delicati perche' leggono o scrivono pixel con coordinate che
+oggi assumono target full canvas.
+
+Color fill:
+
+  Oggi legge tutto il framebuffer:
+
+    readPixels(0, 0, width, height)
+
+  Se width/height diventano 500x500 ma il click e' in coordinate documento
+  x=1600,y=1700, bisogna sottrarre target.x/target.y.
+
+  Fase 1 consigliata:
+    materializzare prima del fill.
+
+Eraser:
+
+  Oggi puo' agire su layer paint o image. Se il layer image diventa cropped, il
+  brush engine deve convertire coordinate documento -> coordinate locali oppure
+  materializzare.
+
+  Fase 1 consigliata:
+    materializzare prima di usare eraser su target cropped.
+
+Smudge:
+
+  Oggi e' principalmente legato ai paint layer. Se i paint layer restano full
+  nella fase 1, nessun problema nuovo.
+
+  Quando i paint layer diventeranno cropped:
+    adattare sampling e coordinate locali.
+
+Puppet:
+
+  Mesh e pin oggi assumono coordinate target/documento molto vicine al full canvas.
+  Con target cropped serve sottrarre origin o materializzare.
+
+  Fase 1 consigliata:
+    materializzare prima di puppet.
+
+
+23. getRasterContentBounds e hit test
+-------------------------------------
+
+Queste funzioni devono diventare cropped-aware.
+
+getRasterContentBounds:
+
+  Oggi scansiona alpha del target e ritorna bounds nel sistema coordinate del
+  target. Se il target e' full canvas, questo coincide col documento.
+
+  Con target cropped deve aggiungere target.x/target.y.
+
+Pseudocodice:
+
+  getRasterContentBounds(layerId) {
+    const target = rasterTargetsByLayerId.get(layerId);
+    const localBounds = scanAlphaBounds(target);
+
+    if (!localBounds) {
+      return null;
+    }
+
+    return {
+      x: (target.x || 0) + localBounds.x,
+      y: (target.y || 0) + localBounds.y,
+      width: localBounds.width,
+      height: localBounds.height,
+    };
+  }
+
+getRasterAlphaAtPoint:
+
+  Oggi controlla direttamente x/y contro target.width/target.height.
+
+  Con target cropped:
+
+    localX = x - target.x
+    localY = y - target.y
+
+Pseudocodice:
+
+  getRasterAlphaAtPoint(layerId, docX, docY) {
+    const target = rasterTargetsByLayerId.get(layerId);
+    const localX = Math.floor(docX - (target.x || 0));
+    const localY = Math.floor(docY - (target.y || 0));
+
+    if (
+      localX < 0 ||
+      localY < 0 ||
+      localX >= target.width ||
+      localY >= target.height
+    ) {
+      return 0;
+    }
+
+    readPixels(localX, target.height - localY - 1, 1, 1);
+  }
+
+
+24. Preview cache
+-----------------
+
+La preview cache e' un rischio importante.
+
+Quando l'app fa zoom out o preview composita, usa un framebuffer/cache del
+documento. Oggi il codice della preview cache disegna ogni texture layer come se
+fosse grande quanto il documento.
+
+Con target cropped, bisogna passare il rect anche alla preview cache:
+
+  const rect = isCroppedRasterTarget(layerTarget)
+    ? getRasterTargetDocumentRect(layerTarget)
+    : null;
+
+  drawBlendTexture(layerTexture, opacity, rect, blendModeId);
+
+Se non si fa questo, il layer cropped puo':
+
+- apparire stirato su tutto il canvas;
+- apparire in posizione sbagliata;
+- apparire corretto nella view normale ma sbagliato nella cache.
+
+Fase 1 alternativa:
+
+  Disabilitare temporaneamente preview cache quando esiste almeno un target cropped.
+
+Ma la soluzione migliore e' renderla rect-aware subito.
+
+
+25. Salvataggio e stato layer
+-----------------------------
+
+Il target rect e' stato GPU, non semplice metadata layer.
+
+La history dei layer oggi salva entries e activeLayerId. Per i pixel raster esiste
+history separata tramite snapshot texture.
+
+Con target cropped, quando undo/redo ripristina pixel deve ripristinare anche:
+
+  - x;
+  - y;
+  - width;
+  - height;
+  - cropped;
+  - texture.
+
+Per operazioni come resize, e' consigliabile salvare snapshot di target intero:
+
+  {
+    texture,
+    framebuffer,
+    rect: { x, y, width, height },
+    cropped: true
+  }
+
+Poi undo/redo sostituiscono l'intero target.
+
+
+26. Ordine di implementazione consigliato
+-----------------------------------------
+
+Fase 0: infrastruttura senza cambiare comportamento
+
+  - aggiungere x/y/cropped ai target;
+  - createRasterTarget accetta width/height/x/y opzionali;
+  - i target full restano identici nel comportamento;
+  - aggiungere helper getRasterTargetDocumentRect, isCroppedRasterTarget.
+
+Fase 1: render cropped-aware
+
+  - drawToCanvas passa rect per target cropped;
+  - updatePreviewCache passa rect per target cropped;
+  - getRasterAlphaAtPoint converte doc -> local;
+  - getRasterContentBounds ritorna coordinate documento;
+  - snapshot/restore accettano coordinate documento.
+
+Fase 2: import immagini cropped
+
+  - import immagine crea target grande quanto il source;
+  - target posizionato al centro del documento;
+  - placeRasterImage disegna a x=0,y=0 locale;
+  - fallback materialize per strumenti non aggiornati.
+
+Fase 3: transform cropped-aware
+
+  - resize di image layer sostituisce il target con uno nuovo;
+  - se riduci, la memoria scende;
+  - se ingrandisci, la memoria sale in base al bounding box finale;
+  - undo/redo ripristina anche target rect.
+
+Fase 4: effects cropped-aware
+
+  - Gaussian/Motion blur usano scratch della dimensione target;
+  - aggiungere padding trasparente per non tagliare il blur;
+  - inizialmente materializzare Field/Radial se troppo rischiosi;
+  - rasterizeLayerEffects salva before/after cropped, non full.
+
+Fase 5: paint layer cropped
+
+  - brush bake converte doc coords -> local coords;
+  - ensureRasterTargetCoversRect espande il paint target quando serve;
+  - resize su paint layer puo' ricompattare il target;
+  - color fill/eraser/smudge diventano local-coordinate aware.
+
+Fase 6: clipping masks e strumenti avanzati
+
+  - aggiungere clipOrigin negli shader;
+  - puppet local-coordinate aware oppure materializzazione controllata;
+  - ottimizzare radial/field blur senza fallback full.
+
+
+27. Criteri di successo
+-----------------------
+
+Test manuali/attesi:
+
+1. Import immagine 800x600
+
+   Prima:
+     layer image circa 61 MiB
+
+   Dopo:
+     layer image circa 1.8 MiB
+
+2. Resize immagine 800x600 -> 400x300
+
+   Dopo:
+     target circa 400x300 = circa 0.46 MiB
+
+3. Resize immagine 800x600 -> 2000x1500
+
+   Dopo:
+     target circa 2000x1500 = circa 11.4 MiB
+
+4. Brush stroke piccolo su paint layer, fase 1
+
+   Atteso:
+     nessun cambiamento sul target finale;
+     stroke temp/history restano cropped.
+
+5. Brush layer resize, fase paint-cropped
+
+   Atteso:
+     se ridotto, target persistente si riduce;
+     se ingrandito, target persistente cresce in base al bounding box.
+
+6. Gaussian Blur su piccolo target cropped
+
+   Atteso:
+     scratch texture piccole;
+     blur non tagliato ai bordi grazie al padding.
+
+7. Undo/redo transform
+
+   Atteso:
+     non solo pixel corretti, ma anche x/y/width/height target corretti.
+
+8. Preview cache
+
+   Atteso:
+     nessun layer stirato;
+     posizione corretta a tutti gli zoom.
+
+9. Clipping mask
+
+   Atteso fase 1:
+     se non supportata cropped-aware, materializzazione sicura.
+
+   Atteso fase finale:
+     clipOrigin supportato, nessuna materializzazione necessaria.
+
+
+28. Rischi principali
+---------------------
+
+Rischio 1: coordinate sbagliate
+
+  Molte funzioni oggi assumono che x=0,y=0 sia l'origine del target. Con target
+  cropped bisogna sottrarre target.x/target.y quando si leggono o scrivono pixel.
+
+Rischio 2: preview cache sbagliata
+
+  Se una path di rendering non riceve il rect, la texture cropped viene disegnata
+  come se fosse full canvas.
+
+Rischio 3: undo/redo incompleto
+
+  Non basta ripristinare i pixel. Bisogna ripristinare anche la rect del target.
+
+Rischio 4: blur tagliato
+
+  Il blur estende i pixel fuori dai bounds originali. Serve padding trasparente.
+
+Rischio 5: clipping masks
+
+  Lo shader attuale usa globalDocPixel / clipTextureSize. Serve clipOrigin per
+  target cropped.
+
+Rischio 6: paint layer cropped troppo presto
+
+  Se si rende cropped il paint layer prima di aggiornare brush/eraser/fill, si
+  rischiano bug difficili. Meglio farlo dopo le immagini.
+
+
+29. Risposta diretta alle domande emerse
+----------------------------------------
+
+Quando carico un'immagine che non copre tutto il canvas, occupa tutto il canvas?
+
+  Visivamente no: si vede solo dove e' disegnata.
+  In memoria oggi si: il target persistente e' comunque 4000x4000.
+
+Stiamo sprecando memoria?
+
+  Si, soprattutto per image layer e paint layer persistenti piccoli rispetto al
+  documento.
+
+I brush sono ottimizzati?
+
+  Si per stroke temporanei e history della pennellata.
+  No per il layer finale persistente, che resta full canvas.
+
+Se ridimensiono un layer brush piu' piccolo, occupa meno?
+
+  Oggi no. Il contenuto diventa piu' piccolo, ma il target del layer resta
+  4000x4000. Solo la history del transform scala con l'area toccata.
+
+Se ingrandisco un layer brush, occupa di piu'?
+
+  Oggi il layer persistente non cambia: era gia' 4000x4000.
+  La history del transform puo' occupare di piu' perche' la dirtyRect cresce.
+
+Il blur su un layer piccolo costa poco?
+
+  Oggi no se il target e' full canvas. Gli scratch del blur usano la dimensione
+  del target, quindi 4000x4000.
+
+Come dovrebbe funzionare dopo l'ottimizzazione?
+
+  La memoria persistente dovrebbe seguire il bounding box reale del contenuto:
+
+    image 800x600 -> target 800x600
+    resize a 400x300 -> target 400x300
+    resize a 2000x1500 -> target 2000x1500
+
+  Per brush layer questo richiede una fase extra: paint layer cropped-aware.
+
+
+30. Conclusione
+---------------
+
+L'app non e' "non ottimizzata": alcune parti lo sono gia'. La parte brush temporanea
+e la history delle pennellate sono state ottimizzate correttamente.
+
+Il problema grosso rimasto e' che i layer persistenti sono ancora quasi sempre
+full canvas.
+
+La direzione giusta e':
+
+  1. introdurre target raster con x/y/width/height;
+  2. rendere render, preview, snapshot e hit test cropped-aware;
+  3. applicare subito ai layer image importati;
+  4. rendere il resize capace di sostituire/ricompattare il target;
+  5. rendere blur/effects cropped-aware con padding;
+  6. estendere infine ai paint layer, adattando brush/eraser/fill.
+
+Questa roadmap consente di ottenere risparmio memoria reale senza riscrivere tutto
+insieme e senza rischiare di rompere i tool piu' sensibili.
+
+
+31. Appendice tecnica WebGL: invarianti e casi limite
+-----------------------------------------------------
+
+Questa appendice raccoglie i punti pratici da tenere presenti quando la roadmap
+diventa codice reale. Non cambia l'architettura proposta, ma rende espliciti i
+vincoli WebGL che evitano regressioni, artefatti e memory leak.
+
+
+31.1 Struttura target consigliata
+---------------------------------
+
+La struttura minima proposta era:
+
+  {
+    texture,
+    framebuffer,
+    width,
+    height,
+    x,
+    y,
+    cropped,
+    clearColor,
+  }
+
+Per render, cache e debug conviene espanderla cosi':
+
+  {
+    id,
+    version,
+    texture,
+    framebuffer,
+    width,
+    height,
+    x,
+    y,
+    cropped,
+    clearColor,
+  }
+
+clearColor
+  Serve quando un target viene espanso e bisogna inizializzare la nuova area
+  vuota.
+
+id
+  Identificatore univoco del target. Utile per debug e per capire quando una
+  texture e' stata sostituita.
+
+version
+  Intero incrementato ogni volta che il contenuto del target cambia o quando il
+  target viene sostituito. Serve per invalidare preview/cache in modo affidabile.
+
+Pseudocodice:
+
+  let rasterTargetIdSequence = 1;
+
+  function createRasterTarget(clearColor = [0, 0, 0, 0], options = {}) {
+    const width = Math.max(1, Math.round(options.width ?? this.width));
+    const height = Math.max(1, Math.round(options.height ?? this.height));
+    const x = Math.round(options.x ?? 0);
+    const y = Math.round(options.y ?? 0);
+
+    return {
+      id: `raster-target-${rasterTargetIdSequence++}`,
+      version: 0,
+      framebuffer,
+      texture,
+      width,
+      height,
+      x,
+      y,
+      cropped: options.cropped === true || x !== 0 || y !== 0 ||
+        width !== this.width || height !== this.height,
+      clearColor,
+    };
+  }
+
+  function markRasterTargetDirty(target) {
+    if (target) {
+      target.version = (target.version || 0) + 1;
+    }
+  }
+
+Invariante assoluta:
+
+  x, y, width e height devono essere sempre interi.
+
+Motivo:
+
+  Se un target viene posizionato a coordinate decimali, ad esempio x=100.45,
+  WebGL con filtro lineare puo' campionare fra texel diversi. Il risultato e'
+  una sfocatura bilineare sottile ma permanente, oltre a hit-test e bounding box
+  meno affidabili.
+
+
+31.2 materializeRasterTarget come guardiano
+-------------------------------------------
+
+materializeRasterTarget deve vivere nel DocumentRenderer, perche' il renderer e'
+il proprietario del ciclo di vita di texture e framebuffer.
+
+Va usata come guardia all'inizio dei tool legacy non ancora cropped-aware:
+
+  - Color Fill: prima di readPixels(0, 0, width, height).
+  - Eraser: dentro getActiveRasterTargetForEraser se il target e' cropped.
+  - Smudge: finche' il sampling non gestisce coordinate locali e bordi.
+  - Puppet: finche' mesh e pin non sono local-coordinate aware.
+  - Field Blur / Radial Blur: nella prima fase, se il padding non e' robusto.
+  - Clipping masks: finche' u_clipOrigin non e' implementato in tutti gli shader.
+
+Pseudocodice:
+
+  function getLegacyWritableTarget(layerId, source) {
+    const target = renderer.rasterTargetsByLayerId.get(layerId);
+
+    if (renderer.isCroppedRasterTarget(target)) {
+      return renderer.materializeRasterTarget(layerId, { source });
+    }
+
+    return renderer.getRasterTarget(layerId);
+  }
+
+
+31.3 Undo/Redo: target swap quando cambia il bounding box
+---------------------------------------------------------
+
+Un target GPU non cambia dimensione. Se cambiano x, y, width o height, il vecchio
+target deve morire e deve nascere un target nuovo.
+
+Questo e' fondamentale per undo/redo.
+
+Esempio di bug da evitare:
+
+  1. Target cropped iniziale: 2000x2000.
+  2. Resize finale: 500x500.
+  3. Undo prova a copiare uno snapshot 2000x2000 dentro il target corrente 500x500.
+  4. WebGL puo' generare INVALID_VALUE o output corrotto.
+
+Regola:
+
+  Se la geometria dello snapshot non coincide con la geometria del target
+  corrente, non fare patch dei pixel. Fai target swap.
+
+Snapshot consigliato:
+
+  {
+    texture,
+    framebuffer,
+    x,
+    y,
+    width,
+    height,
+    cropped,
+  }
+
+Pseudocodice:
+
+  function restoreRasterSnapshot(layerId, snapshot) {
+    const target = getExistingRasterTarget(layerId);
+    const sameGeometry =
+      target &&
+      target.x === snapshot.x &&
+      target.y === snapshot.y &&
+      target.width === snapshot.width &&
+      target.height === snapshot.height;
+
+    if (!sameGeometry) {
+      const nextTarget = createRasterTarget([0, 0, 0, 0], {
+        x: snapshot.x,
+        y: snapshot.y,
+        width: snapshot.width,
+        height: snapshot.height,
+        cropped: snapshot.cropped,
+      });
+
+      copySnapshotTextureIntoTarget(snapshot.texture, nextTarget);
+      replaceRasterTarget(layerId, nextTarget, { source: "history-target-swap" });
+      return true;
+    }
+
+    restoreSnapshotPixelsIntoExistingTarget(target, snapshot);
+    markRasterTargetDirty(target);
+    return true;
+  }
+
+Per il transform cropped conviene salvare beforeTargetSnapshot e
+afterTargetSnapshot come target completi. Undo/redo diventano sostituzioni
+atomiche del target, molto piu' sicure di un blit parziale.
+
+
+31.4 Deallocazione esplicita della VRAM
+---------------------------------------
+
+Il Garbage Collector JavaScript non libera la VRAM WebGL nel momento in cui serve
+all'app. Texture e framebuffer devono essere distrutti esplicitamente.
+
+Ogni target orfano deve passare da:
+
+  gl.deleteTexture(target.texture);
+  gl.deleteFramebuffer(target.framebuffer);
+
+Questa regola vale per:
+
+  - replaceRasterTarget;
+  - deleteRasterTarget;
+  - pruneOrphanRasterTargets;
+  - cancellazione layer;
+  - snapshot rimossi dallo stack undo/redo;
+  - rollback falliti durante transform/effects;
+  - dispose finale del renderer.
+
+Pseudocodice:
+
+  function deleteRasterTargetObject(target) {
+    if (!target) {
+      return;
+    }
+
+    if (target.framebuffer) {
+      gl.deleteFramebuffer(target.framebuffer);
+      target.framebuffer = null;
+    }
+
+    if (target.texture) {
+      gl.deleteTexture(target.texture);
+      target.texture = null;
+    }
+  }
+
+  function replaceRasterTarget(layerId, nextTarget, options = {}) {
+    const previous = rasterTargetsByLayerId.get(layerId);
+
+    rasterTargetsByLayerId.set(layerId, nextTarget);
+
+    if (previous && previous !== nextTarget) {
+      deleteRasterTargetObject(previous);
+    }
+
+    markRasterTargetDirty(nextTarget);
+    invalidatePreviewCache(options.source || "replace-raster-target");
+    requestDraw();
+  }
+
+
+31.5 Evitare texture thrashing nei paint layer cropped
+------------------------------------------------------
+
+Quando anche i paint layer diventeranno cropped, il target dovra' espandersi se
+l'utente dipinge fuori dai bounds correnti.
+
+Rischio:
+
+  Se il target si espande di pochi pixel a ogni pointermove, la GPU deve
+  continuamente creare texture, copiare pixel e distruggere texture vecchie.
+  Questo causa micro-lag e spreco di VRAM.
+
+Soluzione:
+
+  Espandere a blocchi, non al singolo pixel.
+
+Costante consigliata:
+
+  const EXPANSION_QUANTUM = 256;
+
+Pseudocodice:
+
+  function quantizeExpansionRect(rect, documentWidth, documentHeight) {
+    const q = EXPANSION_QUANTUM;
+    const x0 = Math.max(0, Math.floor(rect.x / q) * q);
+    const y0 = Math.max(0, Math.floor(rect.y / q) * q);
+    const x1 = Math.min(documentWidth, Math.ceil((rect.x + rect.width) / q) * q);
+    const y1 = Math.min(documentHeight, Math.ceil((rect.y + rect.height) / q) * q);
+
+    return {
+      x: x0,
+      y: y0,
+      width: Math.max(1, x1 - x0),
+      height: Math.max(1, y1 - y0),
+    };
+  }
+
+  function ensureRasterTargetCoversRect(layerId, neededRect) {
+    const target = getExistingRasterTarget(layerId);
+    const currentRect = getRasterTargetDocumentRect(target);
+
+    if (rectContains(currentRect, neededRect)) {
+      return target;
+    }
+
+    const union = unionRects(currentRect, neededRect);
+    const nextRect = quantizeExpansionRect(union, this.width, this.height);
+
+    return expandTargetToRect(layerId, nextRect);
+  }
+
+Questa logica e' coerente con l'ottimizzazione gia' presente nei brush stroke,
+dove l'allocazione temporanea viene quantizzata.
+
+
+31.6 Padding trasparente ed edge bleeding
+-----------------------------------------
+
+Con target cropped, tagliare la texture esattamente sull'ultimo pixel opaco puo'
+creare artefatti ai bordi, soprattutto in zoom-out, resize e blur.
+
+Regole:
+
+  1. Impostare sempre:
+
+     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  2. Mantenere almeno 1-2 pixel trasparenti dentro la texture cropped quando
+     possibile.
+
+  3. Per blur/effects, usare padding proporzionale al raggio dell'effetto.
+
+Pseudocodice:
+
+  const CROPPED_TARGET_EDGE_PADDING = 2;
+
+  function padContentRectForTexture(rect) {
+    return clampRectToDocument(
+      padRect(rect, CROPPED_TARGET_EDGE_PADDING),
+    );
+  }
+
+
+31.7 Clipping mask shader con clipOrigin
+----------------------------------------
+
+Con target cropped, la clipping mask deve conoscere anche la sua origine nel
+documento, non solo la dimensione della texture.
+
+Uniform necessari:
+
+  uniform vec2 u_clipOrigin;
+  uniform vec2 u_clipTextureSize;
+
+Fragment shader consigliato:
+
+  vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+  vec2 clipLocalPixel = globalDocPixel - u_clipOrigin;
+
+  vec2 clipUv = vec2(
+    clipLocalPixel.x / max(u_clipTextureSize.x, 1.0),
+    1.0 - (clipLocalPixel.y / max(u_clipTextureSize.y, 1.0))
+  );
+
+  float clipAlpha = 0.0;
+
+  if (
+    clipUv.x >= 0.0 &&
+    clipUv.x <= 1.0 &&
+    clipUv.y >= 0.0 &&
+    clipUv.y <= 1.0
+  ) {
+    clipAlpha = texture(u_clipTexture, clipUv).a * clamp(u_clipOpacity, 0.0, 1.0);
+  }
+
+  color *= clipAlpha;
+
+Invariante:
+
+  Se il pixel del layer cade fuori dal bounding box della maschera cropped, alpha
+  deve diventare 0. Nel modello full canvas era implicito; nel modello cropped va
+  reso esplicito.
+
+Lato JS:
+
+  gl.uniform2f(
+    uniforms.clipOrigin,
+    clipBase.target.x || 0,
+    clipBase.target.y || 0,
+  );
+
+  gl.uniform2f(
+    uniforms.clipTextureSize,
+    clipBase.target.width,
+    clipBase.target.height,
+  );
+
+
+31.8 Shrink differito dopo gomma/cancellazioni
+----------------------------------------------
+
+Il transform conosce il nuovo bounding box finale, quindi puo' ricompattare subito.
+La gomma invece puo' cancellare aree in modo progressivo.
+
+Rischio:
+
+  Ricalcolare getRasterContentBounds a ogni movimento della gomma e ricompattare
+  subito sarebbe costoso.
+
+Soluzione:
+
+  Segnare il layer come needsCompaction e compattare piu' tardi.
+
+Momenti adatti:
+
+  - pointerup/fine stroke;
+  - cambio strumento;
+  - cambio layer;
+  - idle callback;
+  - salvataggio/esportazione;
+  - comando interno "compact layer".
+
+Pseudocodice:
+
+  function markLayerNeedsCompaction(layerId) {
+    const target = rasterTargetsByLayerId.get(layerId);
+
+    if (target) {
+      target.needsCompaction = true;
+    }
+  }
+
+  function compactRasterTargetIfNeeded(layerId) {
+    const target = rasterTargetsByLayerId.get(layerId);
+
+    if (!target?.needsCompaction) {
+      return false;
+    }
+
+    const bounds = getRasterContentBounds(layerId);
+
+    if (!bounds) {
+      clearOrDeleteTarget(layerId);
+      return true;
+    }
+
+    const padded = padContentRectForTexture(bounds);
+    replaceTargetWithCroppedCopy(layerId, padded);
+    return true;
+  }
+
+
+31.9 Fase 1: cosa fare cropped-aware e cosa materializzare
+----------------------------------------------------------
+
+Da rendere cropped-aware subito:
+
+  Image Import
+    Semplice, forte risparmio memoria, basso rischio.
+
+  Render normale e preview cache
+    Necessario per vedere correttamente i target cropped.
+
+  getRasterContentBounds e getRasterAlphaAtPoint
+    Necessari per selezione, hit-test e transform.
+
+  createRasterSnapshot e restoreRasterSnapshot
+    Necessari per undo/redo e transform.
+
+  commitRasterTransform per image layer
+    Permette a resize/transform di ridurre o aumentare davvero la memoria.
+
+  Gaussian Blur e Motion Blur
+    Utili se gestiti con padding corretto.
+
+Da materializzare nella fase 1:
+
+  Color Fill
+    Flood-fill globale: alto rischio se convertito subito.
+
+  Smudge
+    Sampling vicino ai bordi e rischio clamp bleeding.
+
+  Eraser su target cropped
+    Materializzare finche' il brush engine non e' local-coordinate aware.
+
+  Puppet
+    Mesh/pin dipendono da coordinate assolute.
+
+  Field Blur / Radial Blur
+    Effetti non-locali piu' difficili da stimare correttamente.
+
+  Clipping masks
+    Materializzare finche' u_clipOrigin non e' implementato in tutti gli shader
+    coinvolti.
+
+
+31.10 QA minimo prima di fidarsi
+--------------------------------
+
+Test 1: Cache stirata
+
+  1. Importare un'immagine piccola.
+  2. Zoomare fuori fino al 20%.
+  3. Fare pan sul canvas.
+
+  Fallimento:
+    il layer scatta a 0,0 oppure si spalma su tutto il documento.
+
+  Probabile causa:
+    updatePreviewCache non usa target.x/target.y.
+
+Test 2: Edge bleeding
+
+  1. Importare un'immagine con bordo colorato netto.
+  2. Ridimensionarla.
+  3. Zoomare molto sui bordi.
+
+  Fallimento:
+    compare una riga sottile o una sbavatura al limite della texture.
+
+  Probabile causa:
+    manca padding trasparente o clamp corretto.
+
+Test 3: Hit test fuori bounds
+
+  1. Importare un layer cropped piccolo.
+  2. Cliccare in una zona vuota fuori dal suo bounding box usando selezione,
+     contagocce o tool che legge alpha.
+
+  Fallimento:
+    crash, readPixels out-of-bounds o selezione errata.
+
+  Probabile causa:
+    getRasterAlphaAtPoint non controlla localX/localY prima di readPixels.
+
+Test 4: VRAM leak Undo/Redo
+
+  1. Importare immagine grande.
+  2. Ridimensionarla molto piu' piccola.
+  3. Fare Undo/Redo velocemente 20 volte.
+  4. Osservare memoria GPU/profiler.
+
+  Fallimento:
+    la memoria GPU cresce senza scendere.
+
+  Probabile causa:
+    target swap/history non chiamano deleteTexture/deleteFramebuffer sui target
+    orfani.
+
+Test 5: Resize shrink reale
+
+  1. Importare immagine 2000x2000.
+  2. Ridimensionarla a 500x500.
+  3. Verificare target.width/height.
+
+  Atteso:
+    target persistente circa 500x500 piu' eventuale padding, non 4000x4000.
+
+Test 6: Blur non tagliato
+
+  1. Importare immagine piccola.
+  2. Applicare Gaussian Blur con raggio alto.
+  3. Verificare i bordi.
+
+  Atteso:
+    blur morbido, non tagliato rettilinearmente sul bounding box originale.
+
+
+31.11 Limite noto: bounding box contro tiling
+---------------------------------------------
+
+Il modello cropped/bounding-box migliora molto la memoria, ma non risolve tutti i
+casi.
+
+Esempio:
+
+  Un puntino a x=0,y=0 e un puntino a x=3999,y=3999 sullo stesso layer generano
+  un bounding box quasi 4000x4000. Il layer occupa quindi quasi 61 MiB anche se i
+  pixel opachi reali sono solo due.
+
+Questo e' accettabile per questa fase.
+
+Soluzione futura:
+
+  Tiling.
+
+In un sistema tiled, il documento viene diviso in tasselli, ad esempio 256x256.
+La memoria viene allocata solo per i tile che contengono pixel.
+
+Esempio:
+
+  tile size: 256x256
+  costo tile: 256 * 256 * 4 = circa 256 KiB
+
+Due puntini lontani occuperebbero due tile:
+
+  circa 512 KiB
+
+invece di:
+
+  circa 61 MiB
+
+Il tiling e' un refactoring piu' grande. La roadmap cropped target resta il passo
+intermedio corretto: grande risparmio, complessita' molto inferiore rispetto a un
+tile engine completo.

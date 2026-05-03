@@ -1080,6 +1080,14 @@ void main() {
         return null;
       }
 
+      const existingTarget = this.documentRenderer?.rasterTargetsByLayerId?.get?.(activeId);
+
+      if (this.documentRenderer?.isCroppedRasterTarget?.(existingTarget)) {
+        return this.documentRenderer?.materializeRasterTarget?.(activeId, {
+          source: "smudge-materialize",
+        }) || getRasterTarget.call(this.documentRenderer, activeId);
+      }
+
       return getRasterTarget.call(this.documentRenderer, activeId);
     }
 

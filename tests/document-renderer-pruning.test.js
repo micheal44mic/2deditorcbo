@@ -240,9 +240,9 @@ test("document renderer composites supported layer blend modes in shader", () =>
   assert.match(source, /createLayerBlendProgramInfo\(\)/);
   assert.match(source, /ensureLayerBlendProgramInfo\(\)/);
   assert.match(source, /renderLayerWithActiveStrokeTexture\(layerTexture, strokeTexture, strokeRect = null\)/);
-  assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\)\)/);
+  assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect\)/);
   assert.match(drawToCanvasBody, /activeStrokeNeedsFullStack/);
-  assert.match(drawToCanvasBody, /drawBlendTexture\(layerTexture, opacity, null, clipBase, blendModeId\)/);
+  assert.match(drawToCanvasBody, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);
 });
 
 test("document renderer exposes non-destructive gaussian blur layer effect helpers", () => {
@@ -303,7 +303,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /this\.deleteMotionBlurResources\(\)/);
   assert.match(source, /this\.deleteFieldBlurResources\(\)/);
   assert.match(source, /this\.deleteRadialBlurResources\(\)/);
-  assert.match(previewCacheBody, /const layerTexture = this\.getLayerRenderTexture\(layer, layerTarget\)/);
+  assert.match(previewCacheBody, /const renderResult = this\.getLayerRenderResult\(layer, layerTarget\)/);
   assert.match(previewCacheBody, /sourceTexture: layerTexture/);
   assert.doesNotMatch(previewCacheBody, /!hasLayerEffects/);
   assert.doesNotMatch(source, /rasterTargetsByLayerId\.set\([^)]*layerEffectScratch/);

@@ -187,6 +187,14 @@
       (activeLayer.type === "paint" || activeLayer.type === "image");
 
     if (canWriteActiveLayer) {
+      const existingTarget = renderer.rasterTargetsByLayerId?.get?.(activeLayer.id);
+
+      if (renderer.isCroppedRasterTarget?.(existingTarget)) {
+        return renderer.materializeRasterTarget?.(activeLayer.id, {
+          source: "color-fill-materialize",
+        }) || renderer.getRasterTarget(activeLayer.id);
+      }
+
       return renderer.getRasterTarget(activeLayer.id);
     }
 

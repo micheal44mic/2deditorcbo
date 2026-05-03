@@ -47,6 +47,9 @@ void main() {
 
       this.gl = options.gl;
       this.getTarget = options.getTarget;
+      this.createTargetForPlacement = typeof options.createTargetForPlacement === "function"
+        ? options.createTargetForPlacement
+        : null;
       this.isDisposed = false;
       this.programInfo = this.createPlacedImageProgramInfo();
       this.quad = this.createPlacementQuad();
@@ -225,7 +228,14 @@ void main() {
         return;
       }
 
-      const target = options.target || this.getTarget(options);
+      const { width, height } = this.getRasterSourceSize(source);
+      const target = options.target ||
+        this.createTargetForPlacement?.({
+          ...options,
+          sourceHeight: height,
+          sourceWidth: width,
+        }) ||
+        this.getTarget(options);
 
       if (!target || !Number.isFinite(target.width) || !Number.isFinite(target.height)) {
         throw new Error("ImageRasterizer richiede un target raster valido.");
@@ -234,9 +244,16 @@ void main() {
       const gl = this.gl;
       const targetWidth = Math.max(1, Math.round(target.width));
       const targetHeight = Math.max(1, Math.round(target.height));
-      const { width, height } = this.getRasterSourceSize(source);
-      const x = Number.isFinite(options.x) ? options.x : Math.round((targetWidth - width) * 0.5);
-      const y = Number.isFinite(options.y) ? options.y : Math.round((targetHeight - height) * 0.5);
+      const x = Number.isFinite(options.x)
+        ? options.x
+        : (Number.isFinite(target.drawX)
+            ? target.drawX
+            : (target.cropped ? 0 : Math.round((targetWidth - width) * 0.5)));
+      const y = Number.isFinite(options.y)
+        ? options.y
+        : (Number.isFinite(target.drawY)
+            ? target.drawY
+            : (target.cropped ? 0 : Math.round((targetHeight - height) * 0.5)));
       const texture = this.createRasterImageTexture(source);
       const { program, uniforms } = this.programInfo;
 

@@ -1916,7 +1916,12 @@ void main() {
         return null;
       }
 
-      const target = this.documentRenderer?.getRasterTarget?.(activeId);
+      const existingTarget = this.documentRenderer?.rasterTargetsByLayerId?.get?.(activeId);
+      const target = this.documentRenderer?.isCroppedRasterTarget?.(existingTarget)
+        ? this.documentRenderer?.materializeRasterTarget?.(activeId, {
+            source: "eraser-materialize",
+          })
+        : this.documentRenderer?.getRasterTarget?.(activeId);
 
       if (!target?.texture || !target?.framebuffer) {
         return null;

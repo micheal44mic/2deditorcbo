@@ -1,0 +1,224 @@
+{
+  "source": "headless-cdp-run",
+  "date": "2026-05-03",
+  "rendererSize": {
+    "width": 4000,
+    "height": 4000
+  },
+  "scenario": [
+    "fresh-load",
+    "after-import-800x600-history-cleared",
+    "after-resize-to-400x300-history-cleared",
+    "after-gaussian-blur-radius-50-scratch"
+  ],
+  "note": "Baseline before cropped raster targets. MiB values estimate app-owned WebGL textures as width * height * 4 bytes, with preview mip cache including mip levels. Browser/driver overhead is not included.",
+  "results": [
+    {
+      "name": "fresh-load",
+      "totalMiB": "203.5",
+      "summary": [
+        {
+          "category": "persistent layer targets",
+          "estimatedMiB": "122.1",
+          "textures": 2
+        },
+        {
+          "category": "renderer caches",
+          "estimatedMiB": "81.4",
+          "textures": 1,
+          "duplicateRows": 1
+        }
+      ],
+      "topRows": [
+        {
+          "category": "renderer caches",
+          "label": "preview mip cache",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "81.4"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "Background (background)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "Paint (paint)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        }
+      ]
+    },
+    {
+      "name": "after-import-800x600-history-cleared",
+      "totalMiB": "264.5",
+      "summary": [
+        {
+          "category": "persistent layer targets",
+          "estimatedMiB": "183.1",
+          "textures": 3
+        },
+        {
+          "category": "renderer caches",
+          "estimatedMiB": "81.4",
+          "textures": 1,
+          "duplicateRows": 1
+        }
+      ],
+      "topRows": [
+        {
+          "category": "renderer caches",
+          "label": "preview mip cache",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "81.4"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "Background (background)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "Paint (paint)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "benchmark-800x600.png (image)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        }
+      ]
+    },
+    {
+      "name": "after-resize-to-400x300-history-cleared",
+      "totalMiB": "264.5",
+      "didTransform": true,
+      "sourceRect": {
+        "x": 1598,
+        "y": 1698,
+        "width": 804,
+        "height": 604
+      },
+      "summary": [
+        {
+          "category": "persistent layer targets",
+          "estimatedMiB": "183.1",
+          "textures": 3
+        },
+        {
+          "category": "renderer caches",
+          "estimatedMiB": "81.4",
+          "textures": 1,
+          "duplicateRows": 1
+        }
+      ],
+      "topRows": [
+        {
+          "category": "renderer caches",
+          "label": "preview mip cache",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "81.4"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "Background (background)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "Paint (paint)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "benchmark-800x600.png (image)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        }
+      ]
+    },
+    {
+      "name": "after-gaussian-blur-radius-50-scratch",
+      "totalMiB": "386.6",
+      "summary": [
+        {
+          "category": "persistent layer targets",
+          "estimatedMiB": "183.1",
+          "textures": 3
+        },
+        {
+          "category": "renderer scratch targets",
+          "estimatedMiB": "122.1",
+          "textures": 2
+        },
+        {
+          "category": "renderer caches",
+          "estimatedMiB": "81.4",
+          "textures": 1,
+          "duplicateRows": 1
+        }
+      ],
+      "topRows": [
+        {
+          "category": "renderer caches",
+          "label": "preview mip cache",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "81.4"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "Background (background)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "Paint (paint)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "persistent layer targets",
+          "label": "benchmark-800x600.png (image)",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "renderer scratch targets",
+          "label": "layerEffectScratchA",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        },
+        {
+          "category": "renderer scratch targets",
+          "label": "layerEffectScratchB",
+          "width": 4000,
+          "height": 4000,
+          "MiB": "61.0"
+        }
+      ]
+    }
+  ]
+}

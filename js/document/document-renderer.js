@@ -1,4 +1,6 @@
 (function registerDocumentRenderer(namespace) {
+  const CROPPED_TARGET_EDGE_PADDING = 2;
+  const CROPPED_TARGET_EFFECT_PADDING = 320;
   const WEBGL2_CONTEXT_ATTRIBUTES = Object.freeze({
     alpha: true,
     antialias: false,
@@ -55,6 +57,7 @@ uniform vec4 u_maskRect;
 uniform float u_maskRectMode;
 uniform float u_clipMode;
 uniform float u_clipOpacity;
+uniform vec2 u_clipOrigin;
 uniform vec2 u_clipTextureSize;
 uniform vec2 u_drawOrigin;
 uniform float u_previewCutMode;
@@ -79,12 +82,14 @@ void main() {
   } else {
     vec4 color = texture(u_texture, v_uv) * u_opacity;
 
+    vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+
     if (u_previewCutMode > 0.5) {
       bool insideCutRect =
-        v_documentPixel.x >= u_previewCutRect.x &&
-        v_documentPixel.y >= u_previewCutRect.y &&
-        v_documentPixel.x <= u_previewCutRect.x + u_previewCutRect.z &&
-        v_documentPixel.y <= u_previewCutRect.y + u_previewCutRect.w;
+        globalDocPixel.x >= u_previewCutRect.x &&
+        globalDocPixel.y >= u_previewCutRect.y &&
+        globalDocPixel.x <= u_previewCutRect.x + u_previewCutRect.z &&
+        globalDocPixel.y <= u_previewCutRect.y + u_previewCutRect.w;
 
       if (insideCutRect) {
         color = vec4(0.0);
@@ -108,10 +113,10 @@ void main() {
     }
 
     if (u_clipMode > 0.5) {
-      vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+      vec2 clipLocalPixel = globalDocPixel - u_clipOrigin;
       vec2 clipUv = vec2(
-        globalDocPixel.x / max(u_clipTextureSize.x, 1.0),
-        1.0 - globalDocPixel.y / max(u_clipTextureSize.y, 1.0)
+        clipLocalPixel.x / max(u_clipTextureSize.x, 1.0),
+        1.0 - clipLocalPixel.y / max(u_clipTextureSize.y, 1.0)
       );
       float clipAlpha = 0.0;
 
@@ -525,6 +530,7 @@ uniform vec4 u_maskRect;
 uniform float u_maskRectMode;
 uniform float u_clipMode;
 uniform float u_clipOpacity;
+uniform vec2 u_clipOrigin;
 uniform vec2 u_clipTextureSize;
 uniform vec2 u_drawOrigin;
 uniform float u_previewCutMode;
@@ -577,12 +583,14 @@ vec3 applyBlendMode(vec3 baseColor, vec3 sourceColor, int blendMode) {
 void main() {
   vec4 source = texture(u_texture, v_uv) * clamp(u_opacity, 0.0, 1.0);
 
+  vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+
   if (u_previewCutMode > 0.5) {
     bool insideCutRect =
-      v_documentPixel.x >= u_previewCutRect.x &&
-      v_documentPixel.y >= u_previewCutRect.y &&
-      v_documentPixel.x <= u_previewCutRect.x + u_previewCutRect.z &&
-      v_documentPixel.y <= u_previewCutRect.y + u_previewCutRect.w;
+      globalDocPixel.x >= u_previewCutRect.x &&
+      globalDocPixel.y >= u_previewCutRect.y &&
+      globalDocPixel.x <= u_previewCutRect.x + u_previewCutRect.z &&
+      globalDocPixel.y <= u_previewCutRect.y + u_previewCutRect.w;
 
     if (insideCutRect) {
       source = vec4(0.0);
@@ -606,10 +614,10 @@ void main() {
   }
 
   if (u_clipMode > 0.5) {
-    vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+    vec2 clipLocalPixel = globalDocPixel - u_clipOrigin;
     vec2 clipUv = vec2(
-      globalDocPixel.x / max(u_clipTextureSize.x, 1.0),
-      1.0 - globalDocPixel.y / max(u_clipTextureSize.y, 1.0)
+      clipLocalPixel.x / max(u_clipTextureSize.x, 1.0),
+      1.0 - clipLocalPixel.y / max(u_clipTextureSize.y, 1.0)
     );
     float clipAlpha = 0.0;
 
@@ -754,6 +762,7 @@ void main() {
       this.height = 1;
       this.texture = null;
       this.framebuffer = null;
+      this.rasterTargetIdSequence = 1;
       this.paintLayerId = "";
       this.rasterTargetsByLayerId = new Map();
       this.puppetMeshResourcesByLayerId = new Map();
@@ -855,6 +864,7 @@ void main() {
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
           clipMode: gl.getUniformLocation(program, "u_clipMode"),
           clipOpacity: gl.getUniformLocation(program, "u_clipOpacity"),
+          clipOrigin: gl.getUniformLocation(program, "u_clipOrigin"),
           clipTexture: gl.getUniformLocation(program, "u_clipTexture"),
           clipTextureSize: gl.getUniformLocation(program, "u_clipTextureSize"),
           documentSize: gl.getUniformLocation(program, "uDocumentSize"),
@@ -1126,6 +1136,7 @@ void main() {
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
           clipMode: gl.getUniformLocation(program, "u_clipMode"),
           clipOpacity: gl.getUniformLocation(program, "u_clipOpacity"),
+          clipOrigin: gl.getUniformLocation(program, "u_clipOrigin"),
           clipTexture: gl.getUniformLocation(program, "u_clipTexture"),
           clipTextureSize: gl.getUniformLocation(program, "u_clipTextureSize"),
           documentSize: gl.getUniformLocation(program, "uDocumentSize"),
@@ -2227,14 +2238,127 @@ void main() {
       return didRadialPass ? target.texture : sourceTexture;
     }
 
-    getLayerRenderTexture(layer, layerTarget) {
-      if (!layerTarget?.texture) {
+    getLayerEffectPadding(layer) {
+      let padding = 0;
+
+      if (Array.isArray(layer?.effects)) {
+        for (const effect of layer.effects) {
+          if (!effect || effect.enabled === false) {
+            continue;
+          }
+
+          if (effect.type === "gaussian-blur") {
+            padding = Math.max(padding, this.getGaussianBlurRadius({ effects: [effect] }));
+          } else if (effect.type === "motion-blur") {
+            const motionBlur = this.getLayerMotionBlur({ effects: [effect] });
+
+            if (motionBlur) {
+              padding = Math.max(padding, motionBlur.distance);
+            }
+          } else if (effect.type === "field-blur") {
+            const fieldBlur = this.getLayerFieldBlur({ effects: [effect] });
+
+            if (fieldBlur) {
+              padding = Math.max(
+                padding,
+                ...fieldBlur.pins.map((pin) => Number.isFinite(pin.blur) ? pin.blur : 0),
+              );
+            }
+          }
+        }
+      } else {
+        const motionBlur = this.getLayerMotionBlur(layer);
+        const fieldBlur = this.getLayerFieldBlur(layer);
+
+        padding = Math.max(padding, this.getGaussianBlurRadius(layer));
+
+        if (motionBlur) {
+          padding = Math.max(padding, motionBlur.distance);
+        }
+
+        if (fieldBlur) {
+          padding = Math.max(
+            padding,
+            ...fieldBlur.pins.map((pin) => Number.isFinite(pin.blur) ? pin.blur : 0),
+          );
+        }
+      }
+
+      return padding > 0
+        ? Math.min(CROPPED_TARGET_EFFECT_PADDING, Math.ceil(padding + CROPPED_TARGET_EDGE_PADDING))
+        : 0;
+    }
+
+    createLayerEffectPaddedSource(sourceTexture, sourceRect, outputRect) {
+      if (!sourceTexture || !sourceRect || !outputRect || !this.programInfo || !this.quad?.vao) {
         return null;
       }
 
-      const width = layerTarget.width || this.width;
-      const height = layerTarget.height || this.height;
-      let texture = layerTarget.texture;
+      const width = Math.max(1, Math.round(outputRect.width || 1));
+      const height = Math.max(1, Math.round(outputRect.height || 1));
+      const { scratchA } = this.ensureLayerEffectScratchTargets(width, height);
+
+      if (!scratchA?.framebuffer || !scratchA.texture) {
+        return null;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.programInfo;
+      const offsetX = sourceRect.x - outputRect.x;
+      const offsetY = sourceRect.y - outputRect.y;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, scratchA.framebuffer);
+      gl.viewport(0, 0, width, height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.useProgram(program);
+      gl.uniform2f(uniforms.viewportSize, width, height);
+      gl.uniform2f(uniforms.documentSize, sourceRect.width, sourceRect.height);
+      gl.uniform2f(uniforms.cameraPosition, offsetX, offsetY);
+      gl.uniform1f(uniforms.cameraZoom, 1);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1i(uniforms.maskTexture, 1);
+      gl.uniform1i(uniforms.clipTexture, 2);
+      gl.uniform1f(uniforms.maskMode, 0.0);
+      gl.uniform1f(uniforms.maskRectMode, 0.0);
+      gl.uniform4f(uniforms.maskRect, 0, 0, width, height);
+      gl.uniform1f(uniforms.clipMode, 0.0);
+      gl.uniform1f(uniforms.clipOpacity, 1.0);
+      gl.uniform2f(uniforms.clipOrigin, 0, 0);
+      gl.uniform2f(uniforms.clipTextureSize, width, height);
+      gl.uniform2f(uniforms.drawOrigin, sourceRect.x, sourceRect.y);
+      gl.uniform1f(uniforms.previewCutMode, 0.0);
+      gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
+      gl.uniform1f(uniforms.gridMode, 0.0);
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.uniform1f(uniforms.opacity, 1);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.useProgram(null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      return {
+        height,
+        rect: outputRect,
+        texture: scratchA.texture,
+        width,
+      };
+    }
+
+    applyLayerEffectsToTexture(layer, sourceTexture, options = {}) {
+      if (!sourceTexture) {
+        return null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      let texture = sourceTexture;
 
       if (Array.isArray(layer?.effects)) {
         for (const effect of layer.effects) {
@@ -2306,6 +2430,46 @@ void main() {
       }
 
       return texture;
+    }
+
+    getLayerRenderResult(layer, layerTarget) {
+      if (!layerTarget?.texture) {
+        return null;
+      }
+
+      const targetRect = this.getRasterTargetDocumentRect(layerTarget);
+      let width = Math.max(1, Math.round(layerTarget.width || this.width || 1));
+      let height = Math.max(1, Math.round(layerTarget.height || this.height || 1));
+      let rect = this.isCroppedRasterTarget(layerTarget) ? targetRect : null;
+      let texture = layerTarget.texture;
+      const effectPadding = this.hasPuppetLayerTransform(layer) ? 0 : this.getLayerEffectPadding(layer);
+      const paddedRect = effectPadding > 0 && this.isCroppedRasterTarget(layerTarget)
+        ? this.getClampedDocumentRect(targetRect, effectPadding)
+        : targetRect;
+
+      if (effectPadding > 0 && paddedRect && !this.areDocumentRectsEqual(paddedRect, targetRect)) {
+        const paddedSource = this.createLayerEffectPaddedSource(texture, targetRect, paddedRect);
+
+        if (paddedSource?.texture) {
+          texture = paddedSource.texture;
+          width = paddedSource.width;
+          height = paddedSource.height;
+          rect = paddedSource.rect;
+        }
+      }
+
+      texture = this.applyLayerEffectsToTexture(layer, texture, { height, width });
+
+      return {
+        height,
+        rect,
+        texture,
+        width,
+      };
+    }
+
+    getLayerRenderTexture(layer, layerTarget) {
+      return this.getLayerRenderResult(layer, layerTarget)?.texture || null;
     }
 
     resolveLayerVisualTexture(layer, layerTarget, options = {}) {
@@ -2407,10 +2571,19 @@ void main() {
       this.rasterTargetsByLayerId.set(this.paintLayerId, target);
     }
 
-    createRasterTarget(clearColor = [0, 0, 0, 0]) {
+    createRasterTarget(clearColor = [0, 0, 0, 0], options = {}) {
       const gl = this.gl;
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
+      const targetWidth = Math.max(1, Math.round(options.width || this.width || 1));
+      const targetHeight = Math.max(1, Math.round(options.height || this.height || 1));
+      const targetX = Number.isFinite(options.x) ? Math.round(options.x) : 0;
+      const targetY = Number.isFinite(options.y) ? Math.round(options.y) : 0;
+      const cropped = options.cropped === true ||
+        targetX !== 0 ||
+        targetY !== 0 ||
+        targetWidth !== this.width ||
+        targetHeight !== this.height;
 
       if (!texture || !framebuffer) {
         if (texture) {
@@ -2435,8 +2608,8 @@ void main() {
         gl.TEXTURE_2D,
         0,
         gl.RGBA,
-        this.width,
-        this.height,
+        targetWidth,
+        targetHeight,
         0,
         gl.RGBA,
         gl.UNSIGNED_BYTE,
@@ -2461,10 +2634,15 @@ void main() {
       }
 
       const target = {
+        id: `raster-target-${this.rasterTargetIdSequence++}`,
         framebuffer,
         texture,
-        width: this.width,
-        height: this.height,
+        width: targetWidth,
+        height: targetHeight,
+        x: targetX,
+        y: targetY,
+        cropped,
+        version: 0,
         clearColor,
       };
 
@@ -2476,6 +2654,22 @@ void main() {
 
     createPaintTarget() {
       return this.createRasterTarget([0, 0, 0, 0]);
+    }
+
+    createRasterTargetForRect(rect, clearColor = [0, 0, 0, 0], padding = 0) {
+      const targetRect = this.getClampedDocumentRect(rect, padding);
+
+      if (!targetRect) {
+        return null;
+      }
+
+      return this.createRasterTarget(clearColor, {
+        cropped: true,
+        height: targetRect.height,
+        width: targetRect.width,
+        x: targetRect.x,
+        y: targetRect.y,
+      });
     }
 
     resolvePaintLayerId() {
@@ -2492,6 +2686,127 @@ void main() {
       return renderablePaintLayer?.id || "paint-main";
     }
 
+    getClampedDocumentRect(rect, padding = 0) {
+      if (!rect) {
+        return null;
+      }
+
+      const pad = Number.isFinite(padding) ? Math.max(0, Math.floor(padding)) : 0;
+      const rawX = Number.isFinite(rect.x) ? rect.x : 0;
+      const rawY = Number.isFinite(rect.y) ? rect.y : 0;
+      const rawWidth = Number.isFinite(rect.width) && rect.width > 0 ? rect.width : 1;
+      const rawHeight = Number.isFinite(rect.height) && rect.height > 0 ? rect.height : 1;
+      const minX = Math.max(0, Math.floor(rawX - pad));
+      const minY = Math.max(0, Math.floor(rawY - pad));
+      const maxX = Math.min(this.width, Math.ceil(rawX + rawWidth + pad));
+      const maxY = Math.min(this.height, Math.ceil(rawY + rawHeight + pad));
+
+      if (maxX <= minX || maxY <= minY) {
+        return null;
+      }
+
+      return {
+        x: minX,
+        y: minY,
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+      };
+    }
+
+    getRasterTargetDocumentRect(target) {
+      if (!target) {
+        return null;
+      }
+
+      return {
+        x: Number.isFinite(target.x) ? Math.round(target.x) : 0,
+        y: Number.isFinite(target.y) ? Math.round(target.y) : 0,
+        width: Math.max(1, Math.round(target.width || this.width || 1)),
+        height: Math.max(1, Math.round(target.height || this.height || 1)),
+      };
+    }
+
+    isCroppedRasterTarget(target) {
+      const rect = this.getRasterTargetDocumentRect(target);
+
+      return Boolean(
+        target &&
+        rect &&
+        (
+          target.cropped === true ||
+          rect.x !== 0 ||
+          rect.y !== 0 ||
+          rect.width !== this.width ||
+          rect.height !== this.height
+        )
+      );
+    }
+
+    isCroppedRect(rect) {
+      return Boolean(
+        rect &&
+        (
+          rect.x !== 0 ||
+          rect.y !== 0 ||
+          rect.width !== this.width ||
+          rect.height !== this.height
+        )
+      );
+    }
+
+    areDocumentRectsEqual(a, b) {
+      return Boolean(
+        a &&
+        b &&
+        a.x === b.x &&
+        a.y === b.y &&
+        a.width === b.width &&
+        a.height === b.height
+      );
+    }
+
+    getRasterTargetLocalRect(target, docRect = null) {
+      const targetRect = this.getRasterTargetDocumentRect(target);
+      const requested = docRect
+        ? this.getClampedDocumentRect(docRect)
+        : targetRect;
+
+      if (!targetRect || !requested) {
+        return null;
+      }
+
+      const x0 = Math.max(targetRect.x, requested.x);
+      const y0 = Math.max(targetRect.y, requested.y);
+      const x1 = Math.min(targetRect.x + targetRect.width, requested.x + requested.width);
+      const y1 = Math.min(targetRect.y + targetRect.height, requested.y + requested.height);
+
+      if (x1 <= x0 || y1 <= y0) {
+        return null;
+      }
+
+      return {
+        docRect: {
+          x: x0,
+          y: y0,
+          width: x1 - x0,
+          height: y1 - y0,
+        },
+        localRect: {
+          x: x0 - targetRect.x,
+          y: y0 - targetRect.y,
+          width: x1 - x0,
+          height: y1 - y0,
+        },
+        targetRect,
+      };
+    }
+
+    markRasterTargetDirty(target) {
+      if (target) {
+        target.version = (target.version || 0) + 1;
+      }
+    }
+
     clearTarget(target) {
       if (!target?.framebuffer) {
         return;
@@ -2505,6 +2820,7 @@ void main() {
       gl.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.markRasterTargetDirty(target);
     }
 
     clear() {
@@ -2559,11 +2875,14 @@ void main() {
 
     createRasterSnapshot(targetOrLayerId, rect = null, label = "raster snapshot") {
       const target = typeof targetOrLayerId === "string"
-        ? this.getRasterTarget(targetOrLayerId)
+        ? this.rasterTargetsByLayerId.get(targetOrLayerId) || this.getRasterTarget(targetOrLayerId)
         : targetOrLayerId;
-      const snapshotRect = this.getSnapshotRect(target, rect);
+      const mappedRect = this.getRasterTargetLocalRect(target, rect);
+      const snapshotRect = mappedRect?.localRect;
+      const docRect = mappedRect?.docRect;
+      const targetRect = mappedRect?.targetRect;
 
-      if (!target?.framebuffer || !snapshotRect) {
+      if (!target?.framebuffer || !snapshotRect || !docRect || !targetRect) {
         return null;
       }
 
@@ -2638,18 +2957,28 @@ void main() {
       return {
         framebuffer,
         label,
-        rect: snapshotRect,
+        rect: docRect,
+        targetRect,
         texture,
       };
     }
 
     canRestoreRasterSnapshot(target, snapshot) {
-      const rect = snapshot?.rect;
+      const mappedRect = this.getRasterTargetLocalRect(target, snapshot?.rect);
+      const rect = mappedRect?.localRect;
+      const docRect = mappedRect?.docRect;
+      const snapshotRect = snapshot?.rect;
 
       return Boolean(
         target?.framebuffer &&
         snapshot?.framebuffer &&
         rect &&
+        docRect &&
+        snapshotRect &&
+        docRect.x === snapshotRect.x &&
+        docRect.y === snapshotRect.y &&
+        docRect.width === snapshotRect.width &&
+        docRect.height === snapshotRect.height &&
         rect.width > 0 &&
         rect.height > 0 &&
         rect.x >= 0 &&
@@ -2664,7 +2993,64 @@ void main() {
         return false;
       }
 
-      const target = this.getRasterTarget(layerId);
+      let target = this.getRasterTarget(layerId);
+      const snapshotTargetRect = snapshot.targetRect;
+      const targetRect = this.getRasterTargetDocumentRect(target);
+
+      if (
+        snapshotTargetRect &&
+        (
+          targetRect.x !== snapshotTargetRect.x ||
+          targetRect.y !== snapshotTargetRect.y ||
+          targetRect.width !== snapshotTargetRect.width ||
+          targetRect.height !== snapshotTargetRect.height
+        ) &&
+        snapshot.rect?.x === snapshotTargetRect.x &&
+        snapshot.rect?.y === snapshotTargetRect.y &&
+        snapshot.rect?.width === snapshotTargetRect.width &&
+        snapshot.rect?.height === snapshotTargetRect.height
+      ) {
+        const nextTarget = this.createRasterTarget([0, 0, 0, 0], {
+          cropped: this.isCroppedRect(snapshotTargetRect),
+          height: snapshotTargetRect.height,
+          width: snapshotTargetRect.width,
+          x: snapshotTargetRect.x,
+          y: snapshotTargetRect.y,
+        });
+
+        const gl = this.gl;
+
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, snapshot.framebuffer);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, nextTarget.framebuffer);
+        gl.blitFramebuffer(
+          0,
+          0,
+          snapshotTargetRect.width,
+          snapshotTargetRect.height,
+          0,
+          0,
+          nextTarget.width,
+          nextTarget.height,
+          gl.COLOR_BUFFER_BIT,
+          gl.NEAREST,
+        );
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+
+        this.markRasterTargetDirty(nextTarget);
+        this.replaceRasterTarget(layerId, nextTarget, {
+          emit: false,
+          source: options.source || "raster-snapshot-target-swap",
+        });
+        target = nextTarget;
+      }
+
+      if (!this.canRestoreRasterSnapshot(target, snapshot)) {
+        target = this.materializeRasterTarget(layerId, {
+          emit: false,
+          source: options.source || "raster-snapshot-materialize",
+        });
+      }
 
       if (!this.canRestoreRasterSnapshot(target, snapshot)) {
         return false;
@@ -2672,16 +3058,19 @@ void main() {
 
       const gl = this.gl;
       const rect = snapshot.rect;
-      const x0 = rect.x;
-      const x1 = rect.x + rect.width;
-      const y0 = target.height - (rect.y + rect.height);
-      const y1 = target.height - rect.y;
+      const mappedRect = this.getRasterTargetLocalRect(target, rect);
+      const localRect = mappedRect.localRect;
+      const x0 = localRect.x;
+      const x1 = localRect.x + localRect.width;
+      const y0 = target.height - (localRect.y + localRect.height);
+      const y1 = target.height - localRect.y;
 
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, snapshot.framebuffer);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, target.framebuffer);
-      gl.blitFramebuffer(0, 0, rect.width, rect.height, x0, y0, x1, y1, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.blitFramebuffer(0, 0, localRect.width, localRect.height, x0, y0, x1, y1, gl.COLOR_BUFFER_BIT, gl.NEAREST);
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      this.markRasterTargetDirty(target);
 
       if (options.emit !== false) {
         this.emitContentChange({
@@ -2703,6 +3092,111 @@ void main() {
         this.gl.deleteTexture(snapshot.texture);
         snapshot.texture = null;
       }
+    }
+
+    deleteRasterTargetObject(target) {
+      if (!target) {
+        return;
+      }
+
+      const gl = this.gl;
+
+      if (target.framebuffer) {
+        gl.deleteFramebuffer(target.framebuffer);
+        target.framebuffer = null;
+      }
+
+      if (target.texture) {
+        gl.deleteTexture(target.texture);
+        target.texture = null;
+      }
+    }
+
+    replaceRasterTarget(layerId, nextTarget, options = {}) {
+      if (!layerId || !nextTarget?.framebuffer || !nextTarget?.texture) {
+        return false;
+      }
+
+      const previousTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      this.rasterTargetsByLayerId.set(layerId, nextTarget);
+
+      if (layerId === this.paintLayerId || previousTarget?.texture === this.texture) {
+        this.texture = nextTarget.texture;
+        this.framebuffer = nextTarget.framebuffer;
+      }
+
+      if (previousTarget && previousTarget !== nextTarget) {
+        this.deleteRasterTargetObject(previousTarget);
+      }
+
+      this.deletePuppetMeshResource(layerId);
+      this.invalidatePreviewCache(options.source || "replace-raster-target");
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId,
+          source: options.source || "replace-raster-target",
+        });
+      }
+
+      return true;
+    }
+
+    materializeRasterTarget(layerId, options = {}) {
+      const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!target?.texture || !target?.framebuffer) {
+        return this.getRasterTarget(layerId);
+      }
+
+      if (!this.isCroppedRasterTarget(target)) {
+        return {
+          ...target,
+          layerId,
+        };
+      }
+
+      const targetRect = this.getRasterTargetDocumentRect(target);
+      const fullTarget = this.createRasterTarget(target.clearColor || [0, 0, 0, 0], {
+        cropped: false,
+        height: this.height,
+        width: this.width,
+        x: 0,
+        y: 0,
+      });
+      const destQuad = [
+        { x: targetRect.x, y: targetRect.y },
+        { x: targetRect.x + targetRect.width, y: targetRect.y },
+        { x: targetRect.x + targetRect.width, y: targetRect.y + targetRect.height },
+        { x: targetRect.x, y: targetRect.y + targetRect.height },
+      ];
+      const didDraw = this.drawTexturedQuad(target.texture, destQuad, {
+        camera: { x: 0, y: 0, zoom: 1 },
+        framebuffer: fullTarget.framebuffer,
+        opacity: 1,
+        viewportHeight: fullTarget.height,
+        viewportWidth: fullTarget.width,
+      });
+
+      if (!didDraw) {
+        this.deleteRasterTargetObject(fullTarget);
+        return {
+          ...target,
+          layerId,
+        };
+      }
+
+      this.markRasterTargetDirty(fullTarget);
+      this.replaceRasterTarget(layerId, fullTarget, {
+        emit: options.emit,
+        source: options.source || "materialize-raster-target",
+      });
+
+      return {
+        ...fullTarget,
+        layerId,
+      };
     }
 
     requestDraw() {
@@ -2832,12 +3326,25 @@ void main() {
       const topDownMaxY = coarseRect.height - 1 - minY;
       const padding = Number.isFinite(options.padding) ? Math.max(0, Math.floor(options.padding)) : 2;
 
-      return bounds?.getClampedRasterBox?.({
+      const localBounds = bounds?.getClampedRasterBox?.({
         x: coarseRect.x + minX - padding,
         y: coarseRect.y + topDownMinY - padding,
         width: maxX - minX + 1 + padding * 2,
         height: topDownMaxY - topDownMinY + 1 + padding * 2,
-      }, targetWidth, targetHeight) || null;
+      }, targetWidth, targetHeight);
+
+      if (!localBounds) {
+        return null;
+      }
+
+      const targetRect = this.getRasterTargetDocumentRect(target);
+
+      return bounds?.getClampedRasterBox?.({
+        x: targetRect.x + localBounds.x,
+        y: targetRect.y + localBounds.y,
+        width: localBounds.width,
+        height: localBounds.height,
+      }, this.width, this.height) || null;
     }
 
     clearRasterRect(layerId, rect) {
@@ -2846,7 +3353,8 @@ void main() {
       }
 
       const target = this.rasterTargetsByLayerId.get(layerId);
-      const clearRect = namespace.documentBounds?.getClampedRasterBox?.(rect, target?.width, target?.height);
+      const mappedRect = this.getRasterTargetLocalRect(target, rect);
+      const clearRect = mappedRect?.localRect;
 
       if (!target?.framebuffer || !clearRect) {
         return false;
@@ -2861,6 +3369,104 @@ void main() {
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.disable(gl.SCISSOR_TEST);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.markRasterTargetDirty(target);
+
+      return true;
+    }
+
+    commitCroppedRasterTransform(options = {}) {
+      const {
+        destQuad,
+        destRect,
+        layerId,
+        source = "raster-transform",
+        sourceSnapshot,
+        transformMode = "free",
+      } = options;
+      const target = this.rasterTargetsByLayerId.get(layerId);
+      const nextRect = this.getClampedDocumentRect(destRect, CROPPED_TARGET_EDGE_PADDING);
+
+      if (!target?.framebuffer || !sourceSnapshot?.texture || !nextRect) {
+        return false;
+      }
+
+      const beforeSnapshot = this.createRasterSnapshot(target, null, `${source}-before-target`);
+
+      if (!beforeSnapshot?.texture) {
+        return false;
+      }
+
+      const nextTarget = this.createRasterTargetForRect(nextRect);
+
+      if (!nextTarget?.framebuffer) {
+        this.deleteRasterSnapshot(beforeSnapshot);
+        return false;
+      }
+
+      const localDestQuad = destQuad.map((point) => ({
+        x: point.x - nextRect.x,
+        y: point.y - nextRect.y,
+      }));
+      const drawOptions = {
+        camera: { x: 0, y: 0, zoom: 1 },
+        framebuffer: nextTarget.framebuffer,
+        opacity: 1,
+        viewportHeight: nextTarget.height,
+        viewportWidth: nextTarget.width,
+      };
+      const didDraw = String(transformMode).trim().toLowerCase() === "perspective"
+        ? this.drawPerspectiveTexturedQuad(sourceSnapshot.texture, localDestQuad, drawOptions)
+        : this.drawTexturedQuad(sourceSnapshot.texture, localDestQuad, drawOptions);
+
+      if (!didDraw) {
+        this.deleteRasterTargetObject(nextTarget);
+        this.deleteRasterSnapshot(beforeSnapshot);
+        return false;
+      }
+
+      this.markRasterTargetDirty(nextTarget);
+
+      const afterSnapshot = this.createRasterSnapshot(nextTarget, null, `${source}-after-target`);
+
+      if (!afterSnapshot?.texture) {
+        this.deleteRasterTargetObject(nextTarget);
+        this.deleteRasterSnapshot(beforeSnapshot);
+        return false;
+      }
+
+      this.replaceRasterTarget(layerId, nextTarget, {
+        emit: false,
+        source,
+      });
+
+      const history = namespace.documentHistory;
+      const entry = {
+        type: "custom",
+        afterSnapshot,
+        beforeSnapshot,
+        layerId,
+        source,
+        undo: () => this.restoreRasterSnapshot(layerId, beforeSnapshot, {
+          source: `history-undo-${source}`,
+        }),
+        redo: () => this.restoreRasterSnapshot(layerId, afterSnapshot, {
+          source: `history-redo-${source}`,
+        }),
+        destroy: () => {
+          this.deleteRasterSnapshot(beforeSnapshot);
+          this.deleteRasterSnapshot(afterSnapshot);
+        },
+      };
+
+      if (history?.push) {
+        history.push(entry);
+      } else {
+        entry.destroy();
+      }
+
+      this.clearRasterTransformPreview(layerId);
+      this.emitContentChange({ layerId, source });
+      this.requestDraw();
 
       return true;
     }
@@ -2883,6 +3489,14 @@ void main() {
 
       const destBounds = bounds?.quadToBounds?.(destQuad);
       const destRect = bounds?.boundsToRect?.(destBounds);
+
+      if (this.isCroppedRasterTarget(target)) {
+        return this.commitCroppedRasterTransform({
+          ...options,
+          destRect,
+        });
+      }
+
       const dirtyRect = bounds?.getClampedRasterBox?.(
         bounds.getUnionRect(sourceRect, destRect),
         target?.width,
@@ -2979,16 +3593,7 @@ void main() {
         return false;
       }
 
-      const gl = this.gl;
-
-      if (target.framebuffer) {
-        gl.deleteFramebuffer(target.framebuffer);
-      }
-
-      if (target.texture) {
-        gl.deleteTexture(target.texture);
-      }
-
+      this.deleteRasterTargetObject(target);
       this.rasterTargetsByLayerId.delete(layerId);
       this.deletePuppetMeshResource(layerId);
 
@@ -3230,6 +3835,7 @@ void main() {
         gl.uniform4f(uniforms.maskRect, 0, 0, width, height);
         gl.uniform1f(uniforms.clipMode, 0.0);
         gl.uniform1f(uniforms.clipOpacity, 1.0);
+        gl.uniform2f(uniforms.clipOrigin, 0, 0);
         gl.uniform2f(uniforms.clipTextureSize, width, height);
         gl.uniform2f(uniforms.drawOrigin, 0, 0);
         gl.uniform1f(uniforms.previewCutMode, 0.0);
@@ -3241,20 +3847,25 @@ void main() {
         gl.blendEquation(gl.FUNC_ADD);
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       };
-      const drawTexture = (texture, opacity = 1) => {
-        setDocumentProjection(width, height, 0, 0);
-        gl.uniform2f(uniforms.drawOrigin, 0, 0);
+      const drawTexture = (texture, opacity = 1, rect = null) => {
+        if (rect) {
+          setDocumentProjection(rect.width, rect.height, rect.x, rect.y);
+          gl.uniform2f(uniforms.drawOrigin, rect.x, rect.y);
+        } else {
+          setDocumentProjection(width, height, 0, 0);
+          gl.uniform2f(uniforms.drawOrigin, 0, 0);
+        }
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, opacity);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       };
-      const drawBlendTexture = (texture, opacity = 1, blendModeId = 0) => {
+      const drawBlendTexture = (texture, opacity = 1, blendModeId = 0, rect = null) => {
         if (!texture) {
           return;
         }
 
         if (blendModeId === 0) {
-          drawTexture(texture, opacity);
+          drawTexture(texture, opacity, rect);
           return;
         }
 
@@ -3264,8 +3875,15 @@ void main() {
         gl.disable(gl.BLEND);
         gl.useProgram(blendProgram);
         gl.uniform2f(blendUniforms.viewportSize, width, height);
-        gl.uniform2f(blendUniforms.documentSize, width, height);
-        gl.uniform2f(blendUniforms.cameraPosition, 0, 0);
+        if (rect) {
+          gl.uniform2f(blendUniforms.documentSize, rect.width, rect.height);
+          gl.uniform2f(blendUniforms.cameraPosition, rect.x, rect.y);
+          gl.uniform2f(blendUniforms.drawOrigin, rect.x, rect.y);
+        } else {
+          gl.uniform2f(blendUniforms.documentSize, width, height);
+          gl.uniform2f(blendUniforms.cameraPosition, 0, 0);
+          gl.uniform2f(blendUniforms.drawOrigin, 0, 0);
+        }
         gl.uniform1f(blendUniforms.cameraZoom, 1);
         gl.uniform1i(blendUniforms.texture, 0);
         gl.uniform1i(blendUniforms.backdropTexture, 3);
@@ -3279,8 +3897,8 @@ void main() {
         gl.uniform4f(blendUniforms.maskRect, 0, 0, width, height);
         gl.uniform1f(blendUniforms.clipMode, 0.0);
         gl.uniform1f(blendUniforms.clipOpacity, 1.0);
+        gl.uniform2f(blendUniforms.clipOrigin, 0, 0);
         gl.uniform2f(blendUniforms.clipTextureSize, width, height);
-        gl.uniform2f(blendUniforms.drawOrigin, 0, 0);
         gl.uniform1f(blendUniforms.previewCutMode, 0.0);
         gl.uniform4f(blendUniforms.previewCutRect, 0, 0, 0, 0);
         gl.bindVertexArray(this.quad.vao);
@@ -3311,7 +3929,8 @@ void main() {
           continue;
         }
 
-        const layerTexture = this.getLayerRenderTexture(layer, layerTarget);
+        const renderResult = this.getLayerRenderResult(layer, layerTarget);
+        const layerTexture = renderResult?.texture;
 
         if (!layerTexture) {
           continue;
@@ -3332,10 +3951,10 @@ void main() {
           bindArtboardProgram();
 
           if (!didDrawPuppet) {
-            drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer));
+            drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect);
           }
         } else {
-          drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer));
+          drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect);
         }
       }
 
@@ -3648,8 +4267,9 @@ void main() {
         return 0;
       }
 
-      const pixelX = Math.floor(x);
-      const pixelY = Math.floor(y);
+      const targetRect = this.getRasterTargetDocumentRect(target);
+      const pixelX = Math.floor(x - targetRect.x);
+      const pixelY = Math.floor(y - targetRect.y);
 
       if (
         pixelX < 0 ||
@@ -3971,15 +4591,27 @@ void main() {
         return null;
       }
 
-      const renderTexture = this.getLayerRenderTexture(layer, target);
+      const renderResult = this.getLayerRenderResult(layer, target);
+      const renderTexture = renderResult?.texture;
+      const targetRect = this.getRasterTargetDocumentRect(target);
+      const renderRect = renderResult?.rect || targetRect;
+      const needsTargetSwap = renderRect && !this.areDocumentRectsEqual(renderRect, targetRect);
+      const destinationTarget = needsTargetSwap
+        ? this.createRasterTargetForRect(renderRect)
+        : target;
       const didCopy = renderTexture &&
         renderTexture !== target.texture &&
-        this.copyTextureToRasterTarget(renderTexture, target, {
-          height: target.height,
-          width: target.width,
+        destinationTarget?.framebuffer &&
+        this.copyTextureToRasterTarget(renderTexture, destinationTarget, {
+          height: renderResult.height,
+          width: renderResult.width,
         });
 
       if (!didCopy) {
+        if (needsTargetSwap) {
+          this.deleteRasterTargetObject(destinationTarget);
+        }
+
         this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
           emit: false,
           source: "layer-effects-rasterize-rollback",
@@ -3988,7 +4620,15 @@ void main() {
         return null;
       }
 
-      const afterSnapshot = this.createRasterSnapshot(target, null, "layer-effects-rasterize-after");
+      if (needsTargetSwap) {
+        this.replaceRasterTarget(layer.id, destinationTarget, {
+          emit: false,
+          source: options.source || "layer-effects-rasterize",
+        });
+      }
+
+      const finalTarget = needsTargetSwap ? destinationTarget : target;
+      const afterSnapshot = this.createRasterSnapshot(finalTarget, null, "layer-effects-rasterize-after");
 
       if (!afterSnapshot?.texture) {
         this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
@@ -4097,6 +4737,11 @@ void main() {
           gl.uniform1f(uniforms.clipMode, 1.0);
           gl.uniform1f(uniforms.clipOpacity, clipOpacity);
           gl.uniform2f(
+            uniforms.clipOrigin,
+            Number.isFinite(clipBase.target.x) ? clipBase.target.x : 0,
+            Number.isFinite(clipBase.target.y) ? clipBase.target.y : 0,
+          );
+          gl.uniform2f(
             uniforms.clipTextureSize,
             clipBase.target.width || target.width,
             clipBase.target.height || target.height,
@@ -4105,6 +4750,7 @@ void main() {
         } else {
           gl.uniform1f(uniforms.clipMode, 0.0);
           gl.uniform1f(uniforms.clipOpacity, 1.0);
+          gl.uniform2f(uniforms.clipOrigin, 0, 0);
           gl.uniform2f(uniforms.clipTextureSize, target.width, target.height);
         }
 
@@ -4201,6 +4847,11 @@ void main() {
           gl.uniform1f(blendUniforms.clipMode, 1.0);
           gl.uniform1f(blendUniforms.clipOpacity, clipOpacity);
           gl.uniform2f(
+            blendUniforms.clipOrigin,
+            Number.isFinite(clipBase.target.x) ? clipBase.target.x : 0,
+            Number.isFinite(clipBase.target.y) ? clipBase.target.y : 0,
+          );
+          gl.uniform2f(
             blendUniforms.clipTextureSize,
             clipBase.target.width || target.width,
             clipBase.target.height || target.height,
@@ -4208,6 +4859,7 @@ void main() {
         } else {
           gl.uniform1f(blendUniforms.clipMode, 0.0);
           gl.uniform1f(blendUniforms.clipOpacity, 1.0);
+          gl.uniform2f(blendUniforms.clipOrigin, 0, 0);
           gl.uniform2f(blendUniforms.clipTextureSize, target.width, target.height);
         }
 
@@ -4261,6 +4913,7 @@ void main() {
         gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
         gl.uniform1f(uniforms.clipMode, 0.0);
         gl.uniform1f(uniforms.clipOpacity, 1.0);
+        gl.uniform2f(uniforms.clipOrigin, 0, 0);
         gl.uniform2f(uniforms.clipTextureSize, target.width, target.height);
         gl.uniform2f(uniforms.drawOrigin, 0, 0);
         gl.uniform1f(uniforms.previewCutMode, 0.0);
@@ -4391,9 +5044,11 @@ void main() {
               }
             }
 
-            const layerTexture = this.getLayerRenderTexture(layer, renderTarget);
+            const renderResult = this.getLayerRenderResult(layer, renderTarget);
+            const layerTexture = renderResult?.texture;
             const hasVisualEffects = layerTexture && layerTexture !== renderTarget.texture;
             const blendModeId = this.getLayerBlendModeId(layer);
+            const layerRect = renderResult?.rect || null;
 
             if (hasVisualEffects) {
               bindArtboardProgram();
@@ -4427,7 +5082,7 @@ void main() {
 
             if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
               if (isClippingLayer) {
-                drawBlendTexture(layerTexture, opacity, null, clipBase, blendModeId);
+                drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
               } else {
                 const didDrawPuppet = this.drawPuppetLayer(layer, layerTarget, opacity, {
                   camera,
@@ -4439,11 +5094,11 @@ void main() {
                 bindArtboardProgram();
 
                 if (!didDrawPuppet) {
-                  drawBlendTexture(layerTexture, opacity, null, null, blendModeId);
+                  drawBlendTexture(layerTexture, opacity, layerRect, null, blendModeId);
                 }
               }
             } else {
-              drawBlendTexture(layerTexture, opacity, null, clipBase, blendModeId);
+              drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
             }
 
             if (isRasterTransformPreviewLayer) {

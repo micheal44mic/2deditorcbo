@@ -1,0 +1,275 @@
+{
+  "activeLayerId": "image-mopt4cby-1",
+  "rendererSize": {
+    "width": 4000,
+    "height": 4000
+  },
+  "results": [
+    {
+      "name": "fresh-load",
+      "countedTextures": 3,
+      "summary": [
+        {
+          "category": "persistent layer targets",
+          "duplicateRows": 0,
+          "estimatedMiB": "122.1",
+          "textures": 2
+        },
+        {
+          "category": "renderer caches",
+          "duplicateRows": 1,
+          "estimatedMiB": "81.4",
+          "textures": 1
+        }
+      ],
+      "topRows": [
+        {
+          "category": "renderer caches",
+          "duplicate": false,
+          "height": 4000,
+          "label": "preview mip cache",
+          "MiB": "81.4",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 4000,
+          "label": "Background (background)",
+          "MiB": "61.0",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 4000,
+          "label": "Paint (paint)",
+          "MiB": "61.0",
+          "width": 4000
+        },
+        {
+          "category": "renderer caches",
+          "duplicate": true,
+          "height": 4000,
+          "label": "main document texture",
+          "MiB": "0.00",
+          "width": 4000
+        }
+      ],
+      "totalMiB": "203.5"
+    },
+    {
+      "name": "after-import-800x600-history-cleared",
+      "countedTextures": 4,
+      "summary": [
+        {
+          "category": "persistent layer targets",
+          "duplicateRows": 0,
+          "estimatedMiB": "123.9",
+          "textures": 3
+        },
+        {
+          "category": "renderer caches",
+          "duplicateRows": 1,
+          "estimatedMiB": "81.4",
+          "textures": 1
+        }
+      ],
+      "topRows": [
+        {
+          "category": "renderer caches",
+          "duplicate": false,
+          "height": 4000,
+          "label": "preview mip cache",
+          "MiB": "81.4",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 4000,
+          "label": "Background (background)",
+          "MiB": "61.0",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 4000,
+          "label": "Paint (paint)",
+          "MiB": "61.0",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 604,
+          "label": "benchmark-800x600.png (image)",
+          "MiB": "1.85",
+          "width": 804
+        },
+        {
+          "category": "renderer caches",
+          "duplicate": true,
+          "height": 4000,
+          "label": "main document texture",
+          "MiB": "0.00",
+          "width": 4000
+        }
+      ],
+      "totalMiB": "205.3"
+    },
+    {
+      "name": "after-resize-to-400x300-history-cleared",
+      "countedTextures": 4,
+      "summary": [
+        {
+          "category": "persistent layer targets",
+          "duplicateRows": 0,
+          "estimatedMiB": "122.5",
+          "textures": 3
+        },
+        {
+          "category": "renderer caches",
+          "duplicateRows": 1,
+          "estimatedMiB": "81.4",
+          "textures": 1
+        }
+      ],
+      "topRows": [
+        {
+          "category": "renderer caches",
+          "duplicate": false,
+          "height": 4000,
+          "label": "preview mip cache",
+          "MiB": "81.4",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 4000,
+          "label": "Background (background)",
+          "MiB": "61.0",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 4000,
+          "label": "Paint (paint)",
+          "MiB": "61.0",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 304,
+          "label": "benchmark-800x600.png (image)",
+          "MiB": "0.47",
+          "width": 404
+        },
+        {
+          "category": "renderer caches",
+          "duplicate": true,
+          "height": 4000,
+          "label": "main document texture",
+          "MiB": "0.00",
+          "width": 4000
+        }
+      ],
+      "totalMiB": "203.9",
+      "didTransform": true,
+      "sourceRect": {
+        "x": 1598,
+        "y": 1698,
+        "width": 804,
+        "height": 604
+      }
+    },
+    {
+      "name": "after-gaussian-blur-radius-50-scratch",
+      "countedTextures": 6,
+      "summary": [
+        {
+          "category": "persistent layer targets",
+          "duplicateRows": 0,
+          "estimatedMiB": "122.5",
+          "textures": 3
+        },
+        {
+          "category": "renderer caches",
+          "duplicateRows": 1,
+          "estimatedMiB": "81.4",
+          "textures": 1
+        },
+        {
+          "category": "renderer scratch targets",
+          "duplicateRows": 0,
+          "estimatedMiB": "1.58",
+          "textures": 2
+        }
+      ],
+      "topRows": [
+        {
+          "category": "renderer caches",
+          "duplicate": false,
+          "height": 4000,
+          "label": "preview mip cache",
+          "MiB": "81.4",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 4000,
+          "label": "Background (background)",
+          "MiB": "61.0",
+          "width": 4000
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 4000,
+          "label": "Paint (paint)",
+          "MiB": "61.0",
+          "width": 4000
+        },
+        {
+          "category": "renderer scratch targets",
+          "duplicate": false,
+          "height": 408,
+          "label": "layerEffectScratchA",
+          "MiB": "0.79",
+          "width": 508
+        },
+        {
+          "category": "renderer scratch targets",
+          "duplicate": false,
+          "height": 408,
+          "label": "layerEffectScratchB",
+          "MiB": "0.79",
+          "width": 508
+        },
+        {
+          "category": "persistent layer targets",
+          "duplicate": false,
+          "height": 304,
+          "label": "benchmark-800x600.png (image)",
+          "MiB": "0.47",
+          "width": 404
+        },
+        {
+          "category": "renderer caches",
+          "duplicate": true,
+          "height": 4000,
+          "label": "main document texture",
+          "MiB": "0.00",
+          "width": 4000
+        }
+      ],
+      "totalMiB": "205.5",
+      "blurError": null
+    }
+  ]
+}

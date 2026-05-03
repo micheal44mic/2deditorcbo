@@ -146,6 +146,48 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   try {
     window.CBO.imageRasterizer = new window.CBO.ImageRasterizer({
       gl,
+      createTargetForPlacement: (options = {}) => {
+        if (
+          !options.layerId ||
+          options.cropped === false ||
+          Number.isFinite(options.x) ||
+          Number.isFinite(options.y)
+        ) {
+          return null;
+        }
+
+        const renderer = window.CBO.documentRenderer;
+
+        if (!renderer?.createRasterTargetForRect || !renderer?.replaceRasterTarget) {
+          return null;
+        }
+
+        const sourceWidth = Math.max(1, Math.round(options.sourceWidth || 1));
+        const sourceHeight = Math.max(1, Math.round(options.sourceHeight || 1));
+        const rect = renderer.getClampedDocumentRect?.({
+          x: Math.round((renderer.width - sourceWidth) * 0.5),
+          y: Math.round((renderer.height - sourceHeight) * 0.5),
+          width: sourceWidth,
+          height: sourceHeight,
+        });
+        const target = rect ? renderer.createRasterTargetForRect(rect, [0, 0, 0, 0], 2) : null;
+
+        if (!target) {
+          return null;
+        }
+
+        renderer.replaceRasterTarget(options.layerId, target, {
+          emit: false,
+          source: options.source || "image-placement-target",
+        });
+
+        return {
+          ...target,
+          drawX: rect.x - target.x,
+          drawY: rect.y - target.y,
+          layerId: options.layerId,
+        };
+      },
       getTarget: (options = {}) => {
         if (options.layerId) {
           return window.CBO.documentRenderer.getRasterTarget(options.layerId);
