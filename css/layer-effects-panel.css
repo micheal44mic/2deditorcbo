@@ -270,6 +270,61 @@
   border-color: rgba(246, 247, 251, 0.28);
 }
 
+.field-blur-control-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field-blur-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 62px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 7px;
+  background: #181a1f;
+  color: #c3c8d1;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.field-blur-number:focus-within {
+  background: #2c303a;
+  color: #ffffff;
+}
+
+.field-blur-number-input {
+  width: 42px;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  appearance: textfield;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  letter-spacing: 0;
+  line-height: 1;
+  outline: 0;
+  text-align: right;
+}
+
+.field-blur-number-input::-webkit-outer-spin-button,
+.field-blur-number-input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.field-blur-number-unit {
+  margin-left: 1px;
+}
+
 .field-blur-guide {
   display: grid;
   gap: 3px;

@@ -5,6 +5,7 @@ window.CBO = window.CBO || {};
   const MAX_MOTION_BLUR_DISTANCE = 300;
   const MAX_FIELD_BLUR_RADIUS = 200;
   const MAX_FIELD_BLUR_PINS = 8;
+  const FIELD_BLUR_PREVIEW_DEBOUNCE_MS = 90;
   const MAX_RADIAL_BLUR_AMOUNT = 200;
   const RASTERIZABLE_EFFECT_TYPES = Object.freeze(["gaussian-blur", "motion-blur", "field-blur", "radial-blur"]);
   const EFFECT_GROUPS = Object.freeze([
@@ -1007,7 +1008,7 @@ window.CBO = window.CBO || {};
     let activeFieldBlurPinId = "";
     let fieldBlurOverlay = null;
     let fieldBlurPinIdSequence = 0;
-    let fieldBlurPreviewFrame = 0;
+    let fieldBlurPreviewTimer = 0;
     let fieldBlurPins = [];
     let previewSession = null;
 
@@ -1161,9 +1162,22 @@ window.CBO = window.CBO || {};
 
       fieldBlurPinList.innerHTML = fieldBlurPins.map((pin, index) => `
         <div class="field-blur-pin-control${pin.id === activeFieldBlurPinId ? " active" : ""}" data-field-blur-pin-control="${pin.id}">
-          <div class="layer-effects-control-header">
+          <div class="field-blur-control-header">
             <span class="layer-effects-label">Pin ${index + 1}</span>
-            <output class="layer-effects-value" data-field-blur-pin-value="${pin.id}">${Math.round(pin.blur)} px</output>
+            <label class="field-blur-number brush-studio-setting-value">
+              <input
+                class="field-blur-number-input brush-studio-setting-value-input"
+                type="number"
+                min="0"
+                max="${MAX_FIELD_BLUR_RADIUS}"
+                step="1"
+                value="${Math.round(pin.blur)}"
+                inputmode="numeric"
+                aria-label="Field blur pin ${index + 1} value"
+                data-field-blur-pin-number="${pin.id}"
+              />
+              <span class="field-blur-number-unit brush-studio-setting-value-unit">px</span>
+            </label>
           </div>
           <input
             class="layer-effects-range"
@@ -1193,6 +1207,18 @@ window.CBO = window.CBO || {};
       syncFieldBlurUi();
     }
 
+    function focusFieldBlurPinControl(pinId) {
+      const pin = fieldBlurPins.find((candidate) => candidate.id === pinId);
+
+      if (!pin) {
+        return;
+      }
+
+      activeFieldBlurPinId = pinId;
+      renderFieldBlurPins();
+      updateFieldBlurPinControlValue(pinId, pin.blur);
+    }
+
     function syncFieldBlurAcceptState() {
       if (activeEffectType !== "field-blur") {
         return;
@@ -1201,11 +1227,17 @@ window.CBO = window.CBO || {};
       acceptButton.disabled = !isBlurEligibleLayer(getActiveLayer()) || !hasFieldBlurAmount(fieldBlurPins);
     }
 
-    function flushFieldBlurPreview() {
-      if (fieldBlurPreviewFrame) {
-        window.cancelAnimationFrame?.(fieldBlurPreviewFrame);
-        fieldBlurPreviewFrame = 0;
+    function clearFieldBlurPreviewTimer() {
+      if (!fieldBlurPreviewTimer) {
+        return;
       }
+
+      window.clearTimeout?.(fieldBlurPreviewTimer);
+      fieldBlurPreviewTimer = 0;
+    }
+
+    function flushFieldBlurPreview() {
+      clearFieldBlurPreviewTimer();
 
       const layer = getActiveLayer();
 
@@ -1228,19 +1260,17 @@ window.CBO = window.CBO || {};
     }
 
     function scheduleFieldBlurPreview() {
-      if (fieldBlurPreviewFrame) {
-        return;
-      }
+      clearFieldBlurPreviewTimer();
 
-      if (typeof window.requestAnimationFrame !== "function") {
+      if (typeof window.setTimeout !== "function") {
         flushFieldBlurPreview();
         return;
       }
 
-      fieldBlurPreviewFrame = window.requestAnimationFrame(() => {
-        fieldBlurPreviewFrame = 0;
+      fieldBlurPreviewTimer = window.setTimeout(() => {
+        fieldBlurPreviewTimer = 0;
         flushFieldBlurPreview();
-      });
+      }, FIELD_BLUR_PREVIEW_DEBOUNCE_MS);
     }
 
     function addFieldBlurPin(point) {
@@ -1275,19 +1305,26 @@ window.CBO = window.CBO || {};
     }
 
     function updateFieldBlurPinControlValue(pinId, blur) {
+      const nextValue = String(Math.round(blur));
+
       fieldBlurPinList.querySelectorAll("[data-field-blur-pin-control]").forEach((control) => {
         const isActive = control.dataset.fieldBlurPinControl === pinId;
 
         control.classList.toggle("active", isActive);
       });
-      fieldBlurPinList.querySelectorAll("[data-field-blur-pin-value]").forEach((output) => {
-        if (output.dataset.fieldBlurPinValue === pinId) {
-          output.textContent = `${Math.round(blur)} px`;
+      fieldBlurPinList.querySelectorAll("[data-field-blur-pin-input]").forEach((input) => {
+        if (input.dataset.fieldBlurPinInput === pinId) {
+          input.value = String(blur);
+        }
+      });
+      fieldBlurPinList.querySelectorAll("[data-field-blur-pin-number]").forEach((input) => {
+        if (input.dataset.fieldBlurPinNumber === pinId && document.activeElement !== input) {
+          input.value = nextValue;
         }
       });
     }
 
-    function setFieldBlurPinBlur(pinId, blur) {
+    function setFieldBlurPinBlur(pinId, blur, options = {}) {
       const nextBlur = clamp(blur, 0, MAX_FIELD_BLUR_RADIUS);
 
       fieldBlurPins = fieldBlurPins.map((pin) =>
@@ -1296,8 +1333,25 @@ window.CBO = window.CBO || {};
       activeFieldBlurPinId = pinId;
       renderFieldBlurPins();
       updateFieldBlurPinControlValue(pinId, nextBlur);
-      scheduleFieldBlurPreview();
+      if (options.flush === true) {
+        flushFieldBlurPreview();
+      } else {
+        scheduleFieldBlurPreview();
+      }
       syncFieldBlurAcceptState();
+    }
+
+    function commitFieldBlurPinInput(input) {
+      const pinId = input?.dataset.fieldBlurPinInput || input?.dataset.fieldBlurPinNumber || "";
+
+      if (!pinId) {
+        return;
+      }
+
+      const nextBlur = clamp(input.value, 0, MAX_FIELD_BLUR_RADIUS);
+
+      input.value = String(Math.round(nextBlur));
+      setFieldBlurPinBlur(pinId, nextBlur, { flush: true });
     }
 
     function handleFieldBlurOverlayWheel(event) {
@@ -1420,10 +1474,7 @@ window.CBO = window.CBO || {};
       }
 
       fieldBlurDrag = null;
-      if (fieldBlurPreviewFrame) {
-        window.cancelAnimationFrame?.(fieldBlurPreviewFrame);
-        fieldBlurPreviewFrame = 0;
-      }
+      clearFieldBlurPreviewTimer();
       activeFieldBlurPinId = "";
       fieldBlurPins = [];
     }
@@ -1858,20 +1909,54 @@ window.CBO = window.CBO || {};
     });
 
     fieldBlurPinList.addEventListener("click", (event) => {
+      const valueControl = event.target?.closest?.("[data-field-blur-pin-input], [data-field-blur-pin-number], .field-blur-number");
       const control = event.target?.closest?.("[data-field-blur-pin-control]");
-      const pinId = control?.dataset.fieldBlurPinControl || "";
+      const valuePinId = valueControl?.dataset.fieldBlurPinInput ||
+        valueControl?.dataset.fieldBlurPinNumber ||
+        valueControl?.querySelector?.("[data-field-blur-pin-number]")?.dataset.fieldBlurPinNumber ||
+        "";
+      const pinId = valuePinId || control?.dataset.fieldBlurPinControl || "";
 
-      if (pinId) {
-        setActiveFieldBlurPin(pinId);
+      if (!pinId) {
+        return;
       }
+
+      if (valueControl) {
+        focusFieldBlurPinControl(pinId);
+        return;
+      }
+
+      setActiveFieldBlurPin(pinId);
     });
 
     fieldBlurPinList.addEventListener("input", (event) => {
-      const input = event.target?.closest?.("[data-field-blur-pin-input]");
-      const pinId = input?.dataset.fieldBlurPinInput || "";
+      const input = event.target?.closest?.("[data-field-blur-pin-input], [data-field-blur-pin-number]");
+      const pinId = input?.dataset.fieldBlurPinInput || input?.dataset.fieldBlurPinNumber || "";
 
-      if (pinId) {
+      if (pinId && input.value !== "") {
         setFieldBlurPinBlur(pinId, input.value);
+      }
+    });
+
+    fieldBlurPinList.addEventListener("change", (event) => {
+      const input = event.target?.closest?.("[data-field-blur-pin-input], [data-field-blur-pin-number]");
+
+      if (input) {
+        commitFieldBlurPinInput(input);
+      }
+    });
+
+    fieldBlurPinList.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      const input = event.target?.closest?.("[data-field-blur-pin-number]");
+
+      if (input) {
+        event.preventDefault();
+        commitFieldBlurPinInput(input);
+        input.blur?.();
       }
     });
 

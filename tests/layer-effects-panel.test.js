@@ -48,6 +48,10 @@ test("layer effects panel is loaded after the vertical toolbar", () => {
   assert.match(cssSource, /\.layer-effects-range[\s\S]*?max-width: 100%;/);
   assert.match(cssSource, /\.field-blur-pin-overlay[\s\S]*?pointer-events: auto;/);
   assert.match(cssSource, /\.field-blur-pin-ring[\s\S]*?conic-gradient/);
+  assert.match(cssSource, /\.field-blur-control-header[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(cssSource, /\.field-blur-number[\s\S]*?background: #181a1f;/);
+  assert.match(cssSource, /\.field-blur-number:focus-within[\s\S]*?background: #2c303a;/);
+  assert.match(cssSource, /\.field-blur-number-input[\s\S]*?appearance: textfield;[\s\S]*?text-align: right;/);
   assert.match(cssSource, /\.field-blur-guide[\s\S]*?font-style: italic;/);
 });
 
@@ -108,6 +112,11 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /data-field-blur-guide/);
   assert.match(source, /data-field-blur-pin-overlay/);
   assert.match(source, /data-field-blur-pin-input/);
+  assert.match(source, /data-field-blur-pin-number/);
+  assert.match(source, /field-blur-number brush-studio-setting-value/);
+  assert.match(source, /field-blur-number-input brush-studio-setting-value-input/);
+  assert.match(source, /function focusFieldBlurPinControl\(pinId\)/);
+  assert.match(source, /valueControl = event\.target\?\.closest\?\.\("\[data-field-blur-pin-input\], \[data-field-blur-pin-number\], \.field-blur-number"\)/);
   assert.match(source, /Double-click canvas: add pin/);
   assert.match(source, /Drag pin: move/);
   assert.match(source, /Alt-click pin: remove/);
@@ -117,7 +126,12 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /fieldBlurOverlay\.addEventListener\("wheel", handleFieldBlurOverlayWheel, \{ passive: false \}\)/);
   assert.match(source, /brushEngine\.handleWheel\(event\)/);
   assert.match(source, /moveFieldBlurPin\(fieldBlurDrag\.pinId, clientToFieldBlurPoint\(event\.clientX, event\.clientY\)\)/);
+  assert.match(source, /FIELD_BLUR_PREVIEW_DEBOUNCE_MS = 90/);
+  assert.match(source, /clearFieldBlurPreviewTimer\(\)/);
   assert.match(source, /scheduleFieldBlurPreview\(\)/);
+  assert.match(source, /window\.setTimeout\(\(\) =>/);
+  assert.match(source, /commitFieldBlurPinInput\(input\)/);
+  assert.match(source, /event\.key !== "Enter"/);
   assert.match(source, /event\?\.detail\?\.source === "layer-effects-preview"/);
   assert.match(source, /namespace\.setLayerFieldBlurPins/);
   assert.match(source, /source: "layer-effects-preview"/);

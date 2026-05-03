@@ -6,15 +6,21 @@
   box-sizing: border-box;
 }
 
+body,
 .editor-page,
 .side-panel,
 .brush-studio-panel,
-.brushes-gallery-popout {
+.brushes-gallery-popout,
+.layer-effects-popover {
+  -webkit-user-select: none;
   user-select: none;
 }
 
 input,
-textarea {
+textarea,
+[contenteditable="true"],
+[contenteditable="true"] * {
+  -webkit-user-select: text;
   user-select: text;
 }
 
