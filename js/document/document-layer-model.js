@@ -6,6 +6,9 @@
   const MAX_FIELD_BLUR_RADIUS = 200;
   const MAX_FIELD_BLUR_PINS = 8;
   const MAX_RADIAL_BLUR_AMOUNT = 200;
+  const MAX_GRAIN_AMOUNT = 100;
+  const MAX_GRAIN_SCALE = 100;
+  const DEFAULT_GRAIN_SCALE = 42;
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
     fill: "#f8efe2",
     stroke: "#1b1713",
@@ -38,6 +41,18 @@
 
   function normalizeRadialBlurMode(value) {
     return String(value || "").trim().toLowerCase() === "zoom" ? "zoom" : "spin";
+  }
+
+  function normalizeGrainAmount(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_GRAIN_AMOUNT, number)) : 0;
+  }
+
+  function normalizeGrainScale(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(1, Math.min(MAX_GRAIN_SCALE, number)) : DEFAULT_GRAIN_SCALE;
   }
 
   function normalizeFieldBlurPins(pins) {
@@ -178,13 +193,28 @@
             };
           }
 
+          if (effect.type === "grain") {
+            const amount = normalizeGrainAmount(effect.amount);
+            const seed = Number(effect.seed);
+
+            return {
+              type: "grain",
+              enabled: effect.enabled !== false,
+              amount,
+              scale: normalizeGrainScale(effect.scale),
+              monochrome: effect.monochrome !== false,
+              seed: Number.isFinite(seed) ? seed : 0,
+            };
+          }
+
           return this.cloneValue(effect);
         })
         .filter((effect) =>
           (effect.type !== "gaussian-blur" || effect.radius > 0) &&
           (effect.type !== "motion-blur" || effect.distance > 0) &&
           (effect.type !== "field-blur" || hasFieldBlurAmount(effect.pins)) &&
-          (effect.type !== "radial-blur" || effect.amount > 0),
+          (effect.type !== "radial-blur" || effect.amount > 0) &&
+          (effect.type !== "grain" || effect.amount > 0),
         );
     }
 

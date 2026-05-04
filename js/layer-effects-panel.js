@@ -7,7 +7,10 @@ window.CBO = window.CBO || {};
   const MAX_FIELD_BLUR_PINS = 8;
   const FIELD_BLUR_PREVIEW_DEBOUNCE_MS = 90;
   const MAX_RADIAL_BLUR_AMOUNT = 200;
-  const RASTERIZABLE_EFFECT_TYPES = Object.freeze(["gaussian-blur", "motion-blur", "field-blur", "radial-blur"]);
+  const MAX_GRAIN_AMOUNT = 100;
+  const MAX_GRAIN_SCALE = 100;
+  const DEFAULT_GRAIN_SCALE = 42;
+  const RASTERIZABLE_EFFECT_TYPES = Object.freeze(["gaussian-blur", "motion-blur", "field-blur", "radial-blur", "grain"]);
   const EFFECT_GROUPS = Object.freeze([
     {
       label: "Blur",
@@ -31,7 +34,7 @@ window.CBO = window.CBO || {};
       label: "Texture",
       items: Object.freeze([
         { implemented: false, icon: "noise", label: "Noise", type: "noise" },
-        { implemented: false, icon: "grain", label: "Grain", type: "grain" },
+        { implemented: true, icon: "grain", label: "Grain", type: "grain" },
         { implemented: false, icon: "halftone", label: "Halftone", type: "halftone" },
         { implemented: false, icon: "pixelate", label: "Pixelate", type: "pixelate" },
       ]),
@@ -257,7 +260,8 @@ window.CBO = window.CBO || {};
       effect.type === "gaussian-blur" ||
       effect.type === "motion-blur" ||
       effect.type === "field-blur" ||
-      effect.type === "radial-blur"
+      effect.type === "radial-blur" ||
+      effect.type === "grain"
     ) {
       return "";
     }
@@ -272,11 +276,6 @@ window.CBO = window.CBO || {};
         getAdjustmentControlMarkup("Radius", 18),
         getAdjustmentControlMarkup("Intensity", 40),
         getAdjustmentControlMarkup("Spread", 24),
-      ],
-      grain: [
-        getAdjustmentControlMarkup("Amount", 18),
-        getAdjustmentControlMarkup("Scale", 42),
-        getAdjustmentControlMarkup("Monochrome", true, "checkbox"),
       ],
       halftone: [
         getAdjustmentControlMarkup("Size", 34),
@@ -411,6 +410,32 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function getGrain(layer) {
+    const effect = findLayerEffect(layer, "grain", "grain");
+    const amount = Number(effect?.amount);
+    const scale = Number(effect?.scale);
+    const seed = Number(effect?.seed);
+
+    return {
+      amount: Number.isFinite(amount) ? Math.max(0, Math.min(MAX_GRAIN_AMOUNT, amount)) : 0,
+      scale: Number.isFinite(scale) ? Math.max(1, Math.min(MAX_GRAIN_SCALE, scale)) : DEFAULT_GRAIN_SCALE,
+      monochrome: effect ? effect.monochrome !== false : true,
+      seed: Number.isFinite(seed) ? seed : 0,
+    };
+  }
+
+  function createGrainSeed(layerId) {
+    const text = `grain:${layerId || ""}`;
+    let hash = 2166136261;
+
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return ((hash >>> 0) % 100000) / 100;
+  }
+
   function getNextEffects(layer, radius) {
     const nextRadius = clamp(radius, 0, MAX_GAUSSIAN_BLUR_RADIUS);
     const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
@@ -489,6 +514,30 @@ window.CBO = window.CBO || {};
     return effects;
   }
 
+  function getNextGrainEffects(layer, amount, scale, monochrome) {
+    const nextAmount = clamp(amount, 0, MAX_GRAIN_AMOUNT);
+    const nextScale = clamp(scale, 1, MAX_GRAIN_SCALE);
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const existingGrain = existingEffects.find((effect) => effect && effect.type === "grain");
+    const existingSeed = Number(existingGrain?.seed);
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "grain")
+      .map((effect) => cloneValue(effect));
+
+    if (nextAmount > 0) {
+      effects.push({
+        type: "grain",
+        enabled: true,
+        amount: nextAmount,
+        scale: nextScale,
+        monochrome: monochrome !== false,
+        seed: Number.isFinite(existingSeed) ? existingSeed : createGrainSeed(layer?.id),
+      });
+    }
+
+    return effects;
+  }
+
   function isRenderableEffect(effect) {
     if (!effect || effect.enabled === false || !RASTERIZABLE_EFFECT_TYPES.includes(effect.type)) {
       return false;
@@ -508,6 +557,10 @@ window.CBO = window.CBO || {};
 
     if (effect.type === "radial-blur") {
       return getRadialBlur({ effects: [effect] }).amount > 0;
+    }
+
+    if (effect.type === "grain") {
+      return getGrain({ effects: [effect] }).amount > 0;
     }
 
     return false;
@@ -554,6 +607,7 @@ window.CBO = window.CBO || {};
   namespace.getLayerMotionBlur = getMotionBlur;
   namespace.getLayerFieldBlur = getFieldBlur;
   namespace.getLayerRadialBlur = getRadialBlur;
+  namespace.getLayerGrain = getGrain;
 
   namespace.hasRasterizableLayerEffects = function hasRasterizableLayerEffects(layerOrId) {
     const layer = typeof layerOrId === "string"
@@ -675,6 +729,34 @@ window.CBO = window.CBO || {};
 
     const didUpdate = layerModel.updateLayer(layerId, {
       effects: getNextRadialBlurEffects(layer, amount, centerX, centerY, updateMode),
+    }, updateOptions);
+
+    if (didUpdate) {
+      namespace.documentRenderer?.requestDraw?.();
+    }
+
+    return didUpdate;
+  };
+
+  namespace.setLayerGrain = function setLayerGrain(layerId, amount, scale, monochrome, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const updateOptions = {
+      historyGroup: options.historyGroup || `grain-${layerId}`,
+      source: options.source || "layer-effects-grain",
+    };
+
+    if (options.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = layerModel.updateLayer(layerId, {
+      effects: getNextGrainEffects(layer, amount, scale, monochrome),
     }, updateOptions);
 
     if (didUpdate) {
@@ -969,6 +1051,30 @@ window.CBO = window.CBO || {};
               </button>
             </div>
           </section>
+          <section class="layer-effects-section" aria-label="Grain" data-layer-effects-editor="grain" hidden>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Amount</span>
+              <output class="layer-effects-value" data-layer-grain-amount-value>0%</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="100" step="1" value="0" aria-label="Grain amount" data-layer-grain-amount-input />
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Scale</span>
+              <output class="layer-effects-value" data-layer-grain-scale-value>42%</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="1" max="100" step="1" value="42" aria-label="Grain scale" data-layer-grain-scale-input />
+            <label class="layer-effects-check-row">
+              <span class="layer-effects-label">Monochrome</span>
+              <input class="layer-effects-check" type="checkbox" checked data-layer-grain-monochrome-input />
+            </label>
+            <div class="layer-effects-actions">
+              <button class="layer-effects-icon-button" type="button" aria-label="Reset grain" data-layer-grain-reset>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+            </div>
+          </section>
           ${getEffectEditorsMarkup()}
         </div>
       </div>
@@ -997,10 +1103,16 @@ window.CBO = window.CBO || {};
     const radialCenterYInput = panel.querySelector("[data-layer-radial-center-y-input]");
     const radialCenterYValue = panel.querySelector("[data-layer-radial-center-y-value]");
     const radialModeButtons = panel.querySelectorAll("[data-layer-radial-mode-button]");
+    const grainAmountInput = panel.querySelector("[data-layer-grain-amount-input]");
+    const grainAmountValue = panel.querySelector("[data-layer-grain-amount-value]");
+    const grainScaleInput = panel.querySelector("[data-layer-grain-scale-input]");
+    const grainScaleValue = panel.querySelector("[data-layer-grain-scale-value]");
+    const grainMonochromeInput = panel.querySelector("[data-layer-grain-monochrome-input]");
     const acceptButton = panel.querySelector("[data-layer-effects-accept]");
     const resetButton = panel.querySelector("[data-layer-blur-reset]");
     const motionResetButton = panel.querySelector("[data-layer-motion-reset]");
     const radialResetButton = panel.querySelector("[data-layer-radial-reset]");
+    const grainResetButton = panel.querySelector("[data-layer-grain-reset]");
     const closeButton = panel.querySelector("[data-layer-effects-close]");
     const panelCloseButton = panel.querySelector("[data-layer-effects-panel-close]");
     let activeEffectType = "";
@@ -1586,6 +1698,8 @@ window.CBO = window.CBO || {};
         fieldBlurPinList?.querySelector?.("[data-field-blur-pin-input]")?.focus?.({ preventScroll: true });
       } else if (effectType === "radial-blur") {
         radialAmountInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "grain") {
+        grainAmountInput?.focus?.({ preventScroll: true });
       }
     }
 
@@ -1647,6 +1761,9 @@ window.CBO = window.CBO || {};
       const radialBlur = isEligible
         ? getRadialBlur(layer, { defaultToLayerCenter: activeEffectType === "radial-blur" })
         : { amount: 0, centerX: 50, centerY: 50, mode: "spin" };
+      const grain = isEligible
+        ? getGrain(layer)
+        : { amount: 0, scale: DEFAULT_GRAIN_SCALE, monochrome: true, seed: 0 };
       const hasActiveFieldBlur = hasFieldBlurAmount(
         activeEffectType === "field-blur" ? fieldBlurPins : fieldBlur.pins,
       );
@@ -1668,6 +1785,9 @@ window.CBO = window.CBO || {};
       radialAmountInput.disabled = !isEligible;
       radialCenterXInput.disabled = !isEligible;
       radialCenterYInput.disabled = !isEligible;
+      grainAmountInput.disabled = !isEligible;
+      grainScaleInput.disabled = !isEligible;
+      grainMonochromeInput.disabled = !isEligible;
       fieldBlurPinList.querySelectorAll("[data-field-blur-pin-input]").forEach((input) => {
         input.disabled = !isEligible;
       });
@@ -1679,10 +1799,12 @@ window.CBO = window.CBO || {};
         (activeEffectType === "gaussian-blur" && radius <= 0) ||
         (activeEffectType === "motion-blur" && motionBlur.distance <= 0) ||
         (activeEffectType === "field-blur" && !hasActiveFieldBlur) ||
-        (activeEffectType === "radial-blur" && radialBlur.amount <= 0);
+        (activeEffectType === "radial-blur" && radialBlur.amount <= 0) ||
+        (activeEffectType === "grain" && grain.amount <= 0);
       resetButton.disabled = !isEligible || radius <= 0;
       motionResetButton.disabled = !isEligible || motionBlur.distance <= 0;
       radialResetButton.disabled = !isEligible || radialBlur.amount <= 0;
+      grainResetButton.disabled = !isEligible || grain.amount <= 0;
       blurInput.value = String(radius);
       blurValue.textContent = `${Math.round(radius)} px`;
       motionDistanceInput.value = String(motionBlur.distance);
@@ -1696,6 +1818,11 @@ window.CBO = window.CBO || {};
       radialCenterYInput.value = String(radialBlur.centerY);
       radialCenterYValue.textContent = `${Math.round(radialBlur.centerY)}%`;
       setRadialModeButtonState(radialBlur.mode);
+      grainAmountInput.value = String(grain.amount);
+      grainAmountValue.textContent = `${Math.round(grain.amount)}%`;
+      grainScaleInput.value = String(grain.scale);
+      grainScaleValue.textContent = `${Math.round(grain.scale)}%`;
+      grainMonochromeInput.checked = grain.monochrome;
       syncFieldBlurUi();
       panel.classList.toggle("disabled", !isEligible);
     }
@@ -1769,6 +1896,35 @@ window.CBO = window.CBO || {};
 
       setRadialModeButtonState(nextMode);
       namespace.setLayerRadialBlur(layer.id, nextAmount, nextCenterX, nextCenterY, nextMode, {
+        history: false,
+        source: "layer-effects-preview",
+      });
+    }
+
+    function applyGrain(
+      amount,
+      scale = grainScaleInput?.value,
+      monochrome = grainMonochromeInput?.checked,
+    ) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextAmount = clamp(amount, 0, MAX_GRAIN_AMOUNT);
+      const nextScale = clamp(scale, 1, MAX_GRAIN_SCALE);
+      const nextMonochrome = monochrome !== false;
+      const currentGrain = getGrain(layer);
+
+      grainAmountValue.textContent = `${Math.round(nextAmount)}%`;
+      grainScaleValue.textContent = `${Math.round(nextScale)}%`;
+      if (nextAmount <= 0 && currentGrain.amount <= 0) {
+        return;
+      }
+
+      namespace.setLayerGrain(layer.id, nextAmount, nextScale, nextMonochrome, {
         history: false,
         source: "layer-effects-preview",
       });
@@ -1906,6 +2062,25 @@ window.CBO = window.CBO || {};
     radialResetButton.addEventListener("click", () => {
       radialAmountInput.value = "0";
       applyRadialBlur(0, radialCenterXInput.value, radialCenterYInput.value, getSelectedRadialMode());
+    });
+
+    grainAmountInput.addEventListener("input", () => {
+      applyGrain(grainAmountInput.value, grainScaleInput.value, grainMonochromeInput.checked);
+    });
+
+    grainScaleInput.addEventListener("input", () => {
+      applyGrain(grainAmountInput.value, grainScaleInput.value, grainMonochromeInput.checked);
+    });
+
+    grainMonochromeInput.addEventListener("change", () => {
+      applyGrain(grainAmountInput.value, grainScaleInput.value, grainMonochromeInput.checked);
+    });
+
+    grainResetButton.addEventListener("click", () => {
+      grainAmountInput.value = "0";
+      grainScaleInput.value = String(DEFAULT_GRAIN_SCALE);
+      grainMonochromeInput.checked = true;
+      applyGrain(0, DEFAULT_GRAIN_SCALE, true);
     });
 
     fieldBlurPinList.addEventListener("click", (event) => {

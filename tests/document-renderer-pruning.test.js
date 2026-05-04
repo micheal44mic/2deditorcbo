@@ -139,6 +139,76 @@ test("raster snapshot rectangles clamp crop bounds safely", () => {
   });
 });
 
+test("duplicateRasterTarget clones a source raster target into a new layer target", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const sourceTarget = {
+    clearColor: [0.1, 0.2, 0.3, 0],
+    cropped: true,
+    framebuffer: { id: "source-framebuffer" },
+    height: 40,
+    texture: { id: "source-texture" },
+    width: 30,
+    x: 8,
+    y: 12,
+  };
+  const destinationTarget = {
+    framebuffer: { id: "destination-framebuffer" },
+    texture: { id: "destination-texture" },
+  };
+  const copyCalls = [];
+  const replaceCalls = [];
+
+  renderer.width = 100;
+  renderer.height = 100;
+  renderer.rasterTargetsByLayerId = new Map([["source-layer", sourceTarget]]);
+  renderer.createRasterTarget = (clearColor, options = {}) => {
+    assert.deepEqual(JSON.parse(JSON.stringify(clearColor)), sourceTarget.clearColor);
+    assert.deepEqual(JSON.parse(JSON.stringify(options)), {
+      cropped: true,
+      height: 40,
+      layerId: "copy-layer",
+      reason: "unit-duplicate",
+      width: 30,
+      x: 8,
+      y: 12,
+    });
+    return destinationTarget;
+  };
+  renderer.copyRasterTargetRectToTarget = (source, rect, destination) => {
+    copyCalls.push({ destination, rect, source });
+    return true;
+  };
+  renderer.replaceRasterTarget = (layerId, target, options = {}) => {
+    replaceCalls.push({ layerId, options, target });
+    return true;
+  };
+  renderer.deleteRasterTargetObject = () => {
+    throw new Error("destination target should not be deleted after a successful copy");
+  };
+
+  assert.equal(renderer.duplicateRasterTarget("source-layer", "copy-layer", {
+    emit: false,
+    source: "unit-duplicate",
+  }), true);
+  assert.equal(copyCalls[0].destination, destinationTarget);
+  assert.equal(copyCalls[0].source, sourceTarget);
+  assert.deepEqual(JSON.parse(JSON.stringify(copyCalls[0].rect)), {
+    height: 40,
+    width: 30,
+    x: 8,
+    y: 12,
+  });
+  assert.equal(replaceCalls.length, 1);
+  assert.equal(replaceCalls[0].layerId, "copy-layer");
+  assert.equal(replaceCalls[0].target, destinationTarget);
+  assert.deepEqual(JSON.parse(JSON.stringify(replaceCalls[0].options)), {
+    emit: false,
+    label: "copy-layer",
+    source: "unit-duplicate",
+  });
+});
+
 test("puppet Rigid MLS writes translated and rotated mesh vertices", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -453,28 +523,34 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /MOTION_BLUR_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /FIELD_BLUR_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /RADIAL_BLUR_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /GRAIN_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /createGaussianBlurProgramInfo\(\)/);
   assert.match(source, /createMotionBlurProgramInfo\(\)/);
   assert.match(source, /createFieldBlurProgramInfo\(\)/);
   assert.match(source, /createRadialBlurProgramInfo\(\)/);
+  assert.match(source, /createGrainProgramInfo\(\)/);
   assert.match(source, /ensureMotionBlurProgramInfo\(\)/);
   assert.match(source, /ensureFieldBlurProgramInfo\(\)/);
   assert.match(source, /ensureRadialBlurProgramInfo\(\)/);
+  assert.match(source, /ensureGrainProgramInfo\(\)/);
   assert.match(source, /ensureLayerEffectScratchTargets\(/);
   assert.match(source, /runGaussianBlurPass\(/);
   assert.match(source, /runMotionBlurPass\(/);
   assert.match(source, /runFieldBlurPass\(/);
   assert.match(source, /runRadialBlurPass\(/);
+  assert.match(source, /runGrainPass\(/);
   assert.match(source, /applyGaussianBlurTexture\(sourceTexture, radius, options = \{\}\)/);
   assert.match(source, /applyMotionBlurTexture\(sourceTexture, distance, angle, options = \{\}\)/);
   assert.match(source, /applyFieldBlurTexture\(sourceTexture, pins, options = \{\}\)/);
   assert.match(source, /applyRadialBlurTexture\(\s*sourceTexture,\s*amount,\s*centerX = 50,\s*centerY = 50,\s*mode = "spin",\s*options = \{\},/);
+  assert.match(source, /applyGrainTexture\(sourceTexture, grain, options = \{\}\)/);
   assert.match(source, /getLayerEffectOutputRect\(layer, targetRect\)/);
   assert.match(source, /getRadialBlurOutputRect\(radialBlur, outputRect, targetRect\)/);
   assert.match(source, /sourceRect: targetRect/);
   assert.match(source, /getLayerMotionBlur\(layer\)/);
   assert.match(source, /getLayerFieldBlur\(layer\)/);
   assert.match(source, /getLayerRadialBlur\(layer\)/);
+  assert.match(source, /getLayerGrain\(layer\)/);
   assert.match(source, /getLayerRenderTexture\(layer, layerTarget\)/);
   assert.match(source, /for \(const effect of layer\.effects\)/);
   assert.match(source, /u_directionTexelStep/);
@@ -494,6 +570,9 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /Math\.cos\(angleRad\) \/ width/);
   assert.match(source, /Math\.sin\(angleRad\) \/ height/);
   assert.match(source, /centerY: resolvedCenter\.y/);
+  assert.match(source, /u_monochrome/);
+  assert.match(source, /vec2 documentPixel = u_origin/);
+  assert.match(source, /effect\.type === "grain"/);
   assert.match(source, /copyTextureToRasterTarget\(sourceTexture, target, options = \{\}\)/);
   assert.match(source, /rasterizeLayerEffects\(layer, options = \{\}\)/);
   assert.match(source, /layer-effects-rasterize-before/);
@@ -514,6 +593,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /this\.deleteMotionBlurResources\(\)/);
   assert.match(source, /this\.deleteFieldBlurResources\(\)/);
   assert.match(source, /this\.deleteRadialBlurResources\(\)/);
+  assert.match(source, /this\.deleteGrainResources\(\)/);
   assert.match(previewCacheBody, /const renderResult = this\.getLayerRenderResult\(layer, layerTarget\)/);
   assert.match(previewCacheBody, /sourceTexture: layerTexture/);
   assert.doesNotMatch(previewCacheBody, /!hasLayerEffects/);

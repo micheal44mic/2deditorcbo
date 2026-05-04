@@ -712,6 +712,41 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return copiedEntry;
   }
 
+  function collectLayerClonePairs(entry, pairs = []) {
+    const sourceLayerId = entry.dataset.layerCloneSourceId || "";
+    const row = entry.querySelector(":scope > [data-layer-row]");
+    const destinationLayerId = getLayerId(row);
+    const children = getLayerChildren(entry);
+
+    if (sourceLayerId && destinationLayerId && sourceLayerId !== destinationLayerId) {
+      pairs.push({ destinationLayerId, sourceLayerId });
+    }
+
+    Array.from(children?.children || []).forEach((childEntry) => {
+      if (childEntry.matches("[data-layer-entry]")) {
+        collectLayerClonePairs(childEntry, pairs);
+      }
+    });
+
+    return pairs;
+  }
+
+  function duplicateCopiedLayerRasterTargets(copiedEntries) {
+    const renderer = window.CBO.documentRenderer;
+
+    if (!renderer?.duplicateRasterTarget) {
+      return;
+    }
+
+    copiedEntries
+      .flatMap((entry) => collectLayerClonePairs(entry))
+      .forEach(({ sourceLayerId, destinationLayerId }) => {
+        renderer.duplicateRasterTarget(sourceLayerId, destinationLayerId, {
+          source: "layers-panel-copy",
+        });
+      });
+  }
+
   function getSelectedRootEntries() {
     return Array.from(panel.querySelector(".layers-list").querySelectorAll("[data-layer-entry]"))
       .filter(isEntrySelected)
@@ -859,6 +894,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   function copySelectedLayers() {
     const selectedEntries = getSelectedRootEntries();
     let insertAfterEntry = selectedEntries[selectedEntries.length - 1];
+    const copiedEntries = [];
     const copiedRows = [];
 
     if (!insertAfterEntry) {
@@ -870,6 +906,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
       insertLayerEntryAfter(copiedEntry, insertAfterEntry);
       insertAfterEntry = copiedEntry;
+      copiedEntries.push(copiedEntry);
       copiedRows.push(copiedEntry.querySelector(":scope > [data-layer-row]"));
     });
 
@@ -878,6 +915,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     rangeAnchor = copiedRows[0] || null;
     setFocusedLayer(copiedRows[0] || null);
     syncLayerModelFromDom("copy");
+    duplicateCopiedLayerRasterTargets(copiedEntries);
   }
 
   function deleteSelectedLayers() {

@@ -1,0 +1,61 @@
+PROMPT PER CHATGPT WEB - EFFETTO "THRESHOLD" TIPO PHOTOSHOP
+
+Voglio implementare in un editor 2D web un effetto simile alla funzione "Soglia" di Photoshop. In inglese si chiama "Threshold".
+
+Prima regola: usa il web e cita fonti reali. Non inventare API, metodi browser, librerie o funzioni del mio progetto. Se una cosa non e documentata o non e presente nel codice che ti incollo, devi dirlo chiaramente.
+
+Contesto progetto:
+- App web vanilla JavaScript, HTML e CSS.
+- Rendering documento in WebGL2.
+- Esiste un DocumentRenderer in js/document/document-renderer.js.
+- Esiste un pannello effetti livello in js/layer-effects-panel.js.
+- Il model dei livelli e in js/document/document-layer-model.js.
+- Ci sono gia effetti layer non distruttivi come gaussian blur, motion blur, field blur, radial blur e grain.
+- I test sono in tests/*.test.js e usano node:test.
+- Voglio uno stile coerente con gli effetti gia presenti, non una nuova architettura.
+
+Obiettivo:
+Implementare un effetto "Threshold" tipo Photoshop come effetto livello non distruttivo, con slider nel pannello effetti.
+
+Comportamento atteso:
+- Ogni pixel visibile del livello viene convertito in bianco o nero in base alla luminanza.
+- Valore soglia in stile Photoshop: range 0-255, default 128.
+- Se luminanza * 255 >= soglia: output bianco.
+- Altrimenti: output nero.
+- Mantieni l'alpha originale del pixel.
+- Lavora su colori premoltiplicati se il renderer usa premultiplied alpha: spiega bene come evitare aloni o risultati sbagliati.
+- L'effetto deve essere non distruttivo finche non viene rasterizzato/baked come gli altri layer effects.
+
+Vincoli tecnici:
+- Usa solo WebGL2 e GLSL ES 3.00 compatibile con browser reali.
+- Non proporre API inesistenti.
+- Non proporre dipendenze npm se non sono strettamente necessarie.
+- Non cambiare il formato globale del progetto se basta estendere il pattern esistente.
+- Mantieni compatibilita con cropped raster targets.
+- Mantieni compatibilita con layer image, paint e rasterized text quando passano dal renderer.
+- Aggiungi test mirati o aggiorna test esistenti.
+
+File che ti incollero o che devi chiedermi se servono:
+1. js/document/document-layer-model.js
+2. js/document/document-renderer.js
+3. js/layer-effects-panel.js
+4. tests/document-renderer-pruning.test.js
+5. tests/layer-effects-panel.test.js
+
+Output richiesto:
+1. Conferma il nome corretto inglese della funzione Photoshop e riassumi il comportamento con fonti.
+2. Dimmi quali file modificare e perche.
+3. Proponi una patch coerente con il codice esistente.
+4. Non usare nomi di funzioni del progetto se non li hai visti nei file incollati.
+5. Se mancano informazioni, fai domande specifiche invece di inventare.
+6. Includi test da aggiungere.
+7. Alla fine dammi una checklist di verifica manuale: livello dipinto, immagine importata, alpha trasparente, undo/redo, rasterize effects.
+
+Formato risposta:
+- Prima una breve analisi.
+- Poi patch o blocchi di codice per file.
+- Poi test.
+- Poi rischi o punti da verificare.
+
+Nota importante:
+Se trovi documentazione ufficiale Adobe sulla funzione Threshold, usala per confermare nome e comportamento. Per WebGL2/GLSL/browser usa fonti ufficiali come MDN, Khronos o documentazione browser affidabile.

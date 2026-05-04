@@ -524,6 +524,65 @@ void main() {
 }
 `;
 
+  const GRAIN_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform float u_amount;
+uniform float u_scale;
+uniform float u_monochrome;
+uniform float u_seed;
+uniform vec2 u_origin;
+uniform vec2 u_size;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+float grainNoise(vec2 cell, float salt) {
+  return hash12(cell + vec2(salt, salt * 1.37) + u_seed) * 2.0 - 1.0;
+}
+
+void main() {
+  vec4 base = texture(u_texture, v_uv);
+  float alpha = clamp(base.a, 0.0, 1.0);
+  float amount = clamp(u_amount / 100.0, 0.0, 1.0);
+
+  if (alpha <= 0.0 || amount <= 0.0) {
+    outColor = base;
+    return;
+  }
+
+  vec2 documentPixel = u_origin + vec2(v_uv.x * u_size.x, (1.0 - v_uv.y) * u_size.y);
+  float grainSize = mix(1.0, 24.0, clamp(u_scale / 100.0, 0.0, 1.0));
+  vec2 grainCell = floor(documentPixel / max(grainSize, 1.0));
+  vec3 color = base.rgb / max(alpha, 0.0001);
+  vec3 noise;
+
+  if (u_monochrome > 0.5) {
+    float value = grainNoise(grainCell, 17.0);
+
+    noise = vec3(value);
+  } else {
+    noise = vec3(
+      grainNoise(grainCell, 11.0),
+      grainNoise(grainCell, 29.0),
+      grainNoise(grainCell, 47.0)
+    );
+  }
+
+  color = clamp(color + noise * amount, vec3(0.0), vec3(1.0));
+  outColor = vec4(color * alpha, alpha);
+}
+`;
+
   const LAYER_BLEND_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -668,6 +727,9 @@ void main() {
   const MAX_FIELD_BLUR_RADIUS = 200;
   const MAX_FIELD_BLUR_PINS = 8;
   const MAX_RADIAL_BLUR_AMOUNT = 200;
+  const MAX_GRAIN_AMOUNT = 100;
+  const MAX_GRAIN_SCALE = 100;
+  const DEFAULT_GRAIN_SCALE = 42;
 
   function normalizeAngle(value) {
     const number = Number(value);
@@ -687,6 +749,18 @@ void main() {
 
   function normalizeRadialBlurMode(value) {
     return String(value || "").trim().toLowerCase() === "zoom" ? "zoom" : "spin";
+  }
+
+  function normalizeGrainAmount(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_GRAIN_AMOUNT, number)) : 0;
+  }
+
+  function normalizeGrainScale(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(1, Math.min(MAX_GRAIN_SCALE, number)) : DEFAULT_GRAIN_SCALE;
   }
 
   function normalizeFieldBlurPins(pins) {
@@ -790,6 +864,7 @@ void main() {
       this.motionBlurProgramInfo = null;
       this.fieldBlurProgramInfo = null;
       this.radialBlurProgramInfo = null;
+      this.grainProgramInfo = null;
       this.layerBlendProgramInfo = null;
       this.layerBlendBackdropTexture = null;
       this.layerBlendBackdropWidth = 0;
@@ -1744,6 +1819,45 @@ void main() {
       };
     }
 
+    createGrainProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, GRAIN_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma grain WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma grain.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          amount: gl.getUniformLocation(program, "u_amount"),
+          monochrome: gl.getUniformLocation(program, "u_monochrome"),
+          origin: gl.getUniformLocation(program, "u_origin"),
+          scale: gl.getUniformLocation(program, "u_scale"),
+          seed: gl.getUniformLocation(program, "u_seed"),
+          size: gl.getUniformLocation(program, "u_size"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+
     createLayerBlendProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, ARTBOARD_VERTEX_SHADER_SOURCE);
@@ -1843,6 +1957,14 @@ void main() {
       }
 
       return this.radialBlurProgramInfo;
+    }
+
+    ensureGrainProgramInfo() {
+      if (!this.grainProgramInfo) {
+        this.grainProgramInfo = this.createGrainProgramInfo();
+      }
+
+      return this.grainProgramInfo;
     }
 
     ensureLayerBlendProgramInfo() {
@@ -2344,12 +2466,42 @@ void main() {
         : null;
     }
 
+    getGrain(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "grain" && item.enabled !== false)
+        : effects?.grain;
+      const seed = Number(effect?.seed);
+
+      return {
+        amount: normalizeGrainAmount(effect?.amount),
+        scale: normalizeGrainScale(effect?.scale),
+        monochrome: effect ? effect.monochrome !== false : true,
+        seed: Number.isFinite(seed) ? seed : 0,
+      };
+    }
+
+    getLayerGrain(layer) {
+      const grain = this.getGrain(layer);
+
+      return grain.amount > 0
+        ? {
+            enabled: true,
+            amount: grain.amount,
+            scale: grain.scale,
+            monochrome: grain.monochrome,
+            seed: grain.seed,
+          }
+        : null;
+    }
+
     hasEnabledLayerEffects(layer) {
       return (
         this.getGaussianBlurRadius(layer) > 0 ||
         this.getMotionBlur(layer).distance > 0 ||
         hasFieldBlurAmount(this.getFieldBlur(layer).pins) ||
-        this.getRadialBlur(layer).amount > 0
+        this.getRadialBlur(layer).amount > 0 ||
+        this.getGrain(layer).amount > 0
       );
     }
 
@@ -2606,6 +2758,14 @@ void main() {
       }
 
       this.radialBlurProgramInfo = null;
+    }
+
+    deleteGrainResources() {
+      if (this.grainProgramInfo?.program) {
+        this.gl.deleteProgram(this.grainProgramInfo.program);
+      }
+
+      this.grainProgramInfo = null;
     }
 
     ensureLayerEffectScratchTargets(width = this.width, height = this.height) {
@@ -2871,6 +3031,46 @@ void main() {
       return true;
     }
 
+    runGrainPass({
+      sourceTexture,
+      target,
+      amount,
+      scale,
+      monochrome,
+      seed,
+      originX = 0,
+      originY = 0,
+    }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureGrainProgramInfo();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1f(uniforms.amount, normalizeGrainAmount(amount));
+      gl.uniform1f(uniforms.scale, normalizeGrainScale(scale));
+      gl.uniform1f(uniforms.monochrome, monochrome === false ? 0 : 1);
+      gl.uniform1f(uniforms.seed, Number.isFinite(Number(seed)) ? Number(seed) : 0);
+      gl.uniform2f(uniforms.origin, Number.isFinite(originX) ? originX : 0, Number.isFinite(originY) ? originY : 0);
+      gl.uniform2f(uniforms.size, Math.max(1, target.width || 1), Math.max(1, target.height || 1));
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
     applyGaussianBlurTexture(sourceTexture, radius, options = {}) {
       const blurRadius = Number.isFinite(radius)
         ? Math.max(0, Math.min(MAX_GAUSSIAN_BLUR_RADIUS, radius))
@@ -2988,6 +3188,31 @@ void main() {
       });
 
       return didRadialPass ? target.texture : sourceTexture;
+    }
+
+    applyGrainTexture(sourceTexture, grain, options = {}) {
+      const grainEffect = grain || null;
+      const amount = normalizeGrainAmount(grainEffect?.amount);
+
+      if (!sourceTexture || amount <= 0) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const didGrainPass = this.runGrainPass({
+        amount,
+        monochrome: grainEffect?.monochrome !== false,
+        originX: Number.isFinite(options.originX) ? options.originX : 0,
+        originY: Number.isFinite(options.originY) ? options.originY : 0,
+        scale: normalizeGrainScale(grainEffect?.scale),
+        seed: Number.isFinite(Number(grainEffect?.seed)) ? Number(grainEffect.seed) : 0,
+        sourceTexture,
+        target,
+      });
+
+      return didGrainPass ? target.texture : sourceTexture;
     }
 
     resolveRadialBlurCenter(centerX, centerY, options = {}) {
@@ -3341,6 +3566,12 @@ void main() {
                 effectOptions,
               );
             }
+          } else if (effect.type === "grain") {
+            const grain = this.getLayerGrain({ effects: [effect] });
+
+            if (grain) {
+              texture = this.applyGrainTexture(texture, grain, effectOptions);
+            }
           }
         }
 
@@ -3351,6 +3582,7 @@ void main() {
       const motionBlur = this.getLayerMotionBlur(layer);
       const fieldBlur = this.getLayerFieldBlur(layer);
       const radialBlur = this.getLayerRadialBlur(layer);
+      const grain = this.getLayerGrain(layer);
 
       if (radius > 0) {
         texture = this.applyGaussianBlurTexture(texture, radius, effectOptions);
@@ -3373,6 +3605,10 @@ void main() {
           radialBlur.mode,
           effectOptions,
         );
+      }
+
+      if (grain) {
+        texture = this.applyGrainTexture(texture, grain, effectOptions);
       }
 
       return texture;
@@ -4746,6 +4982,53 @@ void main() {
       this.markRasterTargetDirty(destinationTarget);
 
       return true;
+    }
+
+    duplicateRasterTarget(sourceLayerId, destinationLayerId, options = {}) {
+      if (!sourceLayerId || !destinationLayerId || sourceLayerId === destinationLayerId) {
+        return false;
+      }
+
+      const sourceTarget = this.rasterTargetsByLayerId.get(sourceLayerId);
+      const sourceRect = this.getRasterTargetDocumentRect(sourceTarget);
+
+      if (!sourceTarget?.framebuffer || !sourceTarget?.texture || !sourceRect) {
+        return false;
+      }
+
+      const clearColor = Array.isArray(sourceTarget.clearColor)
+        ? [...sourceTarget.clearColor]
+        : [0, 0, 0, 0];
+      const destinationTarget = this.createRasterTarget(clearColor, {
+        cropped: this.isCroppedRasterTarget(sourceTarget),
+        height: sourceRect.height,
+        layerId: destinationLayerId,
+        reason: options.source || "duplicate-raster-target",
+        width: sourceRect.width,
+        x: sourceRect.x,
+        y: sourceRect.y,
+      });
+
+      if (!destinationTarget?.framebuffer || !destinationTarget?.texture) {
+        return false;
+      }
+
+      if (!this.copyRasterTargetRectToTarget(sourceTarget, sourceRect, destinationTarget)) {
+        this.deleteRasterTargetObject(destinationTarget);
+        return false;
+      }
+
+      const didReplace = this.replaceRasterTarget(destinationLayerId, destinationTarget, {
+        emit: options.emit,
+        label: options.label || destinationLayerId,
+        source: options.source || "duplicate-raster-target",
+      });
+
+      if (!didReplace) {
+        this.deleteRasterTargetObject(destinationTarget);
+      }
+
+      return didReplace;
     }
 
     compactPaintTargetToContent(layerId, options = {}) {
@@ -7171,6 +7454,7 @@ void main() {
       this.deleteMotionBlurResources();
       this.deleteFieldBlurResources();
       this.deleteRadialBlurResources();
+      this.deleteGrainResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteLayerBlendResources();
       this.deletePreviewCache();
