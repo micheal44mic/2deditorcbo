@@ -10,7 +10,8 @@ test("brush shape outline preview is loaded and initialized after the editor can
   const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
 
   assert.match(indexSource, /<script src="\.\/js\/brush-engine\.js"><\/script>\s*<script src="\.\/js\/brush-shape-outline-preview\.js"><\/script>/);
-  assert.match(appSource, /window\.CBO\.initEditorCanvas\(\);\s*window\.CBO\.initBrushShapeOutlinePreview\?\.\(\);/);
+  assert.match(appSource, /function initCanvasDependentTools\(\) \{[\s\S]*window\.CBO\.initBrushShapeOutlinePreview\?\.\(\);/);
+  assert.match(appSource, /window\.addEventListener\("cbo:editor-canvas-ready", initCanvasDependentTools\);/);
 });
 
 test("brush shape outline preview extracts a single alpha outline and scales like the brush", () => {

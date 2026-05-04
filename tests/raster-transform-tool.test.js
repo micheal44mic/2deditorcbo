@@ -21,7 +21,8 @@ test("raster transform tool is wired after the document renderer and canvas init
   assert.ok(rendererIndex > boundsIndex);
   assert.ok(rasterToolIndex > rendererIndex);
   assert.ok(appIndex > rasterToolIndex);
-  assert.match(appSource, /window\.CBO\.initEditorCanvas\(\);[\s\S]*window\.CBO\.initRasterTransformTool\?\.\(\);/);
+  assert.match(appSource, /function initCanvasDependentTools\(\) \{[\s\S]*window\.CBO\.initRasterTransformTool\?\.\(\);/);
+  assert.match(appSource, /window\.addEventListener\("cbo:editor-canvas-ready", initCanvasDependentTools\);/);
 });
 
 test("document bounds exposes shared bbox helpers", () => {

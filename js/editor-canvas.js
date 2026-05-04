@@ -57,6 +57,43 @@ function createDocumentPresetButton(preset) {
   return button;
 }
 
+function formatAutosaveDate(value) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleString([], {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function createDocumentRecoveryButton(summary) {
+  const button = document.createElement("button");
+  const label = document.createElement("span");
+  const meta = document.createElement("span");
+  const savedAt = formatAutosaveDate(summary?.savedAt);
+  const sizeLabel = `${Math.max(1, Math.round(summary?.width || 1))} x ${Math.max(1, Math.round(summary?.height || 1))}`;
+  const layerLabel = `${Math.max(0, Math.round(summary?.layerCount || 0))} layers`;
+  const tileLabel = `${Math.max(0, Math.round(summary?.tileCount || 0))} tiles`;
+
+  button.className = "document-start-recovery";
+  button.type = "button";
+  button.dataset.documentRecovery = "latest";
+  button.setAttribute("aria-label", "Continue autosaved document");
+
+  label.className = "document-start-recovery-label";
+  label.textContent = "Continue autosaved document";
+
+  meta.className = "document-start-recovery-meta";
+  meta.textContent = [sizeLabel, layerLabel, tileLabel, savedAt].filter(Boolean).join(" | ");
+
+  button.append(label, meta);
+  return button;
+}
+
 window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
   const stage = document.querySelector(".editor-stage");
 
@@ -71,6 +108,7 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
   const screen = document.createElement("div");
   const panel = document.createElement("section");
   const title = document.createElement("h1");
+  const recoveryHost = document.createElement("div");
   const presetGrid = document.createElement("div");
 
   screen.className = "document-start-screen";
@@ -82,6 +120,9 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
   title.className = "document-start-title";
   title.id = "document-start-title";
   title.textContent = "New document";
+
+  recoveryHost.className = "document-start-recovery-host";
+  recoveryHost.hidden = true;
 
   presetGrid.className = "document-start-presets";
   presetGrid.setAttribute("aria-label", "Document presets");
@@ -103,10 +144,42 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
     });
   });
 
-  panel.append(title, presetGrid);
+  panel.append(title, recoveryHost, presetGrid);
   screen.append(panel);
   stage.dataset.documentStartReady = "true";
   stage.replaceChildren(screen);
+
+  const autosave = window.CBO.documentAutosave;
+
+  if (autosave?.getLatestSummary && autosave?.restoreLatest) {
+    void autosave.getLatestSummary().then((summary) => {
+      if (!summary || stage.dataset.canvasReady === "true") {
+        return;
+      }
+
+      const recoveryButton = createDocumentRecoveryButton(summary);
+
+      recoveryButton.addEventListener("click", () => {
+        recoveryButton.disabled = true;
+        recoveryButton.dataset.loading = "true";
+        void autosave.restoreLatest().then((didRestore) => {
+          if (didRestore) {
+            return;
+          }
+
+          recoveryButton.disabled = false;
+          recoveryButton.dataset.loading = "false";
+        }).catch((error) => {
+          console.warn("Impossibile ripristinare l'autosave documento.", error);
+          recoveryButton.disabled = false;
+          recoveryButton.dataset.loading = "false";
+        });
+      });
+
+      recoveryHost.replaceChildren(recoveryButton);
+      recoveryHost.hidden = false;
+    });
+  }
 
   requestAnimationFrame(() => {
     screen.querySelector(`[data-document-preset="${DEFAULT_DOCUMENT_PRESET_ID}"]`)?.focus();
