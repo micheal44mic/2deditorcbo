@@ -606,19 +606,24 @@ void main() {
         y: targetOriginY + rect.y,
       };
       const snapshot = {
+        bytes: rect.width * rect.height * 4,
         docRect,
         framebuffer,
         id: snapshotId,
+        label,
+        layerId: this.activeHistoryLayerId || target?.layerId || "",
         rect,
         state: "GPU_HOT",
         texture,
       };
+      snapshot.dehydrateGpu = () => this.dehydrateHistorySnapshot(snapshot);
+      snapshot.hydrateGpu = () => this.hydrateHistorySnapshot(snapshot);
       const textureRow = this.registerSmudgeTexture(texture, {
         bbox: docRect,
         height: rect.height,
         kind: "historySnapshot",
         label,
-        layerId: this.activeHistoryLayerId || target?.layerId || "",
+        layerId: snapshot.layerId,
         originX: docRect.x,
         originY: docRect.y,
         ownerId: snapshotId,
@@ -645,7 +650,150 @@ void main() {
       return snapshot;
     }
 
+    dehydrateHistorySnapshot(snapshot) {
+      if (!snapshot?.framebuffer || snapshot.state === "CPU_COLD") {
+        return snapshot?.state === "CPU_COLD";
+      }
+
+      const rect = snapshot.rect || snapshot.docRect;
+      const width = Math.max(0, Math.round(Number(rect?.width) || 0));
+      const height = Math.max(0, Math.round(Number(rect?.height) || 0));
+
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const pixels = new Uint8Array(width * height * 4);
+
+      try {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, snapshot.framebuffer);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      } catch (error) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        console.warn?.("[CBO smudge] Impossibile raffreddare snapshot smudge.", error);
+        return false;
+      }
+
+      this.deleteSmudgeFramebuffer(snapshot.framebuffer);
+      gl.deleteFramebuffer(snapshot.framebuffer);
+      snapshot.framebuffer = null;
+
+      if (snapshot.texture) {
+        this.deleteSmudgeTexture(snapshot.texture);
+        gl.deleteTexture(snapshot.texture);
+        snapshot.texture = null;
+      }
+
+      snapshot.bytes = snapshot.bytes || pixels.byteLength;
+      snapshot.cpuBytes = pixels.byteLength;
+      snapshot.cpuPixels = pixels;
+      snapshot.state = "CPU_COLD";
+
+      return true;
+    }
+
+    hydrateHistorySnapshot(snapshot) {
+      if (!snapshot || snapshot.texture || snapshot.framebuffer) {
+        return Boolean(snapshot?.texture && snapshot?.framebuffer);
+      }
+
+      if (!(snapshot.cpuPixels instanceof Uint8Array)) {
+        return false;
+      }
+
+      const rect = snapshot.rect || snapshot.docRect;
+      const width = Math.max(0, Math.round(Number(rect?.width) || 0));
+      const height = Math.max(0, Math.round(Number(rect?.height) || 0));
+
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const texture = gl.createTexture();
+      const framebuffer = gl.createFramebuffer();
+
+      if (!texture || !framebuffer) {
+        if (texture) {
+          gl.deleteTexture(texture);
+        }
+
+        if (framebuffer) {
+          gl.deleteFramebuffer(framebuffer);
+        }
+
+        return false;
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, snapshot.cpuPixels);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.deleteFramebuffer(framebuffer);
+        gl.deleteTexture(texture);
+        return false;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      snapshot.framebuffer = framebuffer;
+      snapshot.texture = texture;
+      snapshot.state = "GPU_HOT";
+
+      const label = snapshot.label || "smudge history";
+      const layerId = snapshot.layerId || this.activeHistoryLayerId || "";
+      const textureRow = this.registerSmudgeTexture(texture, {
+        bbox: snapshot.docRect || snapshot.rect,
+        height,
+        kind: "historySnapshot",
+        label,
+        layerId,
+        originX: snapshot.docRect?.x ?? snapshot.rect?.x,
+        originY: snapshot.docRect?.y ?? snapshot.rect?.y,
+        ownerId: snapshot.id || this.nextSmudgeResourceOwnerId("smudge-history-snapshot"),
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: label,
+        state: "GPU_HOT",
+        width,
+      });
+
+      this.registerSmudgeFramebuffer(framebuffer, {
+        height,
+        kind: "historySnapshotFramebuffer",
+        label: `${label} framebuffer`,
+        layerId,
+        linkedTextureId: textureRow?.id || "",
+        ownerId: snapshot.id || "",
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: label,
+        width,
+      });
+
+      snapshot.cpuBytes = 0;
+      snapshot.cpuPixels = null;
+
+      return true;
+    }
+
     deleteHistorySnapshot(snapshot) {
+      if (!snapshot) {
+        return;
+      }
+
       if (snapshot?.framebuffer) {
         this.deleteSmudgeFramebuffer(snapshot.framebuffer);
         this.gl.deleteFramebuffer(snapshot.framebuffer);
@@ -657,6 +805,10 @@ void main() {
         this.gl.deleteTexture(snapshot.texture);
         snapshot.texture = null;
       }
+
+      snapshot.cpuBytes = 0;
+      snapshot.cpuPixels = null;
+      snapshot.state = "DELETED";
     }
 
     getSnapshotBytes(snapshot) {
@@ -894,8 +1046,14 @@ void main() {
         width: rect.width,
       });
 
+      snapshot.bytes = rect.width * rect.height * 4;
+      snapshot.docRect = { ...rect };
+      snapshot.label = label;
+      snapshot.layerId = this.activeHistoryLayerId || "";
       snapshot.rect = { ...rect };
       snapshot.state = "GPU_HOT";
+      snapshot.dehydrateGpu = () => this.dehydrateHistorySnapshot(snapshot);
+      snapshot.hydrateGpu = () => this.hydrateHistorySnapshot(snapshot);
 
       return snapshot;
     }
@@ -1077,6 +1235,10 @@ void main() {
     }
 
     restoreHistorySnapshot(target, snapshot) {
+      if (snapshot && (!snapshot.framebuffer || !snapshot.texture) && !this.hydrateHistorySnapshot(snapshot)) {
+        return false;
+      }
+
       if (!this.canRestoreHistorySnapshot(target, snapshot)) {
         return false;
       }
@@ -1125,7 +1287,13 @@ void main() {
       const orderedDabs = reverse ? [...dabs].reverse() : dabs;
 
       for (const dab of orderedDabs) {
-        if (!this.canRestoreHistorySnapshot(target, dab?.[snapshotKey])) {
+        const snapshot = dab?.[snapshotKey];
+
+        if ((!snapshot?.framebuffer || !snapshot?.texture) && !this.hydrateHistorySnapshot(snapshot)) {
+          return false;
+        }
+
+        if (!this.canRestoreHistorySnapshot(target, snapshot)) {
           return false;
         }
       }

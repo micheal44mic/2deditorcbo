@@ -4,6 +4,8 @@
   const BYTES_PER_PIXEL = 4;
   const MIB = 1024 * 1024;
   const DEFAULT_MAX_RASTER_HISTORY_BYTES = 500 * MIB;
+  const DEFAULT_MAX_RASTER_HISTORY_GPU_HOT_BYTES = 192 * MIB;
+  const DEFAULT_MIN_RASTER_HISTORY_GPU_HOT_ENTRIES = 6;
   const HISTORY_CHANGE_EVENT = "cbo:history-change";
 
   function isObject(value) {
@@ -73,6 +75,28 @@
     return DEFAULT_MAX_RASTER_HISTORY_BYTES;
   }
 
+  function normalizeRasterHistoryGpuHotBudgetBytes(options = {}) {
+    const explicitBytes = toFinitePositiveNumber(
+      options.maxRasterHistoryGpuHotBytes ?? options.rasterHistoryGpuHotBudgetBytes,
+      0,
+    );
+
+    if (explicitBytes > 0) {
+      return Math.floor(explicitBytes);
+    }
+
+    const explicitMiB = toFinitePositiveNumber(
+      options.maxRasterHistoryGpuHotMiB ?? options.rasterHistoryGpuHotBudgetMiB,
+      0,
+    );
+
+    if (explicitMiB > 0) {
+      return Math.floor(explicitMiB * MIB);
+    }
+
+    return DEFAULT_MAX_RASTER_HISTORY_GPU_HOT_BYTES;
+  }
+
   class DocumentHistory extends EventTarget {
     constructor(options = {}) {
       super();
@@ -84,6 +108,10 @@
         ? Math.floor(options.groupIdleMs)
         : DEFAULT_GROUP_IDLE_MS;
       this.maxRasterHistoryBytes = normalizeRasterHistoryBudgetBytes(options);
+      this.maxRasterHistoryGpuHotBytes = normalizeRasterHistoryGpuHotBudgetBytes(options);
+      this.minRasterHistoryGpuHotEntries = Number.isFinite(options.minRasterHistoryGpuHotEntries)
+        ? Math.max(0, Math.floor(options.minRasterHistoryGpuHotEntries))
+        : DEFAULT_MIN_RASTER_HISTORY_GPU_HOT_ENTRIES;
       this.undoStack = [];
       this.redoStack = [];
       this.activeGroups = new Map();
@@ -91,6 +119,7 @@
       this.isRestoring = false;
       this.isDisposed = false;
       this.lastRasterBudgetPrune = null;
+      this.lastRasterGpuHotPrune = null;
       this.handleHistoryAction = this.handleHistoryAction.bind(this);
 
       window.addEventListener("cbo:history-action", this.handleHistoryAction);
@@ -192,12 +221,18 @@
       }
 
       const explicitBytes = toFinitePositiveNumber(
-        snapshot.bytes ?? snapshot.byteSize ?? snapshot.gpuBytes,
+        snapshot.bytes ?? snapshot.byteSize ?? snapshot.gpuBytes ?? snapshot.cpuBytes ?? snapshot.coldBytes,
         0,
       );
 
       if (explicitBytes > 0) {
         return Math.floor(explicitBytes);
+      }
+
+      const cpuPixelsBytes = toFinitePositiveNumber(snapshot.cpuPixels?.byteLength, 0);
+
+      if (cpuPixelsBytes > 0) {
+        return Math.floor(cpuPixelsBytes);
       }
 
       const hasTextureKey = Object.prototype.hasOwnProperty.call(snapshot, "texture");
@@ -214,34 +249,80 @@
       return getRectBytes(snapshot.rect || snapshot.docRect || snapshot.targetRect || snapshot.bbox);
     }
 
+    estimateSnapshotGpuHotBytes(snapshot) {
+      if (!isObject(snapshot)) {
+        return 0;
+      }
+
+      const hasGpuResource = Boolean(snapshot.texture || snapshot.framebuffer);
+
+      if (!hasGpuResource || snapshot.state === "CPU_COLD") {
+        return 0;
+      }
+
+      return this.estimateSnapshotBytes(snapshot);
+    }
+
+    forEachRasterSnapshot(entry, callback) {
+      if (!isObject(entry) || typeof callback !== "function") {
+        return;
+      }
+
+      const seen = new Set();
+      const visit = (snapshot, key = "") => {
+        if (!isObject(snapshot) || seen.has(snapshot)) {
+          return;
+        }
+
+        seen.add(snapshot);
+        callback(snapshot, key, entry);
+      };
+
+      visit(entry.before, "before");
+      visit(entry.after, "after");
+      visit(entry.beforeSnapshot, "beforeSnapshot");
+      visit(entry.afterSnapshot, "afterSnapshot");
+      visit(entry.rasterSnapshot, "rasterSnapshot");
+
+      if (isObject(entry.snapshots)) {
+        visit(entry.snapshots.before, "snapshots.before");
+        visit(entry.snapshots.after, "snapshots.after");
+        visit(entry.snapshots.beforeSnapshot, "snapshots.beforeSnapshot");
+        visit(entry.snapshots.afterSnapshot, "snapshots.afterSnapshot");
+      }
+
+      if (Array.isArray(entry.dabs)) {
+        entry.dabs.forEach((dab, index) => {
+          visit(dab?.before, `dabs.${index}.before`);
+          visit(dab?.after, `dabs.${index}.after`);
+        });
+      }
+    }
+
     estimateRasterEntryBytes(entry) {
       if (!isObject(entry)) {
         return 0;
       }
 
       let total = 0;
-      const countedSnapshots = new Set();
-      const addSnapshot = (snapshot) => {
-        if (!isObject(snapshot) || countedSnapshots.has(snapshot)) {
-          return;
-        }
 
-        countedSnapshots.add(snapshot);
+      this.forEachRasterSnapshot(entry, (snapshot) => {
         total += this.estimateSnapshotBytes(snapshot);
-      };
+      });
 
-      addSnapshot(entry.before);
-      addSnapshot(entry.after);
-      addSnapshot(entry.beforeSnapshot);
-      addSnapshot(entry.afterSnapshot);
-      addSnapshot(entry.rasterSnapshot);
+      return total;
+    }
 
-      if (Array.isArray(entry.dabs)) {
-        entry.dabs.forEach((dab) => {
-          addSnapshot(dab?.before);
-          addSnapshot(dab?.after);
-        });
+    estimateRasterEntryGpuHotBytes(entry) {
+      if (!isObject(entry)) {
+        return 0;
       }
+
+      let total = 0;
+
+      this.forEachRasterSnapshot(entry, (snapshot) => {
+        total += this.estimateSnapshotGpuHotBytes(snapshot);
+      });
 
       return total;
     }
@@ -252,6 +333,18 @@
         : 0;
 
       return sumStack(this.undoStack) + sumStack(this.redoStack);
+    }
+
+    getRasterHistoryGpuHotBytes() {
+      const sumStack = (stack) => Array.isArray(stack)
+        ? stack.reduce((sum, entry) => sum + this.estimateRasterEntryGpuHotBytes(entry), 0)
+        : 0;
+
+      return sumStack(this.undoStack) + sumStack(this.redoStack);
+    }
+
+    getRasterHistoryCpuColdBytes() {
+      return Math.max(0, this.getRasterHistoryBytes() - this.getRasterHistoryGpuHotBytes());
     }
 
     getRasterHistoryBudgetBytes() {
@@ -274,6 +367,26 @@
 
     setRasterHistoryBudgetMiB(mib) {
       return this.setRasterHistoryBudgetBytes((Number(mib) || 0) * MIB);
+    }
+
+    getRasterHistoryGpuHotBudgetBytes() {
+      return this.maxRasterHistoryGpuHotBytes;
+    }
+
+    getRasterHistoryGpuHotBudgetMiB() {
+      return this.maxRasterHistoryGpuHotBytes / MIB;
+    }
+
+    setRasterHistoryGpuHotBudgetBytes(bytes) {
+      this.maxRasterHistoryGpuHotBytes = Math.max(0, Math.floor(Number(bytes) || 0));
+      const pruneResult = this.pruneRasterHistoryGpuHotBudget();
+      this.emitChange("history-gpu-hot-budget-change");
+
+      return pruneResult;
+    }
+
+    setRasterHistoryGpuHotBudgetMiB(mib) {
+      return this.setRasterHistoryGpuHotBudgetBytes((Number(mib) || 0) * MIB);
     }
 
     getRasterHistoryEntryCount() {
@@ -372,6 +485,101 @@
       };
 
       this.lastRasterBudgetPrune = result;
+      this.pruneRasterHistoryGpuHotBudget();
+
+      return result;
+    }
+
+    collectGpuHotSnapshotCandidates() {
+      const candidates = [];
+      const collectStack = (stack, stackName, protectedFromIndex = Infinity) => {
+        if (!Array.isArray(stack)) {
+          return;
+        }
+
+        stack.forEach((entry, entryIndex) => {
+          const isProtected = entryIndex >= protectedFromIndex;
+
+          if (isProtected) {
+            return;
+          }
+
+          this.forEachRasterSnapshot(entry, (snapshot, key) => {
+            const bytes = this.estimateSnapshotGpuHotBytes(snapshot);
+
+            if (bytes <= 0 || typeof snapshot.dehydrateGpu !== "function") {
+              return;
+            }
+
+            candidates.push({
+              bytes,
+              entry,
+              entryIndex,
+              key,
+              snapshot,
+              stackName,
+              updatedAt: Number.isFinite(entry?.updatedAt) ? entry.updatedAt : 0,
+            });
+          });
+        });
+      };
+      const protectedUndoStart = Math.max(0, this.undoStack.length - this.minRasterHistoryGpuHotEntries);
+      const protectedRedoStart = Math.max(0, this.redoStack.length - this.minRasterHistoryGpuHotEntries);
+
+      collectStack(this.redoStack, "redo", protectedRedoStart);
+      collectStack(this.undoStack, "undo", protectedUndoStart);
+
+      candidates.sort((first, second) => (
+        first.updatedAt - second.updatedAt ||
+        first.entryIndex - second.entryIndex ||
+        second.bytes - first.bytes
+      ));
+
+      return candidates;
+    }
+
+    pruneRasterHistoryGpuHotBudget() {
+      const budgetBytes = Math.max(0, Math.floor(Number(this.maxRasterHistoryGpuHotBytes) || 0));
+      const beforeBytes = this.getRasterHistoryGpuHotBytes();
+      const cooled = [];
+
+      if (!Number.isFinite(budgetBytes)) {
+        return {
+          afterBytes: beforeBytes,
+          beforeBytes,
+          budgetBytes,
+          cooled,
+        };
+      }
+
+      let candidates = this.collectGpuHotSnapshotCandidates();
+
+      while (this.getRasterHistoryGpuHotBytes() > budgetBytes && candidates.length > 0) {
+        const candidate = candidates.shift();
+        const didCool = candidate.snapshot.dehydrateGpu() !== false;
+
+        if (didCool) {
+          cooled.push({
+            bytes: candidate.bytes,
+            key: candidate.key,
+            source: candidate.entry?.source || "",
+            stack: candidate.stackName,
+            type: candidate.entry?.type || "",
+          });
+        }
+
+        candidates = this.collectGpuHotSnapshotCandidates();
+      }
+
+      const afterBytes = this.getRasterHistoryGpuHotBytes();
+      const result = {
+        afterBytes,
+        beforeBytes,
+        budgetBytes,
+        cooled,
+      };
+
+      this.lastRasterGpuHotPrune = result;
 
       return result;
     }
@@ -476,6 +684,7 @@
       const didUndo = this.runWithoutRecording(() => this.invokeEntry(entry, "undo"));
 
       if (didUndo) {
+        entry.updatedAt = Date.now();
         this.redoStack.push(entry);
         this.pruneRasterHistoryBudget();
       } else {
@@ -497,6 +706,7 @@
       const didRedo = this.runWithoutRecording(() => this.invokeEntry(entry, "redo"));
 
       if (didRedo) {
+        entry.updatedAt = Date.now();
         this.undoStack.push(entry);
         this.pruneRasterHistoryBudget();
       } else {
@@ -514,6 +724,9 @@
         redoCount: this.redoStack.length,
         rasterHistoryBudgetBytes: this.maxRasterHistoryBytes,
         rasterHistoryBytes: this.getRasterHistoryBytes(),
+        rasterHistoryCpuColdBytes: this.getRasterHistoryCpuColdBytes(),
+        rasterHistoryGpuHotBudgetBytes: this.maxRasterHistoryGpuHotBytes,
+        rasterHistoryGpuHotBytes: this.getRasterHistoryGpuHotBytes(),
         source,
         undoCount: this.undoStack.length,
       };
@@ -530,7 +743,43 @@
       return {
         activeLayerId: layerModel.activeLayerId || null,
         entries: layerModel.getEntries(),
+        referenceLayerId: this.getReferenceLayerId(),
       };
+    }
+
+    getReferenceLayerId() {
+      const colorFill = namespace.colorFill;
+
+      if (typeof colorFill?.getReferenceLayerId === "function") {
+        return colorFill.getReferenceLayerId() || null;
+      }
+
+      return namespace.colorFillReferenceLayerId || null;
+    }
+
+    restoreReferenceLayerId(layerId, options = {}) {
+      const nextLayerId = String(layerId || "").trim();
+      const colorFill = namespace.colorFill;
+      const source = options.source || "history-reference-restore";
+
+      if (typeof colorFill?.setReferenceLayerId === "function") {
+        colorFill.setReferenceLayerId(nextLayerId, {
+          emit: options.emit,
+          history: false,
+          source,
+        });
+        return true;
+      }
+
+      namespace.colorFillReferenceLayerId = nextLayerId;
+      window.dispatchEvent(new CustomEvent("cbo:color-fill-reference-change", {
+        detail: {
+          layerId: nextLayerId || null,
+          source,
+        },
+      }));
+
+      return true;
     }
 
     restoreLayerState(layerModel, state, options = {}) {
@@ -545,6 +794,9 @@
         });
         layerModel.setActiveLayer(state.activeLayerId || null, {
           history: false,
+          source: options.source || "history-layer-restore",
+        });
+        this.restoreReferenceLayerId(state.referenceLayerId || null, {
           source: options.source || "history-layer-restore",
         });
       });
@@ -567,18 +819,22 @@
         afterEntries: after.entries,
         beforeActiveLayerId: before.activeLayerId || null,
         afterActiveLayerId: after.activeLayerId || null,
+        beforeReferenceLayerId: before.referenceLayerId || null,
+        afterReferenceLayerId: after.referenceLayerId || null,
         historyGroup: options.historyGroup || "",
         source: options.source || "layer-state",
         undo() {
           return history.restoreLayerState(layerModel, {
             activeLayerId: this.beforeActiveLayerId,
             entries: this.beforeEntries,
+            referenceLayerId: this.beforeReferenceLayerId,
           }, { source: "history-undo-layer-state" });
         },
         redo() {
           return history.restoreLayerState(layerModel, {
             activeLayerId: this.afterActiveLayerId,
             entries: this.afterEntries,
+            referenceLayerId: this.afterReferenceLayerId,
           }, { source: "history-redo-layer-state" });
         },
         mergeWith(nextEntry) {
@@ -588,10 +844,53 @@
 
           this.afterEntries = cloneValue(nextEntry.afterEntries);
           this.afterActiveLayerId = nextEntry.afterActiveLayerId || null;
+          this.afterReferenceLayerId = nextEntry.afterReferenceLayerId || null;
           return true;
         },
         destroy() {},
       };
+    }
+
+    recordReferenceStateChange(beforeLayerId, afterLayerId, options = {}) {
+      if (!this.canRecord(options)) {
+        return false;
+      }
+
+      const before = String(beforeLayerId || "").trim();
+      const after = String(afterLayerId || "").trim();
+
+      if (before === after) {
+        return false;
+      }
+
+      const history = this;
+
+      return this.push({
+        type: "reference-layer-state",
+        beforeReferenceLayerId: before || null,
+        afterReferenceLayerId: after || null,
+        historyGroup: options.historyGroup || "",
+        source: options.source || "color-fill-reference",
+        undo() {
+          return history.restoreReferenceLayerId(this.beforeReferenceLayerId, {
+            source: "history-undo-reference-layer",
+          });
+        },
+        redo() {
+          return history.restoreReferenceLayerId(this.afterReferenceLayerId, {
+            source: "history-redo-reference-layer",
+          });
+        },
+        mergeWith(nextEntry) {
+          if (nextEntry?.type !== "reference-layer-state") {
+            return false;
+          }
+
+          this.afterReferenceLayerId = nextEntry.afterReferenceLayerId || null;
+          return true;
+        },
+        destroy() {},
+      }, options);
     }
 
     recordLayerStateChange(layerModel, beforeState, options = {}) {

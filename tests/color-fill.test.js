@@ -18,6 +18,13 @@ function loadColorFillModule() {
     dispatchEvent() {},
   };
   const context = vm.createContext({
+    CustomEvent: class CustomEvent extends Event {
+      constructor(type, init = {}) {
+        super(type);
+        this.detail = init.detail;
+      }
+    },
+    Event,
     Int32Array,
     Math,
     Number,
@@ -134,6 +141,7 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   const source = readRepoFile("js", "color-fill.js");
 
   assert.match(source, /function setReferenceLayerId\(layerId, options = \{\}\)/);
+  assert.match(source, /recordReferenceStateChange\?\.\(previousLayerId, nextLayerId,/);
   assert.match(source, /function clearReferenceLayerId\(options = \{\}\)/);
   assert.match(source, /function getExistingRasterTarget\(layerId\)/);
   assert.match(source, /function getReferenceTarget\(writeTarget\)/);
@@ -162,6 +170,32 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /renderer\.restoreRasterSnapshot\(layerId, beforeSnapshot/);
   assert.match(source, /gl\.texSubImage2D\(/);
   assert.match(source, /brushEngine\.screenToDocumentSpace\(clientX, clientY\)/);
+});
+
+test("color fill reference changes are recorded in document history", () => {
+  const CBO = loadColorFillModule();
+  const calls = [];
+
+  CBO.documentHistory = {
+    recordReferenceStateChange(beforeLayerId, afterLayerId, options = {}) {
+      calls.push({ afterLayerId, beforeLayerId, source: options.source });
+      return true;
+    },
+  };
+
+  CBO.colorFill.setReferenceLayerId("ref", {
+    emit: false,
+    source: "unit-reference",
+  });
+  CBO.colorFill.clearReferenceLayerId({
+    emit: false,
+    source: "unit-clear-reference",
+  });
+
+  assert.deepEqual(calls, [
+    { afterLayerId: "ref", beforeLayerId: "", source: "unit-reference" },
+    { afterLayerId: "", beforeLayerId: "ref", source: "unit-clear-reference" },
+  ]);
 });
 
 test("color fill maps cropped reference layers into document coordinates", () => {
@@ -296,8 +330,9 @@ test("layers panel exposes a right-click reference layer action", () => {
   assert.match(source, /data-layer-context-action="reference"/);
   assert.match(source, /SET AS REFERENCE/);
   assert.match(source, /REMOVE REFERENCE/);
-  assert.match(source, /window\.CBO\.colorFill\.setReferenceLayerId\(layerId, \{ source \}\)/);
-  assert.match(source, /window\.CBO\.colorFill\.clearReferenceLayerId\(\{ source \}\)/);
+  assert.match(source, /window\.CBO\.colorFill\.setReferenceLayerId\(layerId, \{ \.\.\.options, source \}\)/);
+  assert.match(source, /window\.CBO\.colorFill\.clearReferenceLayerId\(\{ \.\.\.options, source \}\)/);
+  assert.match(source, /clearReferenceLayerId\("layers-panel-prune-reference", \{ history: false \}\)/);
   assert.match(source, /classList\.toggle\("reference-layer"/);
   assert.match(source, /cbo:color-fill-reference-change/);
   assert.match(cssSource, /\.layer-row\.reference-layer \.layer-info::after/);

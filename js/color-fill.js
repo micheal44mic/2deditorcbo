@@ -203,10 +203,18 @@
   }
 
   function setReferenceLayerId(layerId, options = {}) {
+    const previousLayerId = referenceLayerId;
     const nextLayerId = String(layerId || "").trim();
 
     referenceLayerId = nextLayerId;
     namespace.colorFillReferenceLayerId = nextLayerId;
+
+    if (previousLayerId !== nextLayerId && options.history !== false) {
+      namespace.documentHistory?.recordReferenceStateChange?.(previousLayerId, nextLayerId, {
+        historyGroup: options.historyGroup || "",
+        source: options.source || "set-reference-layer",
+      });
+    }
 
     if (options.emit !== false) {
       emitReferenceChange(options.source || "set-reference-layer");

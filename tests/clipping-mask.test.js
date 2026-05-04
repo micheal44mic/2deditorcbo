@@ -64,7 +64,8 @@ test("layers panel exposes clipping mask context action and row indicator", () =
   assert.match(source, /function isClippingMaskAllowed\(layerId\)/);
   assert.match(source, /function toggleClippingMask\(layerId\)/);
   assert.match(source, /clippingMask: shouldClip/);
-  assert.match(source, /historyGroup: `clipping-mask-\$\{layerId\}`/);
+  assert.match(source, /source: "layers-panel-clipping-mask"/);
+  assert.doesNotMatch(source, /historyGroup: `clipping-mask-\$\{layerId\}`/);
   assert.match(source, /getClippingMaskIndicator\(\)/);
   assert.match(source, /classList\.toggle\("clipping-mask", isClipping\)/);
   assert.match(source, /updateLayerDescription\(layerRow\)/);
@@ -82,7 +83,7 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const orderedLayers = this\.getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const hasClippingMasks = orderedLayers\.some\(\(layer\) => layer\?\.clippingMask === true\)/);
-  assert.match(source, /!hasClippingMasks/);
+  assert.match(source, /const activeStrokeUsesClippingMask = Boolean/);
   assert.match(source, /let currentClipBase = null/);
   assert.match(source, /const clipBase = isClippingLayer \? currentClipBase : null/);
   assert.match(source, /isValidClipBaseLayer\(layer\)/);
@@ -90,4 +91,6 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /const layerRect = renderResult\?\.rect \|\| null/);
   assert.match(source, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);
   assert.match(source, /drawBlendTexture\(\s*options\.activeStrokeTexture,\s*opacity,\s*activeStrokeRect,\s*clipBase,/);
+  assert.match(source, /drawTexture\(texture, opacity, rect, clipBase\)/);
+  assert.match(source, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
 });

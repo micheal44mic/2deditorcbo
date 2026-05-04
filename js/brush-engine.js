@@ -3910,20 +3910,24 @@ void main() {
         y: targetOriginY + y,
       };
       const snapshot = {
+        bytes: width * height * 4,
         docRect,
         id: snapshotId,
         label,
+        layerId: this.strokeTargetLayerId || target?.layerId || "",
         rect: { x, y, width, height },
         state: "GPU_HOT",
         texture,
       };
+      snapshot.dehydrateGpu = () => this.dehydrateHistorySnapshot(snapshot);
+      snapshot.hydrateGpu = () => this.hydrateHistorySnapshot(snapshot);
 
       this.registerBrushTexture(texture, {
         bbox: docRect,
         height,
         kind: "historySnapshot",
         label,
-        layerId: this.strokeTargetLayerId || target?.layerId || "",
+        layerId: snapshot.layerId,
         originX: docRect.x,
         originY: docRect.y,
         ownerId: snapshotId,
@@ -3937,8 +3941,122 @@ void main() {
       return snapshot;
     }
 
+    dehydrateHistorySnapshot(snapshot) {
+      if (!snapshot?.texture || snapshot.state === "CPU_COLD") {
+        return snapshot?.state === "CPU_COLD";
+      }
+
+      const rect = snapshot.rect || snapshot.docRect;
+      const width = Math.max(0, Math.round(Number(rect?.width) || 0));
+      const height = Math.max(0, Math.round(Number(rect?.height) || 0));
+
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const framebuffer = gl.createFramebuffer();
+
+      if (!framebuffer) {
+        return false;
+      }
+
+      const pixels = new Uint8Array(width * height * 4);
+
+      try {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, snapshot.texture, 0);
+
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.deleteFramebuffer(framebuffer);
+          return false;
+        }
+
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      } catch (error) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.deleteFramebuffer(framebuffer);
+        console.warn?.("[CBO brush] Impossibile raffreddare snapshot pennellata.", error);
+        return false;
+      }
+
+      gl.deleteFramebuffer(framebuffer);
+      this.deleteBrushTexture(snapshot.texture);
+      gl.deleteTexture(snapshot.texture);
+      snapshot.texture = null;
+      snapshot.bytes = snapshot.bytes || pixels.byteLength;
+      snapshot.cpuBytes = pixels.byteLength;
+      snapshot.cpuPixels = pixels;
+      snapshot.state = "CPU_COLD";
+
+      return true;
+    }
+
+    hydrateHistorySnapshot(snapshot) {
+      if (!snapshot || snapshot.texture) {
+        return Boolean(snapshot?.texture);
+      }
+
+      if (!(snapshot.cpuPixels instanceof Uint8Array)) {
+        return false;
+      }
+
+      const rect = snapshot.rect || snapshot.docRect;
+      const width = Math.max(0, Math.round(Number(rect?.width) || 0));
+      const height = Math.max(0, Math.round(Number(rect?.height) || 0));
+
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const texture = gl.createTexture();
+
+      if (!texture) {
+        return false;
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, snapshot.cpuPixels);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      snapshot.texture = texture;
+      snapshot.state = "GPU_HOT";
+
+      this.registerBrushTexture(texture, {
+        bbox: snapshot.docRect || snapshot.rect,
+        height,
+        kind: "historySnapshot",
+        label: snapshot.label || "history snapshot",
+        layerId: snapshot.layerId || "",
+        originX: snapshot.docRect?.x,
+        originY: snapshot.docRect?.y,
+        ownerId: snapshot.id || this.nextBrushResourceOwnerId("brush-history-snapshot"),
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: snapshot.label || "history snapshot",
+        state: "GPU_HOT",
+        width,
+      });
+
+      snapshot.cpuBytes = 0;
+      snapshot.cpuPixels = null;
+
+      return true;
+    }
+
     restoreHistorySnapshot(layerId, snapshot) {
-      if (!layerId || !snapshot?.texture || !snapshot.rect) {
+      if (!layerId || !snapshot?.rect) {
+        return false;
+      }
+
+      if (!snapshot.texture && !this.hydrateHistorySnapshot(snapshot)) {
         return false;
       }
 
@@ -3979,6 +4097,10 @@ void main() {
     }
 
     deleteHistorySnapshot(snapshot) {
+      if (!snapshot) {
+        return;
+      }
+
       if (snapshot?.texture) {
         this.deleteBrushTexture(snapshot.texture);
         this.gl.deleteTexture(snapshot.texture);
@@ -3990,6 +4112,10 @@ void main() {
         this.gl.deleteFramebuffer(snapshot.framebuffer);
         snapshot.framebuffer = null;
       }
+
+      snapshot.cpuBytes = 0;
+      snapshot.cpuPixels = null;
+      snapshot.state = "DELETED";
     }
 
     resetStrokeProgress() {

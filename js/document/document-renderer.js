@@ -3720,14 +3720,18 @@ void main() {
       gl.bindTexture(gl.TEXTURE_2D, null);
 
       const snapshot = {
+        bytes: snapshotRect.width * snapshotRect.height * 4,
         id: snapshotId,
         framebuffer,
         label,
+        layerId,
         rect: docRect,
         state: "GPU_HOT",
         targetRect,
         texture,
       };
+      snapshot.dehydrateGpu = () => this.dehydrateRasterSnapshot(snapshot);
+      snapshot.hydrateGpu = () => this.hydrateRasterSnapshot(snapshot);
 
       const textureRow = this.registerRasterTexture(texture, {
         bbox: docRect,
@@ -3761,6 +3765,148 @@ void main() {
       return snapshot;
     }
 
+    getRasterSnapshotDimensions(snapshot) {
+      const rect = snapshot?.rect || snapshot?.targetRect || null;
+      const width = Math.max(0, Math.round(Number(rect?.width) || 0));
+      const height = Math.max(0, Math.round(Number(rect?.height) || 0));
+
+      return { height, width };
+    }
+
+    dehydrateRasterSnapshot(snapshot) {
+      if (!snapshot?.framebuffer || snapshot.state === "CPU_COLD") {
+        return snapshot?.state === "CPU_COLD";
+      }
+
+      const { height, width } = this.getRasterSnapshotDimensions(snapshot);
+
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const pixels = new Uint8Array(width * height * 4);
+
+      try {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, snapshot.framebuffer);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      } catch (error) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        console.warn?.("[CBO renderer] Impossibile raffreddare snapshot raster.", error);
+        return false;
+      }
+
+      this.deleteRasterFramebuffer(snapshot.framebuffer);
+      gl.deleteFramebuffer(snapshot.framebuffer);
+      snapshot.framebuffer = null;
+
+      if (snapshot.texture) {
+        this.deleteRasterTexture(snapshot.texture);
+        gl.deleteTexture(snapshot.texture);
+        snapshot.texture = null;
+      }
+
+      snapshot.bytes = snapshot.bytes || pixels.byteLength;
+      snapshot.cpuBytes = pixels.byteLength;
+      snapshot.cpuPixels = pixels;
+      snapshot.state = "CPU_COLD";
+
+      return true;
+    }
+
+    hydrateRasterSnapshot(snapshot) {
+      if (!snapshot || snapshot.texture || snapshot.framebuffer) {
+        return Boolean(snapshot?.texture && snapshot?.framebuffer);
+      }
+
+      if (!(snapshot.cpuPixels instanceof Uint8Array)) {
+        return false;
+      }
+
+      const { height, width } = this.getRasterSnapshotDimensions(snapshot);
+
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const texture = gl.createTexture();
+      const framebuffer = gl.createFramebuffer();
+
+      if (!texture || !framebuffer) {
+        if (texture) {
+          gl.deleteTexture(texture);
+        }
+
+        if (framebuffer) {
+          gl.deleteFramebuffer(framebuffer);
+        }
+
+        return false;
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, snapshot.cpuPixels);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.deleteFramebuffer(framebuffer);
+        gl.deleteTexture(texture);
+        return false;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      snapshot.framebuffer = framebuffer;
+      snapshot.texture = texture;
+      snapshot.state = "GPU_HOT";
+
+      const layerId = snapshot.layerId || "";
+      const textureRow = this.registerRasterTexture(texture, {
+        bbox: snapshot.rect,
+        height,
+        kind: "historySnapshot",
+        label: snapshot.label || "raster snapshot",
+        layerId,
+        originX: snapshot.rect?.x,
+        originY: snapshot.rect?.y,
+        ownerId: snapshot.id || this.nextRasterTargetId?.() || "raster-snapshot",
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: snapshot.label || "raster snapshot",
+        state: "GPU_HOT",
+        width,
+      });
+
+      this.registerRasterFramebuffer(framebuffer, {
+        height,
+        kind: "historySnapshotFramebuffer",
+        label: `${snapshot.label || "raster snapshot"} framebuffer`,
+        layerId,
+        linkedTextureId: textureRow?.id || "",
+        ownerId: snapshot.id || "",
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: snapshot.label || "raster snapshot",
+        width,
+      });
+
+      snapshot.cpuBytes = 0;
+      snapshot.cpuPixels = null;
+
+      return true;
+    }
+
     canRestoreRasterSnapshot(target, snapshot) {
       const mappedRect = this.getRasterTargetLocalRect(target, snapshot?.rect);
       const rect = mappedRect?.localRect;
@@ -3788,6 +3934,10 @@ void main() {
 
     restoreRasterSnapshot(layerId, snapshot, options = {}) {
       if (!layerId || !snapshot) {
+        return false;
+      }
+
+      if ((!snapshot.texture || !snapshot.framebuffer) && !this.hydrateRasterSnapshot(snapshot)) {
         return false;
       }
 
@@ -3881,6 +4031,10 @@ void main() {
     }
 
     deleteRasterSnapshot(snapshot) {
+      if (!snapshot) {
+        return;
+      }
+
       if (snapshot?.framebuffer) {
         this.deleteRasterFramebuffer(snapshot.framebuffer);
         this.gl.deleteFramebuffer(snapshot.framebuffer);
@@ -3892,6 +4046,10 @@ void main() {
         this.gl.deleteTexture(snapshot.texture);
         snapshot.texture = null;
       }
+
+      snapshot.cpuBytes = 0;
+      snapshot.cpuPixels = null;
+      snapshot.state = "DELETED";
     }
 
     deleteRasterTargetObject(target) {
@@ -5077,7 +5235,7 @@ void main() {
         gl.blendEquation(gl.FUNC_ADD);
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       };
-      const drawTexture = (texture, opacity = 1, rect = null) => {
+      const drawTexture = (texture, opacity = 1, rect = null, clipBase = null) => {
         if (rect) {
           setDocumentProjection(rect.width, rect.height, rect.x, rect.y);
           gl.uniform2f(uniforms.drawOrigin, rect.x, rect.y);
@@ -5085,17 +5243,53 @@ void main() {
           setDocumentProjection(width, height, 0, 0);
           gl.uniform2f(uniforms.drawOrigin, 0, 0);
         }
+
+        if (clipBase?.target?.texture) {
+          const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
+            ? Math.min(1, Math.max(0, clipBase.layer.opacity))
+            : 1;
+
+          gl.activeTexture(gl.TEXTURE2);
+          gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
+          gl.uniform1i(uniforms.clipTexture, 2);
+          gl.uniform1f(uniforms.clipMode, 1.0);
+          gl.uniform1f(uniforms.clipOpacity, clipOpacity);
+          gl.uniform2f(
+            uniforms.clipOrigin,
+            Number.isFinite(clipBase.target.x) ? clipBase.target.x : 0,
+            Number.isFinite(clipBase.target.y) ? clipBase.target.y : 0,
+          );
+          gl.uniform2f(
+            uniforms.clipTextureSize,
+            clipBase.target.width || width,
+            clipBase.target.height || height,
+          );
+          gl.activeTexture(gl.TEXTURE0);
+        } else {
+          gl.uniform1f(uniforms.clipMode, 0.0);
+          gl.uniform1f(uniforms.clipOpacity, 1.0);
+          gl.uniform2f(uniforms.clipOrigin, 0, 0);
+          gl.uniform2f(uniforms.clipTextureSize, width, height);
+        }
+
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, opacity);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        if (clipBase?.target?.texture) {
+          gl.uniform1f(uniforms.clipMode, 0.0);
+          gl.activeTexture(gl.TEXTURE2);
+          gl.bindTexture(gl.TEXTURE_2D, null);
+          gl.activeTexture(gl.TEXTURE0);
+        }
       };
-      const drawBlendTexture = (texture, opacity = 1, blendModeId = 0, rect = null) => {
+      const drawBlendTexture = (texture, opacity = 1, blendModeId = 0, rect = null, clipBase = null) => {
         if (!texture) {
           return;
         }
 
         if (blendModeId === 0) {
-          drawTexture(texture, opacity, rect);
+          drawTexture(texture, opacity, rect, clipBase);
           return;
         }
 
@@ -5125,10 +5319,31 @@ void main() {
         gl.uniform1f(blendUniforms.maskMode, 0.0);
         gl.uniform1f(blendUniforms.maskRectMode, 0.0);
         gl.uniform4f(blendUniforms.maskRect, 0, 0, width, height);
-        gl.uniform1f(blendUniforms.clipMode, 0.0);
-        gl.uniform1f(blendUniforms.clipOpacity, 1.0);
-        gl.uniform2f(blendUniforms.clipOrigin, 0, 0);
-        gl.uniform2f(blendUniforms.clipTextureSize, width, height);
+        if (clipBase?.target?.texture) {
+          const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
+            ? Math.min(1, Math.max(0, clipBase.layer.opacity))
+            : 1;
+
+          gl.activeTexture(gl.TEXTURE2);
+          gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
+          gl.uniform1f(blendUniforms.clipMode, 1.0);
+          gl.uniform1f(blendUniforms.clipOpacity, clipOpacity);
+          gl.uniform2f(
+            blendUniforms.clipOrigin,
+            Number.isFinite(clipBase.target.x) ? clipBase.target.x : 0,
+            Number.isFinite(clipBase.target.y) ? clipBase.target.y : 0,
+          );
+          gl.uniform2f(
+            blendUniforms.clipTextureSize,
+            clipBase.target.width || width,
+            clipBase.target.height || height,
+          );
+        } else {
+          gl.uniform1f(blendUniforms.clipMode, 0.0);
+          gl.uniform1f(blendUniforms.clipOpacity, 1.0);
+          gl.uniform2f(blendUniforms.clipOrigin, 0, 0);
+          gl.uniform2f(blendUniforms.clipTextureSize, width, height);
+        }
         gl.uniform1f(blendUniforms.previewCutMode, 0.0);
         gl.uniform4f(blendUniforms.previewCutRect, 0, 0, 0, 0);
         gl.bindVertexArray(this.quad.vao);
@@ -5138,6 +5353,11 @@ void main() {
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         gl.bindTexture(gl.TEXTURE_2D, null);
+        if (clipBase?.target?.texture) {
+          gl.activeTexture(gl.TEXTURE2);
+          gl.bindTexture(gl.TEXTURE_2D, null);
+        }
+        gl.activeTexture(gl.TEXTURE0);
         bindArtboardProgram();
       };
 
@@ -5151,9 +5371,37 @@ void main() {
 
       bindArtboardProgram();
 
-      for (const layer of this.getRenderableLayers()) {
+      let currentClipBase = null;
+      const isValidClipBaseLayer = (layer) => Boolean(
+        layer &&
+        layer.type !== "group" &&
+        layer.type !== "background" &&
+        layer.id !== "background"
+      );
+
+      for (const layer of this.getOrderedLayersBottomToTop()) {
         const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+        const isClippingLayer = layer.clippingMask === true;
         const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
+        const clipBase = isClippingLayer ? currentClipBase : null;
+
+        if (!isClippingLayer) {
+          currentClipBase = isValidClipBaseLayer(layer)
+            ? {
+                layer,
+                target: layerTarget,
+                visible: layer.visible !== false,
+              }
+            : null;
+        }
+
+        if (layer.visible === false) {
+          continue;
+        }
+
+        if (isClippingLayer && (!clipBase?.visible || !clipBase?.target?.texture)) {
+          continue;
+        }
 
         if (!layerTarget?.texture) {
           continue;
@@ -5171,21 +5419,25 @@ void main() {
         }
 
         if (this.hasPuppetLayerTransform(layer)) {
-          const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
-          const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
-            camera: flatCamera,
-            sourceTexture: layerTexture,
-            viewportHeight: height,
-            viewportWidth: width,
-          });
+          if (isClippingLayer) {
+            drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+          } else {
+            const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
+            const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
+              camera: flatCamera,
+              sourceTexture: layerTexture,
+              viewportHeight: height,
+              viewportWidth: width,
+            });
 
-          bindArtboardProgram();
+            bindArtboardProgram();
 
-          if (!didDrawPuppet) {
-            drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect);
+            if (!didDrawPuppet) {
+              drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, null);
+            }
           }
         } else {
-          drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect);
+          drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
         }
       }
 
@@ -6080,13 +6332,19 @@ void main() {
       const hasClippingMasks = orderedLayers.some((layer) => layer?.clippingMask === true);
       const activeStrokeLayerIndex = renderableLayers.findIndex((layer) => layer?.id === activeStrokeLayerId);
       const activeStrokeLayer = activeStrokeLayerIndex >= 0 ? renderableLayers[activeStrokeLayerIndex] : null;
+      const activeStrokeUsesClippingMask = Boolean(
+        options.activeStrokeTexture &&
+        hasClippingMasks &&
+        activeStrokeLayer?.clippingMask === true
+      );
       const activeStrokeNeedsFullStack = Boolean(
         options.activeStrokeTexture &&
         activeStrokeMode !== "eraser" &&
         activeStrokeLayer &&
         (
           this.hasAdvancedLayerBlendMode(activeStrokeLayer) ||
-          this.hasEnabledLayerEffects(activeStrokeLayer)
+          this.hasEnabledLayerEffects(activeStrokeLayer) ||
+          activeStrokeUsesClippingMask
         )
       );
       const activeStrokeCanOverlayPreview = !options.activeStrokeTexture ||
@@ -6102,7 +6360,6 @@ void main() {
       const canUsePreviewCache = Boolean(
         allowPreviewCache &&
         isZoomedOut &&
-        !hasClippingMasks &&
         !rasterTransformPreview &&
         !hasActiveEraserStroke &&
         !activeStrokeNeedsFullStack &&

@@ -9,6 +9,11 @@ test("smudge stroke history captures redo snapshots lazily on undo", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
 
   assert.match(source, /this\.activeHistoryBeforeSnapshot = this\.createHistorySnapshot\(target, bounds, "smudge prima"\)/);
+  assert.match(source, /dehydrateHistorySnapshot\(snapshot\)/);
+  assert.match(source, /hydrateHistorySnapshot\(snapshot\)/);
+  assert.match(source, /snapshot\.dehydrateGpu = \(\) => this\.dehydrateHistorySnapshot\(snapshot\)/);
+  assert.match(source, /snapshot\.hydrateGpu = \(\) => this\.hydrateHistorySnapshot\(snapshot\)/);
+  assert.match(source, /deleteHistorySnapshot\(snapshot\) \{\s*if \(!snapshot\) \{\s*return;\s*\}/);
   assert.match(source, /let after = null/);
   assert.match(source, /const captureRedoSnapshot = \(\) => \{/);
   assert.match(source, /after = this\.createHistorySnapshot\(redoTarget, before\.rect, "smudge dopo"\)/);

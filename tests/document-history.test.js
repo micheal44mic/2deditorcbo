@@ -151,6 +151,54 @@ test("raster history default budget is 500 MiB", () => {
   assert.equal(history.getRasterHistoryBudgetMiB(), 500);
 });
 
+test("raster history cools old GPU snapshots without dropping logical undo budget", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const mib = 1024 * 1024;
+  const cooled = [];
+  const history = new DocumentHistory({
+    maxEntries: 40,
+    maxRasterHistoryBytes: 500 * mib,
+    maxRasterHistoryGpuHotBytes: 2 * mib,
+    minRasterHistoryGpuHotEntries: 0,
+  });
+  const createSnapshot = (id) => ({
+    bytes: mib,
+    id,
+    rect: { width: 512, height: 512 },
+    state: "GPU_HOT",
+    texture: {},
+    dehydrateGpu() {
+      cooled.push(id);
+      this.cpuBytes = this.bytes;
+      this.state = "CPU_COLD";
+      this.texture = null;
+      return true;
+    },
+  });
+
+  history.push({
+    before: createSnapshot("snapshot-1"),
+    redo: () => true,
+    undo: () => true,
+  });
+  history.push({
+    before: createSnapshot("snapshot-2"),
+    redo: () => true,
+    undo: () => true,
+  });
+  history.push({
+    before: createSnapshot("snapshot-3"),
+    redo: () => true,
+    undo: () => true,
+  });
+
+  assert.equal(history.getRasterHistoryBytes(), 3 * mib);
+  assert.equal(history.getRasterHistoryGpuHotBytes(), 2 * mib);
+  assert.equal(history.getRasterHistoryCpuColdBytes(), mib);
+  assert.deepEqual(cooled, ["snapshot-1"]);
+  assert.equal(history.lastRasterGpuHotPrune.cooled.length, 1);
+});
+
 test("raster history budget destroys the oldest raster entries by byte size", () => {
   const DocumentHistory = loadDocumentHistory();
   const mib = 1024 * 1024;

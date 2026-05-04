@@ -9,6 +9,11 @@ test("brush stroke history captures redo snapshots lazily on undo", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 
   assert.match(source, /this\.createHistorySnapshot\(target, strokeRect, "before-stroke"\)/);
+  assert.match(source, /dehydrateHistorySnapshot\(snapshot\)/);
+  assert.match(source, /hydrateHistorySnapshot\(snapshot\)/);
+  assert.match(source, /snapshot\.dehydrateGpu = \(\) => this\.dehydrateHistorySnapshot\(snapshot\)/);
+  assert.match(source, /snapshot\.hydrateGpu = \(\) => this\.hydrateHistorySnapshot\(snapshot\)/);
+  assert.match(source, /deleteHistorySnapshot\(snapshot\) \{\s*if \(!snapshot\) \{\s*return;\s*\}/);
   assert.match(source, /let afterSnapshot = null/);
   assert.match(source, /let entry = null/);
   assert.match(source, /const captureRedoSnapshot = \(\) => \{/);

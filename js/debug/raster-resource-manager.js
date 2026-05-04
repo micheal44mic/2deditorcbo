@@ -744,6 +744,9 @@
     const history = namespace.documentHistory;
     const historyRasterBudgetBytes = Number(history?.getRasterHistoryBudgetBytes?.()) || 0;
     const historyRasterEstimatedBytes = Number(history?.getRasterHistoryBytes?.()) || 0;
+    const historyRasterGpuHotBudgetBytes = Number(history?.getRasterHistoryGpuHotBudgetBytes?.()) || 0;
+    const historyRasterGpuHotBytes = Number(history?.getRasterHistoryGpuHotBytes?.()) || 0;
+    const historyRasterCpuColdBytes = Number(history?.getRasterHistoryCpuColdBytes?.()) || 0;
     const paintTargetCropPotential = options.analyzePaintTargets === true ||
       options.includePaintTargetCropPotential === true
       ? namespace.documentRenderer?.estimatePaintTargetCropPotential?.(options.paintTargetAnalysis || {}) || null
@@ -765,12 +768,18 @@
       fullCanvasResourceCount: rows.filter((row) => row.isFullCanvas).length,
       generatedAt: nowIso(),
       historyCompressedBytes: sumRows(rows, (row) => row.ownerType === "historyCompressed"),
-      historyCpuRawBytes: sumRows(rows, (row) => row.ownerType === "historyCpuRaw"),
+      historyCpuRawBytes: sumRows(rows, (row) => row.ownerType === "historyCpuRaw") + historyRasterCpuColdBytes,
       historyGpuBytes: sumRows(rows, (row) => row.ownerType === "historyGpu"),
       historyRasterBudgetBytes,
       historyRasterBudgetMiB: formatMiB(historyRasterBudgetBytes),
+      historyRasterCpuColdBytes,
+      historyRasterCpuColdMiB: formatMiB(historyRasterCpuColdBytes),
       historyRasterEstimatedBytes,
       historyRasterEstimatedMiB: formatMiB(historyRasterEstimatedBytes),
+      historyRasterGpuHotBudgetBytes,
+      historyRasterGpuHotBudgetMiB: formatMiB(historyRasterGpuHotBudgetBytes),
+      historyRasterGpuHotBytes,
+      historyRasterGpuHotMiB: formatMiB(historyRasterGpuHotBytes),
       historyRedoEntryCount: Array.isArray(history?.redoStack) ? history.redoStack.length : 0,
       historyUndoEntryCount: Array.isArray(history?.undoStack) ? history.undoStack.length : 0,
       liveLayerBytes: sumRows(rows, (row) => row.ownerType === "live"),

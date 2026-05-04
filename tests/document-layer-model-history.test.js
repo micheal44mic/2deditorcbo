@@ -232,6 +232,107 @@ test("layer opacity and blend mode changes are preserved through layer state his
   assert.equal(model.findEntryById("paint-main").opacity, 0.46);
 });
 
+test("reference layer changes undo and redo through document history", () => {
+  const { DocumentHistory, window } = loadDocumentModules();
+  const history = new DocumentHistory();
+  const calls = [];
+  let referenceLayerId = "";
+
+  window.CBO.colorFill = {
+    getReferenceLayerId: () => referenceLayerId,
+    setReferenceLayerId(layerId, options = {}) {
+      referenceLayerId = String(layerId || "");
+      calls.push({ layerId: referenceLayerId, source: options.source });
+    },
+  };
+  window.CBO.documentHistory = history;
+
+  referenceLayerId = "paint-main";
+  history.recordReferenceStateChange("", "paint-main", {
+    source: "unit-reference",
+  });
+
+  assert.equal(history.undoStack.length, 1);
+  assert.equal(history.undo(), true);
+  assert.equal(referenceLayerId, "");
+  assert.equal(calls.at(-1).source, "history-undo-reference-layer");
+
+  assert.equal(history.redo(), true);
+  assert.equal(referenceLayerId, "paint-main");
+  assert.equal(calls.at(-1).source, "history-redo-reference-layer");
+});
+
+test("layer state undo restores the color fill reference when a referenced layer returns", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory();
+  const model = new DocumentLayerModel({
+    entries: [
+      { id: "ref-layer", name: "Reference", type: "paint" },
+      { id: "paint-main", name: "Paint", type: "paint" },
+      { id: "background", name: "Background", type: "background", locked: true },
+    ],
+  });
+  let referenceLayerId = "ref-layer";
+
+  window.CBO.colorFill = {
+    getReferenceLayerId: () => referenceLayerId,
+    setReferenceLayerId(layerId) {
+      referenceLayerId = String(layerId || "");
+    },
+  };
+  window.CBO.documentHistory = history;
+
+  model.setEntries(model.getEntries().filter((entry) => entry.id !== "ref-layer"), {
+    source: "delete-reference-layer",
+  });
+  referenceLayerId = "";
+  await waitForHistoryFlush();
+
+  assert.equal(history.undoStack.length, 1);
+  assert.equal(referenceLayerId, "");
+
+  assert.equal(history.undo(), true);
+  assert.ok(model.findEntryById("ref-layer"));
+  assert.equal(referenceLayerId, "ref-layer");
+
+  assert.equal(history.redo(), true);
+  assert.equal(model.findEntryById("ref-layer"), null);
+  assert.equal(referenceLayerId, "");
+});
+
+test("clipping mask toggles stay as discrete undo steps", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory({ groupIdleMs: 1000 });
+  const model = new DocumentLayerModel({
+    entries: [
+      { id: "clip", name: "Clip", type: "paint" },
+      { id: "base", name: "Base", type: "paint" },
+      { id: "background", name: "Background", type: "background", locked: true },
+    ],
+  });
+
+  window.CBO.documentHistory = history;
+
+  model.updateLayer("clip", { clippingMask: true }, {
+    source: "layers-panel-clipping-mask",
+  });
+  await waitForHistoryFlush();
+
+  model.updateLayer("clip", { clippingMask: false }, {
+    source: "layers-panel-clipping-mask",
+  });
+  await waitForHistoryFlush();
+
+  assert.equal(history.undoStack.length, 2);
+  assert.equal(model.findEntryById("clip").clippingMask, false);
+
+  assert.equal(history.undo(), true);
+  assert.equal(model.findEntryById("clip").clippingMask, true);
+
+  assert.equal(history.undo(), true);
+  assert.equal(model.findEntryById("clip").clippingMask, false);
+});
+
 test("setActiveLayer does not record selection-only changes by default", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory();

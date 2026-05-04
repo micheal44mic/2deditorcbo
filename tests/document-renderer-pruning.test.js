@@ -350,8 +350,13 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   )?.[1] || "";
 
   assert.match(source, /createRasterSnapshot\(targetOrLayerId, rect = null, label = "raster snapshot"\)/);
+  assert.match(source, /dehydrateRasterSnapshot\(snapshot\)/);
+  assert.match(source, /hydrateRasterSnapshot\(snapshot\)/);
+  assert.match(source, /snapshot\.dehydrateGpu = \(\) => this\.dehydrateRasterSnapshot\(snapshot\)/);
+  assert.match(source, /snapshot\.hydrateGpu = \(\) => this\.hydrateRasterSnapshot\(snapshot\)/);
   assert.match(source, /restoreRasterSnapshot\(layerId, snapshot, options = \{\}\)/);
   assert.match(source, /deleteRasterSnapshot\(snapshot\)/);
+  assert.match(source, /deleteRasterSnapshot\(snapshot\) \{\s*if \(!snapshot\) \{\s*return;\s*\}/);
   assert.match(source, /createRasterOperationMemoryReport\(options = \{\}\)/);
   assert.match(source, /operationType: "raster-transform"/);
   assert.match(source, /getDocumentDrawTarget\(layerId = this\.resolvePaintLayerId\(\)\)/);
@@ -426,7 +431,7 @@ test("document renderer composites supported layer blend modes in shader", () =>
   assert.match(source, /createLayerBlendProgramInfo\(\)/);
   assert.match(source, /ensureLayerBlendProgramInfo\(\)/);
   assert.match(source, /renderLayerWithActiveStrokeTexture\(layerTexture, strokeTexture, strokeRect = null\)/);
-  assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect\)/);
+  assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
   assert.match(drawToCanvasBody, /activeStrokeNeedsFullStack/);
   assert.match(drawToCanvasBody, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);
 });

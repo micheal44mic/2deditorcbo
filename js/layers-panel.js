@@ -122,9 +122,9 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return window.CBO.colorFill?.getReferenceLayerId?.() || window.CBO.colorFillReferenceLayerId || "";
   }
 
-  function setReferenceLayerId(layerId, source = "layers-panel-reference") {
+  function setReferenceLayerId(layerId, source = "layers-panel-reference", options = {}) {
     if (window.CBO.colorFill?.setReferenceLayerId) {
-      window.CBO.colorFill.setReferenceLayerId(layerId, { source });
+      window.CBO.colorFill.setReferenceLayerId(layerId, { ...options, source });
     } else {
       window.CBO.colorFillReferenceLayerId = layerId || "";
       window.dispatchEvent(new CustomEvent("cbo:color-fill-reference-change", {
@@ -133,9 +133,9 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
   }
 
-  function clearReferenceLayerId(source = "layers-panel-clear-reference") {
+  function clearReferenceLayerId(source = "layers-panel-clear-reference", options = {}) {
     if (window.CBO.colorFill?.clearReferenceLayerId) {
-      window.CBO.colorFill.clearReferenceLayerId({ source });
+      window.CBO.colorFill.clearReferenceLayerId({ ...options, source });
     } else {
       setReferenceLayerId("", source);
     }
@@ -172,7 +172,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const hasMissingReference = referenceId && !layerModel?.findEntryById?.(referenceId);
 
     if (hasMissingReference) {
-      clearReferenceLayerId("layers-panel-prune-reference");
+      clearReferenceLayerId("layers-panel-prune-reference", { history: false });
       return;
     }
 
@@ -230,7 +230,6 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return layerModel.updateLayer(layerId, {
       clippingMask: shouldClip,
     }, {
-      historyGroup: `clipping-mask-${layerId}`,
       source: "layers-panel-clipping-mask",
     });
   }
