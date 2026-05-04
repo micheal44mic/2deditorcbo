@@ -5,9 +5,13 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..");
 
-test("brush stroke history captures redo snapshots lazily on undo", () => {
+test("brush stroke history prefers tile-memento before and after snapshots", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 
+  assert.match(source, /beginRasterTileHistory\?\.\(layerId, strokeRect/);
+  assert.match(source, /commitRasterTileHistory\?\.\(tileHistory,/);
+  assert.match(source, /historyMode = hasTileHistory[\s\S]*"tile-before-after"/);
+  assert.match(source, /tileHistory[\s\S]*this\.createHistorySnapshot\(target, strokeRect, "before-stroke"\)/);
   assert.match(source, /this\.createHistorySnapshot\(target, strokeRect, "before-stroke"\)/);
   assert.match(source, /dehydrateHistorySnapshot\(snapshot\)/);
   assert.match(source, /hydrateHistorySnapshot\(snapshot\)/);

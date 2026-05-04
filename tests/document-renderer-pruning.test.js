@@ -357,6 +357,12 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /restoreRasterSnapshot\(layerId, snapshot, options = \{\}\)/);
   assert.match(source, /deleteRasterSnapshot\(snapshot\)/);
   assert.match(source, /deleteRasterSnapshot\(snapshot\) \{\s*if \(!snapshot\) \{\s*return;\s*\}/);
+  assert.match(source, /const RASTER_HISTORY_TILE_SIZE = 256/);
+  assert.match(source, /beginRasterTileHistory\(layerId, dirtyRect, options = \{\}\)/);
+  assert.match(source, /extendRasterTileHistory\(capture, dirtyRect, options = \{\}\)/);
+  assert.match(source, /commitRasterTileHistory\(capture, options = \{\}\)/);
+  assert.match(source, /restoreRasterTileHistoryEntry\(entry, snapshotKey = "before", options = \{\}\)/);
+  assert.match(source, /tileDeltas/);
   assert.match(source, /createRasterOperationMemoryReport\(options = \{\}\)/);
   assert.match(source, /operationType: "raster-transform"/);
   assert.match(source, /getDocumentDrawTarget\(layerId = this\.resolvePaintLayerId\(\)\)/);

@@ -594,11 +594,35 @@
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
-  function pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy = null) {
+  function pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy = null, tileHistory = null) {
     const history = namespace.documentHistory;
 
-    if (!history?.push || !beforeSnapshot) {
+    if (!history?.push) {
+      renderer.deleteRasterTileHistoryCapture?.(tileHistory);
       renderer.deleteRasterSnapshot?.(beforeSnapshot);
+      return;
+    }
+
+    if (tileHistory) {
+      const entry = renderer.commitRasterTileHistory?.(tileHistory, {
+        label: "color-fill",
+        memoryPolicy,
+        redoSource: "history-redo-color-fill",
+        source: "color-fill",
+        type: "pixel",
+        undoSource: "history-undo-color-fill",
+      });
+
+      if (entry) {
+        history.push(entry);
+      } else {
+        renderer.deleteRasterTileHistoryCapture?.(tileHistory);
+      }
+
+      return;
+    }
+
+    if (!beforeSnapshot) {
       return;
     }
 
@@ -758,7 +782,13 @@
     }
 
     const layerId = target.layerId;
-    const beforeSnapshot = renderer.createRasterSnapshot?.(layerId, dirtyRect, "color-fill-before");
+    const tileHistory = renderer.beginRasterTileHistory?.(layerId, dirtyRect, {
+      label: "color-fill",
+      source: "color-fill",
+    });
+    const beforeSnapshot = tileHistory
+      ? null
+      : renderer.createRasterSnapshot?.(layerId, dirtyRect, "color-fill-before");
     const dirtyRead = readTargetDirtyPixels(gl, target, dirtyRect);
     const targetPixels = dirtyRead.pixels;
 
@@ -783,7 +813,7 @@
       target,
       width,
     });
-    pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy);
+    pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy, tileHistory);
     renderer.invalidatePreviewCache?.("color-fill");
     renderer.emitContentChange?.({ layerId, source: "color-fill" });
     renderer.requestDraw?.();

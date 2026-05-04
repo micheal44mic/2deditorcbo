@@ -1163,9 +1163,14 @@ void main() {
       const estimatedPeakBytes = persistentBytes + scratchBytes;
       const coverage = this.getRasterRectCoverage(strokeRect, target);
       const policy = this.classifyStrokeMemory(estimatedPeakBytes, coverage);
-      const historyMode = policy === "huge"
-        ? "gpu-before-no-redo"
-        : "gpu-before-lazy-after";
+      const hasTileHistory = typeof this.documentRenderer?.beginRasterTileHistory === "function";
+      const historyMode = hasTileHistory
+        ? "tile-before-after"
+        : (
+            policy === "huge"
+              ? "gpu-before-no-redo"
+              : "gpu-before-lazy-after"
+          );
 
       return {
         beforeBytes,
@@ -1181,7 +1186,7 @@ void main() {
         phase,
         policy,
         potentialAfterBytes,
-        reason: policy === "huge"
+        reason: historyMode === "gpu-before-no-redo"
           ? "redo snapshot disabled for very large brush stroke"
           : "brush stroke memory estimate",
         scratchBytes,
@@ -3734,7 +3739,13 @@ void main() {
         target,
         tool: this.currentStrokeTool,
       });
-      const beforeSnapshot = this.options.enableHistory && strokeRect
+      const tileHistory = this.options.enableHistory && strokeRect
+        ? this.documentRenderer?.beginRasterTileHistory?.(layerId, strokeRect, {
+            label: "brush-stroke",
+            source: this.currentStrokeTool,
+          })
+        : null;
+      const beforeSnapshot = this.options.enableHistory && strokeRect && !tileHistory
         ? this.createHistorySnapshot(target, strokeRect, "before-stroke")
         : null;
 
@@ -3765,7 +3776,24 @@ void main() {
       gl.useProgram(null);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-      if (beforeSnapshot) {
+      if (tileHistory) {
+        const history = namespace.documentHistory;
+        const entry = this.documentRenderer?.commitRasterTileHistory?.(tileHistory, {
+          label: "brush-stroke",
+          memoryPolicy: memoryReport,
+          redoSource: `history-redo-${this.currentStrokeTool}`,
+          source: this.currentStrokeTool,
+          type: "pixel",
+          undoSource: `history-undo-${this.currentStrokeTool}`,
+        });
+
+        if (history?.push && entry) {
+          history.push(entry);
+          this.pruneRasterHistoryForStroke(memoryReport);
+        } else {
+          this.documentRenderer?.deleteRasterTileHistoryCapture?.(tileHistory);
+        }
+      } else if (beforeSnapshot) {
         const history = namespace.documentHistory;
         let afterSnapshot = null;
         let entry = null;

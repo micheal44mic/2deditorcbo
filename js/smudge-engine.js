@@ -188,6 +188,7 @@ void main() {
       this.scratchTarget = null;
       this.activeHistoryDabs = [];
       this.activeHistoryBeforeSnapshot = null;
+      this.activeHistoryTileCapture = null;
       this.activeHistoryLayerId = null;
       this.activeSmudgeBounds = null;
       this.activeSmudgeMemoryReport = null;
@@ -870,9 +871,14 @@ void main() {
       const estimatedPeakBytes = persistentBytes + scratchBytes;
       const coverage = this.getRectCoverage(historyRect, target);
       const policy = this.classifyStrokeMemory(estimatedPeakBytes, coverage);
-      const historyMode = policy === "huge"
-        ? "gpu-before-no-redo"
-        : "gpu-before-lazy-after";
+      const hasTileHistory = typeof this.documentRenderer?.beginRasterTileHistory === "function";
+      const historyMode = hasTileHistory
+        ? "tile-before-after"
+        : (
+            policy === "huge"
+              ? "gpu-before-no-redo"
+              : "gpu-before-lazy-after"
+          );
 
       return {
         beforeBytes,
@@ -888,7 +894,7 @@ void main() {
         phase,
         policy,
         potentialAfterBytes,
-        reason: policy === "huge"
+        reason: historyMode === "gpu-before-no-redo"
           ? "redo snapshot disabled for very large smudge stroke"
           : "smudge stroke memory estimate",
         scratchBytes,
@@ -1129,8 +1135,9 @@ void main() {
       }
 
       try {
-        const nextHistoryRect = this.activeHistoryBeforeSnapshot
-          ? this.unionRects(this.activeHistoryBeforeSnapshot.rect, bounds)
+        const existingHistoryRect = this.activeHistoryTileCapture?.rect || this.activeHistoryBeforeSnapshot?.rect;
+        const nextHistoryRect = existingHistoryRect
+          ? this.unionRects(existingHistoryRect, bounds)
           : bounds;
         const scratchRect = this.scratchTarget?.rect || bounds;
         const memoryReport = this.createStrokeMemoryReport({
@@ -1142,6 +1149,32 @@ void main() {
         });
 
         this.recordStrokeMemory(memoryReport);
+
+        if (this.documentRenderer?.beginRasterTileHistory && this.documentRenderer?.extendRasterTileHistory) {
+          const layerId = this.activeHistoryLayerId || target?.layerId || "";
+
+          if (!this.activeHistoryTileCapture) {
+            this.activeHistoryTileCapture = this.documentRenderer.beginRasterTileHistory(layerId, bounds, {
+              label: "smudge",
+              source: "smudge",
+            });
+
+            return Boolean(this.activeHistoryTileCapture);
+          }
+
+          const didExtend = this.documentRenderer.extendRasterTileHistory(this.activeHistoryTileCapture, bounds, {
+            label: "smudge",
+            layerId,
+            source: "smudge",
+          });
+
+          if (!didExtend) {
+            this.documentRenderer.deleteRasterTileHistoryCapture(this.activeHistoryTileCapture);
+            this.activeHistoryTileCapture = null;
+          }
+
+          return didExtend;
+        }
 
         if (!this.activeHistoryBeforeSnapshot) {
           this.activeHistoryBeforeSnapshot = this.createHistorySnapshot(target, bounds, "smudge prima");
@@ -1198,6 +1231,8 @@ void main() {
     clearActiveHistoryDabs() {
       this.deleteHistoryDabs(this.activeHistoryDabs);
       this.activeHistoryDabs = [];
+      this.documentRenderer?.deleteRasterTileHistoryCapture?.(this.activeHistoryTileCapture);
+      this.activeHistoryTileCapture = null;
       this.deleteHistorySnapshot(this.activeHistoryBeforeSnapshot);
       this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = null;
@@ -1311,6 +1346,7 @@ void main() {
     commitHistory() {
       const dabs = this.activeHistoryDabs;
       const before = this.activeHistoryBeforeSnapshot;
+      const tileHistory = this.activeHistoryTileCapture;
       const layerId = this.activeHistoryLayerId || this.strokeTarget?.layerId || null;
       const target = this.strokeTarget;
       const memoryReport = this.activeSmudgeMemoryReport;
@@ -1319,10 +1355,38 @@ void main() {
 
       this.activeHistoryDabs = [];
       this.activeHistoryBeforeSnapshot = null;
+      this.activeHistoryTileCapture = null;
       this.activeHistoryLayerId = null;
       this.activeSmudgeMemoryReport = null;
       this.activeSmudgeRedoDisabled = false;
       this.historyDisabledForStroke = false;
+
+      if (tileHistory) {
+        if (!layerId || !this.hasHistorySupport()) {
+          this.documentRenderer?.deleteRasterTileHistoryCapture?.(tileHistory);
+          this.deleteHistoryDabs(dabs);
+          return;
+        }
+
+        this.deleteHistoryDabs(dabs);
+        const entry = this.documentRenderer?.commitRasterTileHistory?.(tileHistory, {
+          label: "smudge",
+          memoryPolicy: memoryReport,
+          redoSource: "history-redo-smudge",
+          source: "smudge",
+          type: "pixel",
+          undoSource: "history-undo-smudge",
+        });
+
+        if (entry && namespace.documentHistory?.push) {
+          namespace.documentHistory.push(entry);
+          this.pruneRasterHistoryForStroke(memoryReport);
+        } else {
+          this.documentRenderer?.deleteRasterTileHistoryCapture?.(tileHistory);
+        }
+
+        return;
+      }
 
       if (before) {
         if (!layerId || !target || !this.hasHistorySupport()) {
@@ -1626,6 +1690,7 @@ void main() {
       this.activePointerId = event.pointerId;
       this.activeHistoryDabs = [];
       this.activeHistoryBeforeSnapshot = null;
+      this.activeHistoryTileCapture = null;
       this.activeHistoryLayerId = target.layerId || this.documentRenderer?.layerModel?.activeLayerId || null;
       this.activeSmudgeBounds = null;
       this.activeSmudgeMemoryReport = null;
@@ -1884,7 +1949,9 @@ void main() {
       const layerId = this.activeHistoryLayerId || target?.layerId || null;
       const memoryReport = this.activeSmudgeMemoryReport;
       const debugInfo = {
-        historyBytes: this.activeHistoryBeforeSnapshot
+        historyBytes: this.activeHistoryTileCapture
+          ? rectBytes(this.activeHistoryTileCapture.rect) * 2
+          : this.activeHistoryBeforeSnapshot
           ? this.getSnapshotBytes(this.activeHistoryBeforeSnapshot)
           : this.getHistoryDabsBytes(this.activeHistoryDabs),
       };

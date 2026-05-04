@@ -2,6 +2,7 @@
   const CROPPED_TARGET_EDGE_PADDING = 2;
   const CROPPED_TARGET_EFFECT_PADDING = 320;
   const RASTER_BYTES_PER_PIXEL = 4;
+  const RASTER_HISTORY_TILE_SIZE = 256;
   const RASTER_MIB = 1024 * 1024;
   const RASTER_OPERATION_MEMORY_POLICY = Object.freeze({
     hugeCoverage: 0.35,
@@ -1128,6 +1129,277 @@ void main() {
 
     estimateRasterSnapshotBytes(snapshot) {
       return this.getRasterRectBytes(snapshot?.rect || snapshot?.targetRect);
+    }
+
+    getRasterHistoryTileSize(options = {}) {
+      const requested = Number(options.tileSize ?? options.historyTileSize ?? RASTER_HISTORY_TILE_SIZE);
+
+      if (!Number.isFinite(requested) || requested <= 0) {
+        return RASTER_HISTORY_TILE_SIZE;
+      }
+
+      return Math.max(16, Math.min(1024, Math.round(requested)));
+    }
+
+    getRasterHistoryTileRects(rect, options = {}) {
+      const captureRect = this.getClampedDocumentRect(rect);
+
+      if (!captureRect) {
+        return [];
+      }
+
+      const tileSize = this.getRasterHistoryTileSize(options);
+      const startTx = Math.floor(captureRect.x / tileSize);
+      const startTy = Math.floor(captureRect.y / tileSize);
+      const endTx = Math.floor((captureRect.x + captureRect.width - 1) / tileSize);
+      const endTy = Math.floor((captureRect.y + captureRect.height - 1) / tileSize);
+      const rects = [];
+
+      for (let ty = startTy; ty <= endTy; ty += 1) {
+        for (let tx = startTx; tx <= endTx; tx += 1) {
+          const tileX = tx * tileSize;
+          const tileY = ty * tileSize;
+          const x0 = Math.max(0, tileX);
+          const y0 = Math.max(0, tileY);
+          const x1 = Math.min(tileX + tileSize, this.width);
+          const y1 = Math.min(tileY + tileSize, this.height);
+
+          if (x1 <= x0 || y1 <= y0) {
+            continue;
+          }
+
+          rects.push({
+            rect: {
+              x: x0,
+              y: y0,
+              width: x1 - x0,
+              height: y1 - y0,
+            },
+            tx,
+            ty,
+          });
+        }
+      }
+
+      return rects;
+    }
+
+    unionRasterHistoryRects(a, b) {
+      if (!a) {
+        return b ? { ...b } : null;
+      }
+
+      if (!b) {
+        return { ...a };
+      }
+
+      const x0 = Math.min(a.x, b.x);
+      const y0 = Math.min(a.y, b.y);
+      const x1 = Math.max(a.x + a.width, b.x + b.width);
+      const y1 = Math.max(a.y + a.height, b.y + b.height);
+
+      return {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+      };
+    }
+
+    extendRasterTileHistory(capture, dirtyRect, options = {}) {
+      if (!capture || capture.destroyed === true || !Array.isArray(capture.tileDeltas)) {
+        return false;
+      }
+
+      const captureRect = this.getClampedDocumentRect(dirtyRect);
+
+      if (!captureRect) {
+        return true;
+      }
+
+      const tileSize = this.getRasterHistoryTileSize({
+        tileSize: capture.tileSize,
+        ...options,
+      });
+      const existingKeys = new Set(capture.tileDeltas.map((delta) => `${delta.storeId}:${delta.tx}:${delta.ty}`));
+      const label = options.label || capture.label || options.source || "raster-tile-history";
+      const layerId = options.layerId || capture.layerId;
+
+      for (const tile of this.getRasterHistoryTileRects(captureRect, { tileSize })) {
+        const storeId = `LayerPixels:${layerId}`;
+        const key = `${storeId}:${tile.tx}:${tile.ty}`;
+
+        if (existingKeys.has(key)) {
+          continue;
+        }
+
+        const before = this.createRasterSnapshot(layerId, tile.rect, `${label}-before-tile-${tile.tx}-${tile.ty}`);
+
+        if (!before?.texture && !before?.cpuPixels) {
+          return false;
+        }
+
+        capture.tileDeltas.push({
+          after: null,
+          before,
+          layerId,
+          rect: before.rect ? { ...before.rect } : { ...tile.rect },
+          storeId,
+          tx: tile.tx,
+          ty: tile.ty,
+        });
+        existingKeys.add(key);
+      }
+
+      capture.rect = this.unionRasterHistoryRects(capture.rect, captureRect);
+      capture.projectionInvalidation = [{ ...capture.rect }];
+
+      return true;
+    }
+
+    deleteRasterTileHistoryCapture(capture) {
+      const deltas = Array.isArray(capture?.tileDeltas) ? capture.tileDeltas : [];
+
+      for (const delta of deltas) {
+        this.deleteRasterSnapshot(delta.before);
+        this.deleteRasterSnapshot(delta.after);
+        delta.before = null;
+        delta.after = null;
+      }
+
+      if (capture) {
+        capture.destroyed = true;
+      }
+    }
+
+    beginRasterTileHistory(layerId, dirtyRect, options = {}) {
+      if (!layerId || !dirtyRect) {
+        return null;
+      }
+
+      const target = this.rasterTargetsByLayerId.get(layerId) || this.getRasterTarget(layerId);
+      const captureRect = this.getClampedDocumentRect(dirtyRect);
+
+      if (!target?.framebuffer || !target?.texture || !captureRect) {
+        return null;
+      }
+
+      const tileSize = this.getRasterHistoryTileSize(options);
+      const label = options.label || options.source || "raster-tile-history";
+      const capture = {
+        affectedNodes: [layerId],
+        id: `raster-tile-history-${this.rasterTargetIdSequence++}`,
+        label,
+        layerId,
+        projectionInvalidation: [{ ...captureRect }],
+        rect: { ...captureRect },
+        source: options.source || label,
+        tileDeltas: [],
+        tileSize,
+        type: "raster-tile-history-capture",
+      };
+
+      if (!this.extendRasterTileHistory(capture, captureRect, { label, layerId, tileSize })) {
+        this.deleteRasterTileHistoryCapture(capture);
+        return null;
+      }
+
+      return capture;
+    }
+
+    commitRasterTileHistory(capture, options = {}) {
+      if (!capture || capture.destroyed === true || !Array.isArray(capture.tileDeltas)) {
+        return null;
+      }
+
+      const label = options.label || capture.label || options.source || "raster-tile-history";
+
+      for (const delta of capture.tileDeltas) {
+        const after = this.createRasterSnapshot(
+          delta.layerId || capture.layerId,
+          delta.rect,
+          `${label}-after-tile-${delta.tx}-${delta.ty}`,
+        );
+
+        if (!after?.texture && !after?.cpuPixels) {
+          for (const existingDelta of capture.tileDeltas) {
+            this.deleteRasterSnapshot(existingDelta.after);
+            existingDelta.after = null;
+          }
+
+          capture.commitFailed = true;
+          return null;
+        }
+
+        delta.after = after;
+      }
+
+      const renderer = this;
+      const entry = {
+        affectedNodes: [...capture.affectedNodes],
+        id: capture.id,
+        label,
+        layerId: capture.layerId,
+        memoryPolicy: options.memoryPolicy || capture.memoryPolicy || null,
+        projectionInvalidation: capture.projectionInvalidation.map((rect) => ({ ...rect })),
+        rect: { ...capture.rect },
+        source: options.source || capture.source || label,
+        tileDeltas: capture.tileDeltas,
+        tileSize: capture.tileSize,
+        type: options.type || "tile-delta",
+        undo() {
+          return renderer.restoreRasterTileHistoryEntry(this, "before", {
+            source: options.undoSource || `history-undo-${this.source}`,
+          });
+        },
+        redo() {
+          return renderer.restoreRasterTileHistoryEntry(this, "after", {
+            source: options.redoSource || `history-redo-${this.source}`,
+          });
+        },
+        destroy() {
+          renderer.deleteRasterTileHistoryCapture(this);
+        },
+      };
+
+      capture.destroyed = true;
+      return entry;
+    }
+
+    restoreRasterTileHistoryEntry(entry, snapshotKey = "before", options = {}) {
+      const deltas = Array.isArray(entry?.tileDeltas) ? entry.tileDeltas : [];
+
+      if (deltas.length === 0) {
+        return false;
+      }
+
+      for (const delta of deltas) {
+        if (!delta?.[snapshotKey]) {
+          return false;
+        }
+      }
+
+      for (const delta of deltas) {
+        const layerId = delta.layerId || entry.layerId;
+        const didRestore = this.restoreRasterSnapshot(layerId, delta[snapshotKey], {
+          emit: false,
+          source: options.source || "raster-tile-history-restore",
+        });
+
+        if (!didRestore) {
+          return false;
+        }
+      }
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId: entry.layerId,
+          source: options.source || "raster-tile-history-restore",
+        });
+      }
+
+      this.requestDraw();
+      return true;
     }
 
     createRasterOperationMemoryReport(options = {}) {
@@ -4821,9 +5093,15 @@ void main() {
         return false;
       }
 
-      const beforeSnapshot = this.createRasterSnapshot(layerId, dirtyRect, `${source}-before`);
+      const tileHistory = this.beginRasterTileHistory(layerId, dirtyRect, {
+        label: source,
+        source,
+      });
+      const beforeSnapshot = tileHistory
+        ? null
+        : this.createRasterSnapshot(layerId, dirtyRect, `${source}-before`);
 
-      if (!beforeSnapshot?.texture) {
+      if (!tileHistory && !beforeSnapshot?.texture) {
         return false;
       }
 
@@ -4841,12 +5119,70 @@ void main() {
         : this.drawTexturedQuad(sourceSnapshot.texture, destQuad, drawOptions);
 
       if (!didDraw) {
-        this.restoreRasterSnapshot(layerId, beforeSnapshot, {
-          emit: false,
-          source: `${source}-rollback`,
-        });
-        this.deleteRasterSnapshot(beforeSnapshot);
+        if (tileHistory) {
+          this.restoreRasterTileHistoryEntry(tileHistory, "before", {
+            emit: false,
+            source: `${source}-rollback`,
+          });
+          this.deleteRasterTileHistoryCapture(tileHistory);
+        } else {
+          this.restoreRasterSnapshot(layerId, beforeSnapshot, {
+            emit: false,
+            source: `${source}-rollback`,
+          });
+          this.deleteRasterSnapshot(beforeSnapshot);
+        }
         return false;
+      }
+
+      if (tileHistory) {
+        const memoryPolicy = this.recordRasterOperation(this.createRasterOperationMemoryReport({
+          afterRect: dirtyRect,
+          beforeRect: dirtyRect,
+          layerId,
+          mode: transformMode,
+          operationType: "raster-transform",
+          persistentBytes: this.getRasterRectBytes(dirtyRect) * 2,
+          reason: source,
+          scratchBytes: 0,
+          source,
+          sourceBytes: this.estimateRasterSnapshotBytes(sourceSnapshot),
+          sourceRect,
+          targetBytes: this.getRasterRectBytes(dirtyRect),
+          targetRect: dirtyRect,
+          tool: "raster-transform",
+        }));
+        const entry = this.commitRasterTileHistory(tileHistory, {
+          label: source,
+          memoryPolicy,
+          redoSource: `history-redo-${source}`,
+          source,
+          type: "custom",
+          undoSource: `history-undo-${source}`,
+        });
+
+        if (!entry) {
+          this.restoreRasterTileHistoryEntry(tileHistory, "before", {
+            emit: false,
+            source: `${source}-rollback`,
+          });
+          this.deleteRasterTileHistoryCapture(tileHistory);
+          return false;
+        }
+
+        const history = namespace.documentHistory;
+
+        if (history?.push) {
+          history.push(entry);
+        } else {
+          entry.destroy();
+        }
+
+        this.clearRasterTransformPreview(layerId);
+        this.emitContentChange({ layerId, source });
+        this.requestDraw();
+
+        return true;
       }
 
       const afterSnapshot = this.createRasterSnapshot(layerId, dirtyRect, `${source}-after`);

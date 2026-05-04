@@ -7,6 +7,15 @@ document.addEventListener(
 );
 
 document.addEventListener("DOMContentLoaded", () => {
+  function initCanvasDependentTools() {
+    window.CBO.initBrushShapeOutlinePreview?.();
+    window.CBO.initRasterTransformTool?.();
+    window.CBO.initPuppetTransformTool?.();
+    window.CBO.initVectorTextRenderer();
+  }
+
+  window.addEventListener("cbo:editor-canvas-ready", initCanvasDependentTools);
+
   window.CBO.initSidebar();
   window.CBO.initDrawer();
   window.CBO.initLayersPanel();
@@ -17,11 +26,16 @@ document.addEventListener("DOMContentLoaded", () => {
   window.CBO.initColorPicker();
   window.CBO.initColorDrop();
   window.CBO.initToolbar();
-  window.CBO.initEditorCanvas();
-  window.CBO.initBrushShapeOutlinePreview?.();
-  window.CBO.initRasterTransformTool?.();
-  window.CBO.initPuppetTransformTool?.();
-  window.CBO.initVectorTextRenderer();
+  if (window.CBO.initEditorDocumentStart) {
+    window.CBO.initEditorDocumentStart();
+  } else {
+    window.CBO.initEditorCanvas();
+  }
+
+  if (window.CBO.documentRenderer) {
+    initCanvasDependentTools();
+  }
+
   window.CBO.initRightSidebar();
   window.CBO.initBrushesPanel();
   window.CBO.initBrushStudio();

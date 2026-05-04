@@ -49,6 +49,8 @@ test("document renderer supports raster transform preview and history commit", (
   assert.match(source, /drawPerspectiveTexturedQuad\(texture, quad, options = \{\}\)/);
   assert.match(source, /u_destToSourceUv/);
   assert.match(source, /commitRasterTransform\(options = \{\}\)/);
+  assert.match(source, /beginRasterTileHistory\(layerId, dirtyRect,/);
+  assert.match(source, /commitRasterTileHistory\(tileHistory,/);
   assert.match(source, /namespace\.documentHistory/);
   assert.doesNotMatch(source, /window\.CBO\.history/);
 });

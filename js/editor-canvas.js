@@ -1,6 +1,119 @@
 window.CBO = window.CBO || {};
 
-const EDITOR_DOCUMENT_SIZE = 4000;
+const EDITOR_DOCUMENT_PRESETS = Object.freeze([
+  { id: "square-1024", label: "1024 x 1024", tag: "DRAFT", width: 1024, height: 1024 },
+  { id: "square-2048", label: "2048 x 2048", tag: "STANDARD", width: 2048, height: 2048 },
+  { id: "square-3000", label: "3000 x 3000", tag: "LARGE", width: 3000, height: 3000 },
+  { id: "square-4000", label: "4000 x 4000", tag: "CURRENT", width: 4000, height: 4000 },
+  { id: "landscape-1920", label: "1920 x 1080", tag: "LANDSCAPE", width: 1920, height: 1080 },
+  { id: "story-1080", label: "1080 x 1920", tag: "STORY", width: 1080, height: 1920 },
+  { id: "social-1080", label: "1080 x 1080", tag: "SOCIAL", width: 1080, height: 1080 },
+]);
+const DEFAULT_DOCUMENT_PRESET_ID = "square-4000";
+
+function getDocumentPreset(id) {
+  return EDITOR_DOCUMENT_PRESETS.find((preset) => preset.id === id) ||
+    EDITOR_DOCUMENT_PRESETS.find((preset) => preset.id === DEFAULT_DOCUMENT_PRESET_ID) ||
+    EDITOR_DOCUMENT_PRESETS[0];
+}
+
+function normalizeDocumentSize(options = {}) {
+  const preset = getDocumentPreset(options.presetId);
+  const width = Number.isFinite(options.documentWidth) && options.documentWidth > 0
+    ? Math.floor(options.documentWidth)
+    : preset.width;
+  const height = Number.isFinite(options.documentHeight) && options.documentHeight > 0
+    ? Math.floor(options.documentHeight)
+    : preset.height;
+
+  return {
+    height,
+    presetId: preset.id,
+    width,
+  };
+}
+
+function createDocumentPresetButton(preset) {
+  const button = document.createElement("button");
+  const preview = document.createElement("span");
+  const label = document.createElement("span");
+  const tag = document.createElement("span");
+
+  button.className = "document-start-preset";
+  button.type = "button";
+  button.dataset.documentPreset = preset.id;
+  button.setAttribute("aria-label", `Create ${preset.label} document`);
+
+  preview.className = "document-start-preset-preview";
+  preview.style.setProperty("--document-preset-aspect", `${preset.width} / ${preset.height}`);
+
+  label.className = "document-start-preset-label";
+  label.textContent = preset.label;
+
+  tag.className = "document-start-preset-tag";
+  tag.textContent = preset.tag;
+
+  button.append(preview, label, tag);
+  return button;
+}
+
+window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
+  const stage = document.querySelector(".editor-stage");
+
+  if (!stage || stage.dataset.canvasReady === "true") {
+    return null;
+  }
+
+  if (stage.dataset.documentStartReady === "true") {
+    return stage.querySelector("[data-document-start]");
+  }
+
+  const screen = document.createElement("div");
+  const panel = document.createElement("section");
+  const title = document.createElement("h1");
+  const presetGrid = document.createElement("div");
+
+  screen.className = "document-start-screen";
+  screen.dataset.documentStart = "";
+
+  panel.className = "document-start-panel";
+  panel.setAttribute("aria-labelledby", "document-start-title");
+
+  title.className = "document-start-title";
+  title.id = "document-start-title";
+  title.textContent = "New document";
+
+  presetGrid.className = "document-start-presets";
+  presetGrid.setAttribute("aria-label", "Document presets");
+  presetGrid.append(...EDITOR_DOCUMENT_PRESETS.map(createDocumentPresetButton));
+
+  presetGrid.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-document-preset]");
+
+    if (!button) {
+      return;
+    }
+
+    const preset = getDocumentPreset(button.dataset.documentPreset);
+
+    window.CBO.initEditorCanvas({
+      documentHeight: preset.height,
+      documentWidth: preset.width,
+      presetId: preset.id,
+    });
+  });
+
+  panel.append(title, presetGrid);
+  screen.append(panel);
+  stage.dataset.documentStartReady = "true";
+  stage.replaceChildren(screen);
+
+  requestAnimationFrame(() => {
+    screen.querySelector(`[data-document-preset="${DEFAULT_DOCUMENT_PRESET_ID}"]`)?.focus();
+  });
+
+  return screen;
+};
 
 window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanvas(detail = {}) {
   const rasterizer = window.CBO.imageRasterizer;
@@ -34,7 +147,7 @@ window.addEventListener("cbo:place-uploaded-image", (event) => {
   void window.CBO.placeUploadedImageOnCanvas(event.detail);
 });
 
-window.CBO.initEditorCanvas = function initEditorCanvas() {
+window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   const stage = document.querySelector(".editor-stage");
 
   if (!stage || stage.dataset.canvasReady === "true") {
@@ -66,11 +179,13 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   }
 
   const canvas = document.createElement("canvas");
+  const documentSize = normalizeDocumentSize(options);
 
   canvas.className = "editor-webgl-canvas";
   canvas.setAttribute("aria-label", "Area di disegno WebGL");
 
   stage.dataset.canvasReady = "true";
+  stage.dataset.documentStartReady = "false";
   stage.dataset.paintEngine = "webgl2";
   stage.replaceChildren(canvas);
 
@@ -98,8 +213,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   const documentRenderer = new window.CBO.DocumentRenderer({
     gl,
     layerModel,
-    documentWidth: EDITOR_DOCUMENT_SIZE,
-    documentHeight: EDITOR_DOCUMENT_SIZE,
+    documentWidth: documentSize.width,
+    documentHeight: documentSize.height,
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
   });
@@ -143,6 +258,13 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   window.CBO.brushEngine = brushEngine;
   window.CBO.smudgeEngine = smudgeEngine;
   window.CBO.documentRenderer = documentRenderer;
+  window.CBO.documentSettings = {
+    height: documentRenderer.height,
+    presetId: documentSize.presetId,
+    requestedHeight: documentSize.height,
+    requestedWidth: documentSize.width,
+    width: documentRenderer.width,
+  };
 
   try {
     window.CBO.imageRasterizer = new window.CBO.ImageRasterizer({
@@ -208,4 +330,14 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
     window.CBO.documentRenderer = null;
     throw error;
   }
+
+  window.dispatchEvent(new CustomEvent("cbo:editor-canvas-ready", {
+    detail: {
+      documentHeight: documentRenderer.height,
+      documentWidth: documentRenderer.width,
+      presetId: documentSize.presetId,
+      requestedHeight: documentSize.height,
+      requestedWidth: documentSize.width,
+    },
+  }));
 };

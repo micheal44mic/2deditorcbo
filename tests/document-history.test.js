@@ -254,6 +254,28 @@ test("raster history budget keeps metadata-only entries while trimming raster by
   assert.equal(history.getRasterHistoryBytes(), mib);
 });
 
+test("raster history budget accounts tile delta before and after snapshots", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const mib = 1024 * 1024;
+  const history = new DocumentHistory({ maxEntries: 40, maxRasterHistoryBytes: 4 * mib });
+
+  history.push({
+    id: "tile-entry",
+    tileDeltas: [
+      {
+        before: { bytes: mib, rect: { width: 512, height: 512 }, texture: {} },
+        after: { bytes: mib, rect: { width: 512, height: 512 }, texture: {} },
+        tx: 0,
+        ty: 0,
+      },
+    ],
+    redo: () => true,
+    undo: () => true,
+  });
+
+  assert.equal(history.getRasterHistoryBytes(), 2 * mib);
+});
+
 test("raster history budget can be changed in MiB", () => {
   const DocumentHistory = loadDocumentHistory();
   const mib = 1024 * 1024;

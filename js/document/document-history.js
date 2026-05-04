@@ -297,6 +297,13 @@
           visit(dab?.after, `dabs.${index}.after`);
         });
       }
+
+      if (Array.isArray(entry.tileDeltas)) {
+        entry.tileDeltas.forEach((delta, index) => {
+          visit(delta?.before, `tileDeltas.${index}.before`);
+          visit(delta?.after, `tileDeltas.${index}.after`);
+        });
+      }
     }
 
     estimateRasterEntryBytes(entry) {

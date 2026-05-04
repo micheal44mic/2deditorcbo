@@ -5,9 +5,14 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..");
 
-test("smudge stroke history captures redo snapshots lazily on undo", () => {
+test("smudge stroke history prefers first-touch tile-memento snapshots", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
 
+  assert.match(source, /this\.activeHistoryTileCapture = null/);
+  assert.match(source, /beginRasterTileHistory\(layerId, bounds/);
+  assert.match(source, /extendRasterTileHistory\(this\.activeHistoryTileCapture, bounds/);
+  assert.match(source, /commitRasterTileHistory\?\.\(tileHistory,/);
+  assert.match(source, /historyMode = hasTileHistory[\s\S]*"tile-before-after"/);
   assert.match(source, /this\.activeHistoryBeforeSnapshot = this\.createHistorySnapshot\(target, bounds, "smudge prima"\)/);
   assert.match(source, /dehydrateHistorySnapshot\(snapshot\)/);
   assert.match(source, /hydrateHistorySnapshot\(snapshot\)/);
@@ -19,7 +24,7 @@ test("smudge stroke history captures redo snapshots lazily on undo", () => {
   assert.match(source, /after = this\.createHistorySnapshot\(redoTarget, before\.rect, "smudge dopo"\)/);
   assert.match(source, /entry\.after = after/);
   assert.match(source, /if \(!captureRedoSnapshot\(\)\) \{/);
-  assert.match(source, /historyBytes: this\.activeHistoryBeforeSnapshot\s*\?\s*this\.getSnapshotBytes\(this\.activeHistoryBeforeSnapshot\)/);
+  assert.match(source, /historyBytes: this\.activeHistoryTileCapture[\s\S]*this\.getSnapshotBytes\(this\.activeHistoryBeforeSnapshot\)/);
   assert.doesNotMatch(source, /const after = this\.createHistorySnapshot\(target, before\.rect, "smudge dopo"\)/);
 });
 

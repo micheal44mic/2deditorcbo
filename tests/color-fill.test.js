@@ -159,6 +159,8 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /if \(normalizedTolerance < 16\) \{/);
   assert.match(source, /function dilateMask\(mask, width, height, bounds, radius = 1\)/);
   assert.match(source, /getDilationRadius\(tolerance\)/);
+  assert.match(source, /renderer\.beginRasterTileHistory\?\.\(layerId, dirtyRect/);
+  assert.match(source, /renderer\.commitRasterTileHistory\?\.\(tileHistory,/);
   assert.match(source, /renderer\.createRasterSnapshot\?\.\(layerId, dirtyRect, "color-fill-before"\)/);
   assert.match(source, /recordColorFillMemory\(renderer,/);
   assert.match(source, /operationType: "color-fill"/);
