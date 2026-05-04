@@ -4,6 +4,7 @@
   const BYTES_PER_PIXEL = 4;
   const MIB = 1024 * 1024;
   const MAX_MATERIALIZATION_EVENTS = 200;
+  const MAX_RASTER_OPERATION_EVENTS = 200;
   const MAX_STROKE_MEMORY_EVENTS = 200;
   const MAX_SUSPECT_EVENTS = 200;
   const VALID_OWNER_TYPES = new Set([
@@ -24,6 +25,7 @@
   const framebuffers = new Map();
   const renderbuffers = new Map();
   const fullCanvasMaterializations = [];
+  const rasterOperationEvents = [];
   const strokeMemoryEvents = [];
   const suspectEvents = [];
 
@@ -39,6 +41,7 @@
     deletedRenderbufferCount: 0,
     deletedTextureCount: 0,
     fullCanvasMaterializationCount: 0,
+    rasterOperationEventCount: 0,
     strokeMemoryEventCount: 0,
     unknownDeletedFramebufferCount: 0,
     unknownDeletedRenderbufferCount: 0,
@@ -613,6 +616,72 @@
     };
   }
 
+  function normalizeRasterOperationEvent(event = {}) {
+    const beforeBytes = toNonNegativeInt(event.beforeBytes, 0);
+    const afterBytes = toNonNegativeInt(event.afterBytes ?? event.potentialAfterBytes, 0);
+    const originalBytes = toNonNegativeInt(event.originalBytes, 0);
+    const sourceBytes = toNonNegativeInt(event.sourceBytes, 0);
+    const targetBytes = toNonNegativeInt(event.targetBytes, 0);
+    const scratchBytes = toNonNegativeInt(event.scratchBytes, 0);
+    const historyBytes = toNonNegativeInt(event.historyBytes, beforeBytes + afterBytes);
+    const persistentBytes = toNonNegativeInt(event.persistentBytes, targetBytes);
+    const estimatedPeakBytes = toNonNegativeInt(
+      event.estimatedPeakBytes,
+      sourceBytes + targetBytes + scratchBytes,
+    );
+
+    return {
+      afterBytes,
+      afterMiB: formatMiB(afterBytes),
+      beforeBytes,
+      beforeMiB: formatMiB(beforeBytes),
+      canvasSize: cloneSize(event.canvasSize),
+      coverage: toFiniteNumber(event.coverage, 0),
+      createdAt: event.createdAt || nowIso(),
+      decodedSize: cloneSize(event.decodedSize),
+      estimatedPeakBytes,
+      estimatedPeakMiB: formatMiB(estimatedPeakBytes),
+      historyBytes,
+      historyMiB: formatMiB(historyBytes),
+      layerId: event.layerId || "",
+      maxMiB: toFiniteNumber(event.maxMiB, null),
+      maxSide: toPositiveInt(event.maxSide, 0),
+      mode: event.mode || event.transformMode || "",
+      operationType: event.operationType || event.type || "raster-operation",
+      originalBytes,
+      originalMiB: formatMiB(originalBytes),
+      originalSize: cloneSize(event.originalSize),
+      persistentBytes,
+      persistentMiB: formatMiB(persistentBytes),
+      policy: event.policy || event.severity || "normal",
+      reason: event.reason || "",
+      scale: toFiniteNumber(event.scale, null),
+      scratchBytes,
+      scratchMiB: formatMiB(scratchBytes),
+      source: event.source || "",
+      sourceBytes,
+      sourceMiB: formatMiB(sourceBytes),
+      sourceRect: cloneRect(event.sourceRect),
+      targetBytes,
+      targetMiB: formatMiB(targetBytes),
+      targetRect: cloneRect(event.targetRect),
+      tool: event.tool || event.source || "raster-operation",
+    };
+  }
+
+  function recordRasterOperation(event = {}) {
+    const normalized = normalizeRasterOperationEvent(event);
+
+    stats.rasterOperationEventCount += 1;
+    rasterOperationEvents.push(normalized);
+
+    while (rasterOperationEvents.length > MAX_RASTER_OPERATION_EVENTS) {
+      rasterOperationEvents.shift();
+    }
+
+    return normalized;
+  }
+
   function recordStrokeMemory(event = {}) {
     const normalized = normalizeStrokeMemoryEvent(event);
 
@@ -675,6 +744,10 @@
     const history = namespace.documentHistory;
     const historyRasterBudgetBytes = Number(history?.getRasterHistoryBudgetBytes?.()) || 0;
     const historyRasterEstimatedBytes = Number(history?.getRasterHistoryBytes?.()) || 0;
+    const paintTargetCropPotential = options.analyzePaintTargets === true ||
+      options.includePaintTargetCropPotential === true
+      ? namespace.documentRenderer?.estimatePaintTargetCropPotential?.(options.paintTargetAnalysis || {}) || null
+      : null;
     const result = {
       backgroundBytes: sumRows(rows, (row) => row.kind === "background"),
       blendBackdropBytes: sumRows(rows, (row) => row.kind === "backdrop"),
@@ -710,8 +783,13 @@
         stats.unknownDeletedFramebufferCount +
         stats.unknownDeletedRenderbufferCount,
       paintLayerBytes: sumRows(rows, (row) => row.kind === "paintTarget"),
+      paintTargetCropPotential,
+      paintTargetPotentialSavingsBytes: Number(paintTargetCropPotential?.potentialSavingsBytes) || 0,
+      paintTargetPotentialSavingsMiB: formatMiB(paintTargetCropPotential?.potentialSavingsBytes || 0),
       previewCacheBytes: sumRows(rows, (row) => row.ownerType === "cache" && row.kind === "previewMip"),
       purgeableResourceCount: rows.filter((row) => row.purgeable).length,
+      rasterOperationEventCount: stats.rasterOperationEventCount,
+      rasterOperationEvents: rasterOperationEvents.slice().reverse(),
       renderbufferCount: renderbuffers.size,
       rows,
       scratchBytes: sumRows(rows, (row) => row.ownerType === "scratch"),
@@ -761,8 +839,29 @@
       })),
     );
 
+    if (result.paintTargetCropPotential?.rows?.length > 0) {
+      console.table?.(
+        result.paintTargetCropPotential.rows.slice(0, 20).map((row) => ({
+          action: row.action,
+          contentCoverage: row.contentCoverage,
+          contentHeight: row.contentRect?.height || 0,
+          contentWidth: row.contentRect?.width || 0,
+          currentMiB: row.currentMiB,
+          estimatedCroppedMiB: row.estimatedCroppedMiB,
+          isFullCanvas: row.isFullCanvas,
+          layerId: row.layerId,
+          mode: row.mode,
+          savingsMiB: row.savingsMiB,
+        })),
+      );
+    }
+
     if (result.fullCanvasMaterializations.length > 0) {
       console.table?.(result.fullCanvasMaterializations.slice(0, 20));
+    }
+
+    if (result.rasterOperationEvents.length > 0) {
+      console.table?.(result.rasterOperationEvents.slice(0, 20));
     }
 
     if (result.strokeMemoryEvents.length > 0) {
@@ -783,6 +882,7 @@
       return {
         framebuffers,
         fullCanvasMaterializations,
+        rasterOperationEvents,
         renderbuffers,
         stats,
         strokeMemoryEvents,
@@ -799,6 +899,7 @@
     logRasterMemoryReport,
     markUsed,
     recordFullCanvasMaterialization,
+    recordRasterOperation,
     recordStrokeMemory,
     registerFramebuffer,
     registerRenderbuffer,
@@ -811,14 +912,20 @@
   namespace.rasterResourceManager = manager;
 
   if (typeof namespace.collectRasterMemory !== "function") {
-    namespace.collectRasterMemory = function collectRasterMemoryFromManager() {
-      return manager.reportRasterMemory({ log: false });
+    namespace.collectRasterMemory = function collectRasterMemoryFromManager(options = {}) {
+      return manager.reportRasterMemory({
+        ...options,
+        log: false,
+      });
     };
   }
 
   if (typeof namespace.reportRasterMemory !== "function") {
     namespace.reportRasterMemory = function reportRasterMemoryFromManager(options = {}) {
-      const result = manager.reportRasterMemory({ log: false });
+      const result = manager.reportRasterMemory({
+        ...options,
+        log: false,
+      });
 
       if (options.log !== false) {
         manager.logRasterMemoryReport(result);

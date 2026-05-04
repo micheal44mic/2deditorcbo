@@ -1,7 +1,15 @@
 (function registerColorFill(namespace) {
   const DEFAULT_FILL_TOLERANCE = 48;
   const MAX_FILL_TOLERANCE = 255;
+  const RASTER_BYTES_PER_PIXEL = 4;
+  const RASTER_MIB = 1024 * 1024;
   const THRESHOLD_HIDE_DELAY_MS = 1400;
+  const FILL_MEMORY_POLICY = Object.freeze({
+    hugeCoverage: 0.35,
+    largeMaxBytes: 128 * RASTER_MIB,
+    mediumMaxBytes: 64 * RASTER_MIB,
+    normalMaxBytes: 16 * RASTER_MIB,
+  });
 
   let fillTolerance = clamp(
     Number.isFinite(Number(namespace.colorFillTolerance))
@@ -41,6 +49,49 @@
       g: Number.isFinite(green) ? green : 255,
       r: Number.isFinite(red) ? red : 255,
     };
+  }
+
+  function getRasterRectBytes(rectOrWidth, height = null) {
+    const width = typeof rectOrWidth === "object"
+      ? rectOrWidth?.width
+      : rectOrWidth;
+    const resolvedHeight = typeof rectOrWidth === "object"
+      ? rectOrWidth?.height
+      : height;
+
+    return Math.max(0, Math.round(Number(width) || 0)) *
+      Math.max(0, Math.round(Number(resolvedHeight) || 0)) *
+      RASTER_BYTES_PER_PIXEL;
+  }
+
+  function getRectCoverage(rect, width, height) {
+    const documentPixels = Math.max(0, Math.round(width || 0)) * Math.max(0, Math.round(height || 0));
+
+    if (documentPixels <= 0) {
+      return 0;
+    }
+
+    return Math.min(1, Math.max(0, ((rect?.width || 0) * (rect?.height || 0)) / documentPixels));
+  }
+
+  function classifyFillMemory(renderer, estimatedPeakBytes, coverage) {
+    if (typeof renderer?.classifyRasterOperationMemory === "function") {
+      return renderer.classifyRasterOperationMemory(estimatedPeakBytes, coverage);
+    }
+
+    if (estimatedPeakBytes > FILL_MEMORY_POLICY.largeMaxBytes || coverage >= FILL_MEMORY_POLICY.hugeCoverage) {
+      return "huge";
+    }
+
+    if (estimatedPeakBytes > FILL_MEMORY_POLICY.mediumMaxBytes) {
+      return "large";
+    }
+
+    if (estimatedPeakBytes > FILL_MEMORY_POLICY.normalMaxBytes) {
+      return "medium";
+    }
+
+    return "normal";
   }
 
   function setTolerance(value) {
@@ -324,19 +375,35 @@
     const seedB = getReferenceChannel(referenceSource, seedOffset, 2);
     const seedA = getReferenceChannel(referenceSource, seedOffset, 3);
     const toleranceSq = tolerance * tolerance;
-    const visited = new Uint8Array(pixelCount);
     const mask = new Uint8Array(pixelCount);
-    const stack = new Int32Array(pixelCount);
+    let stack = new Int32Array(Math.max(1, Math.min(4096, pixelCount)));
     let stackPtr = 0;
+    let maxStackCapacity = stack.length;
     let filledCount = 0;
     let minX = seedX;
     let maxX = seedX;
     let minY = seedY;
     let maxY = seedY;
+    const pushPixel = (pixelIndex) => {
+      if (mask[pixelIndex] !== 0) {
+        return;
+      }
 
-    stack[stackPtr] = seedIndex;
-    stackPtr += 1;
-    visited[seedIndex] = 1;
+      if (stackPtr >= stack.length) {
+        const nextLength = Math.min(pixelCount, Math.max(stack.length * 2, stackPtr + 1));
+        const nextStack = new Int32Array(nextLength);
+
+        nextStack.set(stack);
+        stack = nextStack;
+        maxStackCapacity = Math.max(maxStackCapacity, stack.length);
+      }
+
+      mask[pixelIndex] = 1;
+      stack[stackPtr] = pixelIndex;
+      stackPtr += 1;
+    };
+
+    pushPixel(seedIndex);
 
     while (stackPtr > 0) {
       stackPtr -= 1;
@@ -349,35 +416,27 @@
         continue;
       }
 
-      mask[index] = 1;
+      mask[index] = 2;
       filledCount += 1;
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x);
       minY = Math.min(minY, y);
       maxY = Math.max(maxY, y);
 
-      if (x + 1 < width && visited[index + 1] === 0) {
-        visited[index + 1] = 1;
-        stack[stackPtr] = index + 1;
-        stackPtr += 1;
+      if (x + 1 < width && mask[index + 1] === 0) {
+        pushPixel(index + 1);
       }
 
-      if (x > 0 && visited[index - 1] === 0) {
-        visited[index - 1] = 1;
-        stack[stackPtr] = index - 1;
-        stackPtr += 1;
+      if (x > 0 && mask[index - 1] === 0) {
+        pushPixel(index - 1);
       }
 
-      if (y + 1 < height && visited[index + width] === 0) {
-        visited[index + width] = 1;
-        stack[stackPtr] = index + width;
-        stackPtr += 1;
+      if (y + 1 < height && mask[index + width] === 0) {
+        pushPixel(index + width);
       }
 
-      if (y > 0 && visited[index - width] === 0) {
-        visited[index - width] = 1;
-        stack[stackPtr] = index - width;
-        stackPtr += 1;
+      if (y > 0 && mask[index - width] === 0) {
+        pushPixel(index - width);
       }
     }
 
@@ -385,10 +444,15 @@
       return null;
     }
 
+    for (let index = 0; index < pixelCount; index += 1) {
+      mask[index] = mask[index] === 2 ? 1 : 0;
+    }
+
     return {
       bounds: { maxX, maxY, minX, minY },
       filledCount,
       mask,
+      stackBytes: maxStackCapacity * Int32Array.BYTES_PER_ELEMENT,
     };
   }
 
@@ -522,7 +586,7 @@
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
-  function pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot) {
+  function pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy = null) {
     const history = namespace.documentHistory;
 
     if (!history?.push || !beforeSnapshot) {
@@ -550,6 +614,7 @@
       after: null,
       before: beforeSnapshot,
       layerId,
+      memoryPolicy,
       rect: dirtyRect,
       source: "color-fill",
       undo: () => {
@@ -573,6 +638,68 @@
     };
 
     history.push(entry);
+  }
+
+  function recordColorFillMemory(renderer, details = {}) {
+    if (!renderer?.recordRasterOperation) {
+      return null;
+    }
+
+    const {
+      beforeSnapshot,
+      dirtyRead,
+      dirtyRect,
+      expandedMask,
+      fillResult,
+      height,
+      layerId,
+      referenceSource,
+      target,
+      width,
+    } = details;
+    const beforeBytes = getRasterRectBytes(beforeSnapshot?.rect);
+    const afterBytes = getRasterRectBytes(dirtyRect);
+    const referenceBytes = referenceSource?.pixels?.byteLength || getRasterRectBytes(referenceSource || target);
+    const maskBytes = fillResult?.mask?.byteLength || 0;
+    const stackBytes = fillResult?.stackBytes || 0;
+    const expandedMaskBytes = expandedMask && expandedMask !== fillResult?.mask
+      ? expandedMask.byteLength
+      : 0;
+    const dirtyReadBytes = dirtyRead?.pixels?.byteLength || 0;
+    const scratchBytes = referenceBytes + maskBytes + stackBytes + expandedMaskBytes + dirtyReadBytes;
+    const historyBytes = beforeBytes + afterBytes;
+    const estimatedPeakBytes = scratchBytes + historyBytes;
+    const coverage = getRectCoverage(dirtyRect, width, height);
+    const report = {
+      afterBytes,
+      beforeBytes,
+      canvasSize: { height, width },
+      coverage,
+      estimatedPeakBytes,
+      historyBytes,
+      layerId,
+      operationType: "color-fill",
+      persistentBytes: historyBytes,
+      policy: classifyFillMemory(renderer, estimatedPeakBytes, coverage),
+      reason: "color-fill",
+      scratchBytes,
+      source: "color-fill",
+      sourceBytes: referenceBytes,
+      sourceRect: renderer?.getRasterTargetDocumentRect?.(target) || {
+        height,
+        width,
+        x: 0,
+        y: 0,
+      },
+      targetBytes: getRasterRectBytes(dirtyRect),
+      targetRect: dirtyRect,
+      tool: "color-fill",
+    };
+    const recorded = renderer.recordRasterOperation(report);
+
+    namespace.lastColorFillMemoryReport = recorded;
+
+    return recorded;
   }
 
   function dropColorAt(clientX, clientY, colorHex, options = {}) {
@@ -636,7 +763,19 @@
     );
     writeDirtyPixelsToTarget(gl, target, dirtyRect, dirtyRead.textureY, targetPixels);
 
-    pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot);
+    const memoryPolicy = recordColorFillMemory(renderer, {
+      beforeSnapshot,
+      dirtyRead,
+      dirtyRect,
+      expandedMask,
+      fillResult,
+      height,
+      layerId,
+      referenceSource,
+      target,
+      width,
+    });
+    pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy);
     renderer.invalidatePreviewCache?.("color-fill");
     renderer.emitContentChange?.({ layerId, source: "color-fill" });
     renderer.requestDraw?.();

@@ -758,6 +758,10 @@ void main() {
       namespace.lastSmudgeStrokeMemoryReport = report;
       const recorded = namespace.rasterResourceManager?.recordStrokeMemory?.(report) || report;
 
+      if (namespace.debugRasterMemoryLogs !== true && namespace.debugStrokeMemoryLogs !== true) {
+        return recorded;
+      }
+
       if (report.policy === "large" || report.policy === "huge") {
         console.warn?.("[CBO smudge] Stroke memory policy", recorded);
       } else if (report.policy === "medium") {
@@ -1710,6 +1714,7 @@ void main() {
       const smudgeRect = this.getActiveSmudgeRect();
       const target = this.strokeTarget;
       const layerId = this.activeHistoryLayerId || target?.layerId || null;
+      const memoryReport = this.activeSmudgeMemoryReport;
       const debugInfo = {
         historyBytes: this.activeHistoryBeforeSnapshot
           ? this.getSnapshotBytes(this.activeHistoryBeforeSnapshot)
@@ -1719,6 +1724,13 @@ void main() {
       this.isDragging = false;
       this.activePointerId = null;
       this.commitHistory();
+      this.documentRenderer?.evictRasterScratchCachesForPolicy?.(memoryReport, {
+        source: "smudge-stroke",
+      });
+      this.documentRenderer?.compactInactivePaintTargets?.({
+        excludeLayerId: layerId,
+        source: "smudge-compact-inactive",
+      });
       this.documentRenderer?.invalidatePreviewCache?.("smudge-stroke");
       this.debugSmudgeRaster(smudgeRect, target, layerId, debugInfo);
       this.releaseScratchTarget();

@@ -197,9 +197,12 @@
     return report;
   }
 
-  function collectRasterMemory() {
+  function collectRasterMemory(options = {}) {
     if (namespace.rasterResourceManager?.reportRasterMemory) {
-      return namespace.rasterResourceManager.reportRasterMemory({ log: false });
+      return namespace.rasterResourceManager.reportRasterMemory({
+        ...options,
+        log: false,
+      });
     }
 
     const renderer = namespace.documentRenderer;
@@ -350,7 +353,7 @@
 
   namespace.collectRasterMemory = collectRasterMemory;
   namespace.reportRasterMemory = function reportRasterMemory(options = {}) {
-    const result = collectRasterMemory();
+    const result = collectRasterMemory(options);
 
     if (options.log !== false) {
       if (

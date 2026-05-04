@@ -1,6 +1,14 @@
 (function registerDocumentRenderer(namespace) {
   const CROPPED_TARGET_EDGE_PADDING = 2;
   const CROPPED_TARGET_EFFECT_PADDING = 320;
+  const RASTER_BYTES_PER_PIXEL = 4;
+  const RASTER_MIB = 1024 * 1024;
+  const RASTER_OPERATION_MEMORY_POLICY = Object.freeze({
+    hugeCoverage: 0.35,
+    largeMaxBytes: 128 * RASTER_MIB,
+    mediumMaxBytes: 64 * RASTER_MIB,
+    normalMaxBytes: 16 * RASTER_MIB,
+  });
   const WEBGL2_CONTEXT_ATTRIBUTES = Object.freeze({
     alpha: true,
     antialias: false,
@@ -885,6 +893,131 @@ void main() {
       return this.getRasterResourceManager()?.markUsed?.(textureOrId) || null;
     }
 
+    getRasterRectBytes(rectOrWidth, height = null) {
+      const width = typeof rectOrWidth === "object"
+        ? rectOrWidth?.width
+        : rectOrWidth;
+      const resolvedHeight = typeof rectOrWidth === "object"
+        ? rectOrWidth?.height
+        : height;
+
+      return Math.max(0, Math.round(Number(width) || 0)) *
+        Math.max(0, Math.round(Number(resolvedHeight) || 0)) *
+        RASTER_BYTES_PER_PIXEL;
+    }
+
+    getRasterOperationCoverage(rectOrWidth, height = null) {
+      const width = typeof rectOrWidth === "object"
+        ? rectOrWidth?.width
+        : rectOrWidth;
+      const resolvedHeight = typeof rectOrWidth === "object"
+        ? rectOrWidth?.height
+        : height;
+      const documentPixels = Math.max(0, Math.round(this.width || 0)) * Math.max(0, Math.round(this.height || 0));
+
+      if (documentPixels <= 0) {
+        return 0;
+      }
+
+      return Math.min(
+        1,
+        Math.max(0, (Math.max(0, width || 0) * Math.max(0, resolvedHeight || 0)) / documentPixels),
+      );
+    }
+
+    classifyRasterOperationMemory(estimatedPeakBytes, coverage = 0) {
+      if (
+        estimatedPeakBytes > RASTER_OPERATION_MEMORY_POLICY.largeMaxBytes ||
+        coverage >= RASTER_OPERATION_MEMORY_POLICY.hugeCoverage
+      ) {
+        return "huge";
+      }
+
+      if (estimatedPeakBytes > RASTER_OPERATION_MEMORY_POLICY.mediumMaxBytes) {
+        return "large";
+      }
+
+      if (estimatedPeakBytes > RASTER_OPERATION_MEMORY_POLICY.normalMaxBytes) {
+        return "medium";
+      }
+
+      return "normal";
+    }
+
+    formatRasterMiB(bytes) {
+      return ((Math.max(0, Number(bytes) || 0) / RASTER_MIB)).toFixed(2);
+    }
+
+    getRasterOperationPolicy(report = {}) {
+      const policy = String(report?.policy || "").toLowerCase();
+
+      if (policy) {
+        return policy;
+      }
+
+      return this.classifyRasterOperationMemory(
+        Number(report?.estimatedPeakBytes) || 0,
+        Number(report?.coverage) || 0,
+      );
+    }
+
+    shouldEvictRasterScratchForPolicy(report = {}) {
+      const policy = this.getRasterOperationPolicy(report);
+
+      return policy === "large" || policy === "huge";
+    }
+
+    evictRasterScratchCachesForPolicy(report = {}, options = {}) {
+      if (!this.shouldEvictRasterScratchForPolicy(report)) {
+        return null;
+      }
+
+      const policy = this.getRasterOperationPolicy(report);
+      const hadPreviewCache = Boolean(this.previewTexture || this.previewFramebuffer);
+      const hadEffectScratch = Boolean(this.layerEffectScratchA || this.layerEffectScratchB);
+      const hadActiveStrokeScratch = Boolean(this.activeStrokeScratchTarget);
+      const deletePreviewCache = options.deletePreviewCache !== false;
+      const deleteEffectScratch = options.deleteEffectScratch !== false;
+      const deleteActiveStrokeScratch = options.deleteActiveStrokeScratch !== false;
+
+      if (deletePreviewCache && hadPreviewCache) {
+        this.deletePreviewCache();
+      }
+
+      if (deleteEffectScratch && hadEffectScratch) {
+        this.deleteLayerEffectScratchTargets();
+      }
+
+      if (deleteActiveStrokeScratch && hadActiveStrokeScratch) {
+        this.deleteActiveStrokeScratchTarget();
+      }
+
+      const eviction = {
+        createdAt: new Date().toISOString(),
+        operationType: report?.operationType || report?.phase || "",
+        policy,
+        reason: report?.reason || options.reason || "raster-policy",
+        source: options.source || report?.source || report?.tool || "raster-policy",
+        deletedActiveStrokeScratch: deleteActiveStrokeScratch && hadActiveStrokeScratch,
+        deletedEffectScratch: deleteEffectScratch && hadEffectScratch,
+        deletedPreviewCache: deletePreviewCache && hadPreviewCache,
+      };
+
+      namespace.lastRasterScratchEviction = eviction;
+      return eviction;
+    }
+
+    recordRasterOperation(report = {}) {
+      const recorded = this.getRasterResourceManager()?.recordRasterOperation?.(
+        this.withRasterResourceDocumentMetadata(report),
+      ) || report;
+
+      namespace.lastRasterOperationMemoryReport = recorded;
+      this.evictRasterScratchCachesForPolicy(recorded);
+
+      return recorded;
+    }
+
     getRasterTargetResourceMetadata(target, metadata = {}) {
       const width = Math.max(1, Math.round(target?.width || 1));
       const height = Math.max(1, Math.round(target?.height || 1));
@@ -990,7 +1123,62 @@ void main() {
       const width = Math.max(0, Math.round(target?.width || 0));
       const height = Math.max(0, Math.round(target?.height || 0));
 
-      return width * height * 4;
+      return width * height * RASTER_BYTES_PER_PIXEL;
+    }
+
+    estimateRasterSnapshotBytes(snapshot) {
+      return this.getRasterRectBytes(snapshot?.rect || snapshot?.targetRect);
+    }
+
+    createRasterOperationMemoryReport(options = {}) {
+      const beforeBytes = this.getRasterRectBytes(options.beforeRect) ||
+        this.estimateRasterSnapshotBytes(options.beforeSnapshot);
+      const afterBytes = this.getRasterRectBytes(options.afterRect) ||
+        this.estimateRasterSnapshotBytes(options.afterSnapshot);
+      const sourceBytes = Number.isFinite(Number(options.sourceBytes))
+        ? Math.max(0, Math.round(Number(options.sourceBytes)))
+        : this.getRasterRectBytes(options.sourceRect);
+      const targetBytes = Number.isFinite(Number(options.targetBytes))
+        ? Math.max(0, Math.round(Number(options.targetBytes)))
+        : this.getRasterRectBytes(options.targetRect);
+      const scratchBytes = Number.isFinite(Number(options.scratchBytes))
+        ? Math.max(0, Math.round(Number(options.scratchBytes)))
+        : 0;
+      const historyBytes = beforeBytes + afterBytes;
+      const persistentBytes = Number.isFinite(Number(options.persistentBytes))
+        ? Math.max(0, Math.round(Number(options.persistentBytes)))
+        : historyBytes;
+      const estimatedPeakBytes = Number.isFinite(Number(options.estimatedPeakBytes))
+        ? Math.max(0, Math.round(Number(options.estimatedPeakBytes)))
+        : sourceBytes + targetBytes + scratchBytes + historyBytes;
+      const coverage = Number.isFinite(Number(options.coverage))
+        ? Math.min(1, Math.max(0, Number(options.coverage)))
+        : this.getRasterOperationCoverage(options.targetRect || options.afterSnapshot?.rect || options.beforeSnapshot?.rect);
+
+      return {
+        afterBytes,
+        beforeBytes,
+        canvasSize: {
+          height: this.height,
+          width: this.width,
+        },
+        coverage,
+        estimatedPeakBytes,
+        historyBytes,
+        layerId: options.layerId || "",
+        mode: options.mode || options.transformMode || "",
+        operationType: options.operationType || "raster-operation",
+        persistentBytes,
+        policy: this.classifyRasterOperationMemory(estimatedPeakBytes, coverage),
+        reason: options.reason || options.source || "",
+        scratchBytes,
+        source: options.source || "",
+        sourceBytes,
+        sourceRect: options.sourceRect || null,
+        targetBytes,
+        targetRect: options.targetRect || null,
+        tool: options.tool || options.operationType || "raster-operation",
+      };
     }
 
     compileShader(type, source) {
@@ -3127,26 +3315,13 @@ void main() {
 
     createBaseLayerTarget() {
       const backgroundTarget = this.createProceduralBackgroundTarget();
-      const target = this.createRasterTarget([0, 0, 0, 0]);
 
-      this.texture = target.texture;
-      this.framebuffer = target.framebuffer;
       this.rasterTargetsByLayerId.set("background", backgroundTarget);
       this.paintLayerId = this.resolvePaintLayerId();
-      this.rasterTargetsByLayerId.set(this.paintLayerId, target);
+      this.texture = null;
+      this.framebuffer = null;
 
       backgroundTarget.layerId = "background";
-      target.layerId = this.paintLayerId;
-
-      this.updateRasterTargetResourceMetadata(target, {
-        kind: "paintTarget",
-        label: "main paint raster target",
-        layerId: this.paintLayerId,
-        ownerId: this.paintLayerId,
-        ownerType: "live",
-        purgeable: false,
-        reason: "create-base-layer-target",
-      });
     }
 
     createRasterTarget(clearColor = [0, 0, 0, 0], options = {}) {
@@ -3751,7 +3926,7 @@ void main() {
       const nextKind =
         layerId === "background"
           ? "background"
-          : layerId === this.paintLayerId
+          : this.isPaintRasterLayer(layerId, nextTarget)
             ? "paintTarget"
             : "layer";
 
@@ -3967,6 +4142,17 @@ void main() {
         return null;
       }
 
+      const targetRect = this.getRasterTargetDocumentRect(target);
+
+      if (options.coarseOnly === true) {
+        return bounds?.getClampedRasterBox?.({
+          x: targetRect.x + coarseRect.x,
+          y: targetRect.y + coarseRect.y,
+          width: coarseRect.width,
+          height: coarseRect.height,
+        }, this.width, this.height) || null;
+      }
+
       const gl = this.gl;
       const pixels = new Uint8Array(coarseRect.width * coarseRect.height * 4);
       const readY = targetHeight - (coarseRect.y + coarseRect.height);
@@ -4012,14 +4198,277 @@ void main() {
         return null;
       }
 
-      const targetRect = this.getRasterTargetDocumentRect(target);
-
       return bounds?.getClampedRasterBox?.({
         x: targetRect.x + localBounds.x,
         y: targetRect.y + localBounds.y,
         width: localBounds.width,
         height: localBounds.height,
       }, this.width, this.height) || null;
+    }
+
+    isPaintRasterLayer(layerId, target = null) {
+      const layer = layerId ? this.layerModel?.findEntryById?.(layerId) : null;
+
+      return Boolean(
+        layer?.type === "paint" ||
+        layerId === this.paintLayerId ||
+        String(layerId || target?.layerId || "").startsWith("paint-")
+      );
+    }
+
+    estimatePaintTargetCropPotential(options = {}) {
+      const documentBytes = this.getRasterRectBytes(this.width, this.height);
+      const minSavingsBytes = Math.max(0, Number(options.minSavingsMiB ?? 8) || 0) * RASTER_MIB;
+      const maxCropCoverage = Number.isFinite(options.maxCropCoverage)
+        ? Math.min(1, Math.max(0, Number(options.maxCropCoverage)))
+        : 0.8;
+      const precise = options.precise === true;
+      const rows = [];
+
+      for (const [layerId, target] of this.rasterTargetsByLayerId.entries()) {
+        if (!target?.framebuffer || !target?.texture || !this.isPaintRasterLayer(layerId, target)) {
+          continue;
+        }
+
+        const currentBytes = this.estimateRasterTargetBytes(target);
+        const isFullCanvas = !this.isCroppedRasterTarget(target);
+        const contentRect = this.getRasterContentBounds(layerId, {
+          alphaThreshold: options.alphaThreshold,
+          coarseOnly: !precise,
+          padding: options.padding,
+          padCells: options.padCells,
+          sampleCols: options.sampleCols,
+          sampleRows: options.sampleRows,
+        });
+        const croppedBytes = contentRect ? this.getRasterRectBytes(contentRect) : 0;
+        const savingsBytes = Math.max(0, currentBytes - croppedBytes);
+        const contentCoverage = documentBytes > 0 ? croppedBytes / documentBytes : 0;
+        const action = !contentRect
+          ? "empty-target"
+          : !isFullCanvas
+            ? "already-cropped"
+            : savingsBytes >= minSavingsBytes && contentCoverage <= maxCropCoverage
+              ? "crop-candidate"
+              : "keep-full";
+
+        rows.push({
+          action,
+          contentCoverage: Number(contentCoverage.toFixed(6)),
+          contentRect: contentRect ? { ...contentRect } : null,
+          currentBytes,
+          currentMiB: this.formatRasterMiB(currentBytes),
+          estimatedCroppedBytes: croppedBytes,
+          estimatedCroppedMiB: this.formatRasterMiB(croppedBytes),
+          isFullCanvas,
+          layerId,
+          mode: precise ? "precise" : "sampled",
+          savingsBytes,
+          savingsMiB: this.formatRasterMiB(savingsBytes),
+        });
+      }
+
+      rows.sort((first, second) => second.savingsBytes - first.savingsBytes);
+
+      const candidates = rows.filter((row) => row.action === "crop-candidate" || row.action === "empty-target");
+      const potentialSavingsBytes = candidates.reduce((sum, row) => sum + row.savingsBytes, 0);
+
+      return {
+        candidateCount: candidates.length,
+        generatedAt: new Date().toISOString(),
+        mode: precise ? "precise" : "sampled",
+        paintTargetCount: rows.length,
+        potentialSavingsBytes,
+        potentialSavingsMiB: this.formatRasterMiB(potentialSavingsBytes),
+        rows,
+      };
+    }
+
+    copyRasterTargetRectToTarget(sourceTarget, docRect, destinationTarget) {
+      const mappedRect = this.getRasterTargetLocalRect(sourceTarget, docRect);
+      const sourceRect = mappedRect?.localRect;
+
+      if (!sourceTarget?.framebuffer || !destinationTarget?.framebuffer || !sourceRect) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const sourceX0 = sourceRect.x;
+      const sourceX1 = sourceRect.x + sourceRect.width;
+      const sourceY0 = sourceTarget.height - (sourceRect.y + sourceRect.height);
+      const sourceY1 = sourceTarget.height - sourceRect.y;
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, sourceTarget.framebuffer);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, destinationTarget.framebuffer);
+      gl.blitFramebuffer(
+        sourceX0,
+        sourceY0,
+        sourceX1,
+        sourceY1,
+        0,
+        0,
+        destinationTarget.width,
+        destinationTarget.height,
+        gl.COLOR_BUFFER_BIT,
+        gl.NEAREST,
+      );
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      this.markRasterTargetDirty(destinationTarget);
+
+      return true;
+    }
+
+    compactPaintTargetToContent(layerId, options = {}) {
+      const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!layerId || !target?.framebuffer || !target?.texture || !this.isPaintRasterLayer(layerId, target)) {
+        return null;
+      }
+
+      const currentBytes = this.estimateRasterTargetBytes(target);
+      const isFullCanvas = !this.isCroppedRasterTarget(target);
+      const minSavingsBytes = Math.max(0, Number(options.minSavingsMiB ?? 8) || 0) * RASTER_MIB;
+      const maxCropCoverage = Number.isFinite(options.maxCropCoverage)
+        ? Math.min(1, Math.max(0, Number(options.maxCropCoverage)))
+        : 0.8;
+      const contentRect = options.contentRect || this.getRasterContentBounds(layerId, {
+        alphaThreshold: options.alphaThreshold,
+        coarseOnly: options.precise !== true,
+        padding: options.padding,
+        padCells: options.padCells,
+        sampleCols: options.sampleCols,
+        sampleRows: options.sampleRows,
+      });
+
+      if (!contentRect) {
+        const didDelete = layerId !== this.paintLayerId && this.deleteRasterTarget(layerId, {
+          emit: false,
+          source: options.source || "compact-empty-paint-target",
+        });
+
+        return {
+          action: didDelete ? "deleted-empty" : "empty-kept",
+          bytesAfter: didDelete ? 0 : currentBytes,
+          bytesBefore: currentBytes,
+          layerId,
+          savingsBytes: didDelete ? currentBytes : 0,
+        };
+      }
+
+      const croppedBytes = this.getRasterRectBytes(contentRect);
+      const savingsBytes = Math.max(0, currentBytes - croppedBytes);
+      const coverage = this.getRasterOperationCoverage(contentRect);
+
+      if (!isFullCanvas || savingsBytes < minSavingsBytes || coverage > maxCropCoverage) {
+        return {
+          action: "skipped",
+          bytesAfter: currentBytes,
+          bytesBefore: currentBytes,
+          contentRect: { ...contentRect },
+          layerId,
+          savingsBytes: 0,
+        };
+      }
+
+      const nextTarget = this.createRasterTargetForRect(contentRect, target.clearColor || [0, 0, 0, 0]);
+
+      if (!nextTarget?.framebuffer || !nextTarget?.texture) {
+        return null;
+      }
+
+      if (!this.copyRasterTargetRectToTarget(target, contentRect, nextTarget)) {
+        this.deleteRasterTargetObject(nextTarget);
+        return null;
+      }
+
+      const didReplace = this.replaceRasterTarget(layerId, nextTarget, {
+        emit: false,
+        source: options.source || "compact-paint-target",
+      });
+
+      if (!didReplace) {
+        this.deleteRasterTargetObject(nextTarget);
+        return null;
+      }
+
+      const recorded = this.recordRasterOperation({
+        afterBytes: croppedBytes,
+        beforeBytes: currentBytes,
+        canvasSize: {
+          height: this.height,
+          width: this.width,
+        },
+        coverage,
+        estimatedPeakBytes: currentBytes + croppedBytes,
+        historyBytes: 0,
+        layerId,
+        operationType: "paint-target-compact",
+        persistentBytes: croppedBytes,
+        policy: this.classifyRasterOperationMemory(currentBytes + croppedBytes, coverage),
+        reason: options.source || "compact-paint-target",
+        source: options.source || "compact-paint-target",
+        sourceBytes: currentBytes,
+        sourceRect: this.getRasterTargetDocumentRect(target),
+        targetBytes: croppedBytes,
+        targetRect: contentRect,
+        tool: "paint-target-compact",
+      });
+
+      return {
+        action: "compacted",
+        bytesAfter: croppedBytes,
+        bytesBefore: currentBytes,
+        contentRect: { ...contentRect },
+        layerId,
+        memoryPolicy: recorded,
+        savingsBytes,
+      };
+    }
+
+    compactInactivePaintTargets(options = {}) {
+      const activeLayerId = options.excludeLayerId ||
+        this.layerModel?.activeLayerId ||
+        this.paintLayerId ||
+        "";
+      const includeActive = options.includeActive === true;
+      const maxTargets = Math.max(1, Math.floor(Number(options.maxTargets) || 64));
+      const results = [];
+
+      for (const [layerId, target] of this.rasterTargetsByLayerId.entries()) {
+        if (results.length >= maxTargets) {
+          break;
+        }
+
+        if (!includeActive && layerId === activeLayerId) {
+          continue;
+        }
+
+        if (!this.isPaintRasterLayer(layerId, target) || !target?.texture || !target?.framebuffer) {
+          continue;
+        }
+
+        const result = this.compactPaintTargetToContent(layerId, {
+          ...options,
+          source: options.source || "compact-inactive-paint-target",
+        });
+
+        if (result) {
+          results.push(result);
+        }
+      }
+
+      const summary = {
+        compactedCount: results.filter((result) => result.action === "compacted").length,
+        deletedEmptyCount: results.filter((result) => result.action === "deleted-empty").length,
+        generatedAt: new Date().toISOString(),
+        results,
+        savingsBytes: results.reduce((sum, result) => sum + (Number(result.savingsBytes) || 0), 0),
+      };
+
+      summary.savingsMiB = this.formatRasterMiB(summary.savingsBytes);
+      namespace.lastPaintTargetCompaction = summary;
+
+      return summary;
     }
 
     clearRasterRect(layerId, rect) {
@@ -4109,6 +4558,37 @@ void main() {
         return false;
       }
 
+      const currentTargetRect = this.getRasterTargetDocumentRect(target);
+      const sourceBytes = this.estimateRasterTargetBytes(target);
+      const targetBytes = this.estimateRasterTargetBytes(nextTarget);
+      const scratchBytes = this.estimateRasterSnapshotBytes(sourceSnapshot);
+
+      const memoryPolicy = this.recordRasterOperation(this.createRasterOperationMemoryReport({
+        afterSnapshot,
+        beforeSnapshot,
+        estimatedPeakBytes:
+          sourceBytes +
+          targetBytes +
+          scratchBytes +
+          this.estimateRasterSnapshotBytes(beforeSnapshot) +
+          this.estimateRasterSnapshotBytes(afterSnapshot),
+        layerId,
+        mode: transformMode,
+        operationType: "raster-transform",
+        persistentBytes:
+          targetBytes +
+          this.estimateRasterSnapshotBytes(beforeSnapshot) +
+          this.estimateRasterSnapshotBytes(afterSnapshot),
+        reason: source,
+        scratchBytes,
+        source,
+        sourceBytes,
+        sourceRect: currentTargetRect,
+        targetBytes,
+        targetRect: nextRect,
+        tool: "raster-transform",
+      }));
+
       this.replaceRasterTarget(layerId, nextTarget, {
         emit: false,
         source,
@@ -4120,6 +4600,7 @@ void main() {
         afterSnapshot,
         beforeSnapshot,
         layerId,
+        memoryPolicy,
         source,
         undo: () => this.restoreRasterSnapshot(layerId, beforeSnapshot, {
           source: `history-undo-${source}`,
@@ -4221,12 +4702,32 @@ void main() {
         return false;
       }
 
+      const memoryPolicy = this.recordRasterOperation(this.createRasterOperationMemoryReport({
+        afterSnapshot,
+        beforeSnapshot,
+        layerId,
+        mode: transformMode,
+        operationType: "raster-transform",
+        persistentBytes:
+          this.estimateRasterSnapshotBytes(beforeSnapshot) +
+          this.estimateRasterSnapshotBytes(afterSnapshot),
+        reason: source,
+        scratchBytes: 0,
+        source,
+        sourceBytes: this.estimateRasterSnapshotBytes(sourceSnapshot),
+        sourceRect,
+        targetBytes: this.getRasterRectBytes(dirtyRect),
+        targetRect: dirtyRect,
+        tool: "raster-transform",
+      }));
+
       const history = namespace.documentHistory;
       const entry = {
         type: "custom",
         afterSnapshot,
         beforeSnapshot,
         layerId,
+        memoryPolicy,
         source,
         undo: () => this.restoreRasterSnapshot(layerId, beforeSnapshot, {
           source: `history-undo-${source}`,
@@ -4402,6 +4903,8 @@ void main() {
       this.paintLayerId = layerId;
       target.layerId = layerId;
       this.rasterTargetsByLayerId.set(layerId, target);
+      this.texture = target.texture;
+      this.framebuffer = target.framebuffer;
       this.updateRasterTargetResourceMetadata(target, {
         kind: "paintTarget",
         label: "main paint raster target",
@@ -4418,11 +4921,32 @@ void main() {
       };
     }
 
+    getDocumentDrawTarget(layerId = this.resolvePaintLayerId()) {
+      return {
+        cropped: false,
+        framebuffer: null,
+        height: Math.max(1, Math.round(this.height || 1)),
+        layerId,
+        texture: null,
+        width: Math.max(1, Math.round(this.width || 1)),
+        x: 0,
+        y: 0,
+      };
+    }
+
     ensurePaintLayerForBrush() {
       const paintLayer = this.layerModel?.ensureActivePaintLayer?.({ source: "brush-stroke" });
 
       if (paintLayer?.id) {
-        return this.getRasterTarget(paintLayer.id);
+        const target = this.getPaintTarget();
+
+        if (this.isCroppedRasterTarget(target)) {
+          return this.materializeRasterTarget(paintLayer.id, {
+            source: "brush-materialize",
+          }) || target;
+        }
+
+        return target;
       }
 
       return this.getPaintTarget();
@@ -4440,11 +4964,18 @@ void main() {
       }
 
       const target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
+      const activePaintLayerId = this.resolvePaintLayerId();
+      const isPaintTarget = this.isPaintRasterLayer(layerId, target);
 
+      if (layerId === activePaintLayerId) {
+        this.paintLayerId = layerId;
+        this.texture = target.texture;
+        this.framebuffer = target.framebuffer;
+      }
       target.layerId = layerId;
       this.rasterTargetsByLayerId.set(layerId, target);
       this.updateRasterTargetResourceMetadata(target, {
-        kind: layerId === "background" ? "background" : layerId === this.paintLayerId ? "paintTarget" : "layer",
+        kind: layerId === "background" ? "background" : isPaintTarget ? "paintTarget" : "layer",
         label: layerId,
         layerId,
         ownerId: layerId,
@@ -5367,6 +5898,32 @@ void main() {
         return null;
       }
 
+      const sourceBytes = this.estimateRasterTargetBytes(target);
+      const targetBytes = this.estimateRasterTargetBytes(destinationTarget);
+      const beforeBytes = this.estimateRasterSnapshotBytes(sourceSnapshot);
+      const afterBytes = this.estimateRasterSnapshotBytes(rasterizedSnapshot);
+      const scratchBytes = needsTargetSwap ? targetBytes : 0;
+      const estimatedPeakBytes = sourceBytes + scratchBytes + beforeBytes + afterBytes;
+      const coverage = this.getRasterOperationCoverage(destinationRect);
+
+      const memoryPolicy = this.recordRasterOperation(this.createRasterOperationMemoryReport({
+        afterSnapshot: rasterizedSnapshot,
+        beforeSnapshot: sourceSnapshot,
+        coverage,
+        estimatedPeakBytes,
+        layerId: layer.id,
+        operationType: "puppet-rasterize",
+        persistentBytes: beforeBytes + afterBytes + (needsTargetSwap ? targetBytes : 0),
+        reason: options.source || "puppet-rasterize",
+        scratchBytes,
+        source: options.source || "puppet-rasterize",
+        sourceBytes,
+        sourceRect: targetRect,
+        targetBytes,
+        targetRect: destinationRect,
+        tool: "puppet",
+      }));
+
       this.deletePuppetMeshResource(layer.id);
 
       if (options.emit !== false) {
@@ -5380,6 +5937,7 @@ void main() {
         afterSnapshot: rasterizedSnapshot,
         beforeSnapshot: sourceSnapshot,
         layerId: layer.id,
+        memoryPolicy,
       };
     }
 
@@ -5448,6 +6006,42 @@ void main() {
         return null;
       }
 
+      const finalTargetRect = this.getRasterTargetDocumentRect(finalTarget);
+      const beforeBytes = this.getRasterRectBytes(beforeSnapshot.rect);
+      const afterBytes = this.getRasterRectBytes(afterSnapshot.rect);
+      const sourceBytes = this.estimateRasterTargetBytes(target);
+      const targetBytes = this.estimateRasterTargetBytes(finalTarget);
+      const scratchBytes =
+        this.estimateRasterTargetBytes(this.layerEffectScratchA) +
+        this.estimateRasterTargetBytes(this.layerEffectScratchB);
+      const persistentBytes = beforeBytes + afterBytes + targetBytes;
+      const estimatedPeakBytes = persistentBytes + sourceBytes + scratchBytes;
+      const coverage = this.getRasterOperationCoverage(finalTargetRect);
+
+      const memoryPolicy = this.recordRasterOperation({
+        afterBytes,
+        beforeBytes,
+        canvasSize: {
+          height: this.height,
+          width: this.width,
+        },
+        coverage,
+        estimatedPeakBytes,
+        historyBytes: beforeBytes + afterBytes,
+        layerId: layer.id,
+        operationType: "layer-effects-rasterize",
+        persistentBytes,
+        policy: this.classifyRasterOperationMemory(estimatedPeakBytes, coverage),
+        reason: options.source || "layer-effects-rasterize",
+        scratchBytes,
+        source: options.source || "layer-effects-rasterize",
+        sourceBytes,
+        sourceRect: targetRect,
+        targetBytes,
+        targetRect: finalTargetRect,
+        tool: "layer-effects",
+      });
+
       if (options.emit !== false) {
         this.emitContentChange({
           layerId: layer.id,
@@ -5459,6 +6053,7 @@ void main() {
         afterSnapshot,
         beforeSnapshot,
         layerId: layer.id,
+        memoryPolicy,
       };
     }
 
@@ -5468,7 +6063,7 @@ void main() {
       }
 
       const gl = this.gl;
-      const target = this.getPaintTarget();
+      const target = this.getDocumentDrawTarget();
       const camera = options.camera || { x: 0, y: 0, zoom: 1 };
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));

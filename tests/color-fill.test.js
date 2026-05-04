@@ -145,12 +145,15 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.doesNotMatch(source, /updatePreviewCacheIfNeeded/);
   assert.doesNotMatch(source, /previewFramebuffer/);
   assert.doesNotMatch(source, /ensureActivePaintLayer\?\.\(\{ source: "color-fill" \}\)/);
-  assert.match(source, /new Int32Array\(pixelCount\)/);
+  assert.match(source, /let stack = new Int32Array\(Math\.max\(1, Math\.min\(4096, pixelCount\)\)\)/);
+  assert.match(source, /maxStackCapacity \* Int32Array\.BYTES_PER_ELEMENT/);
   assert.match(source, /function getDilationRadius\(tolerance\)/);
   assert.match(source, /if \(normalizedTolerance < 16\) \{/);
   assert.match(source, /function dilateMask\(mask, width, height, bounds, radius = 1\)/);
   assert.match(source, /getDilationRadius\(tolerance\)/);
   assert.match(source, /renderer\.createRasterSnapshot\?\.\(layerId, dirtyRect, "color-fill-before"\)/);
+  assert.match(source, /recordColorFillMemory\(renderer,/);
+  assert.match(source, /operationType: "color-fill"/);
   assert.match(source, /let afterSnapshot = null/);
   assert.match(source, /const captureRedoSnapshot = \(\) => \{/);
   assert.match(source, /afterSnapshot = renderer\.createRasterSnapshot\?\.\(layerId, dirtyRect, "color-fill-after"\)/);

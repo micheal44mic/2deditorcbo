@@ -31,6 +31,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const editorPage = document.querySelector(".editor-page");
   const BrushDefaults = window.CBO.BrushDefaults;
   const defaultBrushSettings = BrushDefaults.settings;
+  const brushSizeMax = BrushDefaults.brushSizeMax || 500;
 
   if (!editorPage) {
     return;
@@ -65,7 +66,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     <div class="brush-quick-controls" data-brush-quick-controls hidden>
       <label class="bottom-toolbar brush-quick-toolbar">
         <span class="brush-quick-label">SIZE</span>
-        <input class="brush-quick-range" type="range" min="1" max="120" step="1" data-brush-quick-input="radius" aria-label="Brush size" />
+        <input class="brush-quick-range" type="range" min="1" max="${brushSizeMax}" step="1" data-brush-quick-input="radius" aria-label="Brush size" />
         <span class="brush-quick-value" data-brush-quick-value="radius"></span>
       </label>
       <label class="bottom-toolbar brush-quick-toolbar">
@@ -171,7 +172,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       return clamp(Math.round(Number(settings.opacity ?? defaultBrushSettings.opacity) * 100), 0, 100);
     }
 
-    return clamp(Math.round(Number(settings.radius ?? defaultBrushSettings.radius)), 1, 120);
+    return clamp(Math.round(Number(settings.radius ?? defaultBrushSettings.radius)), 1, brushSizeMax);
   }
 
   function updateRangeProgress(input) {
@@ -219,7 +220,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     if (key === "opacity") {
       settings.opacity = clamp(displayValue, 0, 100) / 100;
     } else if (key === "radius") {
-      settings.radius = clamp(displayValue, 1, 120);
+      settings.radius = clamp(displayValue, 1, brushSizeMax);
     }
 
     syncQuickControls();

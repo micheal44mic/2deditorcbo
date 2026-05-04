@@ -748,8 +748,22 @@ void main() {
       return target;
     }
 
+    getDocumentDrawTarget() {
+      const target = this.documentRenderer?.getDocumentDrawTarget?.() || this.documentRenderer?.getPaintTarget?.();
+
+      if (
+        !target ||
+        !Number.isFinite(target.width) ||
+        !Number.isFinite(target.height)
+      ) {
+        throw new Error("BrushEngine richiede dimensioni documento valide.");
+      }
+
+      return target;
+    }
+
     centerCamera() {
-      const target = this.getPaintTarget();
+      const target = this.getDocumentDrawTarget();
       const zoom = Math.max(
         0.0001,
         Math.min(this.viewportWidth / target.width, this.viewportHeight / target.height),
@@ -1186,6 +1200,10 @@ void main() {
       this.lastStrokeMemoryReport = report;
       namespace.lastBrushStrokeMemoryReport = report;
       const recorded = namespace.rasterResourceManager?.recordStrokeMemory?.(report) || report;
+
+      if (namespace.debugRasterMemoryLogs !== true && namespace.debugStrokeMemoryLogs !== true) {
+        return recorded;
+      }
 
       if (report.policy === "large" || report.policy === "huge") {
         console.warn?.("[CBO brush] Stroke memory policy", recorded);
@@ -3809,6 +3827,14 @@ void main() {
 
       this.clearStrokeLayer();
       this.releaseStrokeLayerTarget();
+      this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+      this.documentRenderer?.evictRasterScratchCachesForPolicy?.(memoryReport, {
+        source: "brush-bake",
+      });
+      this.documentRenderer?.compactInactivePaintTargets?.({
+        excludeLayerId: layerId,
+        source: "brush-bake-compact-inactive",
+      });
       this.documentRenderer?.invalidatePreviewCache?.("bake-stroke");
       this.requestDraw();
     }
@@ -4345,7 +4371,7 @@ void main() {
     }
 
     draw() {
-      const target = this.getPaintTarget();
+      const target = this.getDocumentDrawTarget();
       const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
       const allowPreviewCache = this.userManipulatedCamera && !namespace.smudgeEngine?.isDragging;
 

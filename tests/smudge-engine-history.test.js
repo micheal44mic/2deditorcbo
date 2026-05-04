@@ -26,6 +26,11 @@ test("smudge stroke history records memory policy and disables redo for huge str
   assert.match(source, /namespace\.rasterResourceManager\?\.recordStrokeMemory\?\.\(report\)/);
   assert.match(source, /historyMode === "gpu-before-no-redo"/);
   assert.match(source, /memoryPolicy: memoryReport/);
+  assert.match(source, /const memoryReport = this\.activeSmudgeMemoryReport/);
+  assert.match(source, /this\.documentRenderer\?\.evictRasterScratchCachesForPolicy\?\.\(memoryReport,/);
+  assert.match(source, /source: "smudge-stroke"/);
+  assert.match(source, /this\.documentRenderer\?\.compactInactivePaintTargets\?\.\(/);
+  assert.match(source, /source: "smudge-compact-inactive"/);
 });
 
 test("smudge invalidates the zoom-out preview cache while painting live", () => {

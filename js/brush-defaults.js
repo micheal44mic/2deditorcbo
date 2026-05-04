@@ -6,6 +6,7 @@ window.CBO = window.CBO || {};
   const defaultGrainTextureSrc = namespace.defaultGrainTexture?.src || "./data/pastel-pencil-grain-texture.png";
   const defaultGrainTextureName = namespace.defaultGrainTexture?.name || "PASTEL PENCIL GRAIN";
   const defaultTaperMinDistance = 247;
+  const brushSizeMax = 500;
   const taperTipRealMin = 0.15;
   const grainModeValues = new Set(["moving", "texturized"]);
   const grainBlendModeValues = Object.freeze([
@@ -124,6 +125,12 @@ window.CBO = window.CBO || {};
     return Number.isFinite(number) ? clamp01(number) : fallback;
   }
 
+  function normalizeRange(value, fallback, min, max) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? clamp(number, min, max) : fallback;
+  }
+
   function normalizeSigned(value, fallback = 0) {
     const number = Number(value);
 
@@ -190,6 +197,7 @@ window.CBO = window.CBO || {};
     nextSettings.grainBlendMode = normalizeGrainBlendMode(nextSettings.grainBlendMode);
     nextSettings.renderingMode = normalizeRenderingMode(nextSettings.renderingMode);
     nextSettings.flow = normalize01(nextSettings.flow, settings.flow);
+    nextSettings.radius = normalizeRange(nextSettings.radius, settings.radius, 1, brushSizeMax);
     nextSettings.wetEdges = normalize01(nextSettings.wetEdges, settings.wetEdges);
     nextSettings.burntEdges = normalize01(nextSettings.burntEdges, settings.burntEdges);
     nextSettings.burntEdgesMode = normalizeBurntEdgesMode(nextSettings.burntEdgesMode);
@@ -235,6 +243,7 @@ window.CBO = window.CBO || {};
     grainTexturizedMinTextureScale,
     grainTextureExportSize: 2048,
     shapeAlphaExportSize: 512,
+    brushSizeMax,
     settings,
     taperTipRealMin,
     createSettings,

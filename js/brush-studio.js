@@ -12,6 +12,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const defaultGrainTextureName = BrushDefaults.defaultGrainTextureName;
   const shapeAlphaExportSize = BrushDefaults.shapeAlphaExportSize;
   const grainTextureExportSize = BrushDefaults.grainTextureExportSize;
+  const brushSizeMax = BrushDefaults.brushSizeMax || 500;
   const studioCategories = ["STROKE", "SHAPE", "GRAIN", "RENDERING", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = BrushDefaults.defaultTaperMinDistance;
   const taperTipRealMin = BrushDefaults.taperTipRealMin;
@@ -1495,7 +1496,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       key: "radius",
       label: "SIZE",
       min: 1,
-      max: 120,
+      max: brushSizeMax,
       step: 1,
       value: draftBrushSettings.radius,
       unit: "PX",

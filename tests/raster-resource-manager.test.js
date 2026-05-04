@@ -14,6 +14,24 @@ function loadManager() {
     window: {
       CBO: {
         documentRenderer: {
+          estimatePaintTargetCropPotential: (options = {}) => ({
+            candidateCount: 1,
+            mode: options.precise === true ? "precise" : "sampled",
+            paintTargetCount: 1,
+            potentialSavingsBytes: 8 * 1024 * 1024,
+            potentialSavingsMiB: "8.00",
+            rows: [{
+              action: "crop-candidate",
+              contentCoverage: 0.1,
+              contentRect: { height: 1000, width: 1000, x: 0, y: 0 },
+              currentMiB: "61.04",
+              estimatedCroppedMiB: "3.81",
+              isFullCanvas: true,
+              layerId: "paint-1",
+              mode: options.precise === true ? "precise" : "sampled",
+              savingsMiB: "57.23",
+            }],
+          }),
           height: 4000,
           width: 4000,
         },
@@ -25,6 +43,39 @@ function loadManager() {
   vm.runInContext(source, context);
 
   return context.window.CBO.rasterResourceManager;
+}
+
+function loadDebugMemoryScripts() {
+  const context = {
+    console,
+    window: {
+      CBO: {
+        documentRenderer: {
+          estimatePaintTargetCropPotential: (options = {}) => ({
+            candidateCount: 1,
+            mode: options.precise === true ? "precise" : "sampled",
+            paintTargetCount: 1,
+            potentialSavingsBytes: 8 * 1024 * 1024,
+            potentialSavingsMiB: "8.00",
+            rows: [],
+          }),
+          height: 4000,
+          width: 4000,
+        },
+      },
+    },
+  };
+
+  vm.createContext(context);
+
+  for (const file of [
+    path.join(__dirname, "..", "js", "debug", "raster-resource-manager.js"),
+    path.join(__dirname, "..", "js", "debug", "raster-memory-report.js"),
+  ]) {
+    vm.runInContext(fs.readFileSync(file, "utf8"), context);
+  }
+
+  return context.window.CBO;
 }
 
 test("raster resource manager reports owner buckets and full-canvas events", () => {
@@ -80,6 +131,23 @@ test("raster resource manager reports owner buckets and full-canvas events", () 
     strokeRect: { height: 1024, width: 1024, x: 0, y: 0 },
     tool: "brush",
   });
+  manager.recordRasterOperation({
+    canvasSize: { height: 4000, width: 4000 },
+    decodedSize: { height: 3000, width: 4000 },
+    estimatedPeakBytes: 94 * 1024 * 1024,
+    layerId: "image-1",
+    maxMiB: 64,
+    maxSide: 4096,
+    operationType: "image-import",
+    originalBytes: 432 * 1024 * 1024,
+    originalSize: { height: 9000, width: 12000 },
+    policy: "large",
+    scale: 1 / 3,
+    sourceBytes: 48 * 1024 * 1024,
+    targetBytes: 46 * 1024 * 1024,
+    targetRect: { height: 3000, width: 4000, x: 0, y: 500 },
+    tool: "image-import",
+  });
 
   const report = manager.reportRasterMemory({ log: false });
 
@@ -87,13 +155,31 @@ test("raster resource manager reports owner buckets and full-canvas events", () 
   assert.equal(report.framebufferCount, 1);
   assert.equal(report.fullCanvasResourceCount, 2);
   assert.equal(report.fullCanvasMaterializationCount, 1);
+  assert.equal(report.rasterOperationEventCount, 1);
+  assert.equal(report.rasterOperationEvents[0].operationType, "image-import");
+  assert.equal(report.rasterOperationEvents[0].policy, "large");
+  assert.equal(report.rasterOperationEvents[0].estimatedPeakMiB, "94.00");
+  assert.equal(report.rasterOperationEvents[0].originalMiB, "432.00");
   assert.equal(report.strokeMemoryEventCount, 1);
   assert.equal(report.strokeMemoryEvents[0].policy, "medium");
   assert.equal(report.strokeMemoryEvents[0].estimatedPeakMiB, "12.00");
   assert.equal(report.paintLayerBytes, 4000 * 4000 * 4);
+  assert.equal(report.paintTargetCropPotential, null);
+  assert.equal(report.paintTargetPotentialSavingsBytes, 0);
   assert.equal(report.previewCacheBytes, manager.estimateTextureBytes(4000, 4000, 3));
   assert.equal(report.purgeableResourceCount, 1);
   assert.equal(report.topResourcesByBytes[0].ownerType, "cache");
+
+  const paintTargetReport = manager.reportRasterMemory({
+    analyzePaintTargets: true,
+    log: false,
+    paintTargetAnalysis: { precise: true },
+  });
+
+  assert.equal(paintTargetReport.paintTargetPotentialSavingsBytes, 8 * 1024 * 1024);
+  assert.equal(paintTargetReport.paintTargetPotentialSavingsMiB, "8.00");
+  assert.equal(paintTargetReport.paintTargetCropPotential.mode, "precise");
+  assert.equal(paintTargetReport.paintTargetCropPotential.rows[0].action, "crop-candidate");
 
   manager.deleteTexture(previewTexture);
   manager.deleteFramebuffer(previewFramebuffer);
@@ -104,4 +190,16 @@ test("raster resource manager reports owner buckets and full-canvas events", () 
   assert.equal(afterDelete.framebufferCount, 0);
   assert.equal(afterDelete.deletedTextureCount, 1);
   assert.equal(afterDelete.deletedFramebufferCount, 1);
+});
+
+test("global raster memory report forwards paint target analysis options", () => {
+  const namespace = loadDebugMemoryScripts();
+  const report = namespace.reportRasterMemory({
+    analyzePaintTargets: true,
+    log: false,
+    paintTargetAnalysis: { precise: true },
+  });
+
+  assert.equal(report.paintTargetPotentialSavingsBytes, 8 * 1024 * 1024);
+  assert.equal(report.paintTargetCropPotential.mode, "precise");
 });

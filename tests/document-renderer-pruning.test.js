@@ -345,10 +345,29 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
     path.join(repoRoot, "js", "document", "document-renderer.js"),
     "utf8",
   );
+  const documentDrawTargetBody = source.match(
+    /getDocumentDrawTarget\(layerId = this\.resolvePaintLayerId\(\)\) \{([\s\S]*?)\n    ensurePaintLayerForBrush/,
+  )?.[1] || "";
 
   assert.match(source, /createRasterSnapshot\(targetOrLayerId, rect = null, label = "raster snapshot"\)/);
   assert.match(source, /restoreRasterSnapshot\(layerId, snapshot, options = \{\}\)/);
   assert.match(source, /deleteRasterSnapshot\(snapshot\)/);
+  assert.match(source, /createRasterOperationMemoryReport\(options = \{\}\)/);
+  assert.match(source, /operationType: "raster-transform"/);
+  assert.match(source, /getDocumentDrawTarget\(layerId = this\.resolvePaintLayerId\(\)\)/);
+  assert.match(documentDrawTargetBody, /return \{\s*cropped: false,\s*framebuffer: null,\s*height: Math\.max\(1, Math\.round\(this\.height \|\| 1\)\),/);
+  assert.doesNotMatch(documentDrawTargetBody, /rasterTargetsByLayerId\.get\(layerId\)/);
+  assert.match(source, /const target = this\.getDocumentDrawTarget\(\)/);
+  assert.match(source, /estimatePaintTargetCropPotential\(options = \{\}\)/);
+  assert.match(source, /getRasterContentBounds\(layerId,/);
+  assert.match(source, /coarseOnly: !precise/);
+  assert.match(source, /action === "crop-candidate"/);
+  assert.match(source, /potentialSavingsBytes/);
+  assert.match(source, /copyRasterTargetRectToTarget\(sourceTarget, docRect, destinationTarget\)/);
+  assert.match(source, /compactPaintTargetToContent\(layerId, options = \{\}\)/);
+  assert.match(source, /compactInactivePaintTargets\(options = \{\}\)/);
+  assert.match(source, /operationType: "paint-target-compact"/);
+  assert.match(source, /source: "brush-materialize"/);
   assert.match(source, /getRasterAlphaAtPoint\(targetOrLayerId, x, y\)/);
   assert.match(source, /gl\.blitFramebuffer\(/);
   assert.match(source, /gl\.deleteFramebuffer\(snapshot\.framebuffer\)/);
@@ -384,6 +403,8 @@ test("document renderer uses a procedural background texture", () => {
   assert.match(source, /new Uint8Array\(\[255, 255, 255, 255\]\)/);
   assert.match(source, /label: "procedural background texture"/);
   assert.match(source, /bbox: \{\s*x: 0,\s*y: 0,\s*width: this\.width,\s*height: this\.height,\s*\}/);
+  assert.match(source, /createBaseLayerTarget\(\) \{\s*const backgroundTarget = this\.createProceduralBackgroundTarget\(\)/);
+  assert.doesNotMatch(source, /createBaseLayerTarget\(\) \{[\s\S]*?const target = this\.createRasterTarget\(\[0, 0, 0, 0\]\)/);
   assert.doesNotMatch(source, /const backgroundTarget = this\.createRasterTarget\(\[1, 1, 1, 1\]\)/);
 });
 
@@ -466,6 +487,16 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /rasterizeLayerEffects\(layer, options = \{\}\)/);
   assert.match(source, /layer-effects-rasterize-before/);
   assert.match(source, /layer-effects-rasterize-after/);
+  assert.match(source, /recordRasterOperation\(report = \{\}\)/);
+  assert.match(source, /evictRasterScratchCachesForPolicy\(report = \{\}, options = \{\}\)/);
+  assert.match(source, /shouldEvictRasterScratchForPolicy\(report = \{\}\)/);
+  assert.match(source, /policy === "large" \|\| policy === "huge"/);
+  assert.match(source, /this\.deletePreviewCache\(\)/);
+  assert.match(source, /this\.deleteLayerEffectScratchTargets\(\)/);
+  assert.match(source, /this\.deleteActiveStrokeScratchTarget\(\)/);
+  assert.match(source, /this\.evictRasterScratchCachesForPolicy\(recorded\)/);
+  assert.match(source, /operationType: "layer-effects-rasterize"/);
+  assert.match(source, /scratchBytes\s*=\s*\n\s*this\.estimateRasterTargetBytes\(this\.layerEffectScratchA\)/);
   assert.match(source, /sourceTexture: layerTexture/);
   assert.doesNotMatch(source, /this\.hasPuppetLayerTransform\(layer\) \? 0 : this\.getLayerEffectPadding\(layer\)/);
   assert.match(source, /this\.deleteGaussianBlurResources\(\)/);
@@ -493,6 +524,8 @@ test("puppet rasterize commits the deformed mesh through snapshots", () => {
   assert.match(rendererSource, /const outputRect = this\.getPuppetDeformedBounds\(layer, target\)/);
   assert.match(rendererSource, /this\.createRasterTargetForRect\(outputRect\)/);
   assert.match(rendererSource, /this\.createRasterSnapshot\(destinationTarget, null, "puppet-rasterize-after"\)/);
+  assert.match(rendererSource, /operationType: "puppet-rasterize"/);
+  assert.match(rendererSource, /tool: "puppet"/);
   assert.match(rendererSource, /this\.replaceRasterTarget\(layer\.id, destinationTarget,/);
   assert.match(rendererSource, /sourceTexture: sourceSnapshot\.texture/);
   assert.match(puppetToolSource, /this\.isActive\(\) && nextTool !== PUPPET_TOOL_MODE/);
