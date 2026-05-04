@@ -241,6 +241,38 @@
     return pixels;
   }
 
+  function getReferenceDocumentRect(referenceTarget, width, height) {
+    const renderer = namespace.documentRenderer;
+    const rect = renderer?.getRasterTargetDocumentRect?.(referenceTarget);
+
+    if (rect) {
+      return rect;
+    }
+
+    return {
+      height,
+      width,
+      x: Number.isFinite(referenceTarget?.x) ? Math.round(referenceTarget.x) : 0,
+      y: Number.isFinite(referenceTarget?.y) ? Math.round(referenceTarget.y) : 0,
+    };
+  }
+
+  function createReferencePixelSource(gl, referenceTarget) {
+    const referenceFramebuffer = referenceTarget.framebuffer;
+    const width = Math.max(1, Math.round(referenceTarget.width || 1));
+    const height = Math.max(1, Math.round(referenceTarget.height || 1));
+    const rect = getReferenceDocumentRect(referenceTarget, width, height);
+    const pixels = readFramebufferPixelsTopDown(gl, referenceFramebuffer, width, height);
+
+    return {
+      height,
+      pixels,
+      width,
+      x: rect.x,
+      y: rect.y,
+    };
+  }
+
   function getTopDownRgbaOffset(pixelIndex, width, height) {
     const y = Math.floor(pixelIndex / width);
     const x = pixelIndex - y * width;
@@ -249,23 +281,48 @@
     return (webglY * width + x) * 4;
   }
 
-  function colorDistanceSq(pixels, offset, red, green, blue, alpha) {
-    const dr = pixels[offset] - red;
-    const dg = pixels[offset + 1] - green;
-    const db = pixels[offset + 2] - blue;
-    const da = pixels[offset + 3] - alpha;
+  function getReferencePixelOffset(referenceSource, documentX, documentY) {
+    const localX = documentX - referenceSource.x;
+    const localY = documentY - referenceSource.y;
+
+    if (
+      localX < 0 ||
+      localY < 0 ||
+      localX >= referenceSource.width ||
+      localY >= referenceSource.height
+    ) {
+      return -1;
+    }
+
+    return getTopDownRgbaOffset(
+      localY * referenceSource.width + localX,
+      referenceSource.width,
+      referenceSource.height,
+    );
+  }
+
+  function getReferenceChannel(referenceSource, offset, channel) {
+    return offset >= 0 ? referenceSource.pixels[offset + channel] : 0;
+  }
+
+  function colorDistanceSq(referenceSource, documentX, documentY, red, green, blue, alpha) {
+    const offset = getReferencePixelOffset(referenceSource, documentX, documentY);
+    const dr = getReferenceChannel(referenceSource, offset, 0) - red;
+    const dg = getReferenceChannel(referenceSource, offset, 1) - green;
+    const db = getReferenceChannel(referenceSource, offset, 2) - blue;
+    const da = getReferenceChannel(referenceSource, offset, 3) - alpha;
 
     return dr * dr + dg * dg + db * db + da * da;
   }
 
-  function floodFillMask(referencePixels, width, height, seedX, seedY, tolerance) {
+  function floodFillMask(referenceSource, width, height, seedX, seedY, tolerance) {
     const pixelCount = width * height;
     const seedIndex = seedY * width + seedX;
-    const seedOffset = getTopDownRgbaOffset(seedIndex, width, height);
-    const seedR = referencePixels[seedOffset];
-    const seedG = referencePixels[seedOffset + 1];
-    const seedB = referencePixels[seedOffset + 2];
-    const seedA = referencePixels[seedOffset + 3];
+    const seedOffset = getReferencePixelOffset(referenceSource, seedX, seedY);
+    const seedR = getReferenceChannel(referenceSource, seedOffset, 0);
+    const seedG = getReferenceChannel(referenceSource, seedOffset, 1);
+    const seedB = getReferenceChannel(referenceSource, seedOffset, 2);
+    const seedA = getReferenceChannel(referenceSource, seedOffset, 3);
     const toleranceSq = tolerance * tolerance;
     const visited = new Uint8Array(pixelCount);
     const mask = new Uint8Array(pixelCount);
@@ -285,14 +342,12 @@
       stackPtr -= 1;
 
       const index = stack[stackPtr];
-      const offset = getTopDownRgbaOffset(index, width, height);
-
-      if (colorDistanceSq(referencePixels, offset, seedR, seedG, seedB, seedA) > toleranceSq) {
-        continue;
-      }
-
       const y = Math.floor(index / width);
       const x = index - y * width;
+
+      if (colorDistanceSq(referenceSource, x, y, seedR, seedG, seedB, seedA) > toleranceSq) {
+        continue;
+      }
 
       mask[index] = 1;
       filledCount += 1;
@@ -467,33 +522,57 @@
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
-  function pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, afterSnapshot) {
+  function pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot) {
     const history = namespace.documentHistory;
 
-    if (!history?.push || !beforeSnapshot || !afterSnapshot) {
+    if (!history?.push || !beforeSnapshot) {
       renderer.deleteRasterSnapshot?.(beforeSnapshot);
-      renderer.deleteRasterSnapshot?.(afterSnapshot);
       return;
     }
 
-    history.push({
+    let afterSnapshot = null;
+    let entry = null;
+    const captureRedoSnapshot = () => {
+      if (afterSnapshot?.texture) {
+        return true;
+      }
+
+      afterSnapshot = renderer.createRasterSnapshot?.(layerId, dirtyRect, "color-fill-after");
+      if (afterSnapshot?.texture && entry) {
+        entry.after = afterSnapshot;
+      }
+
+      return Boolean(afterSnapshot?.texture);
+    };
+
+    entry = {
       type: "pixel",
-      after: afterSnapshot,
+      after: null,
       before: beforeSnapshot,
       layerId,
       rect: dirtyRect,
       source: "color-fill",
-      undo: () => renderer.restoreRasterSnapshot(layerId, beforeSnapshot, {
-        source: "history-undo-color-fill",
-      }),
-      redo: () => renderer.restoreRasterSnapshot(layerId, afterSnapshot, {
-        source: "history-redo-color-fill",
-      }),
+      undo: () => {
+        if (!captureRedoSnapshot()) {
+          return false;
+        }
+
+        return renderer.restoreRasterSnapshot(layerId, beforeSnapshot, {
+          source: "history-undo-color-fill",
+        });
+      },
+      redo: () => afterSnapshot?.texture
+        ? renderer.restoreRasterSnapshot(layerId, afterSnapshot, {
+            source: "history-redo-color-fill",
+          })
+        : false,
       destroy: () => {
         renderer.deleteRasterSnapshot?.(beforeSnapshot);
         renderer.deleteRasterSnapshot?.(afterSnapshot);
       },
-    });
+    };
+
+    history.push(entry);
   }
 
   function dropColorAt(clientX, clientY, colorHex, options = {}) {
@@ -523,9 +602,8 @@
 
     const tolerance = clamp(options.tolerance ?? fillTolerance, 0, MAX_FILL_TOLERANCE);
     const referenceTarget = getReferenceTarget(target);
-    const referenceFramebuffer = referenceTarget.framebuffer;
-    const referencePixels = readFramebufferPixelsTopDown(gl, referenceFramebuffer, width, height);
-    const fillResult = floodFillMask(referencePixels, width, height, seedX, seedY, tolerance);
+    const referenceSource = createReferencePixelSource(gl, referenceTarget);
+    const fillResult = floodFillMask(referenceSource, width, height, seedX, seedY, tolerance);
 
     if (!fillResult) {
       return false;
@@ -558,9 +636,7 @@
     );
     writeDirtyPixelsToTarget(gl, target, dirtyRect, dirtyRead.textureY, targetPixels);
 
-    const afterSnapshot = renderer.createRasterSnapshot?.(layerId, dirtyRect, "color-fill-after");
-
-    pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, afterSnapshot);
+    pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot);
     renderer.invalidatePreviewCache?.("color-fill");
     renderer.emitContentChange?.({ layerId, source: "color-fill" });
     renderer.requestDraw?.();

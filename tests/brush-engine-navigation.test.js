@@ -29,6 +29,14 @@ test("temporary pan owns the cursor and blocks other tool handlers while active"
   assert.match(cssSource, /input,[\s\S]*?\[contenteditable="true"\] \*[\s\S]*?user-select: text;/);
 });
 
+test("preview cache is enabled only after explicit camera navigation", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+
+  assert.match(source, /this\.userManipulatedCamera = false/);
+  assert.match(source, /this\.userManipulatedCamera = true;\s*this\.requestDraw\(\);/);
+  assert.match(source, /allowPreviewCache: this\.userManipulatedCamera/);
+});
+
 test("spacebar navigation cancels native browser button and toolbar behavior", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 

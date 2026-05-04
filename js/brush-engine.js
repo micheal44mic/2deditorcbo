@@ -633,6 +633,54 @@ void main() {
       }
     }
 
+    getRasterResourceManager() {
+      return window.CBO?.rasterResourceManager || null;
+    }
+
+    getRasterResourceDocumentMetadata(metadata = {}) {
+      const renderer = window.CBO?.documentRenderer || this.documentRenderer;
+
+      return {
+        ...metadata,
+        documentHeight: metadata.documentHeight ?? renderer?.height,
+        documentWidth: metadata.documentWidth ?? renderer?.width,
+      };
+    }
+
+    nextBrushResourceOwnerId(prefix = "brush-resource") {
+      this.rasterResourceIdSequence = this.rasterResourceIdSequence || 1;
+
+      return `${prefix}-${this.rasterResourceIdSequence++}`;
+    }
+
+    registerBrushTexture(texture, metadata = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.registerTexture || !texture) {
+        return null;
+      }
+
+      return manager.registerTexture(texture, this.getRasterResourceDocumentMetadata(metadata));
+    }
+
+    registerBrushFramebuffer(framebuffer, metadata = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.registerFramebuffer || !framebuffer) {
+        return null;
+      }
+
+      return manager.registerFramebuffer(framebuffer, this.getRasterResourceDocumentMetadata(metadata));
+    }
+
+    deleteBrushTexture(textureOrId) {
+      return this.getRasterResourceManager()?.deleteTexture?.(textureOrId) || false;
+    }
+
+    deleteBrushFramebuffer(framebufferOrId) {
+      return this.getRasterResourceManager()?.deleteFramebuffer?.(framebufferOrId) || false;
+    }
+
     configureGlState() {
       const gl = this.gl;
 
@@ -890,7 +938,7 @@ void main() {
       return { vao, buffer };
     }
 
-    createTransparentRenderTarget(label, width, height) {
+    createTransparentRenderTarget(label, width, height, resourceMetadata = {}) {
       const gl = this.gl;
       const documentTarget = this.getPaintTarget();
       const targetWidth = Math.max(1, Math.round(width || documentTarget.width));
@@ -952,7 +1000,40 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      return { texture, framebuffer, width: targetWidth, height: targetHeight };
+      const ownerId = resourceMetadata.ownerId || this.nextBrushResourceOwnerId("brush-stroke-target");
+      const target = {
+        framebuffer,
+        height: targetHeight,
+        id: ownerId,
+        texture,
+        width: targetWidth,
+      };
+      const textureRow = this.registerBrushTexture(texture, {
+        height: targetHeight,
+        kind: "strokeScratch",
+        label: targetLabel,
+        ownerId,
+        ownerType: "scratch",
+        purgeable: false,
+        reason: "brush-engine",
+        width: targetWidth,
+        ...resourceMetadata,
+      });
+
+      this.registerBrushFramebuffer(framebuffer, {
+        height: targetHeight,
+        kind: "strokeScratchFramebuffer",
+        label: `${targetLabel} framebuffer`,
+        linkedTextureId: textureRow?.id || "",
+        ownerId,
+        ownerType: "scratch",
+        purgeable: false,
+        reason: "brush-engine",
+        width: targetWidth,
+        ...resourceMetadata,
+      });
+
+      return target;
     }
 
     createStrokeLayerTarget(rect = null) {
@@ -967,14 +1048,18 @@ void main() {
       };
 
       try {
-        targets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height));
-        targets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height));
-        targets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height));
+        const resourceMetadata = {
+          bbox: nextRect,
+          originX: nextRect.x,
+          originY: nextRect.y,
+          reason: "create-stroke-layer-target",
+        };
+
+        targets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height, resourceMetadata));
+        targets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height, resourceMetadata));
+        targets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height, resourceMetadata));
       } catch (error) {
-        for (const target of targets) {
-          gl.deleteFramebuffer(target.framebuffer);
-          gl.deleteTexture(target.texture);
-        }
+        this.deleteStrokeTargets(targets);
 
         throw error;
       }
@@ -1111,11 +1196,15 @@ void main() {
 
       targets.forEach((target) => {
         if (target?.framebuffer) {
+          this.deleteBrushFramebuffer(target.framebuffer);
           gl.deleteFramebuffer(target.framebuffer);
+          target.framebuffer = null;
         }
 
         if (target?.texture) {
+          this.deleteBrushTexture(target.texture);
           gl.deleteTexture(target.texture);
+          target.texture = null;
         }
       });
     }
@@ -1185,9 +1274,16 @@ void main() {
       const nextTargets = [];
 
       try {
-        nextTargets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height));
-        nextTargets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height));
-        nextTargets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height));
+        const resourceMetadata = {
+          bbox: nextRect,
+          originX: nextRect.x,
+          originY: nextRect.y,
+          reason: "replace-stroke-layer-target",
+        };
+
+        nextTargets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height, resourceMetadata));
+        nextTargets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height, resourceMetadata));
+        nextTargets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height, resourceMetadata));
       } catch (error) {
         this.deleteStrokeTargets(nextTargets);
         throw error;
@@ -1518,6 +1614,20 @@ void main() {
       gl.generateMipmap(gl.TEXTURE_2D);
       gl.bindTexture(gl.TEXTURE_2D, null);
       this.shapeTextureReady = true;
+      this.registerBrushTexture(this.shapeTexture, {
+        height: Math.max(1, image.naturalHeight || image.height || 1),
+        kind: "brushShapeTexture",
+        label: "brush shape texture",
+        mipLevels: Math.max(1, Math.floor(Math.log2(Math.max(
+          image.naturalWidth || image.width || 1,
+          image.naturalHeight || image.height || 1,
+        ))) + 1),
+        ownerId: "brush-shape-texture",
+        ownerType: "cache",
+        purgeable: true,
+        reason: "brush-shape-upload",
+        width: Math.max(1, image.naturalWidth || image.width || 1),
+      });
 
       if (this.options.singleStrokeMode && !this.isDrawing && this.lastRecordedStroke.length > 0) {
         this.replayLastStroke();
@@ -1608,6 +1718,17 @@ void main() {
       gl.generateMipmap(gl.TEXTURE_2D);
       gl.bindTexture(gl.TEXTURE_2D, null);
       this.grainTextureReady = true;
+      this.registerBrushTexture(this.grainTexture, {
+        height: this.grainImageHeight,
+        kind: "brushGrainTexture",
+        label: "brush grain texture",
+        mipLevels: Math.max(1, Math.floor(Math.log2(Math.max(this.grainImageWidth, this.grainImageHeight))) + 1),
+        ownerId: "brush-grain-texture",
+        ownerType: "cache",
+        purgeable: true,
+        reason: "brush-grain-upload",
+        width: this.grainImageWidth,
+      });
 
       if (this.options.singleStrokeMode && !this.isDrawing && this.lastRecordedStroke.length > 0) {
         this.replayLastStroke();
@@ -3492,27 +3613,51 @@ void main() {
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
       if (beforeSnapshot) {
-        const afterSnapshot = this.createHistorySnapshot(target, beforeSnapshot.rect, "after-stroke");
         const history = namespace.documentHistory;
+        let afterSnapshot = null;
+        let entry = null;
+        const captureRedoSnapshot = () => {
+          if (afterSnapshot?.texture) {
+            return true;
+          }
 
-        if (history?.push && afterSnapshot) {
-          history.push({
+          const redoTarget = this.documentRenderer?.getRasterTarget?.(layerId);
+
+          afterSnapshot = this.createHistorySnapshot(redoTarget, beforeSnapshot.rect, "after-stroke");
+          if (afterSnapshot?.texture && entry) {
+            entry.after = afterSnapshot;
+          }
+
+          return Boolean(afterSnapshot?.texture);
+        };
+
+        if (history?.push) {
+          entry = {
             type: "pixel",
-            after: afterSnapshot,
+            after: null,
             before: beforeSnapshot,
             layerId,
             rect: beforeSnapshot.rect,
             source: this.currentStrokeTool,
-            undo: () => this.restoreHistorySnapshot(layerId, beforeSnapshot),
-            redo: () => this.restoreHistorySnapshot(layerId, afterSnapshot),
+            undo: () => {
+              if (!captureRedoSnapshot()) {
+                return false;
+              }
+
+              return this.restoreHistorySnapshot(layerId, beforeSnapshot);
+            },
+            redo: () => afterSnapshot?.texture
+              ? this.restoreHistorySnapshot(layerId, afterSnapshot)
+              : false,
             destroy: () => {
               this.deleteHistorySnapshot(beforeSnapshot);
               this.deleteHistorySnapshot(afterSnapshot);
             },
-          });
+          };
+
+          history.push(entry);
         } else {
           this.deleteHistorySnapshot(beforeSnapshot);
-          this.deleteHistorySnapshot(afterSnapshot);
         }
       }
 
@@ -3583,11 +3728,41 @@ void main() {
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      return {
-        label,
-        texture,
-        rect: { x, y, width, height },
+      const snapshotId = this.nextBrushResourceOwnerId("brush-history-snapshot");
+      const targetOriginX = Number.isFinite(target?.x) ? Math.round(target.x) : 0;
+      const targetOriginY = Number.isFinite(target?.y) ? Math.round(target.y) : 0;
+      const docRect = {
+        height,
+        width,
+        x: targetOriginX + x,
+        y: targetOriginY + y,
       };
+      const snapshot = {
+        docRect,
+        id: snapshotId,
+        label,
+        rect: { x, y, width, height },
+        state: "GPU_HOT",
+        texture,
+      };
+
+      this.registerBrushTexture(texture, {
+        bbox: docRect,
+        height,
+        kind: "historySnapshot",
+        label,
+        layerId: this.strokeTargetLayerId || target?.layerId || "",
+        originX: docRect.x,
+        originY: docRect.y,
+        ownerId: snapshotId,
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: label,
+        state: "GPU_HOT",
+        width,
+      });
+
+      return snapshot;
     }
 
     restoreHistorySnapshot(layerId, snapshot) {
@@ -3633,11 +3808,13 @@ void main() {
 
     deleteHistorySnapshot(snapshot) {
       if (snapshot?.texture) {
+        this.deleteBrushTexture(snapshot.texture);
         this.gl.deleteTexture(snapshot.texture);
         snapshot.texture = null;
       }
 
       if (snapshot?.framebuffer) {
+        this.deleteBrushFramebuffer(snapshot.framebuffer);
         this.gl.deleteFramebuffer(snapshot.framebuffer);
         snapshot.framebuffer = null;
       }
@@ -4026,6 +4203,7 @@ void main() {
       const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
 
       this.documentRenderer.drawToCanvas({
+        allowPreviewCache: this.userManipulatedCamera,
         activeStrokeLayerId,
         activeStrokeMode: this.currentStrokeTool === "eraser" ? "eraser" : "paint",
         activeStrokeRect: this.strokeBufferRect,
@@ -4100,41 +4278,49 @@ void main() {
       this.documentRenderer = null;
 
       if (this.strokeFBO) {
+        this.deleteBrushFramebuffer(this.strokeFBO);
         gl.deleteFramebuffer(this.strokeFBO);
         this.strokeFBO = null;
       }
 
       if (this.strokeTexture) {
+        this.deleteBrushTexture(this.strokeTexture);
         gl.deleteTexture(this.strokeTexture);
         this.strokeTexture = null;
       }
 
       if (this.strokePlateauFBO) {
+        this.deleteBrushFramebuffer(this.strokePlateauFBO);
         gl.deleteFramebuffer(this.strokePlateauFBO);
         this.strokePlateauFBO = null;
       }
 
       if (this.strokePlateauTexture) {
+        this.deleteBrushTexture(this.strokePlateauTexture);
         gl.deleteTexture(this.strokePlateauTexture);
         this.strokePlateauTexture = null;
       }
 
       if (this.strokeAccumFBO) {
+        this.deleteBrushFramebuffer(this.strokeAccumFBO);
         gl.deleteFramebuffer(this.strokeAccumFBO);
         this.strokeAccumFBO = null;
       }
 
       if (this.strokeAccumTexture) {
+        this.deleteBrushTexture(this.strokeAccumTexture);
         gl.deleteTexture(this.strokeAccumTexture);
         this.strokeAccumTexture = null;
       }
 
       if (this.shapeTexture) {
+        this.deleteBrushTexture(this.shapeTexture);
         gl.deleteTexture(this.shapeTexture);
         this.shapeTexture = null;
       }
 
       if (this.grainTexture) {
+        this.deleteBrushTexture(this.grainTexture);
         gl.deleteTexture(this.grainTexture);
         this.grainTexture = null;
       }

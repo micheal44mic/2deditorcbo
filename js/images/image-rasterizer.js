@@ -55,6 +55,40 @@ void main() {
       this.quad = this.createPlacementQuad();
     }
 
+    getRasterResourceManager() {
+      return window.CBO?.rasterResourceManager || null;
+    }
+
+    getRasterResourceDocumentMetadata(metadata = {}) {
+      const renderer = window.CBO?.documentRenderer || this.documentRenderer;
+
+      return {
+        ...metadata,
+        documentHeight: metadata.documentHeight ?? renderer?.height,
+        documentWidth: metadata.documentWidth ?? renderer?.width,
+      };
+    }
+
+    nextImageRasterResourceOwnerId(prefix = "image-raster-resource") {
+      this.rasterResourceIdSequence = this.rasterResourceIdSequence || 1;
+
+      return `${prefix}-${this.rasterResourceIdSequence++}`;
+    }
+
+    registerImageRasterTexture(texture, metadata = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.registerTexture || !texture) {
+        return null;
+      }
+
+      return manager.registerTexture(texture, this.getRasterResourceDocumentMetadata(metadata));
+    }
+
+    deleteImageRasterTexture(textureOrId) {
+      return this.getRasterResourceManager()?.deleteTexture?.(textureOrId) || false;
+    }
+
     compileShader(type, source) {
       const gl = this.gl;
       const shader = gl.createShader(type);
@@ -220,6 +254,19 @@ void main() {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
+      const size = this.getRasterSourceSize(source);
+
+      this.registerImageRasterTexture(texture, {
+        height: size.height,
+        kind: "importSourceTexture",
+        label: "import source texture",
+        ownerId: this.nextImageRasterResourceOwnerId("import-source-texture"),
+        ownerType: "scratch",
+        purgeable: true,
+        reason: "image-rasterizer",
+        width: size.width,
+      });
+
       return texture;
     }
 
@@ -278,6 +325,7 @@ void main() {
         gl.bindTexture(gl.TEXTURE_2D, null);
         gl.useProgram(null);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        this.deleteImageRasterTexture(texture);
         gl.deleteTexture(texture);
       }
 

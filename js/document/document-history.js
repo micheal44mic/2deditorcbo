@@ -1,6 +1,9 @@
 (function registerDocumentHistory(namespace) {
   const DEFAULT_MAX_HISTORY_ENTRIES = 40;
   const DEFAULT_GROUP_IDLE_MS = 700;
+  const BYTES_PER_PIXEL = 4;
+  const MIB = 1024 * 1024;
+  const DEFAULT_MAX_RASTER_HISTORY_BYTES = 500 * MIB;
   const HISTORY_CHANGE_EVENT = "cbo:history-change";
 
   function isObject(value) {
@@ -31,6 +34,45 @@
     }
   }
 
+  function toFinitePositiveNumber(value, fallback = 0) {
+    const number = Number(value);
+
+    return Number.isFinite(number) && number > 0 ? number : fallback;
+  }
+
+  function getRectBytes(rect) {
+    if (!isObject(rect)) {
+      return 0;
+    }
+
+    const width = Math.max(0, Math.round(Number(rect.width) || 0));
+    const height = Math.max(0, Math.round(Number(rect.height) || 0));
+
+    return width * height * BYTES_PER_PIXEL;
+  }
+
+  function normalizeRasterHistoryBudgetBytes(options = {}) {
+    const explicitBytes = toFinitePositiveNumber(
+      options.maxRasterHistoryBytes ?? options.rasterHistoryBudgetBytes,
+      0,
+    );
+
+    if (explicitBytes > 0) {
+      return Math.floor(explicitBytes);
+    }
+
+    const explicitMiB = toFinitePositiveNumber(
+      options.maxRasterHistoryMiB ?? options.rasterHistoryBudgetMiB,
+      0,
+    );
+
+    if (explicitMiB > 0) {
+      return Math.floor(explicitMiB * MIB);
+    }
+
+    return DEFAULT_MAX_RASTER_HISTORY_BYTES;
+  }
+
   class DocumentHistory extends EventTarget {
     constructor(options = {}) {
       super();
@@ -41,12 +83,14 @@
       this.groupIdleMs = Number.isFinite(options.groupIdleMs) && options.groupIdleMs >= 0
         ? Math.floor(options.groupIdleMs)
         : DEFAULT_GROUP_IDLE_MS;
+      this.maxRasterHistoryBytes = normalizeRasterHistoryBudgetBytes(options);
       this.undoStack = [];
       this.redoStack = [];
       this.activeGroups = new Map();
       this.pendingLayerStates = new WeakMap();
       this.isRestoring = false;
       this.isDisposed = false;
+      this.lastRasterBudgetPrune = null;
       this.handleHistoryAction = this.handleHistoryAction.bind(this);
 
       window.addEventListener("cbo:history-action", this.handleHistoryAction);
@@ -138,6 +182,196 @@
       }
     }
 
+    estimateSnapshotBytes(snapshot) {
+      if (!isObject(snapshot)) {
+        return 0;
+      }
+
+      const explicitBytes = toFinitePositiveNumber(
+        snapshot.bytes ?? snapshot.byteSize ?? snapshot.gpuBytes,
+        0,
+      );
+
+      if (explicitBytes > 0) {
+        return Math.floor(explicitBytes);
+      }
+
+      const hasTextureKey = Object.prototype.hasOwnProperty.call(snapshot, "texture");
+      const hasFramebufferKey = Object.prototype.hasOwnProperty.call(snapshot, "framebuffer");
+
+      if (
+        hasTextureKey &&
+        snapshot.texture == null &&
+        (!hasFramebufferKey || snapshot.framebuffer == null)
+      ) {
+        return 0;
+      }
+
+      return getRectBytes(snapshot.rect || snapshot.docRect || snapshot.targetRect || snapshot.bbox);
+    }
+
+    estimateRasterEntryBytes(entry) {
+      if (!isObject(entry)) {
+        return 0;
+      }
+
+      let total = 0;
+      const countedSnapshots = new Set();
+      const addSnapshot = (snapshot) => {
+        if (!isObject(snapshot) || countedSnapshots.has(snapshot)) {
+          return;
+        }
+
+        countedSnapshots.add(snapshot);
+        total += this.estimateSnapshotBytes(snapshot);
+      };
+
+      addSnapshot(entry.before);
+      addSnapshot(entry.after);
+      addSnapshot(entry.beforeSnapshot);
+      addSnapshot(entry.afterSnapshot);
+      addSnapshot(entry.rasterSnapshot);
+
+      if (Array.isArray(entry.dabs)) {
+        entry.dabs.forEach((dab) => {
+          addSnapshot(dab?.before);
+          addSnapshot(dab?.after);
+        });
+      }
+
+      return total;
+    }
+
+    getRasterHistoryBytes() {
+      const sumStack = (stack) => Array.isArray(stack)
+        ? stack.reduce((sum, entry) => sum + this.estimateRasterEntryBytes(entry), 0)
+        : 0;
+
+      return sumStack(this.undoStack) + sumStack(this.redoStack);
+    }
+
+    getRasterHistoryBudgetBytes() {
+      return this.maxRasterHistoryBytes;
+    }
+
+    getRasterHistoryBudgetMiB() {
+      return this.maxRasterHistoryBytes / MIB;
+    }
+
+    setRasterHistoryBudgetBytes(bytes) {
+      const nextBytes = Math.max(0, Math.floor(Number(bytes) || 0));
+
+      this.maxRasterHistoryBytes = nextBytes;
+      const pruneResult = this.pruneRasterHistoryBudget();
+      this.emitChange("history-budget-change");
+
+      return pruneResult;
+    }
+
+    setRasterHistoryBudgetMiB(mib) {
+      return this.setRasterHistoryBudgetBytes((Number(mib) || 0) * MIB);
+    }
+
+    getRasterHistoryEntryCount() {
+      return this.undoStack.length + this.redoStack.length;
+    }
+
+    destroyOldestRasterHistoryEntry() {
+      const totalEntries = this.getRasterHistoryEntryCount();
+
+      if (totalEntries <= 1) {
+        return null;
+      }
+
+      const candidates = [];
+      const collectCandidates = (stack, stackName) => {
+        if (!Array.isArray(stack)) {
+          return;
+        }
+
+        stack.forEach((entry, index) => {
+          const bytes = this.estimateRasterEntryBytes(entry);
+
+          if (bytes <= 0) {
+            return;
+          }
+
+          candidates.push({
+            bytes,
+            entry,
+            index,
+            stack,
+            stackName,
+            updatedAt: Number.isFinite(entry?.updatedAt) ? entry.updatedAt : 0,
+          });
+        });
+      };
+
+      collectCandidates(this.undoStack, "undo");
+      collectCandidates(this.redoStack, "redo");
+
+      if (candidates.length === 0) {
+        return null;
+      }
+
+      candidates.sort((first, second) => (
+        first.updatedAt - second.updatedAt ||
+        first.index - second.index
+      ));
+
+      const candidate = candidates[0];
+
+      candidate.stack.splice(candidate.index, 1);
+      const entry = candidate.entry;
+      const bytes = candidate.bytes;
+
+      this.destroyEntry(entry);
+
+      return {
+        bytes,
+        source: entry?.source || "",
+        stack: candidate.stackName,
+        type: entry?.type || "",
+      };
+    }
+
+    pruneRasterHistoryBudget() {
+      const budgetBytes = Math.max(0, Math.floor(Number(this.maxRasterHistoryBytes) || 0));
+      const beforeBytes = this.getRasterHistoryBytes();
+      const dropped = [];
+
+      if (!Number.isFinite(budgetBytes)) {
+        return {
+          afterBytes: beforeBytes,
+          beforeBytes,
+          budgetBytes,
+          dropped,
+        };
+      }
+
+      while (this.getRasterHistoryBytes() > budgetBytes) {
+        const droppedEntry = this.destroyOldestRasterHistoryEntry();
+
+        if (!droppedEntry) {
+          break;
+        }
+
+        dropped.push(droppedEntry);
+      }
+
+      const afterBytes = this.getRasterHistoryBytes();
+      const result = {
+        afterBytes,
+        beforeBytes,
+        budgetBytes,
+        dropped,
+      };
+
+      this.lastRasterBudgetPrune = result;
+
+      return result;
+    }
+
     clearStack(stack) {
       if (!Array.isArray(stack)) {
         return;
@@ -199,6 +433,7 @@
           previousEntry.updatedAt = nextEntry.updatedAt;
           this.destroyEntry(nextEntry);
           this.clearStack(this.redoStack);
+          this.pruneRasterHistoryBudget();
           this.emitChange("merge");
           return true;
         }
@@ -210,6 +445,8 @@
       while (this.undoStack.length > this.maxEntries) {
         this.destroyEntry(this.undoStack.shift());
       }
+
+      this.pruneRasterHistoryBudget();
 
       this.emitChange("push");
       return true;
@@ -236,6 +473,7 @@
 
       if (didUndo) {
         this.redoStack.push(entry);
+        this.pruneRasterHistoryBudget();
       } else {
         this.destroyEntry(entry);
       }
@@ -256,6 +494,7 @@
 
       if (didRedo) {
         this.undoStack.push(entry);
+        this.pruneRasterHistoryBudget();
       } else {
         this.destroyEntry(entry);
       }
@@ -269,6 +508,8 @@
         canRedo: this.redoStack.length > 0,
         canUndo: this.undoStack.length > 0,
         redoCount: this.redoStack.length,
+        rasterHistoryBudgetBytes: this.maxRasterHistoryBytes,
+        rasterHistoryBytes: this.getRasterHistoryBytes(),
         source,
         undoCount: this.undoStack.length,
       };

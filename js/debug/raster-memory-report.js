@@ -198,6 +198,10 @@
   }
 
   function collectRasterMemory() {
+    if (namespace.rasterResourceManager?.reportRasterMemory) {
+      return namespace.rasterResourceManager.reportRasterMemory({ log: false });
+    }
+
     const renderer = namespace.documentRenderer;
     const layerModel = renderer?.layerModel || namespace.documentLayerModel;
     const history = namespace.documentHistory;
@@ -349,7 +353,14 @@
     const result = collectRasterMemory();
 
     if (options.log !== false) {
-      logRasterMemoryReport(result);
+      if (
+        result?.source === "raster-resource-manager" &&
+        namespace.rasterResourceManager?.logRasterMemoryReport
+      ) {
+        namespace.rasterResourceManager.logRasterMemoryReport(result);
+      } else {
+        logRasterMemoryReport(result);
+      }
     }
 
     return result;

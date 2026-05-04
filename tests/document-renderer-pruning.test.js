@@ -364,10 +364,27 @@ test("document renderer exposes mipmapped zoom-out preview cache helpers", () =>
   assert.match(source, /createPreviewCache\(\)/);
   assert.match(source, /updatePreviewCacheIfNeeded\(\)/);
   assert.match(source, /drawPreviewCacheToCanvas\(options = \{\}\)/);
+  assert.doesNotMatch(source, /^\s*this\.createPreviewCache\(\);$/m);
+  assert.match(source, /const didCreate = this\.createPreviewCache\(\)/);
   assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
   assert.match(source, /const isZoomedOut = \(camera\.zoom \|\| 1\) < 0\.99/);
+  assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true/);
+  assert.match(source, /allowPreviewCache &&\s*isZoomedOut/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
+});
+
+test("document renderer uses a procedural background texture", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /createProceduralBackgroundTarget\(\)/);
+  assert.match(source, /new Uint8Array\(\[255, 255, 255, 255\]\)/);
+  assert.match(source, /label: "procedural background texture"/);
+  assert.match(source, /bbox: \{\s*x: 0,\s*y: 0,\s*width: this\.width,\s*height: this\.height,\s*\}/);
+  assert.doesNotMatch(source, /const backgroundTarget = this\.createRasterTarget\(\[1, 1, 1, 1\]\)/);
 });
 
 test("document renderer composites supported layer blend modes in shader", () => {

@@ -541,8 +541,8 @@
   function buildWarnings(memoryReport, categories, budget, cpuHistory) {
     const warnings = [];
     const totalBytes = Number(memoryReport?.totalBytes) || 0;
-    const historyGpu = getGroupBytes(categories, ["history snapshots"]);
-    const previewCache = categories["renderer caches"] || 0;
+    const historyGpu = Number(memoryReport?.historyGpuBytes) || getGroupBytes(categories, ["history snapshots"]);
+    const previewCache = Number(memoryReport?.previewCacheBytes) || categories["renderer caches"] || 0;
 
     if (totalBytes >= budget.criticalBytes) {
       warnings.push("gpu budget critical");
@@ -585,17 +585,25 @@
     const statsElapsedMs = state.lastStatsAt ? Math.max(1, currentTime - state.lastStatsAt) : 1000 / state.updateHz;
     const renderIdle = !state.lastRenderAt || currentTime - state.lastRenderAt > 1000;
     const renderFps = renderIdle ? null : (state.renderCountSinceUpdate * 1000) / statsElapsedMs;
-    const groups = {
-      activePreviews: getGroupBytes(categories, ["active previews"]),
-      cache: getGroupBytes(categories, ["renderer caches", "active previews"]),
-      historyGpu: getGroupBytes(categories, ["history snapshots"]),
-      layers: getGroupBytes(categories, ["persistent layer targets"]),
-      scratch: getGroupBytes(categories, [
-        "renderer scratch targets",
-        "brush active stroke",
-        "smudge active targets",
-      ]),
-    };
+    const groups = memoryReport.source === "raster-resource-manager"
+      ? {
+          activePreviews: Number(memoryReport.transformPreviewBytes) || 0,
+          cache: Number(memoryReport.previewCacheBytes) || 0,
+          historyGpu: Number(memoryReport.historyGpuBytes) || 0,
+          layers: Number(memoryReport.liveLayerBytes) || 0,
+          scratch: Number(memoryReport.scratchBytes) || 0,
+        }
+      : {
+          activePreviews: getGroupBytes(categories, ["active previews"]),
+          cache: getGroupBytes(categories, ["renderer caches", "active previews"]),
+          historyGpu: getGroupBytes(categories, ["history snapshots"]),
+          layers: getGroupBytes(categories, ["persistent layer targets"]),
+          scratch: getGroupBytes(categories, [
+            "renderer scratch targets",
+            "brush active stroke",
+            "smudge active targets",
+          ]),
+        };
     const warnings = buildWarnings(memoryReport, categories, budget, cpuHistory);
 
     return {
@@ -772,6 +780,7 @@
         return;
       }
 
+      renderer.deleteRasterTexture?.(renderer.layerBlendBackdropTexture);
       renderer.gl?.deleteTexture?.(renderer.layerBlendBackdropTexture);
       renderer.layerBlendBackdropTexture = null;
       renderer.layerBlendBackdropWidth = 0;
@@ -793,6 +802,7 @@
       !namespace.rasterTransformTool?.sourceSnapshot &&
       !namespace.rasterTransformTool?.dragState
     ) {
+      renderer.deleteRasterTexture?.(renderer.rasterTransformPreview.texture);
       renderer.gl?.deleteTexture?.(renderer.rasterTransformPreview.texture);
       renderer.rasterTransformPreview = null;
       deleted.push("rasterTransformPreview");

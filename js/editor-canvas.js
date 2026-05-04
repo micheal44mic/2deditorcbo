@@ -105,6 +105,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas() {
   });
   window.CBO.documentHistory = new window.CBO.DocumentHistory({
     maxEntries: 40,
+    maxRasterHistoryMiB: 500,
   });
   let brushEngine;
   let smudgeEngine;

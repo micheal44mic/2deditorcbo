@@ -201,6 +201,54 @@ void main() {
       this.canvas.addEventListener("pointercancel", this.handlePointerCancel);
     }
 
+    getRasterResourceManager() {
+      return window.CBO?.rasterResourceManager || null;
+    }
+
+    getRasterResourceDocumentMetadata(metadata = {}) {
+      const renderer = window.CBO?.documentRenderer || this.documentRenderer;
+
+      return {
+        ...metadata,
+        documentHeight: metadata.documentHeight ?? renderer?.height,
+        documentWidth: metadata.documentWidth ?? renderer?.width,
+      };
+    }
+
+    nextSmudgeResourceOwnerId(prefix = "smudge-resource") {
+      this.rasterResourceIdSequence = this.rasterResourceIdSequence || 1;
+
+      return `${prefix}-${this.rasterResourceIdSequence++}`;
+    }
+
+    registerSmudgeTexture(texture, metadata = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.registerTexture || !texture) {
+        return null;
+      }
+
+      return manager.registerTexture(texture, this.getRasterResourceDocumentMetadata(metadata));
+    }
+
+    registerSmudgeFramebuffer(framebuffer, metadata = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.registerFramebuffer || !framebuffer) {
+        return null;
+      }
+
+      return manager.registerFramebuffer(framebuffer, this.getRasterResourceDocumentMetadata(metadata));
+    }
+
+    deleteSmudgeTexture(textureOrId) {
+      return this.getRasterResourceManager()?.deleteTexture?.(textureOrId) || false;
+    }
+
+    deleteSmudgeFramebuffer(framebufferOrId) {
+      return this.getRasterResourceManager()?.deleteFramebuffer?.(framebufferOrId) || false;
+    }
+
     compileShader(type, source) {
       const gl = this.gl;
       const shader = gl.createShader(type);
@@ -307,7 +355,7 @@ void main() {
       return { vao, buffer };
     }
 
-    createTarget(width, height, label, filter = this.gl.LINEAR) {
+    createTarget(width, height, label, filter = this.gl.LINEAR, resourceMetadata = {}) {
       const gl = this.gl;
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
@@ -345,7 +393,40 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      return { framebuffer, height, texture, width };
+      const ownerId = resourceMetadata.ownerId || this.nextSmudgeResourceOwnerId("smudge-target");
+      const target = {
+        framebuffer,
+        height,
+        id: ownerId,
+        texture,
+        width,
+      };
+      const textureRow = this.registerSmudgeTexture(texture, {
+        height,
+        kind: resourceMetadata.kind || "smudgeScratch",
+        label,
+        ownerId,
+        ownerType: "scratch",
+        purgeable: resourceMetadata.purgeable === true,
+        reason: resourceMetadata.reason || "smudge-engine",
+        width,
+        ...resourceMetadata,
+      });
+
+      this.registerSmudgeFramebuffer(framebuffer, {
+        height,
+        kind: `${resourceMetadata.kind || "smudgeScratch"}Framebuffer`,
+        label: `${label} framebuffer`,
+        linkedTextureId: textureRow?.id || "",
+        ownerId,
+        ownerType: "scratch",
+        purgeable: resourceMetadata.purgeable === true,
+        reason: resourceMetadata.reason || "smudge-engine",
+        width,
+        ...resourceMetadata,
+      });
+
+      return target;
     }
 
     getFullDocumentRect(target) {
@@ -361,7 +442,25 @@ void main() {
       const rect = CROPPED_SMUDGE_SCRATCH && bounds
         ? { ...bounds }
         : this.getFullDocumentRect(target);
-      const scratch = this.createTarget(rect.width, rect.height, "temporaneo smudge", this.gl.NEAREST);
+      const scratch = this.createTarget(
+        rect.width,
+        rect.height,
+        "temporaneo smudge",
+        this.gl.NEAREST,
+        {
+          bbox: rect,
+          height: rect.height,
+          kind: "smudgeScratch",
+          label: "temporaneo smudge",
+          originX: rect.x,
+          originY: rect.y,
+          ownerId: this.nextSmudgeResourceOwnerId("smudge-scratch"),
+          ownerType: "scratch",
+          purgeable: false,
+          reason: "create-smudge-scratch-target",
+          width: rect.width,
+        },
+      );
 
       scratch.rect = rect;
 
@@ -404,8 +503,17 @@ void main() {
 
       const gl = this.gl;
 
-      gl.deleteFramebuffer(target.framebuffer);
-      gl.deleteTexture(target.texture);
+      if (target.framebuffer) {
+        this.deleteSmudgeFramebuffer(target.framebuffer);
+        gl.deleteFramebuffer(target.framebuffer);
+        target.framebuffer = null;
+      }
+
+      if (target.texture) {
+        this.deleteSmudgeTexture(target.texture);
+        gl.deleteTexture(target.texture);
+        target.texture = null;
+      }
     }
 
     createHistorySnapshot(target, bounds, label = "smudge history") {
@@ -478,16 +586,64 @@ void main() {
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      return { framebuffer, rect, texture };
+      const snapshotId = this.nextSmudgeResourceOwnerId("smudge-history-snapshot");
+      const targetOriginX = Number.isFinite(target?.x) ? Math.round(target.x) : 0;
+      const targetOriginY = Number.isFinite(target?.y) ? Math.round(target.y) : 0;
+      const docRect = {
+        height: rect.height,
+        width: rect.width,
+        x: targetOriginX + rect.x,
+        y: targetOriginY + rect.y,
+      };
+      const snapshot = {
+        docRect,
+        framebuffer,
+        id: snapshotId,
+        rect,
+        state: "GPU_HOT",
+        texture,
+      };
+      const textureRow = this.registerSmudgeTexture(texture, {
+        bbox: docRect,
+        height: rect.height,
+        kind: "historySnapshot",
+        label,
+        layerId: this.activeHistoryLayerId || target?.layerId || "",
+        originX: docRect.x,
+        originY: docRect.y,
+        ownerId: snapshotId,
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: label,
+        state: "GPU_HOT",
+        width: rect.width,
+      });
+
+      this.registerSmudgeFramebuffer(framebuffer, {
+        height: rect.height,
+        kind: "historySnapshotFramebuffer",
+        label: `${label} framebuffer`,
+        layerId: this.activeHistoryLayerId || target?.layerId || "",
+        linkedTextureId: textureRow?.id || "",
+        ownerId: snapshotId,
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: label,
+        width: rect.width,
+      });
+
+      return snapshot;
     }
 
     deleteHistorySnapshot(snapshot) {
       if (snapshot?.framebuffer) {
+        this.deleteSmudgeFramebuffer(snapshot.framebuffer);
         this.gl.deleteFramebuffer(snapshot.framebuffer);
         snapshot.framebuffer = null;
       }
 
       if (snapshot?.texture) {
+        this.deleteSmudgeTexture(snapshot.texture);
         this.gl.deleteTexture(snapshot.texture);
         snapshot.texture = null;
       }
@@ -603,9 +759,25 @@ void main() {
         return null;
       }
 
-      const snapshot = this.createTarget(rect.width, rect.height, label, this.gl.NEAREST);
+      const snapshotId = this.nextSmudgeResourceOwnerId("smudge-history-snapshot");
+      const snapshot = this.createTarget(rect.width, rect.height, label, this.gl.NEAREST, {
+        bbox: rect,
+        height: rect.height,
+        kind: "historySnapshot",
+        label,
+        layerId: this.activeHistoryLayerId || "",
+        originX: rect.x,
+        originY: rect.y,
+        ownerId: snapshotId,
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: label,
+        state: "GPU_HOT",
+        width: rect.width,
+      });
 
       snapshot.rect = { ...rect };
+      snapshot.state = "GPU_HOT";
 
       return snapshot;
     }
@@ -852,23 +1024,36 @@ void main() {
           return;
         }
 
-        const after = this.createHistorySnapshot(target, before.rect, "smudge dopo");
-
-        if (!after) {
-          this.deleteHistorySnapshot(before);
-          this.deleteHistoryDabs(dabs);
-          return;
-        }
-
         this.deleteHistoryDabs(dabs);
-        namespace.documentHistory.push({
+        let after = null;
+        let entry = null;
+        const captureRedoSnapshot = () => {
+          if (after?.texture) {
+            return true;
+          }
+
+          const redoTarget = this.documentRenderer?.getRasterTarget?.(layerId);
+
+          after = this.createHistorySnapshot(redoTarget, before.rect, "smudge dopo");
+          if (after?.texture && entry) {
+            entry.after = after;
+          }
+
+          return Boolean(after?.texture);
+        };
+
+        entry = {
           type: "pixel",
-          after,
+          after: null,
           before,
           layerId,
           rect: before.rect,
           source: "smudge",
           undo: () => {
+            if (!captureRedoSnapshot()) {
+              return false;
+            }
+
             const restoreTarget = this.documentRenderer?.getRasterTarget?.(layerId);
             const didRestore = this.restoreHistorySnapshot(restoreTarget, before);
 
@@ -880,6 +1065,10 @@ void main() {
             return didRestore;
           },
           redo: () => {
+            if (!after?.texture) {
+              return false;
+            }
+
             const restoreTarget = this.documentRenderer?.getRasterTarget?.(layerId);
             const didRestore = this.restoreHistorySnapshot(restoreTarget, after);
 
@@ -894,7 +1083,9 @@ void main() {
             this.deleteHistorySnapshot(before);
             this.deleteHistorySnapshot(after);
           },
-        });
+        };
+
+        namespace.documentHistory.push(entry);
         return;
       }
 
@@ -1365,7 +1556,7 @@ void main() {
       const layerId = this.activeHistoryLayerId || target?.layerId || null;
       const debugInfo = {
         historyBytes: this.activeHistoryBeforeSnapshot
-          ? this.getSnapshotBytes(this.activeHistoryBeforeSnapshot) * 2
+          ? this.getSnapshotBytes(this.activeHistoryBeforeSnapshot)
           : this.getHistoryDabsBytes(this.activeHistoryDabs),
       };
 

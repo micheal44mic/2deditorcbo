@@ -33,6 +33,7 @@ function loadDocumentHistory() {
     EventTarget,
     JSON,
     Map,
+    Math,
     Number,
     Object,
     Set,
@@ -141,6 +142,103 @@ test("maxEntries destroys the oldest entry", () => {
   assert.equal(history.undoStack.length, 2);
   assert.equal(history.undoStack[0].id, 2);
   assert.equal(history.undoStack[1].id, 3);
+});
+
+test("raster history default budget is 500 MiB", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const history = new DocumentHistory();
+
+  assert.equal(history.getRasterHistoryBudgetMiB(), 500);
+});
+
+test("raster history budget destroys the oldest raster entries by byte size", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const mib = 1024 * 1024;
+  const history = new DocumentHistory({ maxEntries: 40, maxRasterHistoryBytes: 2 * mib });
+  const destroyed = [];
+  const createRasterEntry = (id) => ({
+    id,
+    before: {
+      rect: { width: 512, height: 512 },
+      texture: {},
+    },
+    redo: () => true,
+    undo: () => true,
+    destroy: () => destroyed.push(id),
+  });
+
+  history.push(createRasterEntry("raster-1"));
+  history.push(createRasterEntry("raster-2"));
+  history.push(createRasterEntry("raster-3"));
+
+  assert.deepEqual(destroyed, ["raster-1"]);
+  assert.deepEqual(Array.from(history.undoStack, (entry) => entry.id), ["raster-2", "raster-3"]);
+  assert.equal(history.getRasterHistoryBytes(), 2 * mib);
+});
+
+test("raster history budget keeps metadata-only entries while trimming raster bytes", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const mib = 1024 * 1024;
+  const history = new DocumentHistory({ maxEntries: 40, maxRasterHistoryBytes: mib });
+  const destroyed = [];
+  const createRasterEntry = (id) => ({
+    id,
+    before: {
+      rect: { width: 512, height: 512 },
+      texture: {},
+    },
+    redo: () => true,
+    undo: () => true,
+    destroy: () => destroyed.push(id),
+  });
+
+  history.push({
+    id: "metadata",
+    redo: () => true,
+    undo: () => true,
+    destroy: () => destroyed.push("metadata"),
+  });
+  history.push(createRasterEntry("raster-1"));
+  history.push(createRasterEntry("raster-2"));
+
+  assert.deepEqual(destroyed, ["raster-1"]);
+  assert.deepEqual(Array.from(history.undoStack, (entry) => entry.id), ["metadata", "raster-2"]);
+  assert.equal(history.getRasterHistoryBytes(), mib);
+});
+
+test("raster history budget can be changed in MiB", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const mib = 1024 * 1024;
+  const history = new DocumentHistory({ maxEntries: 40, maxRasterHistoryMiB: 4 });
+  const destroyed = [];
+
+  history.push({
+    id: "large-raster-1",
+    before: {
+      rect: { width: 512, height: 512 },
+      texture: {},
+    },
+    redo: () => true,
+    undo: () => true,
+    destroy: () => destroyed.push("large-raster-1"),
+  });
+  history.push({
+    id: "large-raster-2",
+    before: {
+      rect: { width: 512, height: 512 },
+      texture: {},
+    },
+    redo: () => true,
+    undo: () => true,
+    destroy: () => destroyed.push("large-raster-2"),
+  });
+
+  const result = history.setRasterHistoryBudgetMiB(1);
+
+  assert.equal(history.getRasterHistoryBudgetBytes(), mib);
+  assert.deepEqual(destroyed, ["large-raster-1"]);
+  assert.deepEqual(Array.from(history.undoStack, (entry) => entry.id), ["large-raster-2"]);
+  assert.equal(result.afterBytes, mib);
 });
 
 test("undo failures destroy the entry instead of moving it to redo", () => {

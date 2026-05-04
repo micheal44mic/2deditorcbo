@@ -799,7 +799,6 @@ void main() {
         this.createBaseLayerTarget();
         this.programInfo = this.createProgramInfo();
         this.quad = this.createArtboardQuad();
-        this.createPreviewCache();
       } catch (error) {
         this.dispose();
         throw error;
@@ -808,6 +807,190 @@ void main() {
       this.layerModel?.addEventListener?.("change", this.handleLayerModelChange);
       window.addEventListener("cbo:document-content-change", this.handleDocumentContentChange);
       window.addEventListener("cbo:history-change", this.handleHistoryChange);
+    }
+
+    getRasterResourceManager() {
+      return namespace.rasterResourceManager || null;
+    }
+
+    withRasterResourceDocumentMetadata(metadata = {}) {
+      return {
+        ...metadata,
+        documentHeight: metadata.documentHeight ?? this.height,
+        documentWidth: metadata.documentWidth ?? this.width,
+      };
+    }
+
+    registerRasterTexture(texture, metadata = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.registerTexture || !texture) {
+        return null;
+      }
+
+      return manager.registerTexture(texture, this.withRasterResourceDocumentMetadata(metadata));
+    }
+
+    updateRasterTexture(textureOrId, metadataPatch = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.updateTexture || !textureOrId) {
+        return null;
+      }
+
+      return manager.updateTexture(textureOrId, this.withRasterResourceDocumentMetadata(metadataPatch));
+    }
+
+    deleteRasterTexture(textureOrId) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.deleteTexture || !textureOrId) {
+        return false;
+      }
+
+      return manager.deleteTexture(textureOrId);
+    }
+
+    registerRasterFramebuffer(framebuffer, metadata = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.registerFramebuffer || !framebuffer) {
+        return null;
+      }
+
+      return manager.registerFramebuffer(framebuffer, this.withRasterResourceDocumentMetadata(metadata));
+    }
+
+    updateRasterFramebuffer(framebufferOrId, metadataPatch = {}) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.updateFramebuffer || !framebufferOrId) {
+        return null;
+      }
+
+      return manager.updateFramebuffer(framebufferOrId, this.withRasterResourceDocumentMetadata(metadataPatch));
+    }
+
+    deleteRasterFramebuffer(framebufferOrId) {
+      const manager = this.getRasterResourceManager();
+
+      if (!manager?.deleteFramebuffer || !framebufferOrId) {
+        return false;
+      }
+
+      return manager.deleteFramebuffer(framebufferOrId);
+    }
+
+    markRasterResourceUsed(textureOrId) {
+      return this.getRasterResourceManager()?.markUsed?.(textureOrId) || null;
+    }
+
+    getRasterTargetResourceMetadata(target, metadata = {}) {
+      const width = Math.max(1, Math.round(target?.width || 1));
+      const height = Math.max(1, Math.round(target?.height || 1));
+      const x = Number.isFinite(target?.x) ? Math.round(target.x) : 0;
+      const y = Number.isFinite(target?.y) ? Math.round(target.y) : 0;
+      const ownerId = metadata.ownerId || metadata.layerId || target?.layerId || target?.id || "";
+
+      return this.withRasterResourceDocumentMetadata({
+        ...metadata,
+        bbox: {
+          x,
+          y,
+          width,
+          height,
+        },
+        height,
+        kind: metadata.kind || "layer",
+        label: metadata.label || ownerId || target?.id || "raster target",
+        layerId: metadata.layerId || target?.layerId || "",
+        originX: x,
+        originY: y,
+        ownerId,
+        ownerType: metadata.ownerType || "live",
+        purgeable: metadata.purgeable === true,
+        reason: metadata.reason || "raster-target",
+        width,
+      });
+    }
+
+    registerRasterTargetResources(target, metadata = {}) {
+      if (!target) {
+        return target;
+      }
+
+      const baseMetadata = this.getRasterTargetResourceMetadata(target, metadata);
+
+      if (target.texture) {
+        const textureRow = this.registerRasterTexture(target.texture, baseMetadata);
+        target.textureResourceId = textureRow?.id || target.textureResourceId || "";
+      }
+
+      if (target.framebuffer) {
+        const framebufferRow = this.registerRasterFramebuffer(target.framebuffer, {
+          ...baseMetadata,
+          kind: `${baseMetadata.kind}Framebuffer`,
+          linkedTextureId: target.textureResourceId || "",
+        });
+
+        target.framebufferResourceId = framebufferRow?.id || target.framebufferResourceId || "";
+      }
+
+      return target;
+    }
+
+    updateRasterTargetResourceMetadata(target, metadata = {}) {
+      if (!target) {
+        return target;
+      }
+
+      const baseMetadata = this.getRasterTargetResourceMetadata(target, metadata);
+
+      if (target.texture || target.textureResourceId) {
+        const textureRow =
+          this.updateRasterTexture(target.texture || target.textureResourceId, baseMetadata) ||
+          this.registerRasterTexture(target.texture, baseMetadata);
+
+        target.textureResourceId = textureRow?.id || target.textureResourceId || "";
+      }
+
+      if (target.framebuffer || target.framebufferResourceId) {
+        const framebufferMetadata = {
+          ...baseMetadata,
+          kind: `${baseMetadata.kind}Framebuffer`,
+          linkedTextureId: target.textureResourceId || "",
+        };
+        const framebufferRow =
+          this.updateRasterFramebuffer(target.framebuffer || target.framebufferResourceId, framebufferMetadata) ||
+          this.registerRasterFramebuffer(target.framebuffer, framebufferMetadata);
+
+        target.framebufferResourceId = framebufferRow?.id || target.framebufferResourceId || "";
+      }
+
+      return target;
+    }
+
+    unregisterRasterTargetResources(target) {
+      if (!target) {
+        return;
+      }
+
+      if (target.framebuffer || target.framebufferResourceId) {
+        this.deleteRasterFramebuffer(target.framebuffer || target.framebufferResourceId);
+        target.framebufferResourceId = "";
+      }
+
+      if (target.texture || target.textureResourceId) {
+        this.deleteRasterTexture(target.texture || target.textureResourceId);
+        target.textureResourceId = "";
+      }
+    }
+
+    estimateRasterTargetBytes(target) {
+      const width = Math.max(0, Math.round(target?.width || 0));
+      const height = Math.max(0, Math.round(target?.height || 0));
+
+      return width * height * 4;
     }
 
     compileShader(type, source) {
@@ -1479,6 +1662,14 @@ void main() {
     }
 
     createPreviewCache() {
+      if (this.previewTexture && this.previewFramebuffer) {
+        return true;
+      }
+
+      if (this.previewTexture || this.previewFramebuffer) {
+        this.deletePreviewCache();
+      }
+
       const gl = this.gl;
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
@@ -1535,6 +1726,30 @@ void main() {
       this.previewCacheReady = false;
       this.previewCacheReason = "init";
 
+      const textureRow = this.registerRasterTexture(texture, {
+        height,
+        kind: "previewMip",
+        label: "preview mip cache",
+        mipLevels: levels,
+        ownerId: "preview-cache",
+        ownerType: "cache",
+        purgeable: true,
+        reason: "create-preview-cache",
+        width,
+      });
+
+      this.registerRasterFramebuffer(framebuffer, {
+        height,
+        kind: "previewMipFramebuffer",
+        label: "preview mip framebuffer",
+        linkedTextureId: textureRow?.id || "",
+        ownerId: "preview-cache",
+        ownerType: "cache",
+        purgeable: true,
+        reason: "create-preview-cache",
+        width,
+      });
+
       return true;
     }
 
@@ -1542,11 +1757,13 @@ void main() {
       const gl = this.gl;
 
       if (this.previewFramebuffer) {
+        this.deleteRasterFramebuffer(this.previewFramebuffer);
         gl.deleteFramebuffer(this.previewFramebuffer);
         this.previewFramebuffer = null;
       }
 
       if (this.previewTexture) {
+        this.deleteRasterTexture(this.previewTexture);
         gl.deleteTexture(this.previewTexture);
         this.previewTexture = null;
       }
@@ -1706,10 +1923,12 @@ void main() {
         this.layerBlendBackdropHeight !== targetHeight;
 
       if (!needsTexture) {
+        this.markRasterResourceUsed(this.layerBlendBackdropTexture);
         return this.layerBlendBackdropTexture;
       }
 
       if (this.layerBlendBackdropTexture) {
+        this.deleteRasterTexture(this.layerBlendBackdropTexture);
         gl.deleteTexture(this.layerBlendBackdropTexture);
       }
 
@@ -1741,6 +1960,17 @@ void main() {
       this.layerBlendBackdropWidth = targetWidth;
       this.layerBlendBackdropHeight = targetHeight;
 
+      this.registerRasterTexture(texture, {
+        height: targetHeight,
+        kind: "backdrop",
+        label: "layer blend backdrop",
+        ownerId: "layer-blend-backdrop",
+        ownerType: "scratch",
+        purgeable: true,
+        reason: "ensure-layer-blend-backdrop-texture",
+        width: targetWidth,
+      });
+
       return texture;
     }
 
@@ -1767,6 +1997,7 @@ void main() {
       }
 
       if (this.layerBlendBackdropTexture) {
+        this.deleteRasterTexture(this.layerBlendBackdropTexture);
         gl.deleteTexture(this.layerBlendBackdropTexture);
         this.layerBlendBackdropTexture = null;
       }
@@ -1775,7 +2006,7 @@ void main() {
       this.layerBlendBackdropHeight = 0;
     }
 
-    createLayerEffectScratchTarget(width = this.width, height = this.height) {
+    createLayerEffectScratchTarget(width = this.width, height = this.height, resourceMetadata = {}) {
       const gl = this.gl;
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
@@ -1825,12 +2056,32 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      return {
+      const target = {
+        cropped: targetWidth !== this.width || targetHeight !== this.height,
         framebuffer,
         height: targetHeight,
+        id: resourceMetadata.ownerId || `effect-scratch-${this.rasterTargetIdSequence++}`,
         texture,
         width: targetWidth,
+        x: 0,
+        y: 0,
       };
+
+      this.registerRasterTargetResources(target, {
+        height: targetHeight,
+        kind: resourceMetadata.kind || "effectScratch",
+        label: resourceMetadata.label || "layer effect scratch",
+        ownerId: resourceMetadata.ownerId || target.id,
+        ownerType: "scratch",
+        purgeable: resourceMetadata.purgeable !== undefined
+          ? Boolean(resourceMetadata.purgeable)
+          : true,
+        reason: resourceMetadata.reason || "create-layer-effect-scratch-target",
+        width: targetWidth,
+        ...resourceMetadata,
+      });
+
+      return target;
     }
 
     deleteLayerEffectTarget(target) {
@@ -1841,12 +2092,19 @@ void main() {
       const gl = this.gl;
 
       if (target.framebuffer) {
+        this.deleteRasterFramebuffer(target.framebuffer);
         gl.deleteFramebuffer(target.framebuffer);
+        target.framebuffer = null;
       }
 
       if (target.texture) {
+        this.deleteRasterTexture(target.texture);
         gl.deleteTexture(target.texture);
+        target.texture = null;
       }
+
+      target.framebufferResourceId = "";
+      target.textureResourceId = "";
     }
 
     deleteLayerEffectScratchTargets() {
@@ -1903,8 +2161,22 @@ void main() {
 
       if (needsScratch) {
         this.deleteLayerEffectScratchTargets();
-        this.layerEffectScratchA = this.createLayerEffectScratchTarget(targetWidth, targetHeight);
-        this.layerEffectScratchB = this.createLayerEffectScratchTarget(targetWidth, targetHeight);
+        this.layerEffectScratchA = this.createLayerEffectScratchTarget(targetWidth, targetHeight, {
+          kind: "effectScratch",
+          label: "layerEffectScratchA",
+          ownerId: "layerEffectScratchA",
+          ownerType: "scratch",
+          purgeable: true,
+          reason: "layer-effect",
+        });
+        this.layerEffectScratchB = this.createLayerEffectScratchTarget(targetWidth, targetHeight, {
+          kind: "effectScratch",
+          label: "layerEffectScratchB",
+          ownerId: "layerEffectScratchB",
+          ownerType: "scratch",
+          purgeable: true,
+          reason: "layer-effect",
+        });
       }
 
       return {
@@ -1934,7 +2206,14 @@ void main() {
 
       if (needsScratch) {
         this.deleteActiveStrokeScratchTarget();
-        this.activeStrokeScratchTarget = this.createLayerEffectScratchTarget(targetWidth, targetHeight);
+        this.activeStrokeScratchTarget = this.createLayerEffectScratchTarget(targetWidth, targetHeight, {
+          kind: "strokeScratch",
+          label: "active stroke scratch target",
+          ownerId: "activeStrokeScratchTarget",
+          ownerType: "scratch",
+          purgeable: false,
+          reason: "active-stroke",
+        });
       }
 
       return this.activeStrokeScratchTarget;
@@ -2782,8 +3061,72 @@ void main() {
       return hasTouch || hasCoarsePointer || hasMobileUserAgent;
     }
 
+    createProceduralBackgroundTarget() {
+      const gl = this.gl;
+      const texture = gl.createTexture();
+
+      if (!texture) {
+        throw new Error("Impossibile creare la texture procedurale per lo sfondo.");
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        1,
+        1,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        new Uint8Array([255, 255, 255, 255]),
+      );
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      const target = {
+        id: "background-procedural-target",
+        framebuffer: null,
+        texture,
+        width: this.width,
+        height: this.height,
+        x: 0,
+        y: 0,
+        cropped: false,
+        version: 0,
+        clearColor: [1, 1, 1, 1],
+        layerId: "background",
+        procedural: true,
+      };
+
+      const textureRow = this.registerRasterTexture(texture, {
+        bbox: {
+          x: 0,
+          y: 0,
+          width: this.width,
+          height: this.height,
+        },
+        height: 1,
+        kind: "background",
+        label: "procedural background texture",
+        layerId: "background",
+        ownerId: "background",
+        ownerType: "live",
+        purgeable: false,
+        reason: "create-procedural-background-target",
+        width: 1,
+      });
+
+      target.textureResourceId = textureRow?.id || "";
+
+      return target;
+    }
+
     createBaseLayerTarget() {
-      const backgroundTarget = this.createRasterTarget([1, 1, 1, 1]);
+      const backgroundTarget = this.createProceduralBackgroundTarget();
       const target = this.createRasterTarget([0, 0, 0, 0]);
 
       this.texture = target.texture;
@@ -2791,6 +3134,19 @@ void main() {
       this.rasterTargetsByLayerId.set("background", backgroundTarget);
       this.paintLayerId = this.resolvePaintLayerId();
       this.rasterTargetsByLayerId.set(this.paintLayerId, target);
+
+      backgroundTarget.layerId = "background";
+      target.layerId = this.paintLayerId;
+
+      this.updateRasterTargetResourceMetadata(target, {
+        kind: "paintTarget",
+        label: "main paint raster target",
+        layerId: this.paintLayerId,
+        ownerId: this.paintLayerId,
+        ownerType: "live",
+        purgeable: false,
+        reason: "create-base-layer-target",
+      });
     }
 
     createRasterTarget(clearColor = [0, 0, 0, 0], options = {}) {
@@ -2867,6 +3223,16 @@ void main() {
         version: 0,
         clearColor,
       };
+
+      this.registerRasterTargetResources(target, {
+        kind: options.kind || options.resourceMetadata?.kind || "layer",
+        label: options.label || options.resourceMetadata?.label || "raster target",
+        layerId: options.layerId || options.resourceMetadata?.layerId || "",
+        ownerId: options.ownerId || options.layerId || options.resourceMetadata?.ownerId || target.id,
+        ownerType: options.ownerType || options.resourceMetadata?.ownerType || "live",
+        purgeable: options.purgeable === true || options.resourceMetadata?.purgeable === true,
+        reason: options.reason || options.source || options.resourceMetadata?.reason || "create-raster-target",
+      });
 
       this.clearTarget(target);
       gl.bindTexture(gl.TEXTURE_2D, null);
@@ -3108,6 +3474,8 @@ void main() {
         return null;
       }
 
+      const layerId = typeof targetOrLayerId === "string" ? targetOrLayerId : target?.layerId || "";
+      const snapshotId = `raster-snapshot-${this.rasterTargetIdSequence++}`;
       const gl = this.gl;
       const texture = gl.createTexture();
       const framebuffer = gl.createFramebuffer();
@@ -3176,13 +3544,46 @@ void main() {
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      return {
+      const snapshot = {
+        id: snapshotId,
         framebuffer,
         label,
         rect: docRect,
+        state: "GPU_HOT",
         targetRect,
         texture,
       };
+
+      const textureRow = this.registerRasterTexture(texture, {
+        bbox: docRect,
+        height: snapshotRect.height,
+        kind: "historySnapshot",
+        label,
+        layerId,
+        originX: docRect.x,
+        originY: docRect.y,
+        ownerId: snapshotId,
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: label,
+        state: "GPU_HOT",
+        width: snapshotRect.width,
+      });
+
+      this.registerRasterFramebuffer(framebuffer, {
+        height: snapshotRect.height,
+        kind: "historySnapshotFramebuffer",
+        label: `${label} framebuffer`,
+        layerId,
+        linkedTextureId: textureRow?.id || "",
+        ownerId: snapshotId,
+        ownerType: "historyGpu",
+        purgeable: false,
+        reason: label,
+        width: snapshotRect.width,
+      });
+
+      return snapshot;
     }
 
     canRestoreRasterSnapshot(target, snapshot) {
@@ -3306,11 +3707,13 @@ void main() {
 
     deleteRasterSnapshot(snapshot) {
       if (snapshot?.framebuffer) {
+        this.deleteRasterFramebuffer(snapshot.framebuffer);
         this.gl.deleteFramebuffer(snapshot.framebuffer);
         snapshot.framebuffer = null;
       }
 
       if (snapshot?.texture) {
+        this.deleteRasterTexture(snapshot.texture);
         this.gl.deleteTexture(snapshot.texture);
         snapshot.texture = null;
       }
@@ -3324,14 +3727,19 @@ void main() {
       const gl = this.gl;
 
       if (target.framebuffer) {
+        this.deleteRasterFramebuffer(target.framebuffer);
         gl.deleteFramebuffer(target.framebuffer);
         target.framebuffer = null;
       }
 
       if (target.texture) {
+        this.deleteRasterTexture(target.texture);
         gl.deleteTexture(target.texture);
         target.texture = null;
       }
+
+      target.framebufferResourceId = "";
+      target.textureResourceId = "";
     }
 
     replaceRasterTarget(layerId, nextTarget, options = {}) {
@@ -3340,6 +3748,23 @@ void main() {
       }
 
       const previousTarget = this.rasterTargetsByLayerId.get(layerId);
+      const nextKind =
+        layerId === "background"
+          ? "background"
+          : layerId === this.paintLayerId
+            ? "paintTarget"
+            : "layer";
+
+      nextTarget.layerId = layerId;
+      this.updateRasterTargetResourceMetadata(nextTarget, {
+        kind: nextKind,
+        label: options.label || layerId,
+        layerId,
+        ownerId: layerId,
+        ownerType: "live",
+        purgeable: false,
+        reason: options.source || "replace-raster-target",
+      });
 
       this.rasterTargetsByLayerId.set(layerId, nextTarget);
 
@@ -3380,6 +3805,10 @@ void main() {
       }
 
       const targetRect = this.getRasterTargetDocumentRect(target);
+      const oldBytes = this.estimateRasterTargetBytes(target);
+      const newBytes = Math.max(1, Math.round(this.width || 1)) *
+        Math.max(1, Math.round(this.height || 1)) *
+        4;
       const fullTarget = this.createRasterTarget(target.clearColor || [0, 0, 0, 0], {
         cropped: false,
         height: this.height,
@@ -3410,6 +3839,18 @@ void main() {
       }
 
       this.markRasterTargetDirty(fullTarget);
+      this.getRasterResourceManager()?.recordFullCanvasMaterialization?.({
+        bytesAdded: Math.max(0, newBytes - oldBytes),
+        layerId,
+        newSize: {
+          height: this.height,
+          width: this.width,
+        },
+        oldBBox: targetRect,
+        reason: options.reason || options.source || "materialize-raster-target",
+        stackTag: options.stackTag || "",
+        tool: options.tool || options.source || "materializeRasterTarget",
+      });
       this.replaceRasterTarget(layerId, fullTarget, {
         emit: options.emit,
         source: options.source || "materialize-raster-target",
@@ -3444,6 +3885,18 @@ void main() {
           texture: preview.texture,
           transformMode: String(preview.transformMode || "free").trim().toLowerCase() || "free",
         };
+        this.updateRasterTexture(preview.texture, {
+          bbox: preview.sourceRect || null,
+          height: preview.sourceRect?.height,
+          kind: "transformPreview",
+          label: "raster transform preview",
+          layerId: preview.layerId,
+          ownerId: `transform-preview-${preview.layerId}`,
+          ownerType: "scratch",
+          purgeable: true,
+          reason: "set-raster-transform-preview",
+          width: preview.sourceRect?.width,
+        });
       }
 
       this.requestDraw();
@@ -3947,7 +4400,17 @@ void main() {
       const target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
 
       this.paintLayerId = layerId;
+      target.layerId = layerId;
       this.rasterTargetsByLayerId.set(layerId, target);
+      this.updateRasterTargetResourceMetadata(target, {
+        kind: "paintTarget",
+        label: "main paint raster target",
+        layerId,
+        ownerId: layerId,
+        ownerType: "live",
+        purgeable: false,
+        reason: "get-paint-target",
+      });
 
       return {
         ...target,
@@ -3978,7 +4441,17 @@ void main() {
 
       const target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
 
+      target.layerId = layerId;
       this.rasterTargetsByLayerId.set(layerId, target);
+      this.updateRasterTargetResourceMetadata(target, {
+        kind: layerId === "background" ? "background" : layerId === this.paintLayerId ? "paintTarget" : "layer",
+        label: layerId,
+        layerId,
+        ownerId: layerId,
+        ownerType: "live",
+        purgeable: false,
+        reason: "get-raster-target",
+      });
 
       return {
         ...target,
@@ -4018,7 +4491,11 @@ void main() {
 
     updatePreviewCacheIfNeeded() {
       if (!this.previewTexture || !this.previewFramebuffer) {
-        return false;
+        const didCreate = this.createPreviewCache();
+
+        if (!didCreate) {
+          return false;
+        }
       }
 
       if (!this.previewCacheDirty && this.previewCacheReady) {
@@ -5026,15 +5503,15 @@ void main() {
             .some((layer) => this.rasterTargetsByLayerId.get(layer.id)?.texture)
         );
       const isZoomedOut = (camera.zoom || 1) < 0.99;
+      const allowPreviewCache = options.allowPreviewCache === true;
       const canUsePreviewCache = Boolean(
+        allowPreviewCache &&
         isZoomedOut &&
         !hasClippingMasks &&
         !rasterTransformPreview &&
         !hasActiveEraserStroke &&
         !activeStrokeNeedsFullStack &&
-        activeStrokeCanOverlayPreview &&
-        this.previewTexture &&
-        this.previewFramebuffer
+        activeStrokeCanOverlayPreview
       );
       let didDrawActiveStroke = false;
       let currentMaskTexture = null;
@@ -5542,13 +6019,7 @@ void main() {
       }
 
       new Set(this.rasterTargetsByLayerId.values()).forEach((target) => {
-        if (target.framebuffer) {
-          gl.deleteFramebuffer(target.framebuffer);
-        }
-
-        if (target.texture) {
-          gl.deleteTexture(target.texture);
-        }
+        this.deleteRasterTargetObject(target);
       });
 
       this.rasterTargetsByLayerId.clear();
