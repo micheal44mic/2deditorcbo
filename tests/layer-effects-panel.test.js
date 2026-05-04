@@ -64,7 +64,9 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /\{ implemented: true, icon: "field", label: "Field Blur", type: "field-blur" \}/);
   assert.match(source, /\{ implemented: true, icon: "radial", label: "Radial Blur", type: "radial-blur" \}/);
   assert.match(source, /\{ implemented: true, icon: "grain", label: "Grain", type: "grain" \}/);
+  assert.match(source, /\{ implemented: true, icon: "threshold", label: "Threshold", type: "threshold" \}/);
   assert.match(source, /RASTERIZABLE_EFFECT_TYPES[\s\S]*"grain"/);
+  assert.match(source, /RASTERIZABLE_EFFECT_TYPES[\s\S]*"threshold"/);
   assert.match(source, /radius: nextRadius/);
   assert.match(source, /distance: nextDistance/);
   assert.match(source, /angle: nextAngle/);
@@ -82,6 +84,7 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /historyGroup: options\.historyGroup \|\| `field-blur-\$\{layerId\}`/);
   assert.match(source, /historyGroup: updateOptionsSource\.historyGroup \|\| `radial-blur-\$\{layerId\}`/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `grain-\$\{layerId\}`/);
+  assert.match(source, /historyGroup: options\.historyGroup \|\| `threshold-\$\{layerId\}`/);
   assert.match(source, /namespace\.documentRenderer\?\.requestDraw\?\.\(\)/);
   assert.match(source, /layer\.type !== "background"/);
   assert.match(source, /EFFECT_GROUPS/);
@@ -90,8 +93,10 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /label: "Bloom"/);
   assert.match(source, /label: "Threshold"/);
   assert.match(source, /label: "Halftone"/);
-  assert.match(source, /threshold: \[/);
-  assert.match(source, /getAdjustmentControlMarkup\("Level", 50\)/);
+  assert.match(source, /data-layer-effects-editor="threshold"/);
+  assert.match(source, /data-layer-threshold-input/);
+  assert.match(source, /min="0" max="255" step="1" value="128"/);
+  assert.match(source, /data-layer-threshold-reset/);
   assert.match(source, /halftone: \[/);
   assert.match(source, /getAdjustmentControlMarkup\("Angle", 45\)/);
   assert.match(source, /implemented: true/);
@@ -149,10 +154,12 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /data-layer-grain-amount-input/);
   assert.match(source, /data-layer-grain-scale-input/);
   assert.match(source, /data-layer-grain-monochrome-input/);
+  assert.match(source, /data-layer-threshold-input/);
   assert.match(source, /namespace\.setLayerMotionBlur/);
   assert.match(source, /namespace\.setLayerFieldBlurPins/);
   assert.match(source, /namespace\.setLayerRadialBlur/);
   assert.match(source, /namespace\.setLayerGrain/);
+  assert.match(source, /namespace\.setLayerThreshold/);
   assert.match(source, /namespace\.rasterizeActiveLayerEffects/);
   assert.match(source, /renderer\.rasterizeLayerEffects\(layer,/);
   assert.match(source, /function restorePreviewSession\(\)/);
@@ -381,6 +388,51 @@ test("grain preview writes bypass document history with a stable seed", () => {
   assert.equal(layer.effects[0].monochrome, false);
 });
 
+test("threshold preview writes bypass document history and clamps level", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const calls = [];
+  const layer = {
+    id: "paint-main",
+    type: "paint",
+  };
+
+  namespace.documentLayerModel = {
+    findEntryById(id) {
+      return id === layer.id ? layer : null;
+    },
+    updateLayer(id, patch, options = {}) {
+      calls.push(`update:${id}:${options.source}:${options.history}:${options.historyGroup}`);
+      layer.effects = patch.effects;
+      return true;
+    },
+  };
+  namespace.documentRenderer = {
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  assert.equal(namespace.setLayerThreshold(layer.id, 300, {
+    history: false,
+    source: "layer-effects-preview",
+  }), true);
+  assert.equal(
+    JSON.stringify(layer.effects),
+    JSON.stringify([{ type: "threshold", enabled: true, threshold: 255 }]),
+  );
+  assert.deepEqual(calls, [
+    "update:paint-main:layer-effects-preview:false:threshold-paint-main",
+    "draw",
+  ]);
+
+  assert.equal(namespace.setLayerThreshold(layer.id, 128, {
+    enabled: false,
+    history: false,
+    source: "layer-effects-preview",
+  }), true);
+  assert.equal(JSON.stringify(layer.effects), JSON.stringify([]));
+});
+
 test("blur effect defaults use active layer content center", () => {
   const namespace = loadLayerEffectsNamespace();
   const calls = [];
@@ -449,6 +501,7 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
       { type: "field-blur", pins: [{ blur: 40, x: 120, y: 140 }, { blur: 0, x: 220, y: 240 }], enabled: true },
       { type: "radial-blur", amount: 28, centerX: 40, centerY: 60, mode: "zoom", enabled: true },
       { type: "grain", amount: 18, scale: 42, monochrome: true, seed: 12.5, enabled: true },
+      { type: "threshold", threshold: 128, enabled: true },
       { strength: 0.5, type: "future-effect" },
     ],
     id: "paint-main",
@@ -510,7 +563,7 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
   assert.deepEqual(history.entry.beforeEntries, beforeState.entries);
   assert.deepEqual(calls, [
     "flush:true",
-    "bake:paint-main:gaussian-blur,motion-blur,field-blur,radial-blur,grain,future-effect:false",
+    "bake:paint-main:gaussian-blur,motion-blur,field-blur,radial-blur,grain,threshold,future-effect:false",
     "update:paint-main:1:layer-effects-rasterize:false",
     "snapshot:1",
     "push:layer-effects-rasterize",

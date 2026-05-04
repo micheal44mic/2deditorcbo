@@ -9,6 +9,8 @@
   const MAX_GRAIN_AMOUNT = 100;
   const MAX_GRAIN_SCALE = 100;
   const DEFAULT_GRAIN_SCALE = 42;
+  const MAX_THRESHOLD_VALUE = 255;
+  const DEFAULT_THRESHOLD_VALUE = 128;
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
     fill: "#f8efe2",
     stroke: "#1b1713",
@@ -53,6 +55,12 @@
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.max(1, Math.min(MAX_GRAIN_SCALE, number)) : DEFAULT_GRAIN_SCALE;
+  }
+
+  function normalizeThresholdValue(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_THRESHOLD_VALUE, number)) : DEFAULT_THRESHOLD_VALUE;
   }
 
   function normalizeFieldBlurPins(pins) {
@@ -207,6 +215,14 @@
             };
           }
 
+          if (effect.type === "threshold") {
+            return {
+              type: "threshold",
+              enabled: effect.enabled !== false,
+              threshold: normalizeThresholdValue(effect.threshold ?? effect.level),
+            };
+          }
+
           return this.cloneValue(effect);
         })
         .filter((effect) =>
@@ -214,7 +230,8 @@
           (effect.type !== "motion-blur" || effect.distance > 0) &&
           (effect.type !== "field-blur" || hasFieldBlurAmount(effect.pins)) &&
           (effect.type !== "radial-blur" || effect.amount > 0) &&
-          (effect.type !== "grain" || effect.amount > 0),
+          (effect.type !== "grain" || effect.amount > 0) &&
+          (effect.type !== "threshold" || effect.enabled !== false),
         );
     }
 

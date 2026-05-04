@@ -134,6 +134,7 @@ test("layer effects are normalized and preserved through layer state history", a
       { type: "field-blur", pins: [{ id: "sharp", blur: 0, x: 10, y: 20 }, { blur: 260, x: 30, y: 40 }], enabled: true },
       { type: "radial-blur", amount: 260, centerX: 125, centerY: -25, mode: "zoom", enabled: true },
       { type: "grain", amount: 140, scale: -20, monochrome: false, seed: 0.25, enabled: true },
+      { type: "threshold", threshold: 300, enabled: true },
       { type: "future-effect", strength: 0.5 },
     ],
   }, {
@@ -157,7 +158,8 @@ test("layer effects are normalized and preserved through layer state history", a
   assert.equal(model.findEntryById("paint-main").effects[4].scale, 1);
   assert.equal(model.findEntryById("paint-main").effects[4].monochrome, false);
   assert.equal(model.findEntryById("paint-main").effects[4].seed, 0.25);
-  assert.equal(model.findEntryById("paint-main").effects[5].type, "future-effect");
+  assert.equal(model.findEntryById("paint-main").effects[5].threshold, 255);
+  assert.equal(model.findEntryById("paint-main").effects[6].type, "future-effect");
 
   model.updateLayer("paint-main", {
     effects: [{ type: "gaussian-blur", radius: 12, enabled: true }],
@@ -212,6 +214,14 @@ test("layer effects are normalized and preserved through layer state history", a
     effects: [{ type: "grain", amount: 0, scale: 42, monochrome: true, seed: 0.25, enabled: true }],
   }, {
     source: "grain-clear",
+  });
+
+  assert.equal(model.findEntryById("paint-main").effects, undefined);
+
+  model.updateLayer("paint-main", {
+    effects: [{ type: "threshold", threshold: 128, enabled: false }],
+  }, {
+    source: "threshold-clear",
   });
 
   assert.equal(model.findEntryById("paint-main").effects, undefined);

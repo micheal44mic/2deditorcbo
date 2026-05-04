@@ -583,6 +583,37 @@ void main() {
 }
 `;
 
+  const THRESHOLD_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform float u_threshold;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+float thresholdLuminance(vec3 rgb) {
+  return dot(rgb, vec3(0.299, 0.587, 0.114));
+}
+
+void main() {
+  vec4 base = texture(u_texture, v_uv);
+  float alpha = clamp(base.a, 0.0, 1.0);
+
+  if (alpha <= 0.0) {
+    outColor = vec4(0.0);
+    return;
+  }
+
+  vec3 color = clamp(base.rgb / max(alpha, 0.0001), vec3(0.0), vec3(1.0));
+  float level = clamp(u_threshold, 0.0, 255.0);
+  float white = thresholdLuminance(color) * 255.0 >= level ? 1.0 : 0.0;
+
+  outColor = vec4(vec3(white) * alpha, alpha);
+}
+`;
+
   const LAYER_BLEND_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -730,6 +761,8 @@ void main() {
   const MAX_GRAIN_AMOUNT = 100;
   const MAX_GRAIN_SCALE = 100;
   const DEFAULT_GRAIN_SCALE = 42;
+  const MAX_THRESHOLD_VALUE = 255;
+  const DEFAULT_THRESHOLD_VALUE = 128;
 
   function normalizeAngle(value) {
     const number = Number(value);
@@ -761,6 +794,12 @@ void main() {
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.max(1, Math.min(MAX_GRAIN_SCALE, number)) : DEFAULT_GRAIN_SCALE;
+  }
+
+  function normalizeThresholdValue(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_THRESHOLD_VALUE, number)) : DEFAULT_THRESHOLD_VALUE;
   }
 
   function normalizeFieldBlurPins(pins) {
@@ -865,6 +904,7 @@ void main() {
       this.fieldBlurProgramInfo = null;
       this.radialBlurProgramInfo = null;
       this.grainProgramInfo = null;
+      this.thresholdProgramInfo = null;
       this.layerBlendProgramInfo = null;
       this.layerBlendBackdropTexture = null;
       this.layerBlendBackdropWidth = 0;
@@ -1858,6 +1898,40 @@ void main() {
       };
     }
 
+    createThresholdProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, THRESHOLD_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma threshold WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma threshold.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          texture: gl.getUniformLocation(program, "u_texture"),
+          threshold: gl.getUniformLocation(program, "u_threshold"),
+        },
+      };
+    }
+
     createLayerBlendProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, ARTBOARD_VERTEX_SHADER_SOURCE);
@@ -1965,6 +2039,14 @@ void main() {
       }
 
       return this.grainProgramInfo;
+    }
+
+    ensureThresholdProgramInfo() {
+      if (!this.thresholdProgramInfo) {
+        this.thresholdProgramInfo = this.createThresholdProgramInfo();
+      }
+
+      return this.thresholdProgramInfo;
     }
 
     ensureLayerBlendProgramInfo() {
@@ -2495,13 +2577,37 @@ void main() {
         : null;
     }
 
+    getThreshold(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "threshold" && item.enabled !== false)
+        : effects?.threshold;
+
+      return {
+        enabled: Boolean(effect && effect.enabled !== false),
+        threshold: normalizeThresholdValue(effect?.threshold ?? effect?.level),
+      };
+    }
+
+    getLayerThreshold(layer) {
+      const threshold = this.getThreshold(layer);
+
+      return threshold.enabled
+        ? {
+            enabled: true,
+            threshold: threshold.threshold,
+          }
+        : null;
+    }
+
     hasEnabledLayerEffects(layer) {
       return (
         this.getGaussianBlurRadius(layer) > 0 ||
         this.getMotionBlur(layer).distance > 0 ||
         hasFieldBlurAmount(this.getFieldBlur(layer).pins) ||
         this.getRadialBlur(layer).amount > 0 ||
-        this.getGrain(layer).amount > 0
+        this.getGrain(layer).amount > 0 ||
+        Boolean(this.getLayerThreshold(layer))
       );
     }
 
@@ -2766,6 +2872,14 @@ void main() {
       }
 
       this.grainProgramInfo = null;
+    }
+
+    deleteThresholdResources() {
+      if (this.thresholdProgramInfo?.program) {
+        this.gl.deleteProgram(this.thresholdProgramInfo.program);
+      }
+
+      this.thresholdProgramInfo = null;
     }
 
     ensureLayerEffectScratchTargets(width = this.width, height = this.height) {
@@ -3071,6 +3185,32 @@ void main() {
       return true;
     }
 
+    runThresholdPass({ sourceTexture, target, threshold }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureThresholdProgramInfo();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1f(uniforms.threshold, normalizeThresholdValue(threshold));
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
     applyGaussianBlurTexture(sourceTexture, radius, options = {}) {
       const blurRadius = Number.isFinite(radius)
         ? Math.max(0, Math.min(MAX_GAUSSIAN_BLUR_RADIUS, radius))
@@ -3213,6 +3353,23 @@ void main() {
       });
 
       return didGrainPass ? target.texture : sourceTexture;
+    }
+
+    applyThresholdTexture(sourceTexture, threshold, options = {}) {
+      if (!sourceTexture || !threshold) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const didThresholdPass = this.runThresholdPass({
+        sourceTexture,
+        target,
+        threshold: threshold.threshold,
+      });
+
+      return didThresholdPass ? target.texture : sourceTexture;
     }
 
     resolveRadialBlurCenter(centerX, centerY, options = {}) {
@@ -3572,6 +3729,12 @@ void main() {
             if (grain) {
               texture = this.applyGrainTexture(texture, grain, effectOptions);
             }
+          } else if (effect.type === "threshold") {
+            const threshold = this.getLayerThreshold({ effects: [effect] });
+
+            if (threshold) {
+              texture = this.applyThresholdTexture(texture, threshold, effectOptions);
+            }
           }
         }
 
@@ -3583,6 +3746,7 @@ void main() {
       const fieldBlur = this.getLayerFieldBlur(layer);
       const radialBlur = this.getLayerRadialBlur(layer);
       const grain = this.getLayerGrain(layer);
+      const threshold = this.getLayerThreshold(layer);
 
       if (radius > 0) {
         texture = this.applyGaussianBlurTexture(texture, radius, effectOptions);
@@ -3609,6 +3773,10 @@ void main() {
 
       if (grain) {
         texture = this.applyGrainTexture(texture, grain, effectOptions);
+      }
+
+      if (threshold) {
+        texture = this.applyThresholdTexture(texture, threshold, effectOptions);
       }
 
       return texture;
@@ -7455,6 +7623,7 @@ void main() {
       this.deleteFieldBlurResources();
       this.deleteRadialBlurResources();
       this.deleteGrainResources();
+      this.deleteThresholdResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteLayerBlendResources();
       this.deletePreviewCache();

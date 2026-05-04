@@ -10,7 +10,16 @@ window.CBO = window.CBO || {};
   const MAX_GRAIN_AMOUNT = 100;
   const MAX_GRAIN_SCALE = 100;
   const DEFAULT_GRAIN_SCALE = 42;
-  const RASTERIZABLE_EFFECT_TYPES = Object.freeze(["gaussian-blur", "motion-blur", "field-blur", "radial-blur", "grain"]);
+  const MAX_THRESHOLD_VALUE = 255;
+  const DEFAULT_THRESHOLD_VALUE = 128;
+  const RASTERIZABLE_EFFECT_TYPES = Object.freeze([
+    "gaussian-blur",
+    "motion-blur",
+    "field-blur",
+    "radial-blur",
+    "grain",
+    "threshold",
+  ]);
   const EFFECT_GROUPS = Object.freeze([
     {
       label: "Blur",
@@ -26,7 +35,7 @@ window.CBO = window.CBO || {};
       items: Object.freeze([
         { implemented: false, icon: "curves", label: "Curves", type: "curves" },
         { implemented: false, icon: "levels", label: "Levels", type: "levels" },
-        { implemented: false, icon: "threshold", label: "Threshold", type: "threshold" },
+        { implemented: true, icon: "threshold", label: "Threshold", type: "threshold" },
         { implemented: false, icon: "hue", label: "Hue/Saturation", type: "hue-saturation" },
       ]),
     },
@@ -73,6 +82,12 @@ window.CBO = window.CBO || {};
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : fallback;
+  }
+
+  function normalizeThresholdValue(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_THRESHOLD_VALUE, number)) : DEFAULT_THRESHOLD_VALUE;
   }
 
   function getRendererDocumentSize() {
@@ -261,7 +276,8 @@ window.CBO = window.CBO || {};
       effect.type === "motion-blur" ||
       effect.type === "field-blur" ||
       effect.type === "radial-blur" ||
-      effect.type === "grain"
+      effect.type === "grain" ||
+      effect.type === "threshold"
     ) {
       return "";
     }
@@ -305,7 +321,7 @@ window.CBO = window.CBO || {};
         getAdjustmentControlMarkup("Size", 18),
       ],
       threshold: [
-        getAdjustmentControlMarkup("Level", 50),
+        getAdjustmentControlMarkup("Level", DEFAULT_THRESHOLD_VALUE),
       ],
       vignette: [
         getAdjustmentControlMarkup("Amount", 35),
@@ -424,6 +440,15 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function getThreshold(layer) {
+    const effect = findLayerEffect(layer, "threshold", "threshold");
+
+    return {
+      enabled: Boolean(effect && effect.enabled !== false),
+      threshold: normalizeThresholdValue(effect?.threshold ?? effect?.level),
+    };
+  }
+
   function createGrainSeed(layerId) {
     const text = `grain:${layerId || ""}`;
     let hash = 2166136261;
@@ -538,6 +563,23 @@ window.CBO = window.CBO || {};
     return effects;
   }
 
+  function getNextThresholdEffects(layer, threshold, enabled = true) {
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "threshold")
+      .map((effect) => cloneValue(effect));
+
+    if (enabled !== false) {
+      effects.push({
+        type: "threshold",
+        enabled: true,
+        threshold: normalizeThresholdValue(threshold),
+      });
+    }
+
+    return effects;
+  }
+
   function isRenderableEffect(effect) {
     if (!effect || effect.enabled === false || !RASTERIZABLE_EFFECT_TYPES.includes(effect.type)) {
       return false;
@@ -561,6 +603,10 @@ window.CBO = window.CBO || {};
 
     if (effect.type === "grain") {
       return getGrain({ effects: [effect] }).amount > 0;
+    }
+
+    if (effect.type === "threshold") {
+      return getThreshold({ effects: [effect] }).enabled;
     }
 
     return false;
@@ -608,6 +654,7 @@ window.CBO = window.CBO || {};
   namespace.getLayerFieldBlur = getFieldBlur;
   namespace.getLayerRadialBlur = getRadialBlur;
   namespace.getLayerGrain = getGrain;
+  namespace.getLayerThreshold = getThreshold;
 
   namespace.hasRasterizableLayerEffects = function hasRasterizableLayerEffects(layerOrId) {
     const layer = typeof layerOrId === "string"
@@ -757,6 +804,34 @@ window.CBO = window.CBO || {};
 
     const didUpdate = layerModel.updateLayer(layerId, {
       effects: getNextGrainEffects(layer, amount, scale, monochrome),
+    }, updateOptions);
+
+    if (didUpdate) {
+      namespace.documentRenderer?.requestDraw?.();
+    }
+
+    return didUpdate;
+  };
+
+  namespace.setLayerThreshold = function setLayerThreshold(layerId, threshold, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const updateOptions = {
+      historyGroup: options.historyGroup || `threshold-${layerId}`,
+      source: options.source || "layer-effects-threshold",
+    };
+
+    if (options.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = layerModel.updateLayer(layerId, {
+      effects: getNextThresholdEffects(layer, threshold, options.enabled),
     }, updateOptions);
 
     if (didUpdate) {
@@ -1075,6 +1150,21 @@ window.CBO = window.CBO || {};
               </button>
             </div>
           </section>
+          <section class="layer-effects-section" aria-label="Threshold" data-layer-effects-editor="threshold" hidden>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Level</span>
+              <output class="layer-effects-value" data-layer-threshold-value>128</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="255" step="1" value="128" aria-label="Threshold level" data-layer-threshold-input />
+            <div class="layer-effects-actions">
+              <button class="layer-effects-icon-button" type="button" aria-label="Reset threshold" data-layer-threshold-reset>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+            </div>
+          </section>
           ${getEffectEditorsMarkup()}
         </div>
       </div>
@@ -1108,11 +1198,14 @@ window.CBO = window.CBO || {};
     const grainScaleInput = panel.querySelector("[data-layer-grain-scale-input]");
     const grainScaleValue = panel.querySelector("[data-layer-grain-scale-value]");
     const grainMonochromeInput = panel.querySelector("[data-layer-grain-monochrome-input]");
+    const thresholdInput = panel.querySelector("[data-layer-threshold-input]");
+    const thresholdValue = panel.querySelector("[data-layer-threshold-value]");
     const acceptButton = panel.querySelector("[data-layer-effects-accept]");
     const resetButton = panel.querySelector("[data-layer-blur-reset]");
     const motionResetButton = panel.querySelector("[data-layer-motion-reset]");
     const radialResetButton = panel.querySelector("[data-layer-radial-reset]");
     const grainResetButton = panel.querySelector("[data-layer-grain-reset]");
+    const thresholdResetButton = panel.querySelector("[data-layer-threshold-reset]");
     const closeButton = panel.querySelector("[data-layer-effects-close]");
     const panelCloseButton = panel.querySelector("[data-layer-effects-panel-close]");
     let activeEffectType = "";
@@ -1700,6 +1793,15 @@ window.CBO = window.CBO || {};
         radialAmountInput?.focus?.({ preventScroll: true });
       } else if (effectType === "grain") {
         grainAmountInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "threshold") {
+        const threshold = getThreshold(getActiveLayer());
+
+        if (!threshold.enabled) {
+          thresholdInput.value = String(DEFAULT_THRESHOLD_VALUE);
+          applyThreshold(DEFAULT_THRESHOLD_VALUE);
+        }
+
+        thresholdInput?.focus?.({ preventScroll: true });
       }
     }
 
@@ -1764,6 +1866,9 @@ window.CBO = window.CBO || {};
       const grain = isEligible
         ? getGrain(layer)
         : { amount: 0, scale: DEFAULT_GRAIN_SCALE, monochrome: true, seed: 0 };
+      const threshold = isEligible
+        ? getThreshold(layer)
+        : { enabled: false, threshold: DEFAULT_THRESHOLD_VALUE };
       const hasActiveFieldBlur = hasFieldBlurAmount(
         activeEffectType === "field-blur" ? fieldBlurPins : fieldBlur.pins,
       );
@@ -1788,6 +1893,7 @@ window.CBO = window.CBO || {};
       grainAmountInput.disabled = !isEligible;
       grainScaleInput.disabled = !isEligible;
       grainMonochromeInput.disabled = !isEligible;
+      thresholdInput.disabled = !isEligible;
       fieldBlurPinList.querySelectorAll("[data-field-blur-pin-input]").forEach((input) => {
         input.disabled = !isEligible;
       });
@@ -1800,11 +1906,13 @@ window.CBO = window.CBO || {};
         (activeEffectType === "motion-blur" && motionBlur.distance <= 0) ||
         (activeEffectType === "field-blur" && !hasActiveFieldBlur) ||
         (activeEffectType === "radial-blur" && radialBlur.amount <= 0) ||
-        (activeEffectType === "grain" && grain.amount <= 0);
+        (activeEffectType === "grain" && grain.amount <= 0) ||
+        (activeEffectType === "threshold" && !threshold.enabled);
       resetButton.disabled = !isEligible || radius <= 0;
       motionResetButton.disabled = !isEligible || motionBlur.distance <= 0;
       radialResetButton.disabled = !isEligible || radialBlur.amount <= 0;
       grainResetButton.disabled = !isEligible || grain.amount <= 0;
+      thresholdResetButton.disabled = !isEligible || !threshold.enabled;
       blurInput.value = String(radius);
       blurValue.textContent = `${Math.round(radius)} px`;
       motionDistanceInput.value = String(motionBlur.distance);
@@ -1823,6 +1931,8 @@ window.CBO = window.CBO || {};
       grainScaleInput.value = String(grain.scale);
       grainScaleValue.textContent = `${Math.round(grain.scale)}%`;
       grainMonochromeInput.checked = grain.monochrome;
+      thresholdInput.value = String(threshold.threshold);
+      thresholdValue.textContent = String(Math.round(threshold.threshold));
       syncFieldBlurUi();
       panel.classList.toggle("disabled", !isEligible);
     }
@@ -1925,6 +2035,40 @@ window.CBO = window.CBO || {};
       }
 
       namespace.setLayerGrain(layer.id, nextAmount, nextScale, nextMonochrome, {
+        history: false,
+        source: "layer-effects-preview",
+      });
+    }
+
+    function applyThreshold(threshold) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextThreshold = normalizeThresholdValue(threshold);
+
+      thresholdValue.textContent = String(Math.round(nextThreshold));
+      namespace.setLayerThreshold(layer.id, nextThreshold, {
+        history: false,
+        source: "layer-effects-preview",
+      });
+    }
+
+    function clearThreshold() {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      thresholdInput.value = String(DEFAULT_THRESHOLD_VALUE);
+      thresholdValue.textContent = String(DEFAULT_THRESHOLD_VALUE);
+      namespace.setLayerThreshold(layer.id, DEFAULT_THRESHOLD_VALUE, {
+        enabled: false,
         history: false,
         source: "layer-effects-preview",
       });
@@ -2081,6 +2225,14 @@ window.CBO = window.CBO || {};
       grainScaleInput.value = String(DEFAULT_GRAIN_SCALE);
       grainMonochromeInput.checked = true;
       applyGrain(0, DEFAULT_GRAIN_SCALE, true);
+    });
+
+    thresholdInput.addEventListener("input", () => {
+      applyThreshold(thresholdInput.value);
+    });
+
+    thresholdResetButton.addEventListener("click", () => {
+      clearThreshold();
     });
 
     fieldBlurPinList.addEventListener("click", (event) => {
