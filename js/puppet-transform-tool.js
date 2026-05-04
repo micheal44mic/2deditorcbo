@@ -159,6 +159,7 @@
       this.pinSequence = 0;
       this.dragState = null;
       this.handleToolChange = this.handleToolChange.bind(this);
+      this.handleBeforeHistoryAction = this.handleBeforeHistoryAction.bind(this);
       this.handleCameraChange = this.handleCameraChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
       this.handlePointerDown = this.handlePointerDown.bind(this);
@@ -201,6 +202,7 @@
 
     bindEvents() {
       window.addEventListener("cbo:tool-change", this.handleToolChange);
+      window.addEventListener("cbo:before-history-action", this.handleBeforeHistoryAction);
       window.addEventListener("cbo:camera-change", this.handleCameraChange);
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
       window.addEventListener("cbo:document-content-change", this.handleDocumentChange);
@@ -226,6 +228,21 @@
       this.activeTool = nextTool;
       this.svg.classList.toggle("puppet-tool-active", this.isActive());
       this.render();
+    }
+
+    handleBeforeHistoryAction(event) {
+      const action = String(event.detail?.action || "").trim().toLowerCase();
+
+      if (action !== "undo" && action !== "redo") {
+        return;
+      }
+
+      if (this.dragState) {
+        this.finishDrag();
+        return;
+      }
+
+      namespace.documentHistory?.flushLayerState?.(this.layerModel);
     }
 
     handleCameraChange(event) {
@@ -684,6 +701,7 @@
 
       this.dragState = null;
       namespace.documentHistory?.endGroup?.(historyGroup);
+      namespace.documentHistory?.flushLayerState?.(this.layerModel);
       this.render();
     }
 

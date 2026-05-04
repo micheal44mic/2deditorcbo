@@ -3,6 +3,14 @@ window.CBO = window.CBO || {};
 (function registerSmudgeEngine(namespace) {
   const SMUDGE_RASTER_DEBUG = true;
   const CROPPED_SMUDGE_SCRATCH = true;
+  const RASTER_MIB = 1024 * 1024;
+  const STROKE_MEMORY_POLICY = Object.freeze({
+    normalMaxBytes: 5 * RASTER_MIB,
+    mediumMaxBytes: 32 * RASTER_MIB,
+    largeMaxBytes: 128 * RASTER_MIB,
+    largeCoverage: 0.25,
+    hugeCoverage: 0.35,
+  });
 
   function bytesToMega(bytes) {
     return Math.round((bytes / (1024 * 1024)) * 100) / 100;
@@ -182,6 +190,8 @@ void main() {
       this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = null;
       this.activeSmudgeBounds = null;
+      this.activeSmudgeMemoryReport = null;
+      this.activeSmudgeRedoDisabled = false;
       this.historyDisabledForStroke = false;
       this.dabProgramInfo = this.createDabProgramInfo();
       this.quad = this.createQuad();
@@ -663,6 +673,110 @@ void main() {
       ), 0);
     }
 
+    getRectCoverage(rect, target = this.strokeTarget) {
+      const canvasPixels = Math.max(1, Math.round(target?.width || 1)) *
+        Math.max(1, Math.round(target?.height || 1));
+      const rectPixels = Math.max(0, Math.round(rect?.width || 0)) *
+        Math.max(0, Math.round(rect?.height || 0));
+
+      return rectPixels / canvasPixels;
+    }
+
+    classifyStrokeMemory(estimatedPeakBytes, coverage) {
+      if (
+        estimatedPeakBytes > STROKE_MEMORY_POLICY.largeMaxBytes ||
+        coverage >= STROKE_MEMORY_POLICY.hugeCoverage
+      ) {
+        return "huge";
+      }
+
+      if (
+        estimatedPeakBytes > STROKE_MEMORY_POLICY.mediumMaxBytes ||
+        coverage >= STROKE_MEMORY_POLICY.largeCoverage
+      ) {
+        return "large";
+      }
+
+      if (estimatedPeakBytes > STROKE_MEMORY_POLICY.normalMaxBytes) {
+        return "medium";
+      }
+
+      return "normal";
+    }
+
+    createStrokeMemoryReport({
+      historyRect = null,
+      layerId = this.activeHistoryLayerId || "",
+      phase = "smudge-stroke",
+      scratchRect = null,
+      target = this.strokeTarget,
+    } = {}) {
+      const beforeBytes = rectBytes(historyRect);
+      const potentialAfterBytes = beforeBytes;
+      const scratchBytes = rectBytes(scratchRect);
+      const persistentBytes = beforeBytes + potentialAfterBytes;
+      const estimatedPeakBytes = persistentBytes + scratchBytes;
+      const coverage = this.getRectCoverage(historyRect, target);
+      const policy = this.classifyStrokeMemory(estimatedPeakBytes, coverage);
+      const historyMode = policy === "huge"
+        ? "gpu-before-no-redo"
+        : "gpu-before-lazy-after";
+
+      return {
+        beforeBytes,
+        canvasSize: {
+          height: Math.max(1, Math.round(target?.height || 1)),
+          width: Math.max(1, Math.round(target?.width || 1)),
+        },
+        coverage,
+        estimatedPeakBytes,
+        historyMode,
+        layerId,
+        persistentBytes,
+        phase,
+        policy,
+        potentialAfterBytes,
+        reason: policy === "huge"
+          ? "redo snapshot disabled for very large smudge stroke"
+          : "smudge stroke memory estimate",
+        scratchBytes,
+        source: "smudge-engine",
+        strokeBufferRect: scratchRect ? { ...scratchRect } : null,
+        strokeRect: historyRect ? { ...historyRect } : null,
+        tool: "smudge",
+      };
+    }
+
+    recordStrokeMemory(report) {
+      if (!report) {
+        return null;
+      }
+
+      this.activeSmudgeMemoryReport = report;
+      this.activeSmudgeRedoDisabled = this.activeSmudgeRedoDisabled ||
+        report.historyMode === "gpu-before-no-redo";
+      namespace.lastSmudgeStrokeMemoryReport = report;
+      const recorded = namespace.rasterResourceManager?.recordStrokeMemory?.(report) || report;
+
+      if (report.policy === "large" || report.policy === "huge") {
+        console.warn?.("[CBO smudge] Stroke memory policy", recorded);
+      } else if (report.policy === "medium") {
+        console.info?.("[CBO smudge] Stroke memory estimate", recorded);
+      }
+
+      return recorded;
+    }
+
+    pruneRasterHistoryForStroke(report) {
+      const history = namespace.documentHistory;
+
+      if (!history?.pruneRasterHistoryBudget || !report || report.policy === "normal") {
+        return null;
+      }
+
+      return history.pruneRasterHistoryBudget();
+    }
+
     containsRect(container, rect) {
       return Boolean(
         container &&
@@ -853,6 +967,20 @@ void main() {
       }
 
       try {
+        const nextHistoryRect = this.activeHistoryBeforeSnapshot
+          ? this.unionRects(this.activeHistoryBeforeSnapshot.rect, bounds)
+          : bounds;
+        const scratchRect = this.scratchTarget?.rect || bounds;
+        const memoryReport = this.createStrokeMemoryReport({
+          historyRect: nextHistoryRect,
+          layerId: this.activeHistoryLayerId || target?.layerId || "",
+          phase: "smudge-capture-before",
+          scratchRect,
+          target,
+        });
+
+        this.recordStrokeMemory(memoryReport);
+
         if (!this.activeHistoryBeforeSnapshot) {
           this.activeHistoryBeforeSnapshot = this.createHistorySnapshot(target, bounds, "smudge prima");
           return Boolean(this.activeHistoryBeforeSnapshot);
@@ -863,7 +991,7 @@ void main() {
         }
 
         const previousSnapshot = this.activeHistoryBeforeSnapshot;
-        const nextRect = this.unionRects(previousSnapshot.rect, bounds);
+        const nextRect = nextHistoryRect;
         const nextSnapshot = this.createEmptyHistorySnapshot(nextRect, "smudge prima union");
 
         if (!nextSnapshot) {
@@ -911,6 +1039,8 @@ void main() {
       this.deleteHistorySnapshot(this.activeHistoryBeforeSnapshot);
       this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = null;
+      this.activeSmudgeMemoryReport = null;
+      this.activeSmudgeRedoDisabled = false;
       this.historyDisabledForStroke = false;
     }
 
@@ -1011,10 +1141,15 @@ void main() {
       const before = this.activeHistoryBeforeSnapshot;
       const layerId = this.activeHistoryLayerId || this.strokeTarget?.layerId || null;
       const target = this.strokeTarget;
+      const memoryReport = this.activeSmudgeMemoryReport;
+      const redoDisabled = this.activeSmudgeRedoDisabled ||
+        memoryReport?.historyMode === "gpu-before-no-redo";
 
       this.activeHistoryDabs = [];
       this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = null;
+      this.activeSmudgeMemoryReport = null;
+      this.activeSmudgeRedoDisabled = false;
       this.historyDisabledForStroke = false;
 
       if (before) {
@@ -1028,6 +1163,10 @@ void main() {
         let after = null;
         let entry = null;
         const captureRedoSnapshot = () => {
+          if (redoDisabled) {
+            return false;
+          }
+
           if (after?.texture) {
             return true;
           }
@@ -1046,10 +1185,23 @@ void main() {
           type: "pixel",
           after: null,
           before,
+          memoryPolicy: memoryReport,
           layerId,
           rect: before.rect,
           source: "smudge",
           undo: () => {
+            if (redoDisabled) {
+              const restoreTarget = this.documentRenderer?.getRasterTarget?.(layerId);
+              const didRestore = this.restoreHistorySnapshot(restoreTarget, before);
+
+              if (didRestore) {
+                this.emitContentChange(layerId, "smudge-undo");
+                this.requestDraw?.();
+              }
+
+              return didRestore;
+            }
+
             if (!captureRedoSnapshot()) {
               return false;
             }
@@ -1086,6 +1238,7 @@ void main() {
         };
 
         namespace.documentHistory.push(entry);
+        this.pruneRasterHistoryForStroke(memoryReport);
         return;
       }
 
@@ -1303,6 +1456,8 @@ void main() {
       this.activeHistoryBeforeSnapshot = null;
       this.activeHistoryLayerId = target.layerId || this.documentRenderer?.layerModel?.activeLayerId || null;
       this.activeSmudgeBounds = null;
+      this.activeSmudgeMemoryReport = null;
+      this.activeSmudgeRedoDisabled = false;
       this.historyDisabledForStroke = false;
       this.releaseScratchTarget();
       this.lastStampX = point.docX;
@@ -1510,6 +1665,7 @@ void main() {
 
       this.blitScratchToTarget(scratch, target, bounds);
       this.restoreDocumentTextureFiltering(target);
+      this.documentRenderer?.invalidatePreviewCache?.("smudge-live");
 
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
@@ -1563,6 +1719,7 @@ void main() {
       this.isDragging = false;
       this.activePointerId = null;
       this.commitHistory();
+      this.documentRenderer?.invalidatePreviewCache?.("smudge-stroke");
       this.debugSmudgeRaster(smudgeRect, target, layerId, debugInfo);
       this.releaseScratchTarget();
       this.activeSmudgeBounds = null;

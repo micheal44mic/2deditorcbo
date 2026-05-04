@@ -497,6 +497,8 @@ test("puppet rasterize commits the deformed mesh through snapshots", () => {
   assert.match(rendererSource, /sourceTexture: sourceSnapshot\.texture/);
   assert.match(puppetToolSource, /this\.isActive\(\) && nextTool !== PUPPET_TOOL_MODE/);
   assert.match(puppetToolSource, /this\.rasterizeActivePuppetLayer\(\)/);
+  assert.match(puppetToolSource, /window\.addEventListener\("cbo:before-history-action", this\.handleBeforeHistoryAction\)/);
+  assert.match(puppetToolSource, /namespace\.documentHistory\?\.flushLayerState\?\.\(this\.layerModel\)/);
   assert.match(puppetToolSource, /source: "history-undo-puppet-rasterize"/);
   assert.match(puppetToolSource, /source: "history-redo-puppet-rasterize"/);
 });

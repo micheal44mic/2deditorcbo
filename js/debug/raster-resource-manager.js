@@ -4,6 +4,7 @@
   const BYTES_PER_PIXEL = 4;
   const MIB = 1024 * 1024;
   const MAX_MATERIALIZATION_EVENTS = 200;
+  const MAX_STROKE_MEMORY_EVENTS = 200;
   const MAX_SUSPECT_EVENTS = 200;
   const VALID_OWNER_TYPES = new Set([
     "live",
@@ -23,6 +24,7 @@
   const framebuffers = new Map();
   const renderbuffers = new Map();
   const fullCanvasMaterializations = [];
+  const strokeMemoryEvents = [];
   const suspectEvents = [];
 
   let nextTextureId = 1;
@@ -37,6 +39,7 @@
     deletedRenderbufferCount: 0,
     deletedTextureCount: 0,
     fullCanvasMaterializationCount: 0,
+    strokeMemoryEventCount: 0,
     unknownDeletedFramebufferCount: 0,
     unknownDeletedRenderbufferCount: 0,
     unknownDeletedTextureCount: 0,
@@ -564,6 +567,65 @@
     return normalized;
   }
 
+  function cloneSize(size) {
+    return {
+      height: toPositiveInt(size?.height, 0),
+      width: toPositiveInt(size?.width, 0),
+    };
+  }
+
+  function normalizeStrokeMemoryEvent(event = {}) {
+    const beforeBytes = toNonNegativeInt(event.beforeBytes, 0);
+    const potentialAfterBytes = toNonNegativeInt(event.potentialAfterBytes, 0);
+    const scratchBytes = toNonNegativeInt(event.scratchBytes, 0);
+    const persistentBytes = toNonNegativeInt(
+      event.persistentBytes,
+      beforeBytes + potentialAfterBytes,
+    );
+    const estimatedPeakBytes = toNonNegativeInt(
+      event.estimatedPeakBytes,
+      persistentBytes + scratchBytes,
+    );
+
+    return {
+      beforeBytes,
+      beforeMiB: formatMiB(beforeBytes),
+      canvasSize: cloneSize(event.canvasSize),
+      coverage: toFiniteNumber(event.coverage, 0),
+      createdAt: event.createdAt || nowIso(),
+      estimatedPeakBytes,
+      estimatedPeakMiB: formatMiB(estimatedPeakBytes),
+      historyMode: event.historyMode || "",
+      layerId: event.layerId || "",
+      persistentBytes,
+      persistentMiB: formatMiB(persistentBytes),
+      phase: event.phase || "",
+      policy: event.policy || event.severity || "normal",
+      potentialAfterBytes,
+      potentialAfterMiB: formatMiB(potentialAfterBytes),
+      reason: event.reason || "",
+      scratchBytes,
+      scratchMiB: formatMiB(scratchBytes),
+      source: event.source || "",
+      strokeBufferRect: cloneRect(event.strokeBufferRect),
+      strokeRect: cloneRect(event.strokeRect),
+      tool: event.tool || "stroke",
+    };
+  }
+
+  function recordStrokeMemory(event = {}) {
+    const normalized = normalizeStrokeMemoryEvent(event);
+
+    stats.strokeMemoryEventCount += 1;
+    strokeMemoryEvents.push(normalized);
+
+    while (strokeMemoryEvents.length > MAX_STROKE_MEMORY_EVENTS) {
+      strokeMemoryEvents.shift();
+    }
+
+    return normalized;
+  }
+
   function sumRows(rows, predicate) {
     return rows.reduce((sum, row) => (predicate(row) ? sum + row.bytes : sum), 0);
   }
@@ -655,6 +717,8 @@
       scratchBytes: sumRows(rows, (row) => row.ownerType === "scratch"),
       source: "raster-resource-manager",
       strokeScratchBytes: sumRows(rows, (row) => row.kind === "strokeScratch"),
+      strokeMemoryEventCount: stats.strokeMemoryEventCount,
+      strokeMemoryEvents: strokeMemoryEvents.slice().reverse(),
       summary: createSummary(rows),
       suspectEvents: suspectEvents.slice().reverse(),
       textureCount: textures.size,
@@ -701,6 +765,10 @@
       console.table?.(result.fullCanvasMaterializations.slice(0, 20));
     }
 
+    if (result.strokeMemoryEvents.length > 0) {
+      console.table?.(result.strokeMemoryEvents.slice(0, 20));
+    }
+
     if (result.suspectEvents.length > 0) {
       console.warn?.("[RasterMemory] Risorse sospette / delete non registrati:", result.suspectEvents);
     }
@@ -717,6 +785,7 @@
         fullCanvasMaterializations,
         renderbuffers,
         stats,
+        strokeMemoryEvents,
         suspectEvents,
         textures,
       };
@@ -730,6 +799,7 @@
     logRasterMemoryReport,
     markUsed,
     recordFullCanvasMaterialization,
+    recordStrokeMemory,
     registerFramebuffer,
     registerRenderbuffer,
     registerTexture,

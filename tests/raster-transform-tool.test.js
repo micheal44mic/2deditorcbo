@@ -74,6 +74,9 @@ test("raster transform tool uses SVG overlay, resize activation, and deferred co
   assert.match(source, /transformMode: this\.transformMode/);
   assert.match(source, /hasPendingTransform\(\)/);
   assert.match(source, /handleRasterTransformAction\(event\)/);
+  assert.match(source, /window\.addEventListener\("cbo:before-history-action", this\.handleBeforeHistoryAction\)/);
+  assert.match(source, /handleBeforeHistoryAction\(event\)/);
+  assert.match(source, /this\.hasPendingTransform\(\)\) \{\s*this\.commitTransform\(\);/);
   assert.match(source, /cbo:raster-transform-state-change/);
   assert.match(cssSource, /\.editor-raster-transform-overlay/);
   assert.match(cssSource, /\.editor-raster-transform-box/);

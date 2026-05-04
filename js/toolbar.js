@@ -73,6 +73,12 @@ window.CBO.initToolbar = function initToolbar() {
   }
 
   function triggerHistoryAction(action) {
+    window.dispatchEvent(
+      new CustomEvent("cbo:before-history-action", {
+        detail: { action },
+      }),
+    );
+
     const button = document.querySelector(`[data-history-action="${action}"]`);
 
     if (!button || button.disabled) {

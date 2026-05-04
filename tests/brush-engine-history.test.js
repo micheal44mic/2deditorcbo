@@ -17,3 +17,13 @@ test("brush stroke history captures redo snapshots lazily on undo", () => {
   assert.match(source, /if \(!captureRedoSnapshot\(\)\) \{/);
   assert.doesNotMatch(source, /const afterSnapshot = this\.createHistorySnapshot\(target, beforeSnapshot\.rect, "after-stroke"\)/);
 });
+
+test("brush stroke history records memory policy and disables redo for huge strokes", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+
+  assert.match(source, /const STROKE_MEMORY_POLICY = Object\.freeze/);
+  assert.match(source, /createStrokeMemoryReport\(/);
+  assert.match(source, /namespace\.rasterResourceManager\?\.recordStrokeMemory\?\.\(report\)/);
+  assert.match(source, /historyMode === "gpu-before-no-redo"/);
+  assert.match(source, /memoryPolicy: memoryReport/);
+});

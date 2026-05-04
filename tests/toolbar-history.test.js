@@ -13,6 +13,7 @@ test("toolbar derives undo and redo enabled state from document history events",
   assert.match(source, /detail\.canUndo === true/);
   assert.match(source, /detail\.canRedo === true/);
   assert.match(source, /button\.disabled = !isEnabled/);
+  assert.match(source, /new CustomEvent\("cbo:before-history-action"/);
   assert.match(source, /if \(!button \|\| button\.disabled\)/);
 });
 

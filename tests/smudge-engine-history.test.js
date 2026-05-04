@@ -17,3 +17,20 @@ test("smudge stroke history captures redo snapshots lazily on undo", () => {
   assert.match(source, /historyBytes: this\.activeHistoryBeforeSnapshot\s*\?\s*this\.getSnapshotBytes\(this\.activeHistoryBeforeSnapshot\)/);
   assert.doesNotMatch(source, /const after = this\.createHistorySnapshot\(target, before\.rect, "smudge dopo"\)/);
 });
+
+test("smudge stroke history records memory policy and disables redo for huge strokes", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
+
+  assert.match(source, /const STROKE_MEMORY_POLICY = Object\.freeze/);
+  assert.match(source, /createStrokeMemoryReport\(/);
+  assert.match(source, /namespace\.rasterResourceManager\?\.recordStrokeMemory\?\.\(report\)/);
+  assert.match(source, /historyMode === "gpu-before-no-redo"/);
+  assert.match(source, /memoryPolicy: memoryReport/);
+});
+
+test("smudge invalidates the zoom-out preview cache while painting live", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
+
+  assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.\("smudge-live"\)/);
+  assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.\("smudge-stroke"\)/);
+});

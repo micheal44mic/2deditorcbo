@@ -65,6 +65,21 @@ test("raster resource manager reports owner buckets and full-canvas events", () 
     reason: "test",
     tool: "unit-test",
   });
+  manager.recordStrokeMemory({
+    beforeBytes: 4 * 1024 * 1024,
+    canvasSize: { height: 4000, width: 4000 },
+    coverage: 0.1,
+    estimatedPeakBytes: 12 * 1024 * 1024,
+    historyMode: "gpu-before-lazy-after",
+    layerId: "paint-1",
+    phase: "unit-test",
+    policy: "medium",
+    potentialAfterBytes: 4 * 1024 * 1024,
+    scratchBytes: 4 * 1024 * 1024,
+    strokeBufferRect: { height: 1024, width: 1024, x: 0, y: 0 },
+    strokeRect: { height: 1024, width: 1024, x: 0, y: 0 },
+    tool: "brush",
+  });
 
   const report = manager.reportRasterMemory({ log: false });
 
@@ -72,6 +87,9 @@ test("raster resource manager reports owner buckets and full-canvas events", () 
   assert.equal(report.framebufferCount, 1);
   assert.equal(report.fullCanvasResourceCount, 2);
   assert.equal(report.fullCanvasMaterializationCount, 1);
+  assert.equal(report.strokeMemoryEventCount, 1);
+  assert.equal(report.strokeMemoryEvents[0].policy, "medium");
+  assert.equal(report.strokeMemoryEvents[0].estimatedPeakMiB, "12.00");
   assert.equal(report.paintLayerBytes, 4000 * 4000 * 4);
   assert.equal(report.previewCacheBytes, manager.estimateTextureBytes(4000, 4000, 3));
   assert.equal(report.purgeableResourceCount, 1);

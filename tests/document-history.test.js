@@ -357,3 +357,13 @@ test("beginGroup and endGroup keep nested continuous edits active until the fina
 
   assert.equal(history.activeGroups.has("text-content-1"), false);
 });
+
+test("history action dispatches a before hook before undo or redo", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-history.js"),
+    "utf8",
+  );
+
+  assert.match(source, /new CustomEvent\("cbo:before-history-action"/);
+  assert.match(source, /detail: \{ action \}/);
+});

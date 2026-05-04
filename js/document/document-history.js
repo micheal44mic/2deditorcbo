@@ -100,6 +100,10 @@
     handleHistoryAction(event) {
       const action = String(event.detail?.action || "").toLowerCase();
 
+      window.dispatchEvent(new CustomEvent("cbo:before-history-action", {
+        detail: { action },
+      }));
+
       if (action === "undo") {
         this.undo();
       } else if (action === "redo") {

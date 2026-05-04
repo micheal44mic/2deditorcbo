@@ -34,7 +34,8 @@ test("preview cache is enabled only after explicit camera navigation", () => {
 
   assert.match(source, /this\.userManipulatedCamera = false/);
   assert.match(source, /this\.userManipulatedCamera = true;\s*this\.requestDraw\(\);/);
-  assert.match(source, /allowPreviewCache: this\.userManipulatedCamera/);
+  assert.match(source, /const allowPreviewCache = this\.userManipulatedCamera && !namespace\.smudgeEngine\?\.isDragging/);
+  assert.match(source, /allowPreviewCache,/);
 });
 
 test("spacebar navigation cancels native browser button and toolbar behavior", () => {

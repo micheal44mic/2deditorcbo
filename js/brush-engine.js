@@ -10,6 +10,15 @@ window.CBO = window.CBO || {};
   const STROKE_FINAL_PADDING = 6;
   const STROKE_SAMPLE_CLAMP_MIN_PADDING = 64;
   const MAX_STAMPS_PER_FLUSH = 4096;
+  const RASTER_BYTES_PER_PIXEL = 4;
+  const RASTER_MIB = 1024 * 1024;
+  const STROKE_MEMORY_POLICY = Object.freeze({
+    normalMaxBytes: 5 * RASTER_MIB,
+    mediumMaxBytes: 32 * RASTER_MIB,
+    largeMaxBytes: 128 * RASTER_MIB,
+    largeCoverage: 0.25,
+    hugeCoverage: 0.35,
+  });
   const VELOCITY_PRESSURE_MAX_SPEED = 5;
   const VELOCITY_PRESSURE_SMOOTHING = 0.02;
   const RENDERING_MODE_PRESETS = Object.freeze({
@@ -574,6 +583,7 @@ void main() {
       this.strokeAccumTexture = null;
       this.strokeAccumFBO = null;
       this.strokeBufferRect = null;
+      this.lastStrokeMemoryReport = null;
       this.brushProgramInfo = null;
       this.compositeProgramInfo = null;
       this.strokeBuildupProgramInfo = null;
@@ -1080,6 +1090,120 @@ void main() {
         width: Math.max(1, Math.round(target.width || 1)),
         height: Math.max(1, Math.round(target.height || 1)),
       };
+    }
+
+    getRasterRectBytes(rect) {
+      if (!rect) {
+        return 0;
+      }
+
+      const width = Math.max(0, Math.round(rect.width || 0));
+      const height = Math.max(0, Math.round(rect.height || 0));
+
+      return width * height * RASTER_BYTES_PER_PIXEL;
+    }
+
+    getRasterRectCoverage(rect, target = this.getPaintTarget()) {
+      const canvasPixels = Math.max(1, Math.round(target?.width || 1)) *
+        Math.max(1, Math.round(target?.height || 1));
+      const rectPixels = Math.max(0, Math.round(rect?.width || 0)) *
+        Math.max(0, Math.round(rect?.height || 0));
+
+      return rectPixels / canvasPixels;
+    }
+
+    classifyStrokeMemory(estimatedPeakBytes, coverage) {
+      if (
+        estimatedPeakBytes > STROKE_MEMORY_POLICY.largeMaxBytes ||
+        coverage >= STROKE_MEMORY_POLICY.hugeCoverage
+      ) {
+        return "huge";
+      }
+
+      if (
+        estimatedPeakBytes > STROKE_MEMORY_POLICY.mediumMaxBytes ||
+        coverage >= STROKE_MEMORY_POLICY.largeCoverage
+      ) {
+        return "large";
+      }
+
+      if (estimatedPeakBytes > STROKE_MEMORY_POLICY.normalMaxBytes) {
+        return "medium";
+      }
+
+      return "normal";
+    }
+
+    createStrokeMemoryReport({
+      layerId = "",
+      phase = "brush-stroke",
+      strokeBufferRect = null,
+      strokeRect = null,
+      target = this.getPaintTarget(),
+      tool = this.currentStrokeTool || "brush",
+    } = {}) {
+      const beforeBytes = this.getRasterRectBytes(strokeRect);
+      const potentialAfterBytes = beforeBytes;
+      const scratchBytes = this.getRasterRectBytes(strokeBufferRect) * 3;
+      const persistentBytes = beforeBytes + potentialAfterBytes;
+      const estimatedPeakBytes = persistentBytes + scratchBytes;
+      const coverage = this.getRasterRectCoverage(strokeRect, target);
+      const policy = this.classifyStrokeMemory(estimatedPeakBytes, coverage);
+      const historyMode = policy === "huge"
+        ? "gpu-before-no-redo"
+        : "gpu-before-lazy-after";
+
+      return {
+        beforeBytes,
+        canvasSize: {
+          height: Math.max(1, Math.round(target?.height || 1)),
+          width: Math.max(1, Math.round(target?.width || 1)),
+        },
+        coverage,
+        estimatedPeakBytes,
+        historyMode,
+        layerId,
+        persistentBytes,
+        phase,
+        policy,
+        potentialAfterBytes,
+        reason: policy === "huge"
+          ? "redo snapshot disabled for very large brush stroke"
+          : "brush stroke memory estimate",
+        scratchBytes,
+        source: "brush-engine",
+        strokeBufferRect: strokeBufferRect ? { ...strokeBufferRect } : null,
+        strokeRect: strokeRect ? { ...strokeRect } : null,
+        tool,
+      };
+    }
+
+    recordStrokeMemory(report) {
+      if (!report) {
+        return null;
+      }
+
+      this.lastStrokeMemoryReport = report;
+      namespace.lastBrushStrokeMemoryReport = report;
+      const recorded = namespace.rasterResourceManager?.recordStrokeMemory?.(report) || report;
+
+      if (report.policy === "large" || report.policy === "huge") {
+        console.warn?.("[CBO brush] Stroke memory policy", recorded);
+      } else if (report.policy === "medium") {
+        console.info?.("[CBO brush] Stroke memory estimate", recorded);
+      }
+
+      return recorded;
+    }
+
+    pruneRasterHistoryForStroke(report) {
+      const history = namespace.documentHistory;
+
+      if (!history?.pruneRasterHistoryBudget || !report || report.policy === "normal") {
+        return null;
+      }
+
+      return history.pruneRasterHistoryBudget();
     }
 
     isBrushStrokeCropped() {
@@ -3577,15 +3701,26 @@ void main() {
       const isEraserStroke = this.currentStrokeTool === "eraser";
       const { program, uniforms } = this.compositeProgramInfo;
       const strokeRect = this.getActiveStrokeRect();
-      const beforeSnapshot = this.options.enableHistory && strokeRect
-        ? this.createHistorySnapshot(target, strokeRect, "before-stroke")
-        : null;
 
       if (!target?.framebuffer || !target?.texture || !this.strokeTexture || !strokeRect) {
         this.releaseStrokeLayerTarget();
         return;
       }
 
+      const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, target);
+      const memoryReport = this.createStrokeMemoryReport({
+        layerId,
+        phase: "brush-bake",
+        strokeBufferRect: finalStrokeBufferRect,
+        strokeRect,
+        target,
+        tool: this.currentStrokeTool,
+      });
+      const beforeSnapshot = this.options.enableHistory && strokeRect
+        ? this.createHistorySnapshot(target, strokeRect, "before-stroke")
+        : null;
+
+      this.recordStrokeMemory(memoryReport);
       this.compactStrokeLayerTargetForRect(strokeRect, target);
       const bakeRect = this.strokeBufferRect || { ...strokeRect };
 
@@ -3616,7 +3751,12 @@ void main() {
         const history = namespace.documentHistory;
         let afterSnapshot = null;
         let entry = null;
+        const redoDisabled = memoryReport.historyMode === "gpu-before-no-redo";
         const captureRedoSnapshot = () => {
+          if (redoDisabled) {
+            return false;
+          }
+
           if (afterSnapshot?.texture) {
             return true;
           }
@@ -3636,10 +3776,15 @@ void main() {
             type: "pixel",
             after: null,
             before: beforeSnapshot,
+            memoryPolicy: memoryReport,
             layerId,
             rect: beforeSnapshot.rect,
             source: this.currentStrokeTool,
             undo: () => {
+              if (redoDisabled) {
+                return this.restoreHistorySnapshot(layerId, beforeSnapshot);
+              }
+
               if (!captureRedoSnapshot()) {
                 return false;
               }
@@ -3656,6 +3801,7 @@ void main() {
           };
 
           history.push(entry);
+          this.pruneRasterHistoryForStroke(memoryReport);
         } else {
           this.deleteHistorySnapshot(beforeSnapshot);
         }
@@ -4201,9 +4347,10 @@ void main() {
     draw() {
       const target = this.getPaintTarget();
       const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
+      const allowPreviewCache = this.userManipulatedCamera && !namespace.smudgeEngine?.isDragging;
 
       this.documentRenderer.drawToCanvas({
-        allowPreviewCache: this.userManipulatedCamera,
+        allowPreviewCache,
         activeStrokeLayerId,
         activeStrokeMode: this.currentStrokeTool === "eraser" ? "eraser" : "paint",
         activeStrokeRect: this.strokeBufferRect,

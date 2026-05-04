@@ -148,6 +148,7 @@
       this.handleToolChange = this.handleToolChange.bind(this);
       this.handleTransformModeChange = this.handleTransformModeChange.bind(this);
       this.handleRasterTransformAction = this.handleRasterTransformAction.bind(this);
+      this.handleBeforeHistoryAction = this.handleBeforeHistoryAction.bind(this);
       this.handleCameraChange = this.handleCameraChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
       this.handleResize = this.handleResize.bind(this);
@@ -226,6 +227,7 @@
       window.addEventListener("cbo:tool-change", this.handleToolChange);
       window.addEventListener("cbo:transform-mode-change", this.handleTransformModeChange);
       window.addEventListener("cbo:raster-transform-action", this.handleRasterTransformAction);
+      window.addEventListener("cbo:before-history-action", this.handleBeforeHistoryAction);
       window.addEventListener("cbo:camera-change", this.handleCameraChange);
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
       window.addEventListener("cbo:document-content-change", this.handleDocumentChange);
@@ -295,6 +297,14 @@
         this.commitTransform();
       } else if (action === "cancel") {
         this.cancelTransform();
+      }
+    }
+
+    handleBeforeHistoryAction(event) {
+      const action = String(event.detail?.action || "").trim().toLowerCase();
+
+      if ((action === "undo" || action === "redo") && this.hasPendingTransform()) {
+        this.commitTransform();
       }
     }
 
