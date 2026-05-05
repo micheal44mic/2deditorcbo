@@ -1,6 +1,8 @@
 (function registerColorFill(namespace) {
   const DEFAULT_FILL_TOLERANCE = 48;
   const MAX_FILL_TOLERANCE = 255;
+  const FILL_COVERAGE_MAX = 255;
+  const FILL_EDGE_AA_RADIUS = 1;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_MIB = 1024 * 1024;
   const THRESHOLD_HIDE_DELAY_MS = 1400;
@@ -518,11 +520,97 @@
     return expandedMask;
   }
 
-  function createDirtyRect(bounds, width, height) {
-    const x = Math.max(0, bounds.minX - 1);
-    const y = Math.max(0, bounds.minY - 1);
-    const right = Math.min(width - 1, bounds.maxX + 1);
-    const bottom = Math.min(height - 1, bounds.maxY + 1);
+  function clampByte(value) {
+    return Math.max(0, Math.min(255, Math.round(value)));
+  }
+
+  function smoothstep(edge0, edge1, value) {
+    if (edge0 === edge1) {
+      return value < edge0 ? 0 : 1;
+    }
+
+    const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+
+    return t * t * (3 - 2 * t);
+  }
+
+  function getFillCoveragePadding(tolerance) {
+    return FILL_EDGE_AA_RADIUS + getDilationRadius(tolerance);
+  }
+
+  function createFillCoverageMask(mask, width, height, bounds, radius = 0) {
+    const coverageMask = new Uint8Array(mask.length);
+    const coverageRadius = Math.max(0, Math.floor(radius));
+    const featherRadius = FILL_EDGE_AA_RADIUS + coverageRadius;
+    const maxDistance = featherRadius + 0.5;
+    const searchRadius = Math.ceil(maxDistance);
+    const startX = Math.max(0, bounds.minX - searchRadius);
+    const endX = Math.min(width - 1, bounds.maxX + searchRadius);
+    const startY = Math.max(0, bounds.minY - searchRadius);
+    const endY = Math.min(height - 1, bounds.maxY + searchRadius);
+
+    for (let y = startY; y <= endY; y += 1) {
+      for (let x = startX; x <= endX; x += 1) {
+        const index = y * width + x;
+
+        if (mask[index] === 1) {
+          coverageMask[index] = FILL_COVERAGE_MAX;
+          continue;
+        }
+
+        let nearestFilledDistanceSq = Infinity;
+
+        for (let offsetY = -searchRadius; offsetY <= searchRadius; offsetY += 1) {
+          const sampleY = y + offsetY;
+
+          if (sampleY < 0 || sampleY >= height) {
+            continue;
+          }
+
+          for (let offsetX = -searchRadius; offsetX <= searchRadius; offsetX += 1) {
+            const sampleX = x + offsetX;
+
+            if (sampleX < 0 || sampleX >= width) {
+              continue;
+            }
+
+            if (mask[sampleY * width + sampleX] !== 1) {
+              continue;
+            }
+
+            const distanceSq = offsetX * offsetX + offsetY * offsetY;
+
+            if (distanceSq < nearestFilledDistanceSq) {
+              nearestFilledDistanceSq = distanceSq;
+            }
+          }
+        }
+
+        if (!Number.isFinite(nearestFilledDistanceSq)) {
+          continue;
+        }
+
+        const nearestFilledDistance = Math.sqrt(nearestFilledDistanceSq);
+
+        if (nearestFilledDistance > maxDistance) {
+          continue;
+        }
+
+        const falloff = smoothstep(0.5, maxDistance, nearestFilledDistance);
+
+        coverageMask[index] = clampByte(FILL_COVERAGE_MAX * (1 - falloff));
+      }
+    }
+
+    return coverageMask;
+  }
+
+  function createDirtyRect(bounds, width, height, padding = FILL_EDGE_AA_RADIUS) {
+    const safePadding = Math.max(0, Math.ceil(padding));
+    const x = Math.max(0, bounds.minX - safePadding);
+    const y = Math.max(0, bounds.minY - safePadding);
+    const right = Math.min(width - 1, bounds.maxX + safePadding);
+    const bottom = Math.min(height - 1, bounds.maxY + safePadding);
 
     return {
       height: bottom - y + 1,
@@ -554,23 +642,56 @@
     };
   }
 
-  function applyFillToDirtyPixels(targetPixels, expandedMask, dirtyRect, documentWidth, fillColor) {
+  function compositeFillPixelPremultiplied(targetPixels, offset, fillColor, coverageByte) {
+    const coverage = clamp(coverageByte / FILL_COVERAGE_MAX, 0, 1);
+
+    if (coverage <= 0) {
+      return;
+    }
+
+    const sourceAlpha = (fillColor.a / 255) * coverage;
+    const inverseSourceAlpha = 1 - sourceAlpha;
+    const sourceR = (fillColor.r / 255) * sourceAlpha;
+    const sourceG = (fillColor.g / 255) * sourceAlpha;
+    const sourceB = (fillColor.b / 255) * sourceAlpha;
+    const destR = targetPixels[offset] / 255;
+    const destG = targetPixels[offset + 1] / 255;
+    const destB = targetPixels[offset + 2] / 255;
+    const destA = targetPixels[offset + 3] / 255;
+    const outA = sourceAlpha + destA * inverseSourceAlpha;
+    const outR = sourceR + destR * inverseSourceAlpha;
+    const outG = sourceG + destG * inverseSourceAlpha;
+    const outB = sourceB + destB * inverseSourceAlpha;
+
+    targetPixels[offset] = clampByte(outR * 255);
+    targetPixels[offset + 1] = clampByte(outG * 255);
+    targetPixels[offset + 2] = clampByte(outB * 255);
+    targetPixels[offset + 3] = clampByte(outA * 255);
+  }
+
+  function getFillMaskMemoryBytes(fillResult, coverageMask) {
+    return (
+      (fillResult?.mask?.byteLength || 0) +
+      (coverageMask?.byteLength || 0) +
+      (fillResult?.stackBytes || 0)
+    );
+  }
+
+  function applyFillToDirtyPixels(targetPixels, coverageMask, dirtyRect, documentWidth, fillColor) {
     for (let row = 0; row < dirtyRect.height; row += 1) {
       const docY = dirtyRect.y + dirtyRect.height - 1 - row;
 
       for (let col = 0; col < dirtyRect.width; col += 1) {
         const docX = dirtyRect.x + col;
+        const coverageByte = coverageMask[docY * documentWidth + docX];
 
-        if (expandedMask[docY * documentWidth + docX] !== 1) {
+        if (coverageByte <= 0) {
           continue;
         }
 
         const offset = (row * dirtyRect.width + col) * 4;
 
-        targetPixels[offset] = fillColor.r;
-        targetPixels[offset + 1] = fillColor.g;
-        targetPixels[offset + 2] = fillColor.b;
-        targetPixels[offset + 3] = fillColor.a;
+        compositeFillPixelPremultiplied(targetPixels, offset, fillColor, coverageByte);
       }
     }
   }
@@ -679,9 +800,9 @@
 
     const {
       beforeSnapshot,
+      coverageMask,
       dirtyRead,
       dirtyRect,
-      expandedMask,
       fillResult,
       height,
       layerId,
@@ -694,11 +815,10 @@
     const referenceBytes = referenceSource?.pixels?.byteLength || getRasterRectBytes(referenceSource || target);
     const maskBytes = fillResult?.mask?.byteLength || 0;
     const stackBytes = fillResult?.stackBytes || 0;
-    const expandedMaskBytes = expandedMask && expandedMask !== fillResult?.mask
-      ? expandedMask.byteLength
-      : 0;
+    const coverageMaskBytes = coverageMask?.byteLength || 0;
+    const fillMaskMemoryBytes = getFillMaskMemoryBytes(fillResult, coverageMask);
     const dirtyReadBytes = dirtyRead?.pixels?.byteLength || 0;
-    const scratchBytes = referenceBytes + maskBytes + stackBytes + expandedMaskBytes + dirtyReadBytes;
+    const scratchBytes = referenceBytes + fillMaskMemoryBytes + dirtyReadBytes;
     const historyBytes = beforeBytes + afterBytes;
     const estimatedPeakBytes = scratchBytes + historyBytes;
     const coverage = getRectCoverage(dirtyRect, width, height);
@@ -708,6 +828,10 @@
       canvasSize: { height, width },
       coverage,
       estimatedPeakBytes,
+      fillCoverageMaskBytes: coverageMaskBytes,
+      fillMaskBytes: maskBytes,
+      fillMaskMemoryBytes,
+      fillStackBytes: stackBytes,
       historyBytes,
       layerId,
       operationType: "color-fill",
@@ -768,14 +892,20 @@
       return false;
     }
 
-    const expandedMask = dilateMask(
+    const coverageRadius = getDilationRadius(tolerance);
+    const coverageMask = createFillCoverageMask(
       fillResult.mask,
       width,
       height,
       fillResult.bounds,
-      getDilationRadius(tolerance),
+      coverageRadius,
     );
-    const dirtyRect = createDirtyRect(fillResult.bounds, width, height);
+    const dirtyRect = createDirtyRect(
+      fillResult.bounds,
+      width,
+      height,
+      getFillCoveragePadding(tolerance),
+    );
 
     if (dirtyRect.width <= 0 || dirtyRect.height <= 0) {
       return false;
@@ -794,7 +924,7 @@
 
     applyFillToDirtyPixels(
       targetPixels,
-      expandedMask,
+      coverageMask,
       dirtyRect,
       width,
       parseHexColor(colorHex),
@@ -803,9 +933,9 @@
 
     const memoryPolicy = recordColorFillMemory(renderer, {
       beforeSnapshot,
+      coverageMask,
       dirtyRead,
       dirtyRect,
-      expandedMask,
       fillResult,
       height,
       layerId,
@@ -820,6 +950,17 @@
 
     return true;
   }
+
+  namespace.__colorFillTestHooks = Object.freeze({
+    applyFillToDirtyPixels,
+    compositeFillPixelPremultiplied,
+    createDirtyRect,
+    createFillCoverageMask,
+    floodFillMask,
+    getDilationRadius,
+    getFillCoveragePadding,
+    getFillMaskMemoryBytes,
+  });
 
   namespace.colorFill = {
     beginDropDrag,

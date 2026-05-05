@@ -56,6 +56,54 @@ test("document renderer supports raster transform preview and history commit", (
   assert.doesNotMatch(source, /window\.CBO\.history/);
 });
 
+test("document renderer uses analytic anti-aliased quad edge coverage for raster transforms", () => {
+  const source = readRepoFile("js", "document", "document-renderer.js");
+
+  assert.match(source, /const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1/);
+  assert.match(source, /TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /signedDistanceToConvexQuad/);
+  assert.match(source, /quadCoverage/);
+  assert.match(source, /u_quadEdges\[4\]/);
+  assert.match(source, /u_edgeFeatherPixels/);
+  assert.match(source, /fwidth\s*\(/);
+  assert.match(source, /smoothstep\s*\(/);
+  assert.match(source, /const PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE = TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE/);
+});
+
+test("drawTexturedQuad draws an expanded maskable rectangle instead of hard quad triangles", () => {
+  const source = readRepoFile("js", "document", "document-renderer.js");
+  const drawBody = source.match(/drawTexturedQuad\(texture, quad, options = \{\}\) \{[\s\S]*?\n    \}/)?.[0] || "";
+
+  assert.match(drawBody, /ensureTexturedQuadProgramInfo\(\)/);
+  assert.match(drawBody, /createExpandedQuadDrawVertices\(/);
+  assert.match(drawBody, /computeQuadEdgeUniformData\(quad\)/);
+  assert.match(drawBody, /computeAffineDestToSourceUvMatrix\(quad\)/);
+  assert.match(drawBody, /uniform4fv\(uniforms\.quadEdges, edgeData\)/);
+  assert.match(drawBody, /uniformMatrix3fv\(uniforms\.destToSourceUv, false, matrix\)/);
+  assert.doesNotMatch(drawBody, /ensurePuppetProgramInfo\(\)/);
+});
+
+test("drawPerspectiveTexturedQuad uses soft geometric coverage and clamps edge UVs", () => {
+  const source = readRepoFile("js", "document", "document-renderer.js");
+  const drawBody = source.match(/drawPerspectiveTexturedQuad\(texture, quad, options = \{\}\) \{[\s\S]*?\n    \}/)?.[0] || "";
+
+  assert.match(drawBody, /createExpandedQuadDrawVertices\(/);
+  assert.match(drawBody, /computeQuadEdgeUniformData\(quad\)/);
+  assert.match(drawBody, /uniform4fv\(uniforms\.quadEdges, edgeData\)/);
+  assert.match(source, /clamp\(unitUv, vec2\(0\.0\), vec2\(1\.0\)\)/);
+  assert.doesNotMatch(source, /unitUv\.x < 0\.0 \|\| unitUv\.x > 1\.0 \|\| unitUv\.y < 0\.0 \|\| unitUv\.y > 1\.0/);
+});
+
+test("raster transform commits pad dirty rectangles for edge anti-aliasing", () => {
+  const source = readRepoFile("js", "document", "document-renderer.js");
+
+  assert.match(source, /RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING/);
+  assert.match(source, /padRasterRect\(rect, padding = 0\)/);
+  assert.match(source, /const destDirtyRect = this\.padRasterRect\(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING\)/);
+  assert.match(source, /bounds\.getUnionRect\(sourceRect, destDirtyRect \|\| destRect\)/);
+  assert.match(source, /getClampedDocumentRect\(\s*destDirtyRect \|\| destRect,\s*CROPPED_TARGET_EDGE_PADDING,/);
+});
+
 test("raster transform tool uses SVG overlay, resize/rotate activation, and deferred commit", () => {
   const source = readRepoFile("js", "raster-transform-tool.js");
   const cssSource = readRepoFile("css", "layout.css");

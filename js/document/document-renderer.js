@@ -3,6 +3,8 @@
   const CROPPED_TARGET_EFFECT_PADDING = 320;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_HISTORY_TILE_SIZE = 256;
+  const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
+  const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
   const RASTER_MIB = 1024 * 1024;
   const RASTER_OPERATION_MEMORY_POLICY = Object.freeze({
     hugeCoverage: 0.35,
@@ -180,6 +182,81 @@ void main() {
 }
 `;
 
+  const TEXTURED_QUAD_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aDestPixel;
+layout(location = 1) in vec2 aSourceUv;
+
+uniform vec2 uViewportSize;
+uniform vec2 uCameraPosition;
+uniform float uCameraZoom;
+
+out vec2 v_destPixel;
+
+void main() {
+  vec2 viewportPixel = uCameraPosition + aDestPixel * uCameraZoom;
+  vec2 clipPosition = vec2(
+    (viewportPixel.x / uViewportSize.x) * 2.0 - 1.0,
+    1.0 - (viewportPixel.y / uViewportSize.y) * 2.0
+  );
+
+  v_destPixel = aDestPixel;
+  gl_Position = vec4(clipPosition, 0.0, 1.0);
+}
+`;
+
+  const TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform mat3 u_destToSourceUv;
+uniform vec4 u_quadEdges[4];
+uniform float u_edgeFeatherPixels;
+uniform float u_opacity;
+
+in vec2 v_destPixel;
+
+out vec4 outColor;
+
+float signedDistanceToConvexQuad(vec2 point) {
+  float d0 = dot(u_quadEdges[0].xy, point) + u_quadEdges[0].z;
+  float d1 = dot(u_quadEdges[1].xy, point) + u_quadEdges[1].z;
+  float d2 = dot(u_quadEdges[2].xy, point) + u_quadEdges[2].z;
+  float d3 = dot(u_quadEdges[3].xy, point) + u_quadEdges[3].z;
+
+  return min(min(d0, d1), min(d2, d3));
+}
+
+float quadCoverage(vec2 point) {
+  float signedDistance = signedDistanceToConvexQuad(point);
+  float distanceFwidth = max(fwidth(signedDistance), 0.0001);
+  float aa = max(0.5 * max(u_edgeFeatherPixels, 0.0) * distanceFwidth, 0.0001);
+
+  return smoothstep(-aa, aa, signedDistance);
+}
+
+void main() {
+  float coverage = quadCoverage(v_destPixel);
+
+  if (coverage <= 0.0) {
+    discard;
+  }
+
+  vec3 mapped = u_destToSourceUv * vec3(v_destPixel, 1.0);
+
+  if (abs(mapped.z) < 0.000001) {
+    discard;
+  }
+
+  vec2 unitUv = mapped.xy / mapped.z;
+  vec2 clampedUnitUv = clamp(unitUv, vec2(0.0), vec2(1.0));
+  vec2 uv = vec2(clampedUnitUv.x, 1.0 - clampedUnitUv.y);
+
+  outColor = texture(u_texture, uv) * u_opacity * coverage;
+}
+`;
+
   const PERSPECTIVE_QUAD_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -203,34 +280,7 @@ void main() {
 }
 `;
 
-  const PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE = `#version 300 es
-precision highp float;
-
-uniform sampler2D u_texture;
-uniform mat3 u_destToSourceUv;
-uniform float u_opacity;
-
-in vec2 v_destPixel;
-
-out vec4 outColor;
-
-void main() {
-  vec3 mapped = u_destToSourceUv * vec3(v_destPixel, 1.0);
-
-  if (abs(mapped.z) < 0.000001) {
-    discard;
-  }
-
-  vec2 unitUv = mapped.xy / mapped.z;
-
-  if (unitUv.x < 0.0 || unitUv.x > 1.0 || unitUv.y < 0.0 || unitUv.y > 1.0) {
-    discard;
-  }
-
-  vec2 uv = vec2(unitUv.x, 1.0 - unitUv.y);
-  outColor = texture(u_texture, uv) * u_opacity;
-}
-`;
+  const PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE = TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE;
 
   const GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
@@ -897,6 +947,7 @@ void main() {
       this.previewCacheReason = "init";
       this.texturedQuad = null;
       this.programInfo = null;
+      this.texturedQuadProgramInfo = null;
       this.puppetProgramInfo = null;
       this.perspectiveQuadProgramInfo = null;
       this.gaussianBlurProgramInfo = null;
@@ -1678,6 +1729,46 @@ void main() {
       };
     }
 
+    createTexturedQuadProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, TEXTURED_QUAD_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma textured quad edge AA WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma textured quad edge AA.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
+          cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
+          destToSourceUv: gl.getUniformLocation(program, "u_destToSourceUv"),
+          edgeFeatherPixels: gl.getUniformLocation(program, "u_edgeFeatherPixels"),
+          quadEdges: gl.getUniformLocation(program, "u_quadEdges[0]"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+          viewportSize: gl.getUniformLocation(program, "uViewportSize"),
+          opacity: gl.getUniformLocation(program, "u_opacity"),
+        },
+      };
+    }
+
     createPerspectiveQuadProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, PERSPECTIVE_QUAD_VERTEX_SHADER_SOURCE);
@@ -1709,6 +1800,8 @@ void main() {
           cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
           destToSourceUv: gl.getUniformLocation(program, "u_destToSourceUv"),
+          edgeFeatherPixels: gl.getUniformLocation(program, "u_edgeFeatherPixels"),
+          quadEdges: gl.getUniformLocation(program, "u_quadEdges[0]"),
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
@@ -1993,6 +2086,14 @@ void main() {
       return this.puppetProgramInfo;
     }
 
+    ensureTexturedQuadProgramInfo() {
+      if (!this.texturedQuadProgramInfo) {
+        this.texturedQuadProgramInfo = this.createTexturedQuadProgramInfo();
+      }
+
+      return this.texturedQuadProgramInfo;
+    }
+
     ensurePerspectiveQuadProgramInfo() {
       if (!this.perspectiveQuadProgramInfo) {
         this.perspectiveQuadProgramInfo = this.createPerspectiveQuadProgramInfo();
@@ -2102,6 +2203,172 @@ void main() {
       return this.texturedQuad;
     }
 
+    getRasterTransformEdgeAaPaddingForCamera(camera = {}) {
+      const zoom = Math.abs(Number(camera.zoom));
+      const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+
+      return Math.max(
+        1,
+        Math.ceil(RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS / safeZoom) + 1,
+      );
+    }
+
+    padRasterRect(rect, padding = 0) {
+      if (!rect) {
+        return null;
+      }
+
+      const safePadding = Math.max(0, Math.ceil(Number(padding) || 0));
+
+      return {
+        height: rect.height + safePadding * 2,
+        width: rect.width + safePadding * 2,
+        x: rect.x - safePadding,
+        y: rect.y - safePadding,
+      };
+    }
+
+    createExpandedQuadDrawVertices(quad, padding = 0) {
+      if (!Array.isArray(quad) || quad.length < 4) {
+        return null;
+      }
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (let index = 0; index < 4; index += 1) {
+        const point = quad[index];
+
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+          return null;
+        }
+
+        minX = Math.min(minX, point.x);
+        minY = Math.min(minY, point.y);
+        maxX = Math.max(maxX, point.x);
+        maxY = Math.max(maxY, point.y);
+      }
+
+      const safePadding = Math.max(0, Number(padding) || 0);
+      const x0 = minX - safePadding;
+      const y0 = minY - safePadding;
+      const x1 = maxX + safePadding;
+      const y1 = maxY + safePadding;
+
+      return new Float32Array([
+        x0, y0, 0, 1,
+        x1, y0, 1, 1,
+        x1, y1, 1, 0,
+        x0, y0, 0, 1,
+        x1, y1, 1, 0,
+        x0, y1, 0, 0,
+      ]);
+    }
+
+    computeQuadEdgeUniformData(quad) {
+      if (!Array.isArray(quad) || quad.length < 4) {
+        return null;
+      }
+
+      const points = quad.slice(0, 4).map((point) => ({
+        x: Number(point?.x),
+        y: Number(point?.y),
+      }));
+
+      if (points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+        return null;
+      }
+
+      const center = points.reduce(
+        (result, point) => ({
+          x: result.x + point.x / points.length,
+          y: result.y + point.y / points.length,
+        }),
+        { x: 0, y: 0 },
+      );
+      const edgeData = new Float32Array(16);
+
+      for (let index = 0; index < 4; index += 1) {
+        const current = points[index];
+        const next = points[(index + 1) % 4];
+        const dx = next.x - current.x;
+        const dy = next.y - current.y;
+        const length = Math.hypot(dx, dy);
+
+        if (length < 0.000001) {
+          return null;
+        }
+
+        let nx = -dy / length;
+        let ny = dx / length;
+        let c = -(nx * current.x + ny * current.y);
+
+        if (nx * center.x + ny * center.y + c < 0) {
+          nx *= -1;
+          ny *= -1;
+          c *= -1;
+        }
+
+        const offset = index * 4;
+
+        edgeData[offset] = nx;
+        edgeData[offset + 1] = ny;
+        edgeData[offset + 2] = c;
+        edgeData[offset + 3] = 0;
+      }
+
+      return edgeData;
+    }
+
+    computeAffineDestToSourceUvMatrix(quad) {
+      if (!Array.isArray(quad) || quad.length < 4) {
+        return null;
+      }
+
+      const q0 = quad[0];
+      const q1 = quad[1];
+      const q3 = quad[3];
+
+      if (
+        !q0 ||
+        !q1 ||
+        !q3 ||
+        !Number.isFinite(q0.x) ||
+        !Number.isFinite(q0.y) ||
+        !Number.isFinite(q1.x) ||
+        !Number.isFinite(q1.y) ||
+        !Number.isFinite(q3.x) ||
+        !Number.isFinite(q3.y)
+      ) {
+        return null;
+      }
+
+      const ax = q1.x - q0.x;
+      const ay = q1.y - q0.y;
+      const bx = q3.x - q0.x;
+      const by = q3.y - q0.y;
+      const determinant = ax * by - ay * bx;
+
+      if (Math.abs(determinant) < 0.000001) {
+        return null;
+      }
+
+      const m00 = by / determinant;
+      const m01 = -bx / determinant;
+      const m02 = (bx * q0.y - by * q0.x) / determinant;
+      const m10 = -ay / determinant;
+      const m11 = ax / determinant;
+      const m12 = (ay * q0.x - ax * q0.y) / determinant;
+
+      return new Float32Array([
+        m00, m10, 0,
+        m01, m11, 0,
+        m02, m12, 1,
+      ]);
+    }
+
     computeDestToSourceUvHomography(destQuad) {
       if (!Array.isArray(destQuad) || destQuad.length < 4) {
         return null;
@@ -2196,20 +2463,22 @@ void main() {
       }
 
       const gl = this.gl;
-      const { program, uniforms } = this.ensurePuppetProgramInfo();
+      const { program, uniforms } = this.ensureTexturedQuadProgramInfo();
       const resource = this.ensureTexturedQuadResource();
       const camera = options.camera || { x: 0, y: 0, zoom: 1 };
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
-      const vertices = new Float32Array([
-        quad[0].x, quad[0].y, 0, 1,
-        quad[1].x, quad[1].y, 1, 1,
-        quad[2].x, quad[2].y, 1, 0,
-        quad[0].x, quad[0].y, 0, 1,
-        quad[2].x, quad[2].y, 1, 0,
-        quad[3].x, quad[3].y, 0, 0,
-      ]);
+      const matrix = this.computeAffineDestToSourceUvMatrix(quad);
+      const edgeData = this.computeQuadEdgeUniformData(quad);
+      const vertices = this.createExpandedQuadDrawVertices(
+        quad,
+        this.getRasterTransformEdgeAaPaddingForCamera(camera),
+      );
+
+      if (!matrix || !edgeData || !vertices) {
+        return false;
+      }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
@@ -2220,6 +2489,9 @@ void main() {
       gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
       gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+      gl.uniformMatrix3fv(uniforms.destToSourceUv, false, matrix);
+      gl.uniform4fv(uniforms.quadEdges, edgeData);
+      gl.uniform1f(uniforms.edgeFeatherPixels, RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
 
@@ -2255,14 +2527,15 @@ void main() {
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
-      const vertices = new Float32Array([
-        quad[0].x, quad[0].y, 0, 1,
-        quad[1].x, quad[1].y, 1, 1,
-        quad[2].x, quad[2].y, 1, 0,
-        quad[0].x, quad[0].y, 0, 1,
-        quad[2].x, quad[2].y, 1, 0,
-        quad[3].x, quad[3].y, 0, 0,
-      ]);
+      const edgeData = this.computeQuadEdgeUniformData(quad);
+      const vertices = this.createExpandedQuadDrawVertices(
+        quad,
+        this.getRasterTransformEdgeAaPaddingForCamera(camera),
+      );
+
+      if (!edgeData || !vertices) {
+        return false;
+      }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
@@ -2274,6 +2547,8 @@ void main() {
       gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniformMatrix3fv(uniforms.destToSourceUv, false, matrix);
+      gl.uniform4fv(uniforms.quadEdges, edgeData);
+      gl.uniform1f(uniforms.edgeFeatherPixels, RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
 
@@ -5396,7 +5671,11 @@ void main() {
         transformMode = "free",
       } = options;
       const target = this.rasterTargetsByLayerId.get(layerId);
-      const nextRect = this.getClampedDocumentRect(destRect, CROPPED_TARGET_EDGE_PADDING);
+      const destDirtyRect = this.padRasterRect(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING);
+      const nextRect = this.getClampedDocumentRect(
+        destDirtyRect || destRect,
+        CROPPED_TARGET_EDGE_PADDING,
+      );
 
       if (!target?.framebuffer || !sourceSnapshot?.texture || !nextRect) {
         return false;
@@ -5533,6 +5812,7 @@ void main() {
 
       const destBounds = bounds?.quadToBounds?.(destQuad);
       const destRect = bounds?.boundsToRect?.(destBounds);
+      const destDirtyRect = this.padRasterRect(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING);
 
       if (this.isCroppedRasterTarget(target)) {
         return this.commitCroppedRasterTransform({
@@ -5542,7 +5822,7 @@ void main() {
       }
 
       const dirtyRect = bounds?.getClampedRasterBox?.(
-        bounds.getUnionRect(sourceRect, destRect),
+        bounds.getUnionRect(sourceRect, destDirtyRect || destRect),
         target?.width,
         target?.height,
       );
@@ -7650,6 +7930,11 @@ void main() {
       if (this.programInfo?.program) {
         gl.deleteProgram(this.programInfo.program);
         this.programInfo = null;
+      }
+
+      if (this.texturedQuadProgramInfo?.program) {
+        gl.deleteProgram(this.texturedQuadProgramInfo.program);
+        this.texturedQuadProgramInfo = null;
       }
 
       if (this.puppetProgramInfo?.program) {

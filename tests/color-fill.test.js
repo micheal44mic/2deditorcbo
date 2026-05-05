@@ -311,6 +311,133 @@ test("color fill maps cropped reference layers into document coordinates", () =>
   ]);
 });
 
+test("color fill exposes route-1 anti-aliased coverage helpers", () => {
+  const source = readRepoFile("js", "color-fill.js");
+
+  assert.match(source, /FILL_EDGE_AA_RADIUS = 1/);
+  assert.match(source, /function createFillCoverageMask\(mask, width, height, bounds, radius = 0\)/);
+  assert.match(source, /function compositeFillPixelPremultiplied\(targetPixels, offset, fillColor, coverageByte\)/);
+  assert.match(source, /sourceAlpha = \(fillColor\.a \/ 255\) \* coverage/);
+  assert.match(source, /fillCoverageMaskBytes: coverageMaskBytes/);
+  assert.match(source, /namespace\.__colorFillTestHooks = Object\.freeze/);
+});
+
+test("fill coverage mask keeps interiors solid and creates partial outside edges", () => {
+  const CBO = loadColorFillModule();
+  const { createFillCoverageMask } = CBO.__colorFillTestHooks;
+  const width = 5;
+  const height = 5;
+  const mask = new Uint8Array(width * height);
+
+  mask[2 * width + 2] = 1;
+
+  const coverageMask = createFillCoverageMask(
+    mask,
+    width,
+    height,
+    { minX: 2, minY: 2, maxX: 2, maxY: 2 },
+    0,
+  );
+
+  assert.equal(coverageMask[2 * width + 2], 255);
+  assert.ok(coverageMask[2 * width + 3] > 0);
+  assert.ok(coverageMask[2 * width + 3] < 255);
+  assert.equal(coverageMask[0], 0);
+});
+
+test("fill coverage tolerance widens a partial band without full binary dilation", () => {
+  const CBO = loadColorFillModule();
+  const { createFillCoverageMask } = CBO.__colorFillTestHooks;
+  const width = 7;
+  const height = 7;
+  const mask = new Uint8Array(width * height);
+
+  mask[3 * width + 3] = 1;
+
+  const coverageMask = createFillCoverageMask(
+    mask,
+    width,
+    height,
+    { minX: 3, minY: 3, maxX: 3, maxY: 3 },
+    1,
+  );
+  const adjacentCoverage = coverageMask[3 * width + 4];
+  const fartherCoverage = coverageMask[3 * width + 5];
+
+  assert.equal(coverageMask[3 * width + 3], 255);
+  assert.ok(adjacentCoverage > 0 && adjacentCoverage < 255);
+  assert.ok(fartherCoverage > 0 && fartherCoverage < adjacentCoverage);
+});
+
+test("color fill composites premultiplied source-over instead of overwriting", () => {
+  const CBO = loadColorFillModule();
+  const { compositeFillPixelPremultiplied } = CBO.__colorFillTestHooks;
+  const pixels = new Uint8Array([64, 64, 64, 128]);
+
+  compositeFillPixelPremultiplied(
+    pixels,
+    0,
+    { r: 255, g: 0, b: 0, a: 255 },
+    128,
+  );
+
+  assert.notDeepEqual(Array.from(pixels), [255, 0, 0, 255]);
+
+  const sourceAlpha = 128 / 255;
+  const inverseSourceAlpha = 1 - sourceAlpha;
+  const expectedR = Math.round(((1 * sourceAlpha) + ((64 / 255) * inverseSourceAlpha)) * 255);
+  const expectedG = Math.round(((64 / 255) * inverseSourceAlpha) * 255);
+  const expectedB = Math.round(((64 / 255) * inverseSourceAlpha) * 255);
+  const expectedA = Math.round((sourceAlpha + (128 / 255) * inverseSourceAlpha) * 255);
+
+  assert.deepEqual(Array.from(pixels), [expectedR, expectedG, expectedB, expectedA]);
+});
+
+test("applyFillToDirtyPixels writes solid interiors and partial boundary pixels", () => {
+  const CBO = loadColorFillModule();
+  const { applyFillToDirtyPixels } = CBO.__colorFillTestHooks;
+  const width = 3;
+  const height = 3;
+  const dirtyRect = { height, width, x: 0, y: 0 };
+  const coverageMask = new Uint8Array(width * height);
+  const targetPixels = new Uint8Array(width * height * 4);
+
+  coverageMask[1 * width + 1] = 255;
+  coverageMask[1 * width + 2] = 128;
+
+  applyFillToDirtyPixels(
+    targetPixels,
+    coverageMask,
+    dirtyRect,
+    width,
+    { r: 255, g: 0, b: 0, a: 255 },
+  );
+
+  const interiorOffset = (1 * width + 1) * 4;
+  const boundaryOffset = (1 * width + 2) * 4;
+
+  assert.deepEqual(Array.from(targetPixels.slice(interiorOffset, interiorOffset + 4)), [
+    255,
+    0,
+    0,
+    255,
+  ]);
+  assert.ok(targetPixels[boundaryOffset + 3] > 0);
+  assert.ok(targetPixels[boundaryOffset + 3] < 255);
+});
+
+test("fill mask memory accounting includes coverage mask bytes", () => {
+  const CBO = loadColorFillModule();
+  const { getFillMaskMemoryBytes } = CBO.__colorFillTestHooks;
+  const fillResult = {
+    mask: new Uint8Array(16),
+    stackBytes: 64,
+  };
+  const coverageMask = new Uint8Array(16);
+
+  assert.equal(getFillMaskMemoryBytes(fillResult, coverageMask), 96);
+});
+
 test("color fill exposes a top-center threshold range styled like quick brush controls", () => {
   const source = readRepoFile("js", "color-fill.js");
   const cssSource = readRepoFile("css", "color-drop.css");
