@@ -7,6 +7,10 @@ const source = fs.readFileSync(
   path.join(__dirname, "..", "js", "images", "image-rasterizer.js"),
   "utf8",
 );
+const editorCanvasSource = fs.readFileSync(
+  path.join(__dirname, "..", "js", "editor-canvas.js"),
+  "utf8",
+);
 
 test("image rasterizer caps imported images before WebGL texture upload", () => {
   assert.match(source, /IMPORT_MEMORY_POLICY/);
@@ -34,4 +38,18 @@ test("image import reports operation memory to raster resource manager", () => {
   assert.match(source, /lastImageImportMemoryReport/);
   assert.match(source, /documentRenderer\?\.evictRasterScratchCachesForPolicy\?\.\(recorded,/);
   assert.match(source, /estimatedPeakBytes\s*=\s*sourceBytes\s*\+\s*targetBytes/);
+});
+
+test("uploaded image placement fits and centers inside the active document canvas", () => {
+  assert.match(editorCanvasSource, /const fitScale = Math\.min\(1, documentWidth \/ sourceWidth, documentHeight \/ sourceHeight\)/);
+  assert.match(editorCanvasSource, /const drawWidth = Math\.max\(1, Math\.min\(documentWidth, Math\.floor\(sourceWidth \* fitScale\)\)\)/);
+  assert.match(editorCanvasSource, /const drawHeight = Math\.max\(1, Math\.min\(documentHeight, Math\.floor\(sourceHeight \* fitScale\)\)\)/);
+  assert.match(editorCanvasSource, /x: Math\.round\(\(documentWidth - drawWidth\) \* 0\.5\)/);
+  assert.match(editorCanvasSource, /y: Math\.round\(\(documentHeight - drawHeight\) \* 0\.5\)/);
+  assert.match(editorCanvasSource, /drawHeight,\s*drawWidth,/);
+  assert.match(source, /const destinationWidth = Math\.max\([\s\S]*?target\.drawWidth \|\| width/);
+  assert.match(source, /const destinationHeight = Math\.max\([\s\S]*?target\.drawHeight \|\| height/);
+  assert.match(source, /Math\.round\(\(targetWidth - destinationWidth\) \* 0\.5\)/);
+  assert.match(source, /Math\.round\(\(targetHeight - destinationHeight\) \* 0\.5\)/);
+  assert.match(source, /gl\.uniform4f\(uniforms\.destinationRect, x, y, destinationWidth, destinationHeight\)/);
 });

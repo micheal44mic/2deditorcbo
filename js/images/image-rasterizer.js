@@ -784,19 +784,29 @@ void main() {
       const gl = this.gl;
       const targetWidth = Math.max(1, Math.round(target.width));
       const targetHeight = Math.max(1, Math.round(target.height));
+      const destinationWidth = Math.max(
+        1,
+        Math.round(Number.isFinite(options.drawWidth) ? options.drawWidth : target.drawWidth || width),
+      );
+      const destinationHeight = Math.max(
+        1,
+        Math.round(Number.isFinite(options.drawHeight) ? options.drawHeight : target.drawHeight || height),
+      );
       const x = Number.isFinite(options.x)
         ? options.x
         : (Number.isFinite(target.drawX)
             ? target.drawX
-            : (target.cropped ? 0 : Math.round((targetWidth - width) * 0.5)));
+            : (target.cropped ? 0 : Math.round((targetWidth - destinationWidth) * 0.5)));
       const y = Number.isFinite(options.y)
         ? options.y
         : (Number.isFinite(target.drawY)
             ? target.drawY
-            : (target.cropped ? 0 : Math.round((targetHeight - height) * 0.5)));
+            : (target.cropped ? 0 : Math.round((targetHeight - destinationHeight) * 0.5)));
       const memoryReport = this.finalizeImportMemoryReport(options.importMemoryReport, {
         drawX: x,
         drawY: y,
+        drawHeight: destinationHeight,
+        drawWidth: destinationWidth,
         layerId: target.layerId || options.layerId || "",
         sourceHeight: height,
         sourceWidth: width,
@@ -820,7 +830,7 @@ void main() {
 
         gl.useProgram(program);
         gl.uniform2f(uniforms.docResolution, targetWidth, targetHeight);
-        gl.uniform4f(uniforms.destinationRect, x, y, width, height);
+        gl.uniform4f(uniforms.destinationRect, x, y, destinationWidth, destinationHeight);
         gl.uniform1i(uniforms.texture, 0);
 
         gl.bindVertexArray(this.quad.vao);

@@ -360,11 +360,16 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
 
         const sourceWidth = Math.max(1, Math.round(options.sourceWidth || 1));
         const sourceHeight = Math.max(1, Math.round(options.sourceHeight || 1));
+        const documentWidth = Math.max(1, Math.round(renderer.width || 1));
+        const documentHeight = Math.max(1, Math.round(renderer.height || 1));
+        const fitScale = Math.min(1, documentWidth / sourceWidth, documentHeight / sourceHeight);
+        const drawWidth = Math.max(1, Math.min(documentWidth, Math.floor(sourceWidth * fitScale)));
+        const drawHeight = Math.max(1, Math.min(documentHeight, Math.floor(sourceHeight * fitScale)));
         const rect = renderer.getClampedDocumentRect?.({
-          x: Math.round((renderer.width - sourceWidth) * 0.5),
-          y: Math.round((renderer.height - sourceHeight) * 0.5),
-          width: sourceWidth,
-          height: sourceHeight,
+          x: Math.round((documentWidth - drawWidth) * 0.5),
+          y: Math.round((documentHeight - drawHeight) * 0.5),
+          width: drawWidth,
+          height: drawHeight,
         });
         const target = rect ? renderer.createRasterTargetForRect(rect, [0, 0, 0, 0], 2) : null;
 
@@ -379,6 +384,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
 
         return {
           ...target,
+          drawHeight,
+          drawWidth,
           drawX: rect.x - target.x,
           drawY: rect.y - target.y,
           layerId: options.layerId,
