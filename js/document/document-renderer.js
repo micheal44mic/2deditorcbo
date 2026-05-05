@@ -4937,40 +4937,47 @@ void main() {
       const alphaThreshold = Number.isFinite(options.alphaThreshold)
         ? Math.max(0, Math.min(255, options.alphaThreshold))
         : 2;
-      const samples = this.getPuppetAlphaSamples(target, sampleCols, sampleRows);
-      let minCol = sampleCols;
-      let minRow = sampleRows;
-      let maxCol = -1;
-      let maxRow = -1;
+      const pixelPerfect = options.pixelPerfect === true;
+      let coarseRect = null;
 
-      for (let row = 0; row < sampleRows; row += 1) {
-        for (let col = 0; col < sampleCols; col += 1) {
-          if (samples[row * sampleCols + col] > alphaThreshold) {
-            minCol = Math.min(minCol, col);
-            minRow = Math.min(minRow, row);
-            maxCol = Math.max(maxCol, col);
-            maxRow = Math.max(maxRow, row);
+      if (pixelPerfect) {
+        coarseRect = { x: 0, y: 0, width: targetWidth, height: targetHeight };
+      } else {
+        const samples = this.getPuppetAlphaSamples(target, sampleCols, sampleRows);
+        let minCol = sampleCols;
+        let minRow = sampleRows;
+        let maxCol = -1;
+        let maxRow = -1;
+
+        for (let row = 0; row < sampleRows; row += 1) {
+          for (let col = 0; col < sampleCols; col += 1) {
+            if (samples[row * sampleCols + col] > alphaThreshold) {
+              minCol = Math.min(minCol, col);
+              minRow = Math.min(minRow, row);
+              maxCol = Math.max(maxCol, col);
+              maxRow = Math.max(maxRow, row);
+            }
           }
         }
-      }
 
-      if (maxCol < 0 || maxRow < 0) {
-        return null;
-      }
+        if (maxCol < 0 || maxRow < 0) {
+          return null;
+        }
 
-      const padCells = Number.isFinite(options.padCells) ? Math.max(0, Math.floor(options.padCells)) : 2;
-      const paddedMinCol = Math.max(0, minCol - padCells);
-      const paddedMinRow = Math.max(0, minRow - padCells);
-      const paddedMaxCol = Math.min(sampleCols - 1, maxCol + padCells);
-      const paddedMaxRow = Math.min(sampleRows - 1, maxRow + padCells);
-      const cellWidth = targetWidth / sampleCols;
-      const cellHeight = targetHeight / sampleRows;
-      const coarseRect = bounds?.getClampedRasterBox?.({
-        x: paddedMinCol * cellWidth,
-        y: paddedMinRow * cellHeight,
-        width: (paddedMaxCol - paddedMinCol + 1) * cellWidth,
-        height: (paddedMaxRow - paddedMinRow + 1) * cellHeight,
-      }, targetWidth, targetHeight);
+        const padCells = Number.isFinite(options.padCells) ? Math.max(0, Math.floor(options.padCells)) : 2;
+        const paddedMinCol = Math.max(0, minCol - padCells);
+        const paddedMinRow = Math.max(0, minRow - padCells);
+        const paddedMaxCol = Math.min(sampleCols - 1, maxCol + padCells);
+        const paddedMaxRow = Math.min(sampleRows - 1, maxRow + padCells);
+        const cellWidth = targetWidth / sampleCols;
+        const cellHeight = targetHeight / sampleRows;
+        coarseRect = bounds?.getClampedRasterBox?.({
+          x: paddedMinCol * cellWidth,
+          y: paddedMinRow * cellHeight,
+          width: (paddedMaxCol - paddedMinCol + 1) * cellWidth,
+          height: (paddedMaxRow - paddedMinRow + 1) * cellHeight,
+        }, targetWidth, targetHeight);
+      }
 
       if (!coarseRect) {
         return null;

@@ -56,7 +56,7 @@ test("document renderer supports raster transform preview and history commit", (
   assert.doesNotMatch(source, /window\.CBO\.history/);
 });
 
-test("raster transform tool uses SVG overlay, resize activation, and deferred commit", () => {
+test("raster transform tool uses SVG overlay, resize/rotate activation, and deferred commit", () => {
   const source = readRepoFile("js", "raster-transform-tool.js");
   const cssSource = readRepoFile("css", "layout.css");
 
@@ -65,7 +65,15 @@ test("raster transform tool uses SVG overlay, resize activation, and deferred co
   assert.match(source, /class: "editor-raster-transform-guide-layer"/);
   assert.match(source, /editor-raster-transform-guide-\$\{guideName\}/);
   assert.match(source, /isResizeToolDetail\(detail = \{\}\)/);
-  assert.match(source, /this\.documentRenderer\?\.getRasterContentBounds\?\.\(layer\.id\)/);
+  assert.match(source, /const ROTATE_TOOL_MODE = "rotate";/);
+  assert.match(source, /const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object\.freeze\(\{/);
+  assert.match(source, /padding: 0,/);
+  assert.match(source, /pixelPerfect: true,/);
+  assert.match(source, /function isRotateToolDetail\(detail = \{\}\)/);
+  assert.match(source, /function getTransformToolMode\(detail = \{\}\)/);
+  assert.match(source, /getPixelTightRasterContentBounds\(layerId\)/);
+  assert.match(source, /this\.documentRenderer\?\.getRasterContentBounds\?\.\(layerId, PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS\)/);
+  assert.match(source, /const bounds = this\.getPixelTightRasterContentBounds\(layer\.id\)/);
   assert.match(source, /this\.documentRenderer\?\.width/);
   assert.match(source, /this\.documentRenderer\?\.height/);
   assert.match(source, /this\.documentRenderer\?\.setRasterTransformPreview\?\.\(/);
@@ -79,6 +87,20 @@ test("raster transform tool uses SVG overlay, resize activation, and deferred co
   assert.match(source, /HANDLE_TO_CORNERS/);
   assert.match(source, /normalizeTransformMode\(mode\)/);
   assert.match(source, /transformMode: this\.transformMode/);
+  assert.match(source, /getQuadCenter\(quad = \[\]\)/);
+  assert.match(source, /const ROTATION_FREE_SNAP_THRESHOLD_RADIANS = Math\.PI \/ 90;/);
+  assert.match(source, /function cleanTrigValue\(value\)/);
+  assert.match(source, /function getSnappedRotationAngle\(angle, options = \{\}\)/);
+  assert.match(source, /function formatRotationDegrees\(radians\)/);
+  assert.match(source, /rotatePointAroundCenter\(point, center, angle\)/);
+  assert.match(source, /getRotatedQuad\(point, event\)/);
+  assert.match(source, /handleRotationInput\(event\)/);
+  assert.match(source, /cbo:raster-transform-rotation-input/);
+  assert.match(source, /setRotationDegrees\(degrees\)/);
+  assert.match(source, /this\.dragState\.mode === "rotate"/);
+  assert.match(source, /getSnappedRotationAngle\(rawDelta, \{ force: event\.shiftKey \}\)/);
+  assert.match(source, /rotationDegrees: formatRotationDegrees\(this\.currentRotationRadians\)/);
+  assert.match(source, /toolMode: this\.activeTool/);
   assert.match(source, /hasPendingTransform\(\)/);
   assert.match(source, /handleRasterTransformAction\(event\)/);
   assert.match(source, /window\.addEventListener\("cbo:before-history-action", this\.handleBeforeHistoryAction\)/);

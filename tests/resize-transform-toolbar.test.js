@@ -7,6 +7,7 @@ const repoRoot = path.resolve(__dirname, "..");
 
 test("resize tool exposes the top transform mode toolbar", () => {
   const resizeButtonSource = fs.readFileSync(path.join(repoRoot, "js", "resize-button.js"), "utf8");
+  const rotateButtonSource = fs.readFileSync(path.join(repoRoot, "js", "rotate-button.js"), "utf8");
   const topToolbarSource = fs.readFileSync(path.join(repoRoot, "js", "top-toolbar.js"), "utf8");
   const topToolbarCss = fs.readFileSync(path.join(repoRoot, "css", "top-toolbar.css"), "utf8");
   const toolbarStart = topToolbarSource.indexOf('<nav class="bottom-toolbar transform-mode-toolbar"');
@@ -14,6 +15,7 @@ test("resize tool exposes the top transform mode toolbar", () => {
   const transformToolbarMarkup = topToolbarSource.slice(toolbarStart, toolbarEnd);
 
   assert.match(resizeButtonSource, /data-tool-mode="resize"/);
+  assert.match(rotateButtonSource, /data-tool-mode="rotate"/);
   assert.match(topToolbarSource, /data-transform-mode-toolbar/);
   assert.match(topToolbarSource, /lucide-scaling/);
   assert.match(topToolbarSource, /M12 3H5a2 2 0 0 0-2 2v14/);
@@ -24,7 +26,14 @@ test("resize tool exposes the top transform mode toolbar", () => {
   assert.match(topToolbarSource, /allowedTransformModes = new Set\(\["free", "perspective"\]\)/);
   assert.match(topToolbarSource, /data-raster-transform-action="cancel"/);
   assert.match(topToolbarSource, /data-raster-transform-action="accept"/);
+  assert.match(topToolbarSource, /data-transform-angle-control/);
+  assert.match(topToolbarSource, /data-transform-angle-input/);
+  assert.match(topToolbarSource, /transform-angle-icon/);
+  assert.match(topToolbarSource, /transform-angle-unit/);
+  assert.match(topToolbarSource, /data-tooltip="ROTATION ANGLE"/);
+  assert.match(topToolbarSource, /aria-label="Rotation angle"/);
   assert.match(topToolbarSource, /cbo:raster-transform-action/);
+  assert.match(topToolbarSource, /cbo:raster-transform-rotation-input/);
   assert.match(topToolbarSource, /cbo:raster-transform-state-change/);
   assert.doesNotMatch(topToolbarSource, /TRASFORMAZIONE LIBERA/);
   assert.doesNotMatch(topToolbarSource, /DISTORSIONE PROSPETTICA/);
@@ -32,7 +41,17 @@ test("resize tool exposes the top transform mode toolbar", () => {
   assert.doesNotMatch(transformToolbarMarkup, /<span>/);
   assert.match(topToolbarSource, /cbo:transform-mode-change/);
   assert.match(topToolbarSource, /label === "RESIZE" \|\| toolMode === "resize"/);
+  assert.match(topToolbarSource, /label === "ROTATE" \|\| toolMode === "rotate"/);
+  assert.match(topToolbarSource, /showTransformModeToolbar\(isResize \|\| isRotate\)/);
+  assert.match(topToolbarSource, /showTransformAngleControl\(isRotateToolActive && detail\.hasBounds === true\)/);
+  assert.match(topToolbarSource, /syncTransformAngleInput\(detail\.rotationDegrees \?\? 0\)/);
   assert.match(topToolbarCss, /\.transform-mode-toolbar/);
+  assert.match(topToolbarCss, /\.transform-angle-control/);
+  assert.match(topToolbarCss, /\.transform-angle-icon/);
+  assert.match(topToolbarCss, /\.transform-angle-unit/);
+  assert.match(topToolbarCss, /\.transform-angle-input/);
+  assert.doesNotMatch(topToolbarCss, /content: "ANGLE"/);
+  assert.doesNotMatch(topToolbarCss, /content: "deg"/);
   assert.match(topToolbarCss, /left: calc\(var\(--left-panel-width\)/);
   assert.match(topToolbarCss, /transform: translateX\(-50%\)/);
   assert.match(topToolbarCss, /width: 37px/);

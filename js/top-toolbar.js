@@ -55,6 +55,14 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       <button class="transform-mode-button" type="button" aria-label="PERSPECTIVE DISTORTION" aria-pressed="false" data-tooltip="PERSPECTIVE DISTORTION" data-transform-mode="perspective">
         ${TRANSFORM_MODE_ICONS.perspectiveDistort}
       </button>
+      <label class="transform-angle-control" data-tooltip="ROTATION ANGLE" data-transform-angle-control hidden>
+        <svg class="transform-angle-icon lucide lucide-rotate-ccw-icon lucide-rotate-ccw" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
+        </svg>
+        <input class="transform-angle-input" type="number" min="-360" max="360" step="1" value="0" aria-label="Rotation angle" autocomplete="off" data-transform-angle-input />
+        <span class="transform-angle-unit" aria-hidden="true">°</span>
+      </label>
       <div class="transform-mode-divider" aria-hidden="true" data-raster-transform-action-divider hidden></div>
       <button class="transform-mode-button transform-action-button transform-action-cancel" type="button" aria-label="ANNULLA TRASFORMAZIONE" data-tooltip="ANNULLA TRASFORMAZIONE" data-raster-transform-action="cancel" hidden disabled>
         ${TRANSFORM_MODE_ICONS.cancelTransform}
@@ -147,6 +155,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const rasterizeTextButton = dock.querySelector("[data-rasterize-text]");
   const transformModeToolbar = dock.querySelector("[data-transform-mode-toolbar]");
   const transformModeButtons = dock.querySelectorAll("[data-transform-mode]");
+  const transformAngleControl = dock.querySelector("[data-transform-angle-control]");
+  const transformAngleInput = dock.querySelector("[data-transform-angle-input]");
   const rasterTransformActionDivider = dock.querySelector("[data-raster-transform-action-divider]");
   const rasterTransformActionButtons = dock.querySelectorAll("[data-raster-transform-action]");
   const quickControls = dock.querySelector("[data-brush-quick-controls]");
@@ -154,7 +164,9 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
   let selectedTransformMode = "free";
   let isResizeToolActive = false;
+  let isRotateToolActive = false;
   let isRasterTransformPending = false;
+  let isSyncingTransformAngle = false;
   const allowedTransformModes = new Set(["free", "perspective"]);
 
   function clamp(value, min, max) {
@@ -288,6 +300,45 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     syncRasterTransformActions();
   }
 
+  function showTransformAngleControl(isVisible) {
+    if (!transformAngleControl) {
+      return;
+    }
+
+    transformAngleControl.hidden = !isVisible;
+  }
+
+  function syncTransformAngleInput(degrees = 0) {
+    if (!transformAngleInput) {
+      return;
+    }
+
+    isSyncingTransformAngle = true;
+    transformAngleInput.value = String(degrees);
+    isSyncingTransformAngle = false;
+  }
+
+  function dispatchTransformAngleInput() {
+    if (!transformAngleInput || isSyncingTransformAngle) {
+      return;
+    }
+
+    const degrees = Number(transformAngleInput.value);
+
+    if (!Number.isFinite(degrees)) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:raster-transform-rotation-input", {
+        detail: {
+          degrees,
+          source: "transform-angle-control",
+        },
+      }),
+    );
+  }
+
   function syncRasterTransformActions() {
     const shouldShow = isResizeToolActive && isRasterTransformPending;
 
@@ -368,6 +419,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   });
 
+  transformAngleInput?.addEventListener("input", dispatchTransformAngleInput);
+
   transformModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       setTransformMode(button.dataset.transformMode, { source: "transform-mode-toolbar" });
@@ -397,14 +450,22 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
     const isBrush = label === "BRUSH" || label === "ERASER" || toolMode === "eraser" || (toolMode === "brush" && syncGroup === "brush");
     const isResize = label === "RESIZE" || toolMode === "resize";
+    const isRotate = label === "ROTATE" || toolMode === "rotate";
 
+    isRotateToolActive = isRotate;
     showBrushQuickControls(isBrush);
-    showTransformModeToolbar(isResize);
+    showTransformModeToolbar(isResize || isRotate);
+    showTransformAngleControl(isRotate);
   });
 
   window.addEventListener("cbo:raster-transform-state-change", (event) => {
+    const detail = event.detail || {};
+
     isResizeToolActive = Boolean(event.detail?.active);
-    isRasterTransformPending = Boolean(event.detail?.pending);
+    isRotateToolActive = detail.toolMode === "rotate";
+    isRasterTransformPending = Boolean(detail.pending);
+    showTransformAngleControl(isRotateToolActive && detail.hasBounds === true);
+    syncTransformAngleInput(detail.rotationDegrees ?? 0);
     syncRasterTransformActions();
   });
 

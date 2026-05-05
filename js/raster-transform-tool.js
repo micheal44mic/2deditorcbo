@@ -1,10 +1,19 @@
 (function registerRasterTransformTool(namespace) {
   const SVG_NS = "http://www.w3.org/2000/svg";
   const RESIZE_TOOL_MODE = "resize";
+  const ROTATE_TOOL_MODE = "rotate";
   const RASTER_ALPHA_HIT_THRESHOLD = 2;
+  const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object.freeze({
+    alphaThreshold: RASTER_ALPHA_HIT_THRESHOLD,
+    padding: 0,
+    pixelPerfect: true,
+  });
   const HANDLE_SIZE = 10;
   const MIN_TRANSFORM_SIZE = 2;
   const GUIDE_PROXIMITY_PX = 3;
+  const ROTATION_SNAP_RADIANS = Math.PI / 12;
+  const ROTATION_FREE_SNAP_THRESHOLD_RADIANS = Math.PI / 90;
+  const TRIG_EPSILON = 1e-10;
   const HANDLE_DEFS = Object.freeze([
     { dir: "nw", cursor: "nwse-resize" },
     { dir: "n", cursor: "ns-resize" },
@@ -65,6 +74,21 @@
     return toolMode === RESIZE_TOOL_MODE || label === RESIZE_TOOL_MODE;
   }
 
+  function isRotateToolDetail(detail = {}) {
+    const label = String(detail.label || "").trim().toLowerCase();
+    const toolMode = String(detail.toolMode || "").trim().toLowerCase();
+
+    return toolMode === ROTATE_TOOL_MODE || label === ROTATE_TOOL_MODE;
+  }
+
+  function getTransformToolMode(detail = {}) {
+    if (isRotateToolDetail(detail)) {
+      return ROTATE_TOOL_MODE;
+    }
+
+    return isResizeToolDetail(detail) ? RESIZE_TOOL_MODE : "";
+  }
+
   function normalizeTransformMode(mode) {
     return String(mode || "").trim().toLowerCase() === "perspective"
       ? "perspective"
@@ -95,6 +119,87 @@
       x: (first.x + second.x) / 2,
       y: (first.y + second.y) / 2,
     };
+  }
+
+  function getQuadCenter(quad = []) {
+    if (!Array.isArray(quad) || quad.length === 0) {
+      return { x: 0, y: 0 };
+    }
+
+    return quad.reduce(
+      (center, point) => ({
+        x: center.x + toFiniteNumber(point?.x, 0) / quad.length,
+        y: center.y + toFiniteNumber(point?.y, 0) / quad.length,
+      }),
+      { x: 0, y: 0 },
+    );
+  }
+
+  function getPointAngleFromCenter(center, point) {
+    return Math.atan2(point.y - center.y, point.x - center.x);
+  }
+
+  function rotatePointAroundCenter(point, center, angle) {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const cos = cleanTrigValue(Math.cos(angle));
+    const sin = cleanTrigValue(Math.sin(angle));
+
+    return {
+      x: center.x + dx * cos - dy * sin,
+      y: center.y + dx * sin + dy * cos,
+    };
+  }
+
+  function snapAngle(angle, increment = ROTATION_SNAP_RADIANS) {
+    return Math.round(angle / increment) * increment;
+  }
+
+  function cleanTrigValue(value) {
+    if (Math.abs(value) < TRIG_EPSILON) {
+      return 0;
+    }
+
+    if (Math.abs(value - 1) < TRIG_EPSILON) {
+      return 1;
+    }
+
+    if (Math.abs(value + 1) < TRIG_EPSILON) {
+      return -1;
+    }
+
+    return value;
+  }
+
+  function getAngleDistance(first, second) {
+    return Math.atan2(Math.sin(first - second), Math.cos(first - second));
+  }
+
+  function getSnappedRotationAngle(angle, options = {}) {
+    const snapped = snapAngle(angle);
+
+    if (options.force === true || Math.abs(getAngleDistance(angle, snapped)) <= ROTATION_FREE_SNAP_THRESHOLD_RADIANS) {
+      return snapped;
+    }
+
+    return angle;
+  }
+
+  function degreesToRadians(degrees) {
+    return (toFiniteNumber(degrees, 0) * Math.PI) / 180;
+  }
+
+  function radiansToDegrees(radians) {
+    return (toFiniteNumber(radians, 0) * 180) / Math.PI;
+  }
+
+  function formatRotationDegrees(radians) {
+    const degrees = radiansToDegrees(radians);
+    const rounded = Math.round(degrees);
+
+    return Math.abs(degrees - rounded) < 0.01
+      ? String(rounded)
+      : String(Math.round(degrees * 10) / 10);
   }
 
   function quadChanged(first = [], second = []) {
@@ -141,6 +246,7 @@
       this.sourceSnapshot = null;
       this.startQuad = null;
       this.currentQuad = null;
+      this.currentRotationRadians = 0;
       this.dragState = null;
       this.isCommitting = false;
       this.camera = { x: 0, y: 0, zoom: 1 };
@@ -151,6 +257,7 @@
       this.handleToolChange = this.handleToolChange.bind(this);
       this.handleTransformModeChange = this.handleTransformModeChange.bind(this);
       this.handleRasterTransformAction = this.handleRasterTransformAction.bind(this);
+      this.handleRotationInput = this.handleRotationInput.bind(this);
       this.handleBeforeHistoryAction = this.handleBeforeHistoryAction.bind(this);
       this.handleCameraChange = this.handleCameraChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
@@ -246,6 +353,7 @@
       window.addEventListener("cbo:tool-change", this.handleToolChange);
       window.addEventListener("cbo:transform-mode-change", this.handleTransformModeChange);
       window.addEventListener("cbo:raster-transform-action", this.handleRasterTransformAction);
+      window.addEventListener("cbo:raster-transform-rotation-input", this.handleRotationInput);
       window.addEventListener("cbo:before-history-action", this.handleBeforeHistoryAction);
       window.addEventListener("cbo:camera-change", this.handleCameraChange);
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
@@ -261,7 +369,11 @@
     }
 
     isActive() {
-      return this.activeTool === RESIZE_TOOL_MODE;
+      return this.activeTool === RESIZE_TOOL_MODE || this.activeTool === ROTATE_TOOL_MODE;
+    }
+
+    isRotateActive() {
+      return this.activeTool === ROTATE_TOOL_MODE;
     }
 
     isTransformableLayer(layer) {
@@ -280,9 +392,14 @@
 
     handleToolChange(event) {
       const detail = event.detail || {};
+      const transformToolMode = getTransformToolMode(detail);
 
-      if (isResizeToolDetail(detail)) {
-        this.activeTool = RESIZE_TOOL_MODE;
+      if (transformToolMode) {
+        if (this.isActive() && this.activeTool !== transformToolMode && this.hasPendingTransform()) {
+          this.commitTransform();
+        }
+
+        this.activeTool = transformToolMode;
         this.activateLayer(this.getActiveLayer());
       } else {
         if (this.isActive()) {
@@ -317,6 +434,20 @@
       } else if (action === "cancel") {
         this.cancelTransform();
       }
+    }
+
+    handleRotationInput(event) {
+      if (!this.isRotateActive()) {
+        return;
+      }
+
+      const degrees = Number(event.detail?.degrees);
+
+      if (!Number.isFinite(degrees)) {
+        return;
+      }
+
+      this.setRotationDegrees(degrees);
     }
 
     handleBeforeHistoryAction(event) {
@@ -419,6 +550,10 @@
       namespace.puppetTransformTool?.rasterizeActivePuppetLayer?.();
     }
 
+    getPixelTightRasterContentBounds(layerId) {
+      return this.documentRenderer?.getRasterContentBounds?.(layerId, PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS) || null;
+    }
+
     activateLayer(layer) {
       this.cancelTransform({ keepGeometry: false });
 
@@ -427,18 +562,20 @@
         this.contentRect = null;
         this.startQuad = null;
         this.currentQuad = null;
+        this.currentRotationRadians = 0;
         this.render();
         return false;
       }
 
       this.rasterizePuppetIfNeeded(layer);
 
-      const bounds = this.documentRenderer?.getRasterContentBounds?.(layer.id);
+      const bounds = this.getPixelTightRasterContentBounds(layer.id);
 
       this.activeLayerId = layer.id;
       this.contentRect = bounds || null;
       this.startQuad = bounds ? rectToQuad(bounds) : null;
       this.currentQuad = bounds ? cloneValue(this.startQuad) : null;
+      this.currentRotationRadians = 0;
       this.render();
 
       return Boolean(bounds);
@@ -450,6 +587,7 @@
       this.contentRect = null;
       this.startQuad = null;
       this.currentQuad = null;
+      this.currentRotationRadians = 0;
       this.render();
     }
 
@@ -497,6 +635,7 @@
       }
 
       this.dragState = null;
+      this.currentRotationRadians = 0;
 
       if (options.keepGeometry !== false && this.startQuad) {
         this.currentQuad = cloneValue(this.startQuad);
@@ -533,11 +672,12 @@
       const layer = this.getActiveLayer();
 
       if (didCommit && this.isTransformableLayer(layer)) {
-        const bounds = this.documentRenderer?.getRasterContentBounds?.(layer.id);
+        const bounds = this.getPixelTightRasterContentBounds(layer.id);
 
         this.contentRect = bounds || null;
         this.startQuad = bounds ? rectToQuad(bounds) : null;
         this.currentQuad = bounds ? cloneValue(this.startQuad) : null;
+        this.currentRotationRadians = 0;
       }
 
       this.isCommitting = false;
@@ -603,9 +743,12 @@
       }
 
       const point = this.clientToDocumentPoint(event.clientX, event.clientY);
-      const mode = handle
-        ? (this.transformMode === "free" ? "scale" : "distort")
-        : "move";
+      const rotationCenter = getQuadCenter(this.currentQuad);
+      const mode = this.isRotateActive()
+        ? "rotate"
+        : handle
+          ? (this.transformMode === "free" ? "scale" : "distort")
+          : "move";
 
       this.dragState = {
         didChange: false,
@@ -613,9 +756,12 @@
         handleIndex: handle ? Number(handle.dataset.handleIndex) : -1,
         mode,
         pointerId: event.pointerId,
+        rotationCenter,
+        startAngle: getPointAngleFromCenter(rotationCenter, point),
         startPoint: point,
         startQuad: cloneValue(this.currentQuad),
         startRect: getRectFromQuad(this.currentQuad),
+        startRotationRadians: this.currentRotationRadians,
       };
       this.svg.setPointerCapture?.(event.pointerId);
       this.updatePreview();
@@ -673,6 +819,8 @@
         }));
       } else if (this.dragState.mode === "scale") {
         this.currentQuad = this.getScaledQuad(dx, dy, event);
+      } else if (this.dragState.mode === "rotate") {
+        this.currentQuad = this.getRotatedQuad(point, event);
       } else {
         this.currentQuad = this.getDistortedQuad(dx, dy);
       }
@@ -770,6 +918,33 @@
       }
 
       return rectToQuad(this.getSnappedScaledRect({ x, y, width, height }, dir, event));
+    }
+
+    getRotatedQuad(point, event) {
+      const center = this.dragState.rotationCenter || getQuadCenter(this.dragState.startQuad);
+      const currentAngle = getPointAngleFromCenter(center, point);
+      const rawDelta = currentAngle - this.dragState.startAngle;
+      const delta = getSnappedRotationAngle(rawDelta, { force: event.shiftKey });
+
+      this.currentRotationRadians = toFiniteNumber(this.dragState.startRotationRadians, 0) + delta;
+
+      return this.dragState.startQuad.map((item) => rotatePointAroundCenter(item, center, delta));
+    }
+
+    setRotationDegrees(degrees) {
+      if (!this.activeLayerId || !this.startQuad || !this.contentRect) {
+        return false;
+      }
+
+      const radians = degreesToRadians(degrees);
+      const center = getQuadCenter(this.startQuad);
+
+      this.currentRotationRadians = radians;
+      this.currentQuad = this.startQuad.map((item) => rotatePointAroundCenter(item, center, radians));
+      this.render();
+      this.updatePreview();
+
+      return true;
     }
 
     getDistortedQuad(dx, dy) {
@@ -1247,7 +1422,9 @@
         hasBounds: Array.isArray(this.currentQuad),
         layerId: this.activeLayerId || null,
         pending: this.hasPendingTransform(),
+        rotationDegrees: formatRotationDegrees(this.currentRotationRadians),
         source: "raster-transform-tool",
+        toolMode: this.activeTool,
       };
       const stateKey = JSON.stringify(detail);
 
@@ -1292,13 +1469,20 @@
 
       const points = this.currentQuad.map((point) => this.documentToViewportPoint(point.x, point.y));
       const handlePoints = this.getHandlePoints(points);
+      const transformCursor = this.isRotateActive()
+        ? (this.dragState?.mode === "rotate" ? "grabbing" : "grab")
+        : "move";
 
       this.box.setAttribute("points", points.map((point) => `${point.x},${point.y}`).join(" "));
+      this.box.style.cursor = transformCursor;
 
       this.handles.forEach((handle, index) => {
         setSvgElementVisible(handle, true);
         handle.setAttribute("x", handlePoints[index].x - HANDLE_SIZE / 2);
         handle.setAttribute("y", handlePoints[index].y - HANDLE_SIZE / 2);
+        handle.style.cursor = this.isRotateActive()
+          ? transformCursor
+          : HANDLE_DEFS[index].cursor;
       });
 
       this.emitStateChange();

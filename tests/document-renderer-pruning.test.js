@@ -441,6 +441,8 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /const target = this\.getDocumentDrawTarget\(\)/);
   assert.match(source, /estimatePaintTargetCropPotential\(options = \{\}\)/);
   assert.match(source, /getRasterContentBounds\(layerId,/);
+  assert.match(source, /const pixelPerfect = options\.pixelPerfect === true;/);
+  assert.match(source, /coarseRect = \{ x: 0, y: 0, width: targetWidth, height: targetHeight \};/);
   assert.match(source, /coarseOnly: !precise/);
   assert.match(source, /action === "crop-candidate"/);
   assert.match(source, /potentialSavingsBytes/);
