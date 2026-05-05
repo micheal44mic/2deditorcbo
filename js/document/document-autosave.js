@@ -5,8 +5,11 @@
   const SESSIONS_STORE = "sessions";
   const TILES_STORE = "tiles";
   const LATEST_META_KEY = "latest";
+  const PROJECT_NAME_STORAGE_KEY = namespace.documentProjectNameStorageKey || "cbo-project-name";
   const TILE_SIZE = 256;
   const RASTER_LAYER_TYPES = new Set(["paint", "image"]);
+
+  namespace.documentProjectNameStorageKey = PROJECT_NAME_STORAGE_KEY;
 
   let dbPromise = null;
   let isSaving = false;
@@ -186,15 +189,71 @@
 
   function createSummary(session) {
     const document = session?.document || {};
+    const project = session?.project || {};
 
     return {
       height: Math.max(0, Math.round(document.height || 0)),
       layerCount: Math.max(0, Math.round(session?.layerCount || 0)),
+      projectName: typeof project.name === "string" ? project.name : "",
       savedAt: session?.savedAt || "",
       sessionId: session?.id || "",
       tileCount: Math.max(0, Math.round(session?.tileCount || 0)),
       width: Math.max(0, Math.round(document.width || 0)),
     };
+  }
+
+  function normalizeProjectName(value) {
+    return String(value ?? "").trim();
+  }
+
+  function getStoredProjectName() {
+    try {
+      return window.localStorage?.getItem(PROJECT_NAME_STORAGE_KEY) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function setStoredProjectName(name) {
+    try {
+      window.localStorage?.setItem(PROJECT_NAME_STORAGE_KEY, name);
+    } catch (error) {
+      // Storage can be unavailable in private or restricted browser contexts.
+    }
+  }
+
+  function getCurrentProjectName() {
+    const fromApi = typeof namespace.getDocumentProjectName === "function"
+      ? namespace.getDocumentProjectName()
+      : "";
+    const fromInput = document.querySelector(".right-sidebar-project-input")?.value || "";
+
+    return normalizeProjectName(fromApi || fromInput || getStoredProjectName() || namespace.documentProjectName || "");
+  }
+
+  function applyProjectName(projectName, source = "autosave-restore") {
+    const name = normalizeProjectName(projectName);
+
+    namespace.documentProjectName = name;
+
+    if (typeof namespace.setDocumentProjectName === "function") {
+      namespace.setDocumentProjectName(name, { source });
+      return name;
+    }
+
+    setStoredProjectName(name);
+
+    const input = document.querySelector(".right-sidebar-project-input");
+
+    if (input && input.value !== name) {
+      input.value = name;
+    }
+
+    window.dispatchEvent(new CustomEvent("cbo:document-project-change", {
+      detail: { name, source },
+    }));
+
+    return name;
   }
 
   function emitSaveStatus(status, source) {
@@ -295,6 +354,7 @@
 
     const sessionId = createId("session");
     const entries = layerModel.getEntries();
+    const projectName = getCurrentProjectName();
     const rasterLayerIds = Array.from(collectRasterLayerIds(entries));
     const rasterLayers = [];
     const tileRecords = [];
@@ -323,6 +383,9 @@
         entries: cloneValue(entries),
         id: sessionId,
         layerCount: countEntries(entries),
+        project: {
+          name: projectName,
+        },
         rasterLayers,
         referenceLayerId: history?.getReferenceLayerId?.() || null,
         savedAt: new Date().toISOString(),
@@ -562,6 +625,7 @@
       namespace.documentSettings = {
         height: session.document.height,
         presetId: session.document.presetId || "",
+        projectName: applyProjectName(session.project?.name || ""),
         requestedHeight: session.document.requestedHeight || session.document.height,
         requestedWidth: session.document.requestedWidth || session.document.width,
         width: session.document.width,

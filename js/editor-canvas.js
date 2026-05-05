@@ -74,6 +74,7 @@ function createDocumentRecoveryButton(summary) {
   const button = document.createElement("button");
   const label = document.createElement("span");
   const meta = document.createElement("span");
+  const projectName = String(summary?.projectName || "").trim();
   const savedAt = formatAutosaveDate(summary?.savedAt);
   const sizeLabel = `${Math.max(1, Math.round(summary?.width || 1))} x ${Math.max(1, Math.round(summary?.height || 1))}`;
   const layerLabel = `${Math.max(0, Math.round(summary?.layerCount || 0))} layers`;
@@ -82,10 +83,10 @@ function createDocumentRecoveryButton(summary) {
   button.className = "document-start-recovery";
   button.type = "button";
   button.dataset.documentRecovery = "latest";
-  button.setAttribute("aria-label", "Continue saved document");
+  button.setAttribute("aria-label", projectName ? `Continue saved document ${projectName}` : "Continue saved document");
 
   label.className = "document-start-recovery-label";
-  label.textContent = "Continue saved document";
+  label.textContent = projectName || "Continue saved document";
 
   meta.className = "document-start-recovery-meta";
   meta.textContent = [sizeLabel, layerLabel, tileLabel, savedAt].filter(Boolean).join(" | ");

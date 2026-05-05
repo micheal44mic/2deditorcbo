@@ -434,7 +434,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const textShadowBlurField = panel.querySelector("[data-text-shadow-blur-field]");
   const textShadowBlurInput = panel.querySelector("[data-text-shadow-blur]");
   const textShadowBlurValue = panel.querySelector("[data-text-shadow-blur-value]");
-  const storageKey = "cbo-project-name";
+  const storageKey = window.CBO.documentProjectNameStorageKey || "cbo-project-name";
   const fallbackSmudgeSettings = {
     radius: 34,
     opacity: 0.78,
@@ -469,10 +469,56 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   let layerBlendModeOpen = false;
   let layerBlendModeScrollIndex = 0;
 
+  window.CBO.documentProjectNameStorageKey = storageKey;
+
+  function readStoredProjectName() {
+    try {
+      return window.localStorage.getItem(storageKey) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function writeStoredProjectName(name) {
+    try {
+      window.localStorage.setItem(storageKey, name);
+    } catch (error) {
+      // Storage can be disabled; keep the in-memory project name usable.
+    }
+  }
+
+  function getDocumentProjectName() {
+    return projectInput?.value || window.CBO.documentProjectName || readStoredProjectName();
+  }
+
+  function setDocumentProjectName(value, options = {}) {
+    const name = String(value ?? "");
+
+    window.CBO.documentProjectName = name;
+    writeStoredProjectName(name);
+
+    if (projectInput && projectInput.value !== name) {
+      projectInput.value = name;
+    }
+
+    window.dispatchEvent(new CustomEvent("cbo:document-project-change", {
+      detail: {
+        name,
+        source: options.source || "project-sidebar",
+      },
+    }));
+
+    return name;
+  }
+
+  window.CBO.getDocumentProjectName = getDocumentProjectName;
+  window.CBO.setDocumentProjectName = setDocumentProjectName;
+
   if (projectInput) {
-    projectInput.value = window.localStorage.getItem(storageKey) || "";
+    projectInput.value = readStoredProjectName();
+    window.CBO.documentProjectName = projectInput.value;
     projectInput.addEventListener("input", () => {
-      window.localStorage.setItem(storageKey, projectInput.value);
+      setDocumentProjectName(projectInput.value, { source: "project-input" });
     });
   }
 

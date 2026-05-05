@@ -26,8 +26,10 @@ test("document autosave captures layer structure and sparse raster content only"
   const source = readRepoFile("js", "document", "document-autosave.js");
 
   assert.match(source, /history\?\.flushLayerState\?\.\(layerModel\)/);
+  assert.match(source, /const projectName = getCurrentProjectName\(\)/);
   assert.match(source, /entries: cloneValue\(entries\)/);
   assert.match(source, /activeLayerId: layerModel\.activeLayerId \|\| null/);
+  assert.match(source, /project: \{[\s\S]*name: projectName,[\s\S]*\}/);
   assert.match(source, /referenceLayerId: history\?\.getReferenceLayerId\?\.\(\) \|\| null/);
   assert.match(source, /countEntries\(entries\)/);
   assert.match(source, /renderer\.getRasterTargetDocumentRect\?\.\(target\)/);
@@ -67,8 +69,24 @@ test("document autosave restores the latest session before the canvas is started
   assert.match(source, /stage\?\.dataset\.canvasReady === "true"/);
   assert.match(source, /layerModel\?\.setEntries\?\.\(cloneValue\(session\.entries\)/);
   assert.match(source, /restoreRasterLayers\(session, tileRecords\)/);
+  assert.match(source, /projectName: applyProjectName\(session\.project\?\.name \|\| ""\)/);
   assert.match(source, /renderer\.createRasterTargetForRect\?\.\(layerRecord\.rect, \[0, 0, 0, 0\]\)/);
   assert.match(source, /renderer\.restoreRasterSnapshot\?\.\(layerId, snapshot/);
   assert.match(editorCanvasSource, /createDocumentRecoveryButton\(summary\)/);
+  assert.match(editorCanvasSource, /const projectName = String\(summary\?\.projectName \|\| ""\)\.trim\(\)/);
   assert.match(editorCanvasSource, /autosave\.restoreLatest\(\)/);
+});
+
+test("manual document save includes project metadata from the sidebar", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+  const sidebarSource = readRepoFile("js", "right-sidebar.js");
+
+  assert.match(source, /const PROJECT_NAME_STORAGE_KEY = namespace\.documentProjectNameStorageKey \|\| "cbo-project-name"/);
+  assert.match(source, /function getCurrentProjectName\(\)/);
+  assert.match(source, /namespace\.getDocumentProjectName/);
+  assert.match(source, /projectName: typeof project\.name === "string" \? project\.name : ""/);
+  assert.match(source, /window\.dispatchEvent\(new CustomEvent\("cbo:document-project-change"/);
+  assert.match(sidebarSource, /window\.CBO\.getDocumentProjectName = getDocumentProjectName/);
+  assert.match(sidebarSource, /window\.CBO\.setDocumentProjectName = setDocumentProjectName/);
+  assert.match(sidebarSource, /setDocumentProjectName\(projectInput\.value, \{ source: "project-input" \}\)/);
 });
