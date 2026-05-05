@@ -65,8 +65,11 @@ test("document renderer uses analytic anti-aliased quad edge coverage for raster
   assert.match(source, /quadCoverage/);
   assert.match(source, /u_quadEdges\[4\]/);
   assert.match(source, /u_edgeFeatherPixels/);
+  assert.match(source, /u_edgeFeatherPixels <= 0\.0/);
   assert.match(source, /fwidth\s*\(/);
   assert.match(source, /smoothstep\s*\(/);
+  assert.match(source, /getRasterTransformEdgeFeatherPixels\(options = \{\}\)/);
+  assert.match(source, /options\.preserveHardEdges === true/);
   assert.match(source, /const PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE = TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE/);
 });
 
@@ -78,8 +81,10 @@ test("drawTexturedQuad draws an expanded maskable rectangle instead of hard quad
   assert.match(drawBody, /createExpandedQuadDrawVertices\(/);
   assert.match(drawBody, /computeQuadEdgeUniformData\(quad\)/);
   assert.match(drawBody, /computeAffineDestToSourceUvMatrix\(quad\)/);
+  assert.match(drawBody, /const edgeFeatherPixels = this\.getRasterTransformEdgeFeatherPixels\(options\)/);
   assert.match(drawBody, /uniform4fv\(uniforms\.quadEdges, edgeData\)/);
   assert.match(drawBody, /uniformMatrix3fv\(uniforms\.destToSourceUv, false, matrix\)/);
+  assert.match(drawBody, /uniform1f\(uniforms\.edgeFeatherPixels, edgeFeatherPixels\)/);
   assert.doesNotMatch(drawBody, /ensurePuppetProgramInfo\(\)/);
 });
 
@@ -180,6 +185,11 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and defe
   assert.match(source, /this\.setGuideLine\("left", left, 0, left, this\.viewportHeight\)/);
   assert.match(source, /this\.setGuideLine\("top", 0, top, this\.viewportWidth, top\)/);
   assert.match(source, /cbo:raster-transform-state-change/);
+  assert.match(source, /const AXIS_ALIGNED_QUAD_EPSILON = 0\.001;/);
+  assert.match(source, /function isAxisAlignedQuad\(quad = \[\]\)/);
+  assert.match(source, /edgeFeatherPixels: this\.getEdgeFeatherPixelsForQuad\(this\.currentQuad\)/);
+  assert.match(source, /getEdgeFeatherPixelsForQuad\(quad = this\.currentQuad\)/);
+  assert.match(source, /isAxisAlignedQuad\(quad\) \? 0 : undefined/);
   assert.match(cssSource, /\.editor-raster-transform-overlay/);
   assert.match(cssSource, /\.editor-raster-transform-guide/);
   assert.match(cssSource, /stroke: #f05022;/);

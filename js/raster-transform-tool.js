@@ -14,6 +14,7 @@
   const ROTATION_SNAP_RADIANS = Math.PI / 12;
   const ROTATION_FREE_SNAP_THRESHOLD_RADIANS = Math.PI / 90;
   const TRIG_EPSILON = 1e-10;
+  const AXIS_ALIGNED_QUAD_EPSILON = 0.001;
   const HANDLE_DEFS = Object.freeze([
     { dir: "nw", cursor: "nwse-resize" },
     { dir: "n", cursor: "ns-resize" },
@@ -212,6 +213,33 @@
 
       return Math.abs(point.x - other.x) > 0.01 || Math.abs(point.y - other.y) > 0.01;
     });
+  }
+
+  function isAxisAlignedQuad(quad = []) {
+    if (!Array.isArray(quad) || quad.length < 4) {
+      return false;
+    }
+
+    const points = quad.slice(0, 4);
+
+    if (points.some((point) => !Number.isFinite(point?.x) || !Number.isFinite(point?.y))) {
+      return false;
+    }
+
+    const horizontalFirst = (
+      Math.abs(points[0].y - points[1].y) <= AXIS_ALIGNED_QUAD_EPSILON &&
+      Math.abs(points[1].x - points[2].x) <= AXIS_ALIGNED_QUAD_EPSILON &&
+      Math.abs(points[2].y - points[3].y) <= AXIS_ALIGNED_QUAD_EPSILON &&
+      Math.abs(points[3].x - points[0].x) <= AXIS_ALIGNED_QUAD_EPSILON
+    );
+    const verticalFirst = (
+      Math.abs(points[0].x - points[1].x) <= AXIS_ALIGNED_QUAD_EPSILON &&
+      Math.abs(points[1].y - points[2].y) <= AXIS_ALIGNED_QUAD_EPSILON &&
+      Math.abs(points[2].x - points[3].x) <= AXIS_ALIGNED_QUAD_EPSILON &&
+      Math.abs(points[3].y - points[0].y) <= AXIS_ALIGNED_QUAD_EPSILON
+    );
+
+    return horizontalFirst || verticalFirst;
   }
 
   function setSvgElementVisible(element, isVisible) {
@@ -613,6 +641,7 @@
       }
 
       this.documentRenderer?.setRasterTransformPreview?.({
+        edgeFeatherPixels: this.getEdgeFeatherPixelsForQuad(this.currentQuad),
         layerId: this.activeLayerId,
         opacity: 1,
         quad: this.currentQuad,
@@ -658,6 +687,7 @@
 
       const didCommit = this.documentRenderer?.commitRasterTransform?.({
         destQuad: this.currentQuad,
+        edgeFeatherPixels: this.getEdgeFeatherPixelsForQuad(this.currentQuad),
         layerId: this.activeLayerId,
         source: "raster-transform",
         sourceRect: this.contentRect,
@@ -684,6 +714,10 @@
       this.render();
 
       return didCommit;
+    }
+
+    getEdgeFeatherPixelsForQuad(quad = this.currentQuad) {
+      return isAxisAlignedQuad(quad) ? 0 : undefined;
     }
 
     pickLayerAtClient(clientX, clientY) {

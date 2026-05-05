@@ -230,6 +230,11 @@ float signedDistanceToConvexQuad(vec2 point) {
 
 float quadCoverage(vec2 point) {
   float signedDistance = signedDistanceToConvexQuad(point);
+
+  if (u_edgeFeatherPixels <= 0.0) {
+    return signedDistance >= 0.0 ? 1.0 : 0.0;
+  }
+
   float distanceFwidth = max(fwidth(signedDistance), 0.0001);
   float aa = max(0.5 * max(u_edgeFeatherPixels, 0.0) * distanceFwidth, 0.0001);
 
@@ -2203,13 +2208,31 @@ void main() {
       return this.texturedQuad;
     }
 
-    getRasterTransformEdgeAaPaddingForCamera(camera = {}) {
+    getRasterTransformEdgeFeatherPixels(options = {}) {
+      if (Number.isFinite(options.edgeFeatherPixels)) {
+        return Math.max(0, Number(options.edgeFeatherPixels));
+      }
+
+      if (options.preserveHardEdges === true) {
+        return 0;
+      }
+
+      return RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS;
+    }
+
+    getRasterTransformEdgeAaPaddingForCamera(camera = {}, edgeFeatherPixels = RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS) {
+      const featherPixels = Math.max(0, Number(edgeFeatherPixels) || 0);
+
+      if (featherPixels <= 0) {
+        return 0;
+      }
+
       const zoom = Math.abs(Number(camera.zoom));
       const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
 
       return Math.max(
         1,
-        Math.ceil(RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS / safeZoom) + 1,
+        Math.ceil(featherPixels / safeZoom) + 1,
       );
     }
 
@@ -2469,11 +2492,12 @@ void main() {
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
+      const edgeFeatherPixels = this.getRasterTransformEdgeFeatherPixels(options);
       const matrix = this.computeAffineDestToSourceUvMatrix(quad);
       const edgeData = this.computeQuadEdgeUniformData(quad);
       const vertices = this.createExpandedQuadDrawVertices(
         quad,
-        this.getRasterTransformEdgeAaPaddingForCamera(camera),
+        this.getRasterTransformEdgeAaPaddingForCamera(camera, edgeFeatherPixels),
       );
 
       if (!matrix || !edgeData || !vertices) {
@@ -2491,7 +2515,7 @@ void main() {
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniformMatrix3fv(uniforms.destToSourceUv, false, matrix);
       gl.uniform4fv(uniforms.quadEdges, edgeData);
-      gl.uniform1f(uniforms.edgeFeatherPixels, RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS);
+      gl.uniform1f(uniforms.edgeFeatherPixels, edgeFeatherPixels);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
 
@@ -2527,10 +2551,11 @@ void main() {
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
+      const edgeFeatherPixels = this.getRasterTransformEdgeFeatherPixels(options);
       const edgeData = this.computeQuadEdgeUniformData(quad);
       const vertices = this.createExpandedQuadDrawVertices(
         quad,
-        this.getRasterTransformEdgeAaPaddingForCamera(camera),
+        this.getRasterTransformEdgeAaPaddingForCamera(camera, edgeFeatherPixels),
       );
 
       if (!edgeData || !vertices) {
@@ -2548,7 +2573,7 @@ void main() {
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniformMatrix3fv(uniforms.destToSourceUv, false, matrix);
       gl.uniform4fv(uniforms.quadEdges, edgeData);
-      gl.uniform1f(uniforms.edgeFeatherPixels, RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS);
+      gl.uniform1f(uniforms.edgeFeatherPixels, edgeFeatherPixels);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
 
@@ -5108,6 +5133,7 @@ void main() {
       ];
       const didDraw = this.drawTexturedQuad(target.texture, destQuad, {
         camera: { x: 0, y: 0, zoom: 1 },
+        edgeFeatherPixels: 0,
         framebuffer: fullTarget.framebuffer,
         opacity: 1,
         viewportHeight: fullTarget.height,
@@ -5160,6 +5186,7 @@ void main() {
       } else {
         this.rasterTransformPreview = {
           layerId: preview.layerId,
+          edgeFeatherPixels: this.getRasterTransformEdgeFeatherPixels(preview),
           opacity: Number.isFinite(preview.opacity) ? Math.min(1, Math.max(0, preview.opacity)) : 1,
           quad: preview.quad.map((point) => ({
             x: Number.isFinite(point?.x) ? point.x : 0,
@@ -5700,6 +5727,7 @@ void main() {
       }));
       const drawOptions = {
         camera: { x: 0, y: 0, zoom: 1 },
+        edgeFeatherPixels: options.edgeFeatherPixels,
         framebuffer: nextTarget.framebuffer,
         opacity: 1,
         viewportHeight: nextTarget.height,
@@ -5847,6 +5875,7 @@ void main() {
 
       const drawOptions = {
         camera: { x: 0, y: 0, zoom: 1 },
+        edgeFeatherPixels: options.edgeFeatherPixels,
         framebuffer: target.framebuffer,
         opacity: 1,
         viewportHeight: target.height,
@@ -7677,6 +7706,7 @@ void main() {
 
         const drawOptions = {
           camera,
+          edgeFeatherPixels: rasterTransformPreview.edgeFeatherPixels,
           opacity: rasterTransformPreview.opacity * layerOpacity,
           viewportHeight,
           viewportWidth,
