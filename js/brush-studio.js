@@ -1162,12 +1162,17 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     });
   }
 
-  function getMaskValue({ red, green, blue, alpha, invert }) {
-    const sourceAlpha = alpha / 255;
+  function srgbCoverageToLinearByte(value) {
+    const coverage = clamp01(value);
+
+    return clamp(Math.round(Math.pow(coverage, 2.2) * 255), 0, 255);
+  }
+
+  function getMaskValue({ red, green, blue, invert }) {
     const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
     const mask = invert ? 1 - luminance : luminance;
 
-    return clamp(Math.round(mask * sourceAlpha * 255), 0, 255);
+    return srgbCoverageToLinearByte(mask);
   }
 
   function createAlphaDataUrlFromImage(image) {
@@ -1191,15 +1196,20 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     const scanPixels = scanContext.getImageData(0, 0, scanWidth, scanHeight).data;
     let borderLuminance = 0;
     let borderCount = 0;
+    let minAlpha = 255;
+    let maxAlpha = 0;
 
     for (let y = 0; y < scanHeight; y += 1) {
       for (let x = 0; x < scanWidth; x += 1) {
+        const offset = (y * scanWidth + x) * 4;
+        const alpha = scanPixels[offset + 3];
+
+        minAlpha = Math.min(minAlpha, alpha);
+        maxAlpha = Math.max(maxAlpha, alpha);
+
         if (x !== 0 && y !== 0 && x !== scanWidth - 1 && y !== scanHeight - 1) {
           continue;
         }
-
-        const offset = (y * scanWidth + x) * 4;
-        const alpha = scanPixels[offset + 3];
 
         if (alpha <= 8) {
           continue;
@@ -1211,45 +1221,13 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       }
     }
 
-    const invert = borderCount > 0 && borderLuminance / borderCount > 0.55;
-    let minX = scanWidth;
-    let minY = scanHeight;
-    let maxX = -1;
-    let maxY = -1;
-
-    for (let y = 0; y < scanHeight; y += 1) {
-      for (let x = 0; x < scanWidth; x += 1) {
-        const offset = (y * scanWidth + x) * 4;
-        const mask = getMaskValue({
-          red: scanPixels[offset],
-          green: scanPixels[offset + 1],
-          blue: scanPixels[offset + 2],
-          alpha: scanPixels[offset + 3],
-          invert,
-        });
-
-        if (mask <= 18) {
-          continue;
-        }
-
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-      }
-    }
-
-    if (maxX < 0 || maxY < 0) {
-      minX = 0;
-      minY = 0;
-      maxX = scanWidth - 1;
-      maxY = scanHeight - 1;
-    }
-
-    const sourceX = minX / scanScale;
-    const sourceY = minY / scanScale;
-    const sourceWidth = Math.max(1, (maxX - minX + 1) / scanScale);
-    const sourceHeight = Math.max(1, (maxY - minY + 1) / scanScale);
+    const hasSourceAlpha = maxAlpha - minAlpha > 8 && minAlpha < 247;
+    const invert = !hasSourceAlpha && borderCount > 0 && borderLuminance / borderCount > 0.55;
+    const snapAlphaThreshold = hasSourceAlpha ? 1 : 9;
+    const sourceX = 0;
+    const sourceY = 0;
+    const sourceWidth = naturalWidth;
+    const sourceHeight = naturalHeight;
     const tempCanvas = document.createElement("canvas");
     const tempContext = tempCanvas.getContext("2d", { willReadFrequently: true });
     const outputCanvas = document.createElement("canvas");
@@ -1290,14 +1268,14 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         red: imageData.data[index],
         green: imageData.data[index + 1],
         blue: imageData.data[index + 2],
-        alpha: imageData.data[index + 3],
         invert,
       });
+      const coverage = hasSourceAlpha ? imageData.data[index + 3] : mask;
 
       output.data[index] = 255;
       output.data[index + 1] = 255;
       output.data[index + 2] = 255;
-      output.data[index + 3] = mask < 9 ? 0 : mask;
+      output.data[index + 3] = coverage < snapAlphaThreshold ? 0 : coverage;
     }
 
     outputContext.putImageData(output, 0, 0);

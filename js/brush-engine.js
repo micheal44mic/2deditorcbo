@@ -1745,7 +1745,7 @@ void main() {
       }
 
       gl.bindTexture(gl.TEXTURE_2D, this.shapeTexture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -1758,17 +1758,13 @@ void main() {
         gl.UNSIGNED_BYTE,
         image,
       );
-      gl.generateMipmap(gl.TEXTURE_2D);
       gl.bindTexture(gl.TEXTURE_2D, null);
       this.shapeTextureReady = true;
       this.registerBrushTexture(this.shapeTexture, {
         height: Math.max(1, image.naturalHeight || image.height || 1),
         kind: "brushShapeTexture",
         label: "brush shape texture",
-        mipLevels: Math.max(1, Math.floor(Math.log2(Math.max(
-          image.naturalWidth || image.width || 1,
-          image.naturalHeight || image.height || 1,
-        ))) + 1),
+        mipLevels: 1,
         ownerId: "brush-shape-texture",
         ownerType: "cache",
         purgeable: true,

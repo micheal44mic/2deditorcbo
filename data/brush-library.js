@@ -4,7 +4,52 @@ window.CBO = window.CBO || {};
   const BrushDefaults = namespace.BrushDefaults;
   const hardBlendCircleAlphaSrc = "./data/hard-blend-circle-alpha.png";
   const hardBlendCircleAlphaName = "CERCHIO DURO";
+  const softCircleAlphaName = "SOFT";
+  const softCircleAlphaSrc = createSoftCircleAlphaSrc();
   let brushSequence = 0;
+
+  function createSoftCircleAlphaSrc() {
+    const size = 512;
+    const hardness = 3;
+
+    if (typeof document === "undefined") {
+      return hardBlendCircleAlphaSrc;
+    }
+
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+
+    if (!context) {
+      return hardBlendCircleAlphaSrc;
+    }
+
+    canvas.width = size;
+    canvas.height = size;
+
+    const imageData = context.createImageData(size, size);
+    const data = imageData.data;
+    const center = (size - 1) * 0.5;
+    const radius = center - 1;
+
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const offset = (y * size + x) * 4;
+        const isOuterFrame = x === 0 || y === 0 || x === size - 1 || y === size - 1;
+        const distance = Math.hypot(x - center, y - center);
+        const r = distance / Math.max(1, radius);
+        const coverage = isOuterFrame || r >= 1 ? 0 : Math.pow(Math.max(0, 1 - r * r), hardness);
+
+        data[offset] = 255;
+        data[offset + 1] = 255;
+        data[offset + 2] = 255;
+        data[offset + 3] = Math.round(coverage * 255);
+      }
+    }
+
+    context.putImageData(imageData, 0, 0);
+
+    return canvas.toDataURL("image/png");
+  }
 
   function normalizeSettings(settings = {}) {
     return BrushDefaults?.createSettings
@@ -67,11 +112,28 @@ window.CBO = window.CBO || {};
     wetnessJitter: 0,
   });
 
+  const softSettings = normalizeSettings({
+    ...hardBlendSettings,
+    radius: 72,
+    opacity: 1,
+    renderingMode: "uniform-glaze",
+    flow: 0.1,
+    spacing: 0.04,
+    shapeAlphaSrc: softCircleAlphaSrc,
+    shapeAlphaName: softCircleAlphaName,
+    grainEnabled: false,
+  });
+
   const brushes = {
     "hard-blend": {
       id: "hard-blend",
       name: "FUSIONE DURO",
       settings: cloneSettings(hardBlendSettings),
+    },
+    soft: {
+      id: "soft",
+      name: "SOFT",
+      settings: cloneSettings(softSettings),
     },
   };
 
@@ -79,7 +141,7 @@ window.CBO = window.CBO || {};
     {
       id: "essential",
       name: "ESSENTIAL PACK",
-      brushIds: ["hard-blend"],
+      brushIds: ["hard-blend", "soft"],
     },
   ];
 
@@ -214,6 +276,7 @@ window.CBO = window.CBO || {};
       return brush ? cloneSettings(brush.settings) : null;
     },
     hardBlendSettings: cloneSettings(hardBlendSettings),
+    softSettings: cloneSettings(softSettings),
     updateBrushSettings,
   };
 })(window.CBO);

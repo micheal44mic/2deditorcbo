@@ -1,0 +1,250 @@
+CONTESTO PER ESPERTO: PENNELLO MORBIDO / SOFT BRUSH
+===================================================
+
+Questo documento serve a spiegare il problema a una persona esterna che non puo' vedere il nostro codice.
+Il progetto e' un editor 2D nel browser con un motore pennelli WebGL2. L'obiettivo e' ottenere un pennello morbido tipo Procreate: un timbro circolare con centro pieno e decadimento radiale molto morbido, senza bordi quadrati, senza bordi ottagonali, e con accumulo naturale quando si passa piu' volte.
+
+AGGIORNAMENTO DOPO FEEDBACK ESPERTO
+-----------------------------------
+
+Dopo la revisione esterna, la direzione corretta e' stata confermata:
+- le shape devono arrivare al renderer gia' normalizzate come coverage in alpha;
+- lo shader non deve contenere fallback storiche tipo "se e' grayscale usa luminanza";
+- il preset Soft deve usare una texture generata matematicamente in JavaScript, poi caricata come normale bitmap dal motore WebGL;
+- le shape morbide non devono usare mipmap e non devono subire autocrop aggressivo.
+
+Quindi il piano definitivo e':
+1. Import: convertire sempre in RGBA bianco + alpha coverage.
+2. Renderer: leggere solo texture(...).a.
+3. Soft preset: generare alpha 512x512 con curva radiale polinomiale e bordo esterno a zero.
+4. Soft preset: spacing circa 4%, flow circa 10%, opacity 100%.
+
+
+PROBLEMA OSSERVATO
+------------------
+
+1. Con una shape alpha trasparente, il pennello veniva tagliato male: il cerchio sfumato sembrava quasi ottagonale o con lati piatti.
+
+2. Con l'immagine "morbido.png", il pennello diventava quadrato.
+   Questa immagine e' visivamente un cerchio morbido su sfondo nero, ma tecnicamente e' un PNG RGB opaco:
+   - alpha = 255 su tutta l'immagine
+   - nero ai bordi
+   - bianco al centro
+
+   Se un motore brush legge solo il canale alpha per decidere la forma, questa immagine significa:
+   "tutto il quadrato e' pieno", quindi il risultato diventa quadrato.
+
+
+COME FUNZIONA ORA IL MOTORE PENNELLI, IN SINTESI
+------------------------------------------------
+
+Il motore usa un'immagine "shape alpha" come texture del timbro.
+Ogni dab/stamp e' una quad WebGL, cioe' un quadrato. Il framment shader deve rendere invisibili i pixel esterni alla shape usando una coverage/mask.
+
+La parte concettuale e':
+
+  shape texture -> coverage -> alpha del dab -> compositing sul canvas
+
+Il problema e' quindi tutto nella coverage:
+- se coverage arriva dall'alpha corretto, il quadrato WebGL sparisce e resta il cerchio morbido;
+- se coverage e' 1 ovunque, si vede tutto il quadrato;
+- se coverage viene sogliata/croppata troppo, si perdono le code morbide e il bordo sembra tagliato.
+
+
+COSA HO FATTO IO, E COSA POTREBBE ESSERE SBAGLIATO
+--------------------------------------------------
+
+Ho fatto tre interventi principali.
+
+1. In import shape alpha ho ridotto il taglio delle alpha basse.
+   Prima l'import cercava il bounding box della shape usando una soglia circa 18/255 e poi azzerava sotto circa 9/255.
+   Per un pennello morbido questo e' aggressivo: proprio le alpha basse sono la "coda" del morbido.
+
+   Modifica fatta:
+   - se il PNG ha gia' alpha reale, preservo alpha basse;
+   - se invece non ha alpha reale, mantengo una logica di maschera da luminanza.
+
+   Possibile errore:
+   - una soglia troppo bassa puo' conservare rumore residuo ai bordi;
+   - una soglia troppo alta taglia il soft falloff.
+   Serve decidere una policy corretta: per brush morbidi forse non bisogna autocroppare affatto, oppure bisogna usare un padding/falloff ben definito.
+
+2. Ho convertito "morbido.png" in un asset alpha vero.
+   Ho creato un PNG "soft-circle-alpha.png" in cui:
+   - RGB = bianco
+   - alpha = luminanza dell'immagine originale
+
+   Questa e' la forma piu' corretta per una shape alpha: il colore non conta, la trasparenza contiene il cerchio morbido.
+
+   Possibile errore:
+   - conversione fatta in sRGB/luminanza byte senza ragionare su linear/gamma;
+   - falloff forse non corrisponde a Procreate;
+   - centro, raggio, curva di decadimento e risposta al flow non sono stati calibrati artisticamente.
+
+3. Avevo aggiunto una fallback nel motore: se la shape texture era RGB opaca ma grayscale, lo shader poteva campionare la luminanza invece dell'alpha.
+   Dopo il feedback esperto, questa e' stata identificata come architetturalmente sbagliata.
+   La fallback va rimossa: la conversione deve avvenire all'import o in generazione preset, non nel fragment shader.
+
+
+FILE / COMPONENTI COINVOLTI
+---------------------------
+
+I nomi dei file nel progetto sono questi, ma l'esperto non deve per forza vederli:
+
+- js/brush-engine.js
+  Motore WebGL2 del pennello. Qui lo shader campiona la shape texture e calcola coverage/alpha.
+
+- js/brush-studio.js
+  UI e import della shape alpha. Qui vengono importate immagini esterne e convertite in data URL alpha.
+
+- data/brush-library.js
+  Libreria preset dei brush. Qui ho aggiunto il preset "SOFT".
+
+- data/soft-circle-alpha.png
+  Asset creato da "morbido.png", convertendo luminanza -> alpha.
+
+
+SNIPPET CONCETTUALE DELLO SHADER ATTUALE
+----------------------------------------
+
+Prima il motore faceva concettualmente:
+
+  shape = texture(shapeTexture, uv).a;
+
+Questo fallisce con PNG opachi bianco/nero, perche' alpha = 1 ovunque.
+
+La soluzione corretta e':
+
+  shape = texture(shapeTexture, uv).a;
+
+Sempre. Se un input e' opaco grayscale, deve essere convertito prima in una texture RGBA bianca con alpha = luminanza/coverage.
+
+Domanda per esperto:
+La risposta ricevuta e': convertire sempre all'import in un formato interno unico, per esempio RGBA bianco con alpha = coverage.
+
+
+COME DOVREBBE ESSERE FATTO UN PENNELLO MORBIDO TIPO PROCREATE
+--------------------------------------------------------------
+
+Un pennello morbido di qualita' di solito non e' solo "un'immagine sfocata".
+Servono almeno questi elementi:
+
+1. Shape/stamp
+   - Texture quadrata solo come contenitore.
+   - Coverage circolare morbida nel canale alpha o in un canale mask dedicato.
+   - Bordi esterni veramente a zero alpha, senza residui quadrati.
+   - Padding sufficiente attorno al cerchio per non tagliare la sfumatura.
+
+2. Falloff
+   - Il decadimento radiale deve essere calibrato.
+   - Non basta un blur generico: serve una curva tipo smoothstep/pow/gaussiana controllata.
+   - Il centro puo' essere piu' o meno pieno a seconda che si voglia airbrush, soft round, glaze, ecc.
+
+3. Spacing
+   - Per un soft brush deve essere basso, altrimenti si vedono i timbri.
+   - Indicativamente 1-10% del diametro per un tratto continuo molto morbido.
+
+4. Flow / opacity / buildup
+   - Opacity e flow non sono la stessa cosa.
+   - Un brush tipo Procreate spesso accumula gradualmente: passaggi multipli intensificano il colore.
+   - Se il blending e' sbagliato, il brush sembra una macchia piatta o un alone sporco.
+
+5. Premultiplied alpha
+   - Il render dovrebbe essere coerente:
+     output premoltiplicato se la pipeline usa premultiplied alpha.
+   - Formula tipica nel fragment shader:
+       outColor = vec4(color.rgb * alpha, alpha)
+     se il blend usa premultiplied alpha.
+
+6. Mipmaps / filtering
+   - LINEAR filtering e mipmap possono aiutare, ma possono anche cambiare il bordo.
+   - CLAMP_TO_EDGE e alpha zero ai bordi sono importanti per evitare bleeding quadrato.
+
+7. Gamma / linear
+   - Se si converte una immagine grayscale in alpha usando valori sRGB byte, il falloff percepito puo' non essere quello desiderato.
+   - Potrebbe servire correggere la curva di alpha:
+       alpha = pow(luminance, gamma)
+     oppure generare proceduralmente un radial falloff.
+
+
+IPOTESI DI SOLUZIONE MIGLIORE
+-----------------------------
+
+Secondo me una soluzione piu' robusta sarebbe:
+
+1. Normalizzare tutte le shape importate in un formato interno unico:
+   - canvas 512x512 o 1024x1024
+   - RGB sempre bianco
+   - alpha = coverage
+   - bordi a alpha 0
+
+2. Se l'immagine importata ha alpha reale:
+   - usare alpha come coverage
+   - ignorare RGB per la shape
+
+3. Se l'immagine importata e' opaca ma grayscale:
+   - usare luminanza come coverage
+   - NON passare l'immagine RGB originale direttamente al motore
+
+4. Evitare crop aggressivo sui brush morbidi.
+   Meglio:
+   - mantenere l'intero quadrato;
+   - oppure crop solo se alpha/luminanza e' veramente zero per un margine ampio;
+   - aggiungere padding fisso;
+   - non sogliare via le code morbide.
+
+5. Per il preset "Soft", valutare una shape procedurale invece di una bitmap:
+   - alpha(r) = exp(-k * r^2), oppure
+   - alpha(r) = 1 - smoothstep(innerRadius, outerRadius, r), con curva pow.
+
+   Esempio concettuale:
+
+     r = distance(uv, center) / radius
+     alpha = exp(-r*r*4.0)
+     alpha = clamp(alpha, 0, 1)
+
+   Questo elimina errori di crop, gamma e asset.
+
+
+DOMANDE SPECIFICHE PER L'ESPERTO
+--------------------------------
+
+1. Per una shape alpha morbida tipo Procreate, e' meglio usare una bitmap RGBA o un falloff procedurale nello shader?
+
+2. Se usiamo bitmap, quale curva alpha consigli?
+   - gaussian?
+   - smoothstep?
+   - pow/sRGB corrected?
+
+3. Il crop automatico sulle shape alpha va rimosso per i brush morbidi?
+
+4. Conviene convertire qualunque input opaco grayscale in alpha all'import, evitando la fallback luminance nel render?
+
+5. Che valori iniziali consigli per:
+   - spacing
+   - flow
+   - opacity
+   - blending / buildup
+   - dimensione texture alpha
+
+6. Come evitare definitivamente il bordo quadrato?
+   Punti sospetti:
+   - alpha non zero ai bordi della texture
+   - shader che legge alpha pieno da una maschera opaca
+   - mipmap/filtering che pesca colore/alpha dai bordi
+   - crop/soglia che altera la coda del falloff
+
+
+RIASSUNTO BREVE
+---------------
+
+L'errore principale e' stato trattare "immagine visivamente nera ai bordi" come se significasse "trasparente ai bordi".
+In grafica raster non e' cosi': nero opaco resta opaco. Per un brush shape, la forma deve stare in alpha/coverage, non nel colore.
+
+Il fix attuale prova a:
+- preservare alpha basse per PNG trasparenti;
+- convertire morbido.png in alpha vera;
+- aggiungere un preset SOFT;
+- rimuovere la fallback luminance dal motore e far leggere solo alpha.
+
+Pero' serve una revisione esperta per ottenere un comportamento davvero simile a Procreate: falloff, flow, buildup, gamma e import shape devono essere progettati insieme.
