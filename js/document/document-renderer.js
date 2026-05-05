@@ -5,6 +5,8 @@
   const RASTER_HISTORY_TILE_SIZE = 256;
   const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
   const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
+  const RASTER_WARP_MESH_COLS = 64;
+  const RASTER_WARP_MESH_ROWS = 64;
   const RASTER_MIB = 1024 * 1024;
   const RASTER_OPERATION_MEMORY_POLICY = Object.freeze({
     hugeCoverage: 0.35,
@@ -951,6 +953,7 @@ void main() {
       this.previewCacheReady = false;
       this.previewCacheReason = "init";
       this.texturedQuad = null;
+      this.rasterWarpMesh = null;
       this.programInfo = null;
       this.texturedQuadProgramInfo = null;
       this.puppetProgramInfo = null;
@@ -2208,6 +2211,106 @@ void main() {
       return this.texturedQuad;
     }
 
+    deleteRasterWarpMeshResource() {
+      const resource = this.rasterWarpMesh;
+
+      if (!resource) {
+        return;
+      }
+
+      const gl = this.gl;
+
+      if (resource.vbo) {
+        gl.deleteBuffer(resource.vbo);
+      }
+
+      if (resource.ebo) {
+        gl.deleteBuffer(resource.ebo);
+      }
+
+      if (resource.vao) {
+        gl.deleteVertexArray(resource.vao);
+      }
+
+      this.rasterWarpMesh = null;
+    }
+
+    createRasterWarpMeshResource(cols = RASTER_WARP_MESH_COLS, rows = RASTER_WARP_MESH_ROWS) {
+      const gl = this.gl;
+      const vao = gl.createVertexArray();
+      const vbo = gl.createBuffer();
+      const ebo = gl.createBuffer();
+      const vertices = new Float32Array((cols + 1) * (rows + 1) * 4);
+      const indices = new Uint32Array(cols * rows * 6);
+      let indexOffset = 0;
+
+      if (!vao || !vbo || !ebo) {
+        if (vao) {
+          gl.deleteVertexArray(vao);
+        }
+
+        if (vbo) {
+          gl.deleteBuffer(vbo);
+        }
+
+        if (ebo) {
+          gl.deleteBuffer(ebo);
+        }
+
+        throw new Error("Impossibile creare la mesh raster warp WebGL2.");
+      }
+
+      for (let y = 0; y < rows; y += 1) {
+        for (let x = 0; x < cols; x += 1) {
+          const a = y * (cols + 1) + x;
+          const b = a + 1;
+          const c = a + cols + 1;
+          const d = c + 1;
+
+          indices[indexOffset++] = a;
+          indices[indexOffset++] = c;
+          indices[indexOffset++] = b;
+          indices[indexOffset++] = b;
+          indices[indexOffset++] = c;
+          indices[indexOffset++] = d;
+        }
+      }
+
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, vertices.byteLength, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+      gl.enableVertexAttribArray(1);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+      this.rasterWarpMesh = {
+        cols,
+        ebo,
+        indexCount: indices.length,
+        indices,
+        rows,
+        vao,
+        vbo,
+        vertices,
+      };
+
+      return this.rasterWarpMesh;
+    }
+
+    ensureRasterWarpMeshResource(cols = RASTER_WARP_MESH_COLS, rows = RASTER_WARP_MESH_ROWS) {
+      if (this.rasterWarpMesh?.cols === cols && this.rasterWarpMesh?.rows === rows) {
+        return this.rasterWarpMesh;
+      }
+
+      this.deleteRasterWarpMeshResource();
+      return this.createRasterWarpMeshResource(cols, rows);
+    }
+
     getRasterTransformEdgeFeatherPixels(options = {}) {
       if (Number.isFinite(options.edgeFeatherPixels)) {
         return Math.max(0, Number(options.edgeFeatherPixels));
@@ -2478,6 +2581,198 @@ void main() {
         c10 * inverseDet, c11 * inverseDet, c12 * inverseDet,
         c20 * inverseDet, c21 * inverseDet, c22 * inverseDet,
       ]);
+    }
+
+    normalizeRasterWarpControlPoints(controlPoints) {
+      if (!Array.isArray(controlPoints) || controlPoints.length !== 4) {
+        return null;
+      }
+
+      const normalized = [];
+
+      for (let row = 0; row < 4; row += 1) {
+        if (!Array.isArray(controlPoints[row]) || controlPoints[row].length !== 4) {
+          return null;
+        }
+
+        normalized[row] = [];
+
+        for (let col = 0; col < 4; col += 1) {
+          const point = controlPoints[row][col];
+          const x = Number(point?.x);
+          const y = Number(point?.y);
+
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return null;
+          }
+
+          normalized[row][col] = { x, y };
+        }
+      }
+
+      return normalized;
+    }
+
+    getRasterWarpBernstein(index, t) {
+      const clampedT = Math.min(1, Math.max(0, Number(t) || 0));
+      const inverse = 1 - clampedT;
+
+      if (index === 0) {
+        return inverse * inverse * inverse;
+      }
+
+      if (index === 1) {
+        return 3 * clampedT * inverse * inverse;
+      }
+
+      if (index === 2) {
+        return 3 * clampedT * clampedT * inverse;
+      }
+
+      return clampedT * clampedT * clampedT;
+    }
+
+    evaluateRasterWarpSurface(u, v, controlPoints) {
+      let x = 0;
+      let y = 0;
+
+      for (let row = 0; row < 4; row += 1) {
+        const rowWeight = this.getRasterWarpBernstein(row, v);
+
+        for (let col = 0; col < 4; col += 1) {
+          const point = controlPoints[row][col];
+          const weight = rowWeight * this.getRasterWarpBernstein(col, u);
+
+          x += point.x * weight;
+          y += point.y * weight;
+        }
+      }
+
+      return { x, y };
+    }
+
+    getRasterWarpBounds(controlPoints) {
+      const points = this.normalizeRasterWarpControlPoints(controlPoints);
+
+      if (!points) {
+        return null;
+      }
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (let row = 0; row < 4; row += 1) {
+        for (let col = 0; col < 4; col += 1) {
+          const point = points[row][col];
+
+          minX = Math.min(minX, point.x);
+          minY = Math.min(minY, point.y);
+          maxX = Math.max(maxX, point.x);
+          maxY = Math.max(maxY, point.y);
+        }
+      }
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+        return null;
+      }
+
+      return {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+      };
+    }
+
+    offsetRasterWarpControlPoints(controlPoints, dx = 0, dy = 0) {
+      const points = this.normalizeRasterWarpControlPoints(controlPoints);
+
+      if (!points) {
+        return null;
+      }
+
+      return points.map((row) =>
+        row.map((point) => ({
+          x: point.x + dx,
+          y: point.y + dy,
+        }))
+      );
+    }
+
+    updateRasterWarpMeshVertices(resource, controlPoints) {
+      const vertices = resource?.vertices;
+
+      if (!vertices) {
+        return false;
+      }
+
+      const cols = resource.cols;
+      const rows = resource.rows;
+      let offset = 0;
+
+      for (let gridY = 0; gridY <= rows; gridY += 1) {
+        const v = gridY / rows;
+
+        for (let gridX = 0; gridX <= cols; gridX += 1) {
+          const u = gridX / cols;
+          const point = this.evaluateRasterWarpSurface(u, v, controlPoints);
+
+          vertices[offset] = point.x;
+          vertices[offset + 1] = point.y;
+          vertices[offset + 2] = u;
+          vertices[offset + 3] = 1 - v;
+          offset += 4;
+        }
+      }
+
+      return true;
+    }
+
+    drawWarpTexturedMesh(texture, controlPoints, options = {}) {
+      const points = this.normalizeRasterWarpControlPoints(controlPoints);
+
+      if (!texture || !points) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensurePuppetProgramInfo();
+      const resource = this.ensureRasterWarpMeshResource();
+      const camera = options.camera || { x: 0, y: 0, zoom: 1 };
+      const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
+      const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
+      const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
+
+      if (!this.updateRasterWarpMeshVertices(resource, points)) {
+        return false;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
+      gl.viewport(0, 0, viewportWidth, viewportHeight);
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.useProgram(program);
+      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+      gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+      gl.uniform1f(uniforms.opacity, opacity);
+      gl.uniform1i(uniforms.texture, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, resource.vbo);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, resource.vertices);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.bindVertexArray(resource.vao);
+      gl.drawElements(gl.TRIANGLES, resource.indexCount, gl.UNSIGNED_INT, 0);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.useProgram(null);
+
+      return true;
     }
 
     drawTexturedQuad(texture, quad, options = {}) {
@@ -5181,7 +5476,12 @@ void main() {
     }
 
     setRasterTransformPreview(preview = null) {
-      if (!preview?.layerId || !preview?.texture || !Array.isArray(preview.quad)) {
+      const transformMode = String(preview?.transformMode || "free").trim().toLowerCase() || "free";
+      const warpControlPoints = transformMode === "warp"
+        ? this.normalizeRasterWarpControlPoints(preview?.warpControlPoints)
+        : null;
+
+      if (!preview?.layerId || !preview?.texture || !Array.isArray(preview.quad) || (transformMode === "warp" && !warpControlPoints)) {
         this.rasterTransformPreview = null;
       } else {
         this.rasterTransformPreview = {
@@ -5194,7 +5494,8 @@ void main() {
           })),
           sourceRect: preview.sourceRect ? { ...preview.sourceRect } : null,
           texture: preview.texture,
-          transformMode: String(preview.transformMode || "free").trim().toLowerCase() || "free",
+          transformMode,
+          warpControlPoints,
         };
         this.updateRasterTexture(preview.texture, {
           bbox: preview.sourceRect || null,
@@ -5815,6 +6116,7 @@ void main() {
         source = "raster-transform",
         sourceSnapshot,
         transformMode = "free",
+        warpControlPoints,
       } = options;
       const target = this.rasterTargetsByLayerId.get(layerId);
       const destDirtyRect = this.padRasterRect(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING);
@@ -5844,6 +6146,10 @@ void main() {
         x: point.x - nextRect.x,
         y: point.y - nextRect.y,
       }));
+      const normalizedTransformMode = String(transformMode).trim().toLowerCase();
+      const localWarpControlPoints = normalizedTransformMode === "warp"
+        ? this.offsetRasterWarpControlPoints(warpControlPoints, -nextRect.x, -nextRect.y)
+        : null;
       const drawOptions = {
         camera: { x: 0, y: 0, zoom: 1 },
         edgeFeatherPixels: options.edgeFeatherPixels,
@@ -5852,9 +6158,11 @@ void main() {
         viewportHeight: nextTarget.height,
         viewportWidth: nextTarget.width,
       };
-      const didDraw = String(transformMode).trim().toLowerCase() === "perspective"
-        ? this.drawPerspectiveTexturedQuad(sourceSnapshot.texture, localDestQuad, drawOptions)
-        : this.drawTexturedQuad(sourceSnapshot.texture, localDestQuad, drawOptions);
+      const didDraw = normalizedTransformMode === "warp"
+        ? this.drawWarpTexturedMesh(sourceSnapshot.texture, localWarpControlPoints, drawOptions)
+        : normalizedTransformMode === "perspective"
+          ? this.drawPerspectiveTexturedQuad(sourceSnapshot.texture, localDestQuad, drawOptions)
+          : this.drawTexturedQuad(sourceSnapshot.texture, localDestQuad, drawOptions);
 
       if (!didDraw) {
         this.deleteRasterTargetObject(nextTarget);
@@ -5949,15 +6257,19 @@ void main() {
         sourceRect,
         sourceSnapshot,
         transformMode = "free",
+        warpControlPoints,
       } = options;
       const target = this.rasterTargetsByLayerId.get(layerId);
       const bounds = namespace.documentBounds;
+      const normalizedTransformMode = String(transformMode).trim().toLowerCase();
 
       if (!bounds) {
         return false;
       }
 
-      const destBounds = bounds?.quadToBounds?.(destQuad);
+      const destBounds = normalizedTransformMode === "warp"
+        ? bounds?.rectToBounds?.(this.getRasterWarpBounds(warpControlPoints))
+        : bounds?.quadToBounds?.(destQuad);
       const destRect = bounds?.boundsToRect?.(destBounds);
       const destDirtyRect = this.padRasterRect(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING);
 
@@ -6002,7 +6314,9 @@ void main() {
       };
       const didDraw = String(transformMode).trim().toLowerCase() === "perspective"
         ? this.drawPerspectiveTexturedQuad(sourceSnapshot.texture, destQuad, drawOptions)
-        : this.drawTexturedQuad(sourceSnapshot.texture, destQuad, drawOptions);
+        : normalizedTransformMode === "warp"
+          ? this.drawWarpTexturedMesh(sourceSnapshot.texture, warpControlPoints, drawOptions)
+          : this.drawTexturedQuad(sourceSnapshot.texture, destQuad, drawOptions);
 
       if (!didDraw) {
         if (tileHistory) {
@@ -7832,7 +8146,13 @@ void main() {
           viewportWidth,
         };
 
-        if (rasterTransformPreview.transformMode === "perspective") {
+        if (rasterTransformPreview.transformMode === "warp") {
+          this.drawWarpTexturedMesh(
+            rasterTransformPreview.texture,
+            rasterTransformPreview.warpControlPoints,
+            drawOptions,
+          );
+        } else if (rasterTransformPreview.transformMode === "perspective") {
           this.drawPerspectiveTexturedQuad(rasterTransformPreview.texture, rasterTransformPreview.quad, drawOptions);
         } else {
           this.drawTexturedQuad(rasterTransformPreview.texture, rasterTransformPreview.quad, drawOptions);
@@ -8076,6 +8396,8 @@ void main() {
         gl.deleteVertexArray(this.texturedQuad.vao);
         this.texturedQuad = null;
       }
+
+      this.deleteRasterWarpMeshResource();
 
       if (this.programInfo?.program) {
         gl.deleteProgram(this.programInfo.program);

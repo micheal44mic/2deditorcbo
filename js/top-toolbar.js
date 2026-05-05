@@ -14,6 +14,15 @@ const TRANSFORM_MODE_ICONS = Object.freeze({
       <path d="M17.3,2H6.7c-1.2,0-2.4,1-2.5,2.3l-1.7,13.9c-.3,2.1.9,3.8,2.5,3.8h14c1.7,0,2.8-1.8,2.5-3.8l-1.7-13.9c-.2-1.3-1.3-2.3-2.5-2.3ZM18.2,4.3l.5,5.3h-5.9V3.5c0,0,4.6,0,4.6,0,.4,0,.8.4.9.8ZM6.6,3.5h4.6v6.1h-6l.5-5.3c0-.4.4-.8.9-.8ZM4.4,18.2l.7-6.6h6.1v7.8h-5.9c-.5,0-.9-.6-.8-1.2ZM18.8,19.4h-5.8v-7.8c0,0,6,0,6,0l.7,6.6c0,.7-.3,1.2-.8,1.2Z" />
     </svg>
   `,
+  warpTransform: `
+    <svg class="lucide lucide-grid3x3-icon lucide-grid-3x3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M3 9h18" />
+      <path d="M3 15h18" />
+      <path d="M9 3v18" />
+      <path d="M15 3v18" />
+    </svg>
+  `,
   cancelTransform: `
     <svg class="lucide lucide-x-icon lucide-x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M18 6 6 18" />
@@ -54,6 +63,9 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       </button>
       <button class="transform-mode-button" type="button" aria-label="PERSPECTIVE DISTORTION" aria-pressed="false" data-tooltip="PERSPECTIVE DISTORTION" data-transform-mode="perspective">
         ${TRANSFORM_MODE_ICONS.perspectiveDistort}
+      </button>
+      <button class="transform-mode-button" type="button" aria-label="WARP" aria-pressed="false" data-tooltip="WARP" data-transform-mode="warp">
+        ${TRANSFORM_MODE_ICONS.warpTransform}
       </button>
       <label class="transform-angle-control" data-tooltip="ROTATION ANGLE" data-transform-angle-control hidden>
         <svg class="transform-angle-icon lucide lucide-rotate-ccw-icon lucide-rotate-ccw" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -167,7 +179,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   let isRotateToolActive = false;
   let isRasterTransformPending = false;
   let isSyncingTransformAngle = false;
-  const allowedTransformModes = new Set(["free", "perspective"]);
+  const allowedTransformModes = new Set(["free", "perspective", "warp"]);
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, Number(value) || 0));

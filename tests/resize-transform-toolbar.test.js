@@ -21,9 +21,10 @@ test("resize tool exposes the top transform mode toolbar", () => {
   assert.match(topToolbarSource, /M12 3H5a2 2 0 0 0-2 2v14/);
   assert.match(topToolbarSource, /FREE TRANSFORM/);
   assert.match(topToolbarSource, /PERSPECTIVE DISTORTION/);
+  assert.match(topToolbarSource, /WARP/);
   assert.doesNotMatch(topToolbarSource, /FREE DISTORTION/);
   assert.doesNotMatch(topToolbarSource, /free-distort/);
-  assert.match(topToolbarSource, /allowedTransformModes = new Set\(\["free", "perspective"\]\)/);
+  assert.match(topToolbarSource, /allowedTransformModes = new Set\(\["free", "perspective", "warp"\]\)/);
   assert.match(topToolbarSource, /data-raster-transform-action="cancel"/);
   assert.match(topToolbarSource, /data-raster-transform-action="accept"/);
   assert.match(topToolbarSource, /data-transform-angle-control/);

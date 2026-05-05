@@ -57,6 +57,28 @@ test("document renderer supports raster transform preview and history commit", (
   assert.doesNotMatch(source, /window\.CBO\.history/);
 });
 
+test("raster transform supports Photoshop-style warp mesh preview and commit", () => {
+  const toolSource = readRepoFile("js", "raster-transform-tool.js");
+  const rendererSource = readRepoFile("js", "document", "document-renderer.js");
+  const cssSource = readRepoFile("css", "layout.css");
+
+  assert.match(toolSource, /const WARP_TRANSFORM_MODE = "warp";/);
+  assert.match(toolSource, /createWarpControlPointsFromQuad/);
+  assert.match(toolSource, /evaluateWarpSurface/);
+  assert.match(toolSource, /editor-raster-transform-warp-point/);
+  assert.match(toolSource, /editor-raster-transform-warp-handle-line/);
+  assert.match(toolSource, /applyWarpSurfaceDelta/);
+  assert.match(toolSource, /warpControlPointsChanged/);
+  assert.match(rendererSource, /const RASTER_WARP_MESH_COLS = 64;/);
+  assert.match(rendererSource, /createRasterWarpMeshResource/);
+  assert.match(rendererSource, /drawWarpTexturedMesh/);
+  assert.match(rendererSource, /warpControlPoints/);
+  assert.match(rendererSource, /rasterTransformPreview\.transformMode === "warp"/);
+  assert.match(cssSource, /\.editor-raster-transform-warp-line/);
+  assert.match(cssSource, /\.editor-raster-transform-warp-handle-line/);
+  assert.match(cssSource, /\.editor-raster-transform-warp-point/);
+});
+
 test("document renderer uses analytic anti-aliased quad edge coverage for raster transforms", () => {
   const source = readRepoFile("js", "document", "document-renderer.js");
 
@@ -141,7 +163,8 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and defe
   assert.match(source, /setSvgElementVisible\(element, isVisible\)/);
   assert.match(source, /HANDLE_TO_CORNERS/);
   assert.match(source, /normalizeTransformMode\(mode\)/);
-  assert.match(source, /transformMode: this\.transformMode/);
+  assert.match(source, /getEffectiveTransformMode\(\)/);
+  assert.match(source, /transformMode: effectiveTransformMode/);
   assert.match(source, /getQuadCenter\(quad = \[\]\)/);
   assert.match(source, /const ROTATION_FREE_SNAP_THRESHOLD_RADIANS = Math\.PI \/ 90;/);
   assert.match(source, /function cleanTrigValue\(value\)/);

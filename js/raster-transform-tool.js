@@ -2,6 +2,7 @@
   const SVG_NS = "http://www.w3.org/2000/svg";
   const RESIZE_TOOL_MODE = "resize";
   const ROTATE_TOOL_MODE = "rotate";
+  const WARP_TRANSFORM_MODE = "warp";
   const RASTER_ALPHA_HIT_THRESHOLD = 2;
   const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object.freeze({
     alphaThreshold: RASTER_ALPHA_HIT_THRESHOLD,
@@ -9,6 +10,8 @@
     pixelPerfect: true,
   });
   const HANDLE_SIZE = 10;
+  const WARP_POINT_SIZE = 5;
+  const WARP_GRID_SAMPLE_STEPS = 28;
   const MIN_TRANSFORM_SIZE = 2;
   const GUIDE_PROXIMITY_PX = 3;
   const ROTATION_SNAP_RADIANS = Math.PI / 12;
@@ -35,6 +38,16 @@
     6: [3],
     7: [3, 0],
   });
+  const WARP_HANDLE_LINE_DEFS = Object.freeze([
+    { from: [0, 0], to: [0, 1] },
+    { from: [0, 0], to: [1, 0] },
+    { from: [0, 3], to: [0, 2] },
+    { from: [0, 3], to: [1, 3] },
+    { from: [3, 3], to: [3, 2] },
+    { from: [3, 3], to: [2, 3] },
+    { from: [3, 0], to: [3, 1] },
+    { from: [3, 0], to: [2, 0] },
+  ]);
 
   function createSvgElement(name, attributes = {}) {
     const element = document.createElementNS(SVG_NS, name);
@@ -91,9 +104,13 @@
   }
 
   function normalizeTransformMode(mode) {
-    return String(mode || "").trim().toLowerCase() === "perspective"
-      ? "perspective"
-      : "free";
+    const normalizedMode = String(mode || "").trim().toLowerCase();
+
+    if (normalizedMode === "perspective" || normalizedMode === WARP_TRANSFORM_MODE) {
+      return normalizedMode;
+    }
+
+    return "free";
   }
 
   function rectToQuad(rect) {
@@ -120,6 +137,124 @@
       x: (first.x + second.x) / 2,
       y: (first.y + second.y) / 2,
     };
+  }
+
+  function lerpPoint(first, second, amount) {
+    return {
+      x: first.x + (second.x - first.x) * amount,
+      y: first.y + (second.y - first.y) * amount,
+    };
+  }
+
+  function interpolateQuadPoint(quad, u, v) {
+    const top = lerpPoint(quad[0], quad[1], u);
+    const bottom = lerpPoint(quad[3], quad[2], u);
+
+    return lerpPoint(top, bottom, v);
+  }
+
+  function createWarpControlPointsFromQuad(quad = []) {
+    if (!Array.isArray(quad) || quad.length < 4) {
+      return null;
+    }
+
+    return Array.from({ length: 4 }, (_, row) =>
+      Array.from({ length: 4 }, (_, col) =>
+        interpolateQuadPoint(quad, col / 3, row / 3)
+      )
+    );
+  }
+
+  function getWarpBoundaryQuad(controlPoints) {
+    if (!Array.isArray(controlPoints) || controlPoints.length < 4) {
+      return null;
+    }
+
+    return [
+      controlPoints[0]?.[0],
+      controlPoints[0]?.[3],
+      controlPoints[3]?.[3],
+      controlPoints[3]?.[0],
+    ].map((point) => ({
+      x: toFiniteNumber(point?.x, 0),
+      y: toFiniteNumber(point?.y, 0),
+    }));
+  }
+
+  function bernsteinCubic(index, t) {
+    const inverse = 1 - t;
+
+    if (index === 0) {
+      return inverse * inverse * inverse;
+    }
+
+    if (index === 1) {
+      return 3 * t * inverse * inverse;
+    }
+
+    if (index === 2) {
+      return 3 * t * t * inverse;
+    }
+
+    return t * t * t;
+  }
+
+  function evaluateWarpSurface(u, v, controlPoints) {
+    let x = 0;
+    let y = 0;
+
+    for (let row = 0; row < 4; row += 1) {
+      const by = bernsteinCubic(row, v);
+
+      for (let col = 0; col < 4; col += 1) {
+        const point = controlPoints?.[row]?.[col];
+        const weight = by * bernsteinCubic(col, u);
+
+        x += toFiniteNumber(point?.x, 0) * weight;
+        y += toFiniteNumber(point?.y, 0) * weight;
+      }
+    }
+
+    return { x, y };
+  }
+
+  function warpControlPointsChanged(first = [], second = []) {
+    if (!Array.isArray(first) || !Array.isArray(second) || first.length !== 4 || second.length !== 4) {
+      return true;
+    }
+
+    for (let row = 0; row < 4; row += 1) {
+      if (!Array.isArray(first[row]) || !Array.isArray(second[row]) || first[row].length !== 4 || second[row].length !== 4) {
+        return true;
+      }
+
+      for (let col = 0; col < 4; col += 1) {
+        const point = first[row][col];
+        const other = second[row][col];
+
+        if (Math.abs(toFiniteNumber(point?.x, 0) - toFiniteNumber(other?.x, 0)) > 0.01 ||
+          Math.abs(toFiniteNumber(point?.y, 0) - toFiniteNumber(other?.y, 0)) > 0.01) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  function getWarpPointKind(row, col) {
+    const isOuterRow = row === 0 || row === 3;
+    const isOuterCol = col === 0 || col === 3;
+
+    if (isOuterRow && isOuterCol) {
+      return "corner";
+    }
+
+    if (isOuterRow || isOuterCol) {
+      return "edge";
+    }
+
+    return "inner";
   }
 
   function getQuadCenter(quad = []) {
@@ -264,6 +399,10 @@
       this.svg = null;
       this.hitArea = null;
       this.guideLayer = null;
+      this.warpLayer = null;
+      this.warpGridPaths = [];
+      this.warpHandleLines = [];
+      this.warpPoints = [];
       this.guides = {};
       this.box = null;
       this.handles = [];
@@ -274,6 +413,8 @@
       this.sourceSnapshot = null;
       this.startQuad = null;
       this.currentQuad = null;
+      this.startWarpPoints = null;
+      this.currentWarpPoints = null;
       this.currentRotationRadians = 0;
       this.dragState = null;
       this.isCommitting = false;
@@ -329,6 +470,10 @@
         class: "editor-raster-transform-guide-layer",
         hidden: "",
       });
+      this.warpLayer = createSvgElement("g", {
+        class: "editor-raster-transform-warp-layer",
+        hidden: "",
+      });
       ["left", "center-x", "right", "top", "center-y", "bottom"].forEach((guideName) => {
         const guide = createSvgElement("line", {
           class: `editor-raster-transform-guide editor-raster-transform-guide-${guideName}`,
@@ -356,8 +501,53 @@
 
         return handle;
       });
+      this.warpGridPaths = Array.from({ length: 8 }, (_, index) => {
+        const path = createSvgElement("path", {
+          class: "editor-raster-transform-warp-line",
+          d: "",
+        });
 
-      this.svg.append(this.hitArea, this.guideLayer, this.box, ...this.handles);
+        path.dataset.warpLineIndex = String(index);
+        this.warpLayer.append(path);
+
+        return path;
+      });
+      this.warpHandleLines = WARP_HANDLE_LINE_DEFS.map((definition, index) => {
+        const line = createSvgElement("line", {
+          class: "editor-raster-transform-warp-handle-line",
+          x1: 0,
+          x2: 0,
+          y1: 0,
+          y2: 0,
+        });
+
+        line.dataset.warpHandleLineIndex = String(index);
+        line.dataset.from = definition.from.join(",");
+        line.dataset.to = definition.to.join(",");
+        this.warpLayer.append(line);
+
+        return line;
+      });
+      this.warpPoints = [];
+      for (let row = 0; row < 4; row += 1) {
+        for (let col = 0; col < 4; col += 1) {
+          const kind = getWarpPointKind(row, col);
+          const point = createSvgElement("circle", {
+            class: `editor-raster-transform-warp-point editor-raster-transform-warp-point-${kind}`,
+            cx: 0,
+            cy: 0,
+            r: kind === "corner" ? WARP_POINT_SIZE : WARP_POINT_SIZE - 1,
+          });
+
+          point.dataset.row = String(row);
+          point.dataset.col = String(col);
+          point.dataset.kind = kind;
+          this.warpPoints.push(point);
+          this.warpLayer.append(point);
+        }
+      }
+
+      this.svg.append(this.hitArea, this.guideLayer, this.warpLayer, this.box, ...this.handles);
       this.stage.append(this.svg);
       this.updateViewportSize();
     }
@@ -442,7 +632,23 @@
     }
 
     handleTransformModeChange(event) {
-      this.transformMode = normalizeTransformMode(event.detail?.mode);
+      const nextMode = normalizeTransformMode(event.detail?.mode);
+      const previousMode = this.transformMode;
+
+      if (this.transformMode === WARP_TRANSFORM_MODE && nextMode !== WARP_TRANSFORM_MODE && this.hasPendingTransform()) {
+        this.commitTransform();
+      }
+
+      this.transformMode = nextMode;
+
+      if (this.transformMode === WARP_TRANSFORM_MODE) {
+        if (previousMode !== WARP_TRANSFORM_MODE && Array.isArray(this.currentQuad)) {
+          this.currentWarpPoints = createWarpControlPointsFromQuad(this.currentQuad);
+        }
+
+        this.ensureWarpControlPoints();
+      }
+
       if (this.sourceSnapshot) {
         this.updatePreview();
       }
@@ -590,6 +796,8 @@
         this.contentRect = null;
         this.startQuad = null;
         this.currentQuad = null;
+        this.startWarpPoints = null;
+        this.currentWarpPoints = null;
         this.currentRotationRadians = 0;
         this.render();
         return false;
@@ -603,6 +811,8 @@
       this.contentRect = bounds || null;
       this.startQuad = bounds ? rectToQuad(bounds) : null;
       this.currentQuad = bounds ? cloneValue(this.startQuad) : null;
+      this.startWarpPoints = this.startQuad ? createWarpControlPointsFromQuad(this.startQuad) : null;
+      this.currentWarpPoints = this.startWarpPoints ? cloneValue(this.startWarpPoints) : null;
       this.currentRotationRadians = 0;
       this.render();
 
@@ -615,6 +825,8 @@
       this.contentRect = null;
       this.startQuad = null;
       this.currentQuad = null;
+      this.startWarpPoints = null;
+      this.currentWarpPoints = null;
       this.currentRotationRadians = 0;
       this.render();
     }
@@ -635,8 +847,13 @@
 
     updatePreview() {
       const snapshot = this.createSourceSnapshot();
+      const effectiveTransformMode = this.getEffectiveTransformMode();
 
       if (!snapshot?.texture || !this.currentQuad) {
+        return false;
+      }
+
+      if (effectiveTransformMode === WARP_TRANSFORM_MODE && !this.ensureWarpControlPoints()) {
         return false;
       }
 
@@ -647,7 +864,10 @@
         quad: this.currentQuad,
         sourceRect: this.contentRect,
         texture: snapshot.texture,
-        transformMode: this.transformMode,
+        transformMode: effectiveTransformMode,
+        warpControlPoints: effectiveTransformMode === WARP_TRANSFORM_MODE
+          ? this.currentWarpPoints
+          : null,
       });
 
       return true;
@@ -668,17 +888,29 @@
 
       if (options.keepGeometry !== false && this.startQuad) {
         this.currentQuad = cloneValue(this.startQuad);
+        this.currentWarpPoints = this.startWarpPoints ? cloneValue(this.startWarpPoints) : null;
       }
 
       this.render();
     }
 
     commitTransform() {
+      const effectiveTransformMode = this.getEffectiveTransformMode();
+
       if (!this.sourceSnapshot || !this.activeLayerId || !this.contentRect || !this.currentQuad) {
         return false;
       }
 
       if (!quadChanged(this.startQuad || [], this.currentQuad || [])) {
+        if (effectiveTransformMode === WARP_TRANSFORM_MODE && warpControlPointsChanged(this.startWarpPoints || [], this.currentWarpPoints || [])) {
+          // Internal warp points can change without moving the four corners.
+        } else {
+          this.cancelTransform();
+          return false;
+        }
+      }
+
+      if (effectiveTransformMode === WARP_TRANSFORM_MODE && !this.ensureWarpControlPoints()) {
         this.cancelTransform();
         return false;
       }
@@ -692,7 +924,10 @@
         source: "raster-transform",
         sourceRect: this.contentRect,
         sourceSnapshot: this.sourceSnapshot,
-        transformMode: this.transformMode,
+        transformMode: effectiveTransformMode,
+        warpControlPoints: effectiveTransformMode === WARP_TRANSFORM_MODE
+          ? this.currentWarpPoints
+          : null,
       }) === true;
 
       this.documentRenderer?.deleteRasterSnapshot?.(this.sourceSnapshot);
@@ -707,6 +942,8 @@
         this.contentRect = bounds || null;
         this.startQuad = bounds ? rectToQuad(bounds) : null;
         this.currentQuad = bounds ? cloneValue(this.startQuad) : null;
+        this.startWarpPoints = this.startQuad ? createWarpControlPointsFromQuad(this.startQuad) : null;
+        this.currentWarpPoints = this.startWarpPoints ? cloneValue(this.startWarpPoints) : null;
         this.currentRotationRadians = 0;
       }
 
@@ -747,6 +984,209 @@
       return target?.closest?.(".editor-raster-transform-box") || null;
     }
 
+    getWarpPointTarget(target) {
+      return target?.closest?.(".editor-raster-transform-warp-point") || null;
+    }
+
+    isWarpMode() {
+      return this.transformMode === WARP_TRANSFORM_MODE && !this.isRotateActive();
+    }
+
+    getEffectiveTransformMode() {
+      if (this.isWarpMode()) {
+        return WARP_TRANSFORM_MODE;
+      }
+
+      return this.transformMode === "perspective" ? "perspective" : "free";
+    }
+
+    ensureWarpControlPoints() {
+      if (Array.isArray(this.currentWarpPoints)) {
+        return true;
+      }
+
+      if (!Array.isArray(this.currentQuad)) {
+        return false;
+      }
+
+      this.currentWarpPoints = createWarpControlPointsFromQuad(this.currentQuad);
+
+      if (!Array.isArray(this.startWarpPoints) && Array.isArray(this.startQuad)) {
+        this.startWarpPoints = createWarpControlPointsFromQuad(this.startQuad);
+      }
+
+      return Array.isArray(this.currentWarpPoints);
+    }
+
+    getWarpInteractionBounds() {
+      const controlPoints = this.currentWarpPoints;
+
+      if (!Array.isArray(controlPoints)) {
+        return null;
+      }
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (let row = 0; row < 4; row += 1) {
+        for (let col = 0; col < 4; col += 1) {
+          const point = controlPoints[row]?.[col];
+          const x = toFiniteNumber(point?.x, NaN);
+          const y = toFiniteNumber(point?.y, NaN);
+
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            continue;
+          }
+
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      }
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+        return null;
+      }
+
+      return {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+      };
+    }
+
+    isPointInWarpInteractionArea(point) {
+      const bounds = this.getWarpInteractionBounds();
+
+      if (!bounds || !point) {
+        return false;
+      }
+
+      const padding = Math.max(4, 8 * this.dpr / this.camera.zoom);
+
+      return (
+        point.x >= bounds.x - padding &&
+        point.x <= bounds.x + bounds.width + padding &&
+        point.y >= bounds.y - padding &&
+        point.y <= bounds.y + bounds.height + padding
+      );
+    }
+
+    getWarpUvForDocumentPoint(point) {
+      if (!this.currentWarpPoints || !point) {
+        return { u: 0.5, v: 0.5 };
+      }
+
+      let bestU = 0.5;
+      let bestV = 0.5;
+      let bestDistanceSq = Infinity;
+      const steps = 24;
+
+      for (let row = 0; row <= steps; row += 1) {
+        const v = row / steps;
+
+        for (let col = 0; col <= steps; col += 1) {
+          const u = col / steps;
+          const sample = evaluateWarpSurface(u, v, this.currentWarpPoints);
+          const dx = sample.x - point.x;
+          const dy = sample.y - point.y;
+          const distanceSq = dx * dx + dy * dy;
+
+          if (distanceSq < bestDistanceSq) {
+            bestDistanceSq = distanceSq;
+            bestU = u;
+            bestV = v;
+          }
+        }
+      }
+
+      return { u: bestU, v: bestV };
+    }
+
+    getAttachedWarpHandles(row, col) {
+      const handles = [];
+
+      if (row === 0 && col === 0) {
+        handles.push([0, 1], [1, 0]);
+      } else if (row === 0 && col === 3) {
+        handles.push([0, 2], [1, 3]);
+      } else if (row === 3 && col === 3) {
+        handles.push([3, 2], [2, 3]);
+      } else if (row === 3 && col === 0) {
+        handles.push([3, 1], [2, 0]);
+      }
+
+      return handles;
+    }
+
+    applyWarpPointDelta(controlPoints, row, col, dx, dy) {
+      const nextPoints = cloneValue(controlPoints);
+      const movePoint = (targetRow, targetCol) => {
+        if (!nextPoints[targetRow]?.[targetCol]) {
+          return;
+        }
+
+        nextPoints[targetRow][targetCol] = {
+          x: nextPoints[targetRow][targetCol].x + dx,
+          y: nextPoints[targetRow][targetCol].y + dy,
+        };
+      };
+
+      movePoint(row, col);
+
+      if (getWarpPointKind(row, col) === "corner") {
+        this.getAttachedWarpHandles(row, col).forEach(([handleRow, handleCol]) => {
+          movePoint(handleRow, handleCol);
+        });
+      }
+
+      return nextPoints;
+    }
+
+    applyWarpSurfaceDelta(controlPoints, u, v, dx, dy) {
+      const nextPoints = cloneValue(controlPoints);
+      const weights = Array.from({ length: 4 }, () => Array(4).fill(0));
+      let sumSq = 0;
+
+      for (let row = 0; row < 4; row += 1) {
+        const by = bernsteinCubic(row, v);
+
+        for (let col = 0; col < 4; col += 1) {
+          const weight = by * bernsteinCubic(col, u);
+
+          weights[row][col] = weight;
+          sumSq += weight * weight;
+        }
+      }
+
+      const divisor = sumSq > 0.000001 ? sumSq : 1;
+
+      for (let row = 0; row < 4; row += 1) {
+        for (let col = 0; col < 4; col += 1) {
+          const weight = weights[row][col] / divisor;
+
+          nextPoints[row][col] = {
+            x: nextPoints[row][col].x + dx * weight,
+            y: nextPoints[row][col].y + dy * weight,
+          };
+        }
+      }
+
+      return nextPoints;
+    }
+
+    syncQuadFromWarpPoints() {
+      const boundaryQuad = getWarpBoundaryQuad(this.currentWarpPoints);
+
+      if (boundaryQuad) {
+        this.currentQuad = boundaryQuad;
+      }
+    }
+
     handlePointerDown(event) {
       if (!this.isActive() || event.button !== 0) {
         return;
@@ -757,6 +1197,49 @@
 
       const handle = this.getHandleTarget(event.target);
       const box = this.getBoxTarget(event.target);
+      const warpPoint = this.isWarpMode() ? this.getWarpPointTarget(event.target) : null;
+      const point = this.clientToDocumentPoint(event.clientX, event.clientY);
+
+      if (this.isWarpMode()) {
+        if (!this.activeLayerId || !this.currentQuad || !this.contentRect || !this.ensureWarpControlPoints()) {
+          return;
+        }
+
+        if (!warpPoint && !this.isPointInWarpInteractionArea(point)) {
+          if (this.hasPendingTransform()) {
+            return;
+          }
+
+          const hitLayer = this.pickLayerAtClient(event.clientX, event.clientY);
+
+          if (hitLayer) {
+            this.layerModel?.setActiveLayer?.(hitLayer.id, { source: "raster-transform-select" });
+          }
+
+          return;
+        }
+
+        const row = warpPoint ? Math.max(0, Math.min(3, Number(warpPoint.dataset.row) || 0)) : -1;
+        const col = warpPoint ? Math.max(0, Math.min(3, Number(warpPoint.dataset.col) || 0)) : -1;
+        const uv = warpPoint ? null : this.getWarpUvForDocumentPoint(point);
+
+        this.dragState = {
+          col,
+          didChange: false,
+          mode: warpPoint ? "warp-point" : "warp-surface",
+          pointerId: event.pointerId,
+          row,
+          startPoint: point,
+          startQuad: cloneValue(this.currentQuad),
+          startRect: getRectFromQuad(this.currentQuad),
+          startWarpPoints: cloneValue(this.currentWarpPoints),
+          warpU: uv?.u ?? 0.5,
+          warpV: uv?.v ?? 0.5,
+        };
+        this.svg.setPointerCapture?.(event.pointerId);
+        this.updatePreview();
+        return;
+      }
 
       if (!handle && !box) {
         if (this.hasPendingTransform()) {
@@ -776,7 +1259,6 @@
         return;
       }
 
-      const point = this.clientToDocumentPoint(event.clientX, event.clientY);
       const rotationCenter = getQuadCenter(this.currentQuad);
       const mode = this.isRotateActive()
         ? "rotate"
@@ -825,7 +1307,7 @@
 
       this.dragState = null;
 
-      if (!quadChanged(this.startQuad || [], this.currentQuad || [])) {
+      if (!this.hasPendingTransform()) {
         this.cancelTransform();
       } else {
         this.updatePreview();
@@ -844,7 +1326,25 @@
       const dx = point.x - this.dragState.startPoint.x;
       const dy = point.y - this.dragState.startPoint.y;
 
-      if (this.dragState.mode === "move") {
+      if (this.dragState.mode === "warp-point") {
+        this.currentWarpPoints = this.applyWarpPointDelta(
+          this.dragState.startWarpPoints,
+          this.dragState.row,
+          this.dragState.col,
+          dx,
+          dy,
+        );
+        this.syncQuadFromWarpPoints();
+      } else if (this.dragState.mode === "warp-surface") {
+        this.currentWarpPoints = this.applyWarpSurfaceDelta(
+          this.dragState.startWarpPoints,
+          this.dragState.warpU,
+          this.dragState.warpV,
+          dx,
+          dy,
+        );
+        this.syncQuadFromWarpPoints();
+      } else if (this.dragState.mode === "move") {
         const snappedDelta = this.getSnappedMoveDelta(dx, dy);
 
         this.currentQuad = this.dragState.startQuad.map((item) => ({
@@ -859,7 +1359,9 @@
         this.currentQuad = this.getDistortedQuad(dx, dy);
       }
 
-      this.dragState.didChange = quadChanged(this.dragState.startQuad, this.currentQuad);
+      this.dragState.didChange = this.dragState.mode === "warp-point" || this.dragState.mode === "warp-surface"
+        ? warpControlPointsChanged(this.dragState.startWarpPoints, this.currentWarpPoints)
+        : quadChanged(this.dragState.startQuad, this.currentQuad);
       this.render();
       this.updatePreview();
     }
@@ -1013,11 +1515,16 @@
     }
 
     hasPendingTransform() {
+      const hasWarpChange = this.getEffectiveTransformMode() === WARP_TRANSFORM_MODE &&
+        Array.isArray(this.startWarpPoints) &&
+        Array.isArray(this.currentWarpPoints) &&
+        warpControlPointsChanged(this.startWarpPoints, this.currentWarpPoints);
+
       return Boolean(
         this.sourceSnapshot &&
           Array.isArray(this.startQuad) &&
           Array.isArray(this.currentQuad) &&
-          quadChanged(this.startQuad, this.currentQuad)
+          (quadChanged(this.startQuad, this.currentQuad) || hasWarpChange)
       );
     }
 
@@ -1450,6 +1957,82 @@
       });
     }
 
+    createWarpPath(points = []) {
+      if (!points.length) {
+        return "";
+      }
+
+      return points
+        .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+        .join(" ");
+    }
+
+    getWarpGridViewportPath(axis, value) {
+      const points = [];
+
+      for (let step = 0; step <= WARP_GRID_SAMPLE_STEPS; step += 1) {
+        const amount = step / WARP_GRID_SAMPLE_STEPS;
+        const u = axis === "u" ? value : amount;
+        const v = axis === "v" ? value : amount;
+        const point = evaluateWarpSurface(u, v, this.currentWarpPoints);
+
+        points.push(this.documentToViewportPoint(point.x, point.y));
+      }
+
+      return this.createWarpPath(points);
+    }
+
+    renderWarpControls(isVisible) {
+      const showWarp = Boolean(isVisible && this.isWarpMode() && this.ensureWarpControlPoints());
+
+      setSvgElementVisible(this.warpLayer, showWarp);
+
+      if (!showWarp) {
+        this.warpGridPaths.forEach((path) => path.setAttribute("d", ""));
+        this.warpHandleLines.forEach((line) => {
+          line.setAttribute("x1", "-9999");
+          line.setAttribute("y1", "-9999");
+          line.setAttribute("x2", "-9999");
+          line.setAttribute("y2", "-9999");
+        });
+        this.warpPoints.forEach((point) => {
+          point.setAttribute("cx", "-9999");
+          point.setAttribute("cy", "-9999");
+        });
+        return;
+      }
+
+      const values = [0, 1 / 3, 2 / 3, 1];
+
+      values.forEach((value, index) => {
+        this.warpGridPaths[index].setAttribute("d", this.getWarpGridViewportPath("v", value));
+        this.warpGridPaths[index + 4].setAttribute("d", this.getWarpGridViewportPath("u", value));
+      });
+
+      this.warpHandleLines.forEach((line, index) => {
+        const definition = WARP_HANDLE_LINE_DEFS[index];
+        const fromPoint = this.currentWarpPoints[definition.from[0]]?.[definition.from[1]];
+        const toPoint = this.currentWarpPoints[definition.to[0]]?.[definition.to[1]];
+        const fromViewport = this.documentToViewportPoint(fromPoint?.x || 0, fromPoint?.y || 0);
+        const toViewport = this.documentToViewportPoint(toPoint?.x || 0, toPoint?.y || 0);
+
+        line.setAttribute("x1", fromViewport.x);
+        line.setAttribute("y1", fromViewport.y);
+        line.setAttribute("x2", toViewport.x);
+        line.setAttribute("y2", toViewport.y);
+      });
+
+      this.warpPoints.forEach((point) => {
+        const row = Number(point.dataset.row) || 0;
+        const col = Number(point.dataset.col) || 0;
+        const controlPoint = this.currentWarpPoints[row]?.[col];
+        const viewportPoint = this.documentToViewportPoint(controlPoint?.x || 0, controlPoint?.y || 0);
+
+        point.setAttribute("cx", viewportPoint.x);
+        point.setAttribute("cy", viewportPoint.y);
+      });
+    }
+
     emitStateChange() {
       const detail = {
         active: this.isActive(),
@@ -1484,12 +2067,13 @@
       }
 
       this.svg.classList.toggle("raster-transform-tool-active", this.isActive());
-      setSvgElementVisible(this.box, isVisible);
+      setSvgElementVisible(this.box, isVisible && !this.isWarpMode());
       this.renderGuides(isVisible && this.shouldShowGuides());
+      this.renderWarpControls(isVisible);
       this.handles.forEach((handle) => {
-        setSvgElementVisible(handle, isVisible);
+        setSvgElementVisible(handle, isVisible && !this.isWarpMode());
 
-        if (!isVisible) {
+        if (!isVisible || this.isWarpMode()) {
           handle.setAttribute("x", "-9999");
           handle.setAttribute("y", "-9999");
         }
@@ -1511,6 +2095,10 @@
       this.box.style.cursor = transformCursor;
 
       this.handles.forEach((handle, index) => {
+        if (this.isWarpMode()) {
+          return;
+        }
+
         setSvgElementVisible(handle, true);
         handle.setAttribute("x", handlePoints[index].x - HANDLE_SIZE / 2);
         handle.setAttribute("y", handlePoints[index].y - HANDLE_SIZE / 2);
