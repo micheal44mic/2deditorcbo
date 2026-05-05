@@ -356,6 +356,18 @@
   pointer-events: all;
 }
 
+.editor-raster-transform-guide-layer {
+  pointer-events: none;
+}
+
+.editor-raster-transform-guide {
+  opacity: 0.9;
+  stroke: #f05022;
+  stroke-width: 1.35;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 .editor-raster-transform-box {
   fill: rgba(24, 160, 251, 0.05);
   stroke: #18a0fb;

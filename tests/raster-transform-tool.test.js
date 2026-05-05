@@ -62,8 +62,12 @@ test("raster transform tool uses SVG overlay, resize activation, and deferred co
 
   assert.match(source, /document\.createElementNS\(SVG_NS/);
   assert.match(source, /class: "editor-raster-transform-overlay"/);
+  assert.match(source, /class: "editor-raster-transform-guide-layer"/);
+  assert.match(source, /editor-raster-transform-guide-\$\{guideName\}/);
   assert.match(source, /isResizeToolDetail\(detail = \{\}\)/);
   assert.match(source, /this\.documentRenderer\?\.getRasterContentBounds\?\.\(layer\.id\)/);
+  assert.match(source, /this\.documentRenderer\?\.width/);
+  assert.match(source, /this\.documentRenderer\?\.height/);
   assert.match(source, /this\.documentRenderer\?\.setRasterTransformPreview\?\.\(/);
   assert.match(source, /this\.documentRenderer\?\.commitRasterTransform\?\.\(/);
   assert.match(source, /pickLayerAtClient\(clientX, clientY\)/);
@@ -80,8 +84,19 @@ test("raster transform tool uses SVG overlay, resize activation, and deferred co
   assert.match(source, /window\.addEventListener\("cbo:before-history-action", this\.handleBeforeHistoryAction\)/);
   assert.match(source, /handleBeforeHistoryAction\(event\)/);
   assert.match(source, /this\.hasPendingTransform\(\)\) \{\s*this\.commitTransform\(\);/);
+  assert.match(source, /const GUIDE_PROXIMITY_PX = 3;/);
+  assert.match(source, /shouldShowGuides\(\)/);
+  assert.match(source, /this\.dragState\.mode === "move" \|\| this\.dragState\.mode === "scale"/);
+  assert.match(source, /getActiveGuideNames\(rect, documentWidth, documentHeight\)/);
+  assert.match(source, /GUIDE_PROXIMITY_PX \* this\.dpr \/ this\.camera\.zoom/);
+  assert.match(source, /renderGuides\(isVisible\)/);
+  assert.match(source, /this\.setGuideLine\("left", left, 0, left, this\.viewportHeight\)/);
+  assert.match(source, /this\.setGuideLine\("top", 0, top, this\.viewportWidth, top\)/);
   assert.match(source, /cbo:raster-transform-state-change/);
   assert.match(cssSource, /\.editor-raster-transform-overlay/);
+  assert.match(cssSource, /\.editor-raster-transform-guide/);
+  assert.match(cssSource, /stroke: #f05022;/);
+  assert.doesNotMatch(cssSource, /stroke-dasharray:\s*7 5;/);
   assert.match(cssSource, /\.editor-raster-transform-box/);
   assert.match(cssSource, /\.editor-raster-transform-handle/);
 });

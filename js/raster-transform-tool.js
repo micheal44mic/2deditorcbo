@@ -4,6 +4,7 @@
   const RASTER_ALPHA_HIT_THRESHOLD = 2;
   const HANDLE_SIZE = 10;
   const MIN_TRANSFORM_SIZE = 2;
+  const GUIDE_PROXIMITY_PX = 3;
   const HANDLE_DEFS = Object.freeze([
     { dir: "nw", cursor: "nwse-resize" },
     { dir: "n", cursor: "ns-resize" },
@@ -129,6 +130,8 @@
       this.documentRenderer = options.documentRenderer;
       this.svg = null;
       this.hitArea = null;
+      this.guideLayer = null;
+      this.guides = {};
       this.box = null;
       this.handles = [];
       this.activeTool = "";
@@ -187,6 +190,22 @@
         class: "editor-raster-transform-box",
         points: "",
       });
+      this.guideLayer = createSvgElement("g", {
+        class: "editor-raster-transform-guide-layer",
+        hidden: "",
+      });
+      ["left", "center-x", "right", "top", "center-y", "bottom"].forEach((guideName) => {
+        const guide = createSvgElement("line", {
+          class: `editor-raster-transform-guide editor-raster-transform-guide-${guideName}`,
+          x1: 0,
+          x2: 0,
+          y1: 0,
+          y2: 0,
+        });
+
+        this.guides[guideName] = guide;
+        this.guideLayer.append(guide);
+      });
       this.handles = HANDLE_DEFS.map((definition, index) => {
         const handle = createSvgElement("rect", {
           class: "editor-raster-transform-handle",
@@ -203,7 +222,7 @@
         return handle;
       });
 
-      this.svg.append(this.hitArea, this.box, ...this.handles);
+      this.svg.append(this.hitArea, this.guideLayer, this.box, ...this.handles);
       this.stage.append(this.svg);
       this.updateViewportSize();
     }
@@ -791,6 +810,95 @@
       );
     }
 
+    shouldShowGuides() {
+      return Boolean(
+        this.dragState &&
+          (this.dragState.mode === "move" || this.dragState.mode === "scale")
+      );
+    }
+
+    setGuideLine(name, x1, y1, x2, y2) {
+      const line = this.guides[name];
+
+      if (!line) {
+        return;
+      }
+
+      line.setAttribute("x1", x1);
+      line.setAttribute("y1", y1);
+      line.setAttribute("x2", x2);
+      line.setAttribute("y2", y2);
+    }
+
+    getActiveGuideNames(rect, documentWidth, documentHeight) {
+      if (!rect) {
+        return new Set();
+      }
+
+      const threshold = GUIDE_PROXIMITY_PX * this.dpr / this.camera.zoom;
+      const objectX = [rect.x, rect.x + rect.width / 2, rect.x + rect.width];
+      const objectY = [rect.y, rect.y + rect.height / 2, rect.y + rect.height];
+      const guideX = {
+        left: 0,
+        "center-x": documentWidth / 2,
+        right: documentWidth,
+      };
+      const guideY = {
+        top: 0,
+        "center-y": documentHeight / 2,
+        bottom: documentHeight,
+      };
+      const activeGuides = new Set();
+
+      Object.entries(guideX).forEach(([name, guidePosition]) => {
+        if (objectX.some((position) => Math.abs(position - guidePosition) <= threshold)) {
+          activeGuides.add(name);
+        }
+      });
+
+      Object.entries(guideY).forEach(([name, guidePosition]) => {
+        if (objectY.some((position) => Math.abs(position - guidePosition) <= threshold)) {
+          activeGuides.add(name);
+        }
+      });
+
+      return activeGuides;
+    }
+
+    renderGuides(isVisible) {
+      if (!isVisible) {
+        setSvgElementVisible(this.guideLayer, false);
+        return;
+      }
+
+      const documentWidth = Math.max(1, toFiniteNumber(this.documentRenderer?.width, 1));
+      const documentHeight = Math.max(1, toFiniteNumber(this.documentRenderer?.height, 1));
+      const left = this.documentToViewportPoint(0, 0).x;
+      const centerX = this.documentToViewportPoint(documentWidth / 2, 0).x;
+      const right = this.documentToViewportPoint(documentWidth, 0).x;
+      const top = this.documentToViewportPoint(0, 0).y;
+      const centerY = this.documentToViewportPoint(0, documentHeight / 2).y;
+      const bottom = this.documentToViewportPoint(0, documentHeight).y;
+      const activeGuides = this.getActiveGuideNames(
+        getRectFromQuad(this.currentQuad),
+        documentWidth,
+        documentHeight,
+      );
+
+      setSvgElementVisible(this.guideLayer, activeGuides.size > 0);
+
+      this.setGuideLine("left", left, 0, left, this.viewportHeight);
+      this.setGuideLine("center-x", centerX, 0, centerX, this.viewportHeight);
+      this.setGuideLine("right", right, 0, right, this.viewportHeight);
+      this.setGuideLine("top", 0, top, this.viewportWidth, top);
+      this.setGuideLine("center-y", 0, centerY, this.viewportWidth, centerY);
+      this.setGuideLine("bottom", 0, bottom, this.viewportWidth, bottom);
+
+      Object.entries(this.guides).forEach(([name, line]) => {
+        setSvgElementVisible(line, activeGuides.has(name));
+      });
+    }
+
     emitStateChange() {
       const detail = {
         active: this.isActive(),
@@ -824,6 +932,7 @@
 
       this.svg.classList.toggle("raster-transform-tool-active", this.isActive());
       setSvgElementVisible(this.box, isVisible);
+      this.renderGuides(isVisible && this.shouldShowGuides());
       this.handles.forEach((handle) => {
         setSvgElementVisible(handle, isVisible);
 
