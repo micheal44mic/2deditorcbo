@@ -418,10 +418,15 @@
         ...puppet,
         pins: [],
       };
-
-      this.layerModel?.updateLayer?.(layer.id, {
+      const rasterizedLayerPatch = {
         puppet: cloneValue(nextPuppet),
-      }, {
+      };
+
+      if (layer.type === "image") {
+        rasterizedLayerPatch.type = "paint";
+      }
+
+      this.layerModel?.updateLayer?.(layer.id, rasterizedLayerPatch, {
         history: false,
         source: "puppet-rasterize",
       });
@@ -449,6 +454,7 @@
       window.dispatchEvent(new CustomEvent("cbo:puppet-rasterized", {
         detail: {
           layerId: layer.id,
+          rasterizedLayerType: rasterizedLayerPatch.type || layer.type,
           source: "puppet-rasterize",
         },
       }));

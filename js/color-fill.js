@@ -719,13 +719,16 @@
     const history = namespace.documentHistory;
 
     if (!history?.push) {
+      renderer.finalizeRasterEditHistoryEntry?.(layerId, null, {
+        source: "color-fill",
+      });
       renderer.deleteRasterTileHistoryCapture?.(tileHistory);
       renderer.deleteRasterSnapshot?.(beforeSnapshot);
       return;
     }
 
     if (tileHistory) {
-      const entry = renderer.commitRasterTileHistory?.(tileHistory, {
+      const tileEntry = renderer.commitRasterTileHistory?.(tileHistory, {
         label: "color-fill",
         memoryPolicy,
         redoSource: "history-redo-color-fill",
@@ -733,6 +736,11 @@
         type: "pixel",
         undoSource: "history-undo-color-fill",
       });
+      const entry = tileEntry
+        ? renderer.finalizeRasterEditHistoryEntry?.(layerId, tileEntry, {
+            source: "color-fill",
+          }) || tileEntry
+        : null;
 
       if (entry) {
         history.push(entry);
@@ -789,6 +797,10 @@
         renderer.deleteRasterSnapshot?.(afterSnapshot);
       },
     };
+
+    entry = renderer.finalizeRasterEditHistoryEntry?.(layerId, entry, {
+      source: "color-fill",
+    }) || entry;
 
     history.push(entry);
   }

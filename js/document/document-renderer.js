@@ -5688,6 +5688,125 @@ void main() {
       return true;
     }
 
+    cloneValue(value) {
+      if (Array.isArray(value)) {
+        return value.map((item) => this.cloneValue(item));
+      }
+
+      if (value && typeof value === "object") {
+        return Object.fromEntries(
+          Object.entries(value).map(([key, item]) => [key, this.cloneValue(item)]),
+        );
+      }
+
+      return value;
+    }
+
+    createRasterEditLayerStateHistoryEntry(baseEntry, options = {}) {
+      const {
+        afterState,
+        beforeState,
+        history,
+        layerId,
+        source = baseEntry?.source || "raster-edit",
+      } = options;
+
+      if (
+        !baseEntry ||
+        !history ||
+        typeof history.restoreLayerState !== "function" ||
+        !this.layerModel ||
+        !beforeState ||
+        !afterState
+      ) {
+        return baseEntry;
+      }
+
+      const before = this.cloneValue(beforeState);
+      const after = this.cloneValue(afterState);
+
+      return {
+        ...baseEntry,
+        afterActiveLayerId: after.activeLayerId || null,
+        afterEntries: after.entries,
+        afterReferenceLayerId: after.referenceLayerId || null,
+        beforeActiveLayerId: before.activeLayerId || null,
+        beforeEntries: before.entries,
+        beforeReferenceLayerId: before.referenceLayerId || null,
+        layerId,
+        source,
+        undo: () => {
+          const didRestorePixels = baseEntry.undo?.() !== false;
+
+          if (!didRestorePixels) {
+            return false;
+          }
+
+          return history.restoreLayerState(this.layerModel, before, {
+            source: `history-undo-${source}-layer-state`,
+          });
+        },
+        redo: () => {
+          const didRestorePixels = baseEntry.redo?.() !== false;
+
+          if (!didRestorePixels) {
+            return false;
+          }
+
+          const didRestoreState = history.restoreLayerState(this.layerModel, after, {
+            source: `history-redo-${source}-layer-state`,
+          });
+
+          if (!didRestoreState) {
+            baseEntry.undo?.();
+          }
+
+          return didRestoreState;
+        },
+        destroy: () => {
+          baseEntry.destroy?.();
+        },
+      };
+    }
+
+    finalizeRasterEditHistoryEntry(layerId, entry, options = {}) {
+      const source = options.source || entry?.source || "raster-edit";
+      const history = namespace.documentHistory;
+      const layer = layerId ? this.layerModel?.findEntryById?.(layerId) : null;
+
+      if (layer?.type !== "image" || layer.locked === true) {
+        return entry;
+      }
+
+      history?.flushLayerState?.(this.layerModel);
+      const beforeState = history?.getLayerSnapshot?.(this.layerModel) || null;
+      const didRasterize = this.layerModel?.rasterizeImageLayerToPaint?.(layer.id, {
+        history: false,
+        source,
+      });
+
+      if (!didRasterize) {
+        return entry;
+      }
+
+      const afterState = history?.getLayerSnapshot?.(this.layerModel) || null;
+
+      window.dispatchEvent(new CustomEvent("cbo:image-layer-rasterized", {
+        detail: {
+          layerId: layer.id,
+          source,
+        },
+      }));
+
+      return this.createRasterEditLayerStateHistoryEntry(entry, {
+        afterState,
+        beforeState,
+        history,
+        layerId: layer.id,
+        source,
+      });
+    }
+
     commitCroppedRasterTransform(options = {}) {
       const {
         destQuad,
@@ -5790,7 +5909,7 @@ void main() {
       });
 
       const history = namespace.documentHistory;
-      const entry = {
+      const entry = this.finalizeRasterEditHistoryEntry(layerId, {
         type: "custom",
         afterSnapshot,
         beforeSnapshot,
@@ -5807,7 +5926,7 @@ void main() {
           this.deleteRasterSnapshot(beforeSnapshot);
           this.deleteRasterSnapshot(afterSnapshot);
         },
-      };
+      }, { source });
 
       if (history?.push) {
         history.push(entry);
@@ -5919,7 +6038,7 @@ void main() {
           targetRect: dirtyRect,
           tool: "raster-transform",
         }));
-        const entry = this.commitRasterTileHistory(tileHistory, {
+        const tileEntry = this.commitRasterTileHistory(tileHistory, {
           label: source,
           memoryPolicy,
           redoSource: `history-redo-${source}`,
@@ -5928,7 +6047,7 @@ void main() {
           undoSource: `history-undo-${source}`,
         });
 
-        if (!entry) {
+        if (!tileEntry) {
           this.restoreRasterTileHistoryEntry(tileHistory, "before", {
             emit: false,
             source: `${source}-rollback`,
@@ -5937,6 +6056,7 @@ void main() {
           return false;
         }
 
+        const entry = this.finalizeRasterEditHistoryEntry(layerId, tileEntry, { source });
         const history = namespace.documentHistory;
 
         if (history?.push) {
@@ -5983,7 +6103,7 @@ void main() {
       }));
 
       const history = namespace.documentHistory;
-      const entry = {
+      const entry = this.finalizeRasterEditHistoryEntry(layerId, {
         type: "custom",
         afterSnapshot,
         beforeSnapshot,
@@ -6000,7 +6120,7 @@ void main() {
           this.deleteRasterSnapshot(beforeSnapshot);
           this.deleteRasterSnapshot(afterSnapshot);
         },
-      };
+      }, { source });
 
       if (history?.push) {
         history.push(entry);

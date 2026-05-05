@@ -362,6 +362,12 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     return layer?.type === "vector-text" || layer?.type === "text" || layer?.kind === "text";
   }
 
+  function isRasterizableImageLayer(layer) {
+    return layer?.type === "image" &&
+      layer.locked !== true &&
+      typeof window.CBO.rasterizeActiveImageLayer === "function";
+  }
+
   function hasRasterizableLayerEffects(layer) {
     return window.CBO.hasRasterizableLayerEffects?.(layer) === true &&
       typeof window.CBO.rasterizeActiveLayerEffects === "function";
@@ -376,12 +382,21 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const canRasterizeText = isVectorTextLayer(activeLayer) &&
       typeof window.CBO.rasterizeActiveVectorTextLayer === "function";
     const canRasterizeEffects = !canRasterizeText && hasRasterizableLayerEffects(activeLayer);
-    const canRasterize = canRasterizeText || canRasterizeEffects;
-    const tooltip = canRasterizeEffects ? "RASTERIZE EFFECTS" : "RASTERIZE TEXT";
+    const canRasterizeImage = !canRasterizeText && !canRasterizeEffects && isRasterizableImageLayer(activeLayer);
+    const canRasterize = canRasterizeText || canRasterizeEffects || canRasterizeImage;
+    const tooltip = canRasterizeEffects
+      ? "RASTERIZE EFFECTS"
+      : canRasterizeImage
+        ? "RASTERIZE IMAGE"
+        : "RASTERIZE TEXT";
 
     rasterizeTextButton.hidden = !canRasterize;
     rasterizeTextButton.disabled = !canRasterize;
-    rasterizeTextButton.dataset.rasterizeMode = canRasterizeEffects ? "effects" : "text";
+    rasterizeTextButton.dataset.rasterizeMode = canRasterizeEffects
+      ? "effects"
+      : canRasterizeImage
+        ? "image"
+        : "text";
     rasterizeTextButton.dataset.tooltip = tooltip;
   }
 
@@ -402,6 +417,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     try {
       if (rasterizeTextButton.dataset.rasterizeMode === "effects") {
         await window.CBO.rasterizeActiveLayerEffects?.();
+      } else if (rasterizeTextButton.dataset.rasterizeMode === "image") {
+        await window.CBO.rasterizeActiveImageLayer?.();
       } else {
         await window.CBO.rasterizeActiveVectorTextLayer?.();
       }
@@ -472,6 +489,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   window.addEventListener("cbo:document-layers-change", syncRasterizeTextButton);
   window.addEventListener("cbo:vector-text-rasterized", syncRasterizeTextButton);
   window.addEventListener("cbo:layer-effects-rasterized", syncRasterizeTextButton);
+  window.addEventListener("cbo:image-layer-rasterized", syncRasterizeTextButton);
   window.addEventListener("cbo:brush-settings-change", syncQuickControls);
   setTransformMode(selectedTransformMode, { emit: false });
   syncRasterizeTextButton();

@@ -144,11 +144,11 @@ test("maxEntries destroys the oldest entry", () => {
   assert.equal(history.undoStack[1].id, 3);
 });
 
-test("raster history default budget is 500 MiB", () => {
+test("raster history default budget is 320 MiB", () => {
   const DocumentHistory = loadDocumentHistory();
   const history = new DocumentHistory();
 
-  assert.equal(history.getRasterHistoryBudgetMiB(), 500);
+  assert.equal(history.getRasterHistoryBudgetMiB(), 320);
 });
 
 test("raster history cools old GPU snapshots without dropping logical undo budget", () => {

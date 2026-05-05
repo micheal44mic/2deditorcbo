@@ -589,6 +589,22 @@
       return true;
     }
 
+    rasterizeImageLayerToPaint(id, options = {}) {
+      const entry = this.findEntryById(id);
+
+      if (!entry || entry.type !== "image" || entry.locked === true) {
+        return false;
+      }
+
+      return this.updateLayer(entry.id, {
+        type: "paint",
+      }, {
+        history: options.history,
+        historyGroup: options.historyGroup || `image-rasterize-${entry.id}`,
+        source: options.source || "image-rasterize",
+      });
+    }
+
     canActivateEntry(entry) {
       return Boolean(entry && entry.type !== "group" && entry.locked !== true);
     }
@@ -680,4 +696,38 @@
   }
 
   namespace.DocumentLayerModel = DocumentLayerModel;
+  namespace.rasterizeImageLayerToPaint = function rasterizeImageLayerToPaint(layerId, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const activeLayerId = layerId || layerModel?.activeLayerId;
+    const layer = activeLayerId ? layerModel?.findEntryById?.(activeLayerId) : null;
+
+    if (!layerModel?.rasterizeImageLayerToPaint || layer?.type !== "image") {
+      return false;
+    }
+
+    namespace.documentHistory?.flushLayerState?.(layerModel);
+
+    const source = options.source || "image-rasterize";
+    const didRasterize = layerModel.rasterizeImageLayerToPaint(layer.id, {
+      ...options,
+      source,
+    });
+
+    if (!didRasterize) {
+      return false;
+    }
+
+    namespace.documentRenderer?.requestDraw?.();
+    window.dispatchEvent(new CustomEvent("cbo:image-layer-rasterized", {
+      detail: {
+        layerId: layer.id,
+        source,
+      },
+    }));
+
+    return true;
+  };
+  namespace.rasterizeActiveImageLayerToPaint = (options = {}) =>
+    namespace.rasterizeImageLayerToPaint(null, options);
+  namespace.rasterizeActiveImageLayer = namespace.rasterizeActiveImageLayerToPaint;
 })(window.CBO = window.CBO || {});

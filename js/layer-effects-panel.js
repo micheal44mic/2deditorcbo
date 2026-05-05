@@ -942,9 +942,15 @@ window.CBO = window.CBO || {};
       return false;
     }
 
-    const didUpdateLayer = layerModel.updateLayer(layer.id, {
+    const rasterizedLayerPatch = {
       effects: getEffectsAfterRasterize(layer),
-    }, {
+    };
+
+    if (layer.type === "image") {
+      rasterizedLayerPatch.type = "paint";
+    }
+
+    const didUpdateLayer = layerModel.updateLayer(layer.id, rasterizedLayerPatch, {
       history: false,
       source: "layer-effects-rasterize",
     });
@@ -986,6 +992,7 @@ window.CBO = window.CBO || {};
     window.dispatchEvent(new CustomEvent("cbo:layer-effects-rasterized", {
       detail: {
         layerId: layer.id,
+        rasterizedLayerType: rasterizedLayerPatch.type || layer.type,
         source: "layer-effects-rasterize",
       },
     }));

@@ -114,6 +114,42 @@ test("setEntries and setActiveLayer are batched into one layer-state entry", asy
   assert.equal(model.activeLayerId, textLayer.id);
 });
 
+test("image layers can be rasterized into paint layers with undo history", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory({ maxEntries: 40 });
+  const model = new DocumentLayerModel();
+  const imageLayer = model.createLayer({
+    id: "image-1",
+    name: "Imported",
+    type: "image",
+  });
+
+  window.CBO.documentHistory = history;
+  window.CBO.documentLayerModel = model;
+  window.CBO.documentRenderer = { requestDraw() {} };
+
+  model.setEntries([imageLayer, ...model.getEntries()], {
+    history: false,
+    source: "test-setup",
+  });
+  model.setActiveLayer(imageLayer.id, {
+    history: false,
+    source: "test-setup",
+  });
+
+  assert.equal(window.CBO.rasterizeActiveImageLayer(), true);
+  await waitForHistoryFlush();
+
+  assert.equal(model.findEntryById(imageLayer.id).type, "paint");
+  assert.equal(history.undoStack.length, 1);
+
+  assert.equal(history.undo(), true);
+  assert.equal(model.findEntryById(imageLayer.id).type, "image");
+
+  assert.equal(history.redo(), true);
+  assert.equal(model.findEntryById(imageLayer.id).type, "paint");
+});
+
 test("updateLayer entries with the same historyGroup merge", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory({ groupIdleMs: 1000 });

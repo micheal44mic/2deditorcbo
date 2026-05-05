@@ -3774,7 +3774,7 @@ void main() {
 
       if (tileHistory) {
         const history = namespace.documentHistory;
-        const entry = this.documentRenderer?.commitRasterTileHistory?.(tileHistory, {
+        const tileEntry = this.documentRenderer?.commitRasterTileHistory?.(tileHistory, {
           label: "brush-stroke",
           memoryPolicy: memoryReport,
           redoSource: `history-redo-${this.currentStrokeTool}`,
@@ -3782,11 +3782,19 @@ void main() {
           type: "pixel",
           undoSource: `history-undo-${this.currentStrokeTool}`,
         });
+        const entry = tileEntry
+          ? this.documentRenderer?.finalizeRasterEditHistoryEntry?.(layerId, tileEntry, {
+              source: this.currentStrokeTool,
+            }) || tileEntry
+          : null;
 
         if (history?.push && entry) {
           history.push(entry);
           this.pruneRasterHistoryForStroke(memoryReport);
         } else {
+          this.documentRenderer?.finalizeRasterEditHistoryEntry?.(layerId, null, {
+            source: this.currentStrokeTool,
+          });
           this.documentRenderer?.deleteRasterTileHistoryCapture?.(tileHistory);
         }
       } else if (beforeSnapshot) {
@@ -3842,11 +3850,22 @@ void main() {
             },
           };
 
+          entry = this.documentRenderer?.finalizeRasterEditHistoryEntry?.(layerId, entry, {
+            source: this.currentStrokeTool,
+          }) || entry;
+
           history.push(entry);
           this.pruneRasterHistoryForStroke(memoryReport);
         } else {
+          this.documentRenderer?.finalizeRasterEditHistoryEntry?.(layerId, null, {
+            source: this.currentStrokeTool,
+          });
           this.deleteHistorySnapshot(beforeSnapshot);
         }
+      } else {
+        this.documentRenderer?.finalizeRasterEditHistoryEntry?.(layerId, null, {
+          source: this.currentStrokeTool,
+        });
       }
 
       this.clearStrokeLayer();

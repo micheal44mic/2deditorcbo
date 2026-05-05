@@ -171,8 +171,11 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /closePanel\(\{ cancel: true \}\)/);
   assert.match(topToolbarSource, /hasRasterizableLayerEffects\(activeLayer\)/);
   assert.match(topToolbarSource, /window\.CBO\.rasterizeActiveLayerEffects\?\.\(\)/);
+  assert.match(topToolbarSource, /window\.CBO\.rasterizeActiveImageLayer\?\.\(\)/);
   assert.match(topToolbarSource, /RASTERIZE EFFECTS/);
+  assert.match(topToolbarSource, /RASTERIZE IMAGE/);
   assert.match(topToolbarSource, /cbo:layer-effects-rasterized/);
+  assert.match(topToolbarSource, /cbo:image-layer-rasterized/);
 });
 
 test("gaussian blur preview writes bypass document history", () => {
@@ -570,4 +573,58 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
     "content:layer-effects-rasterize:paint-main",
     "draw",
   ]);
+});
+
+test("layer effects rasterizer turns image layers into paint layers", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const beforeSnapshot = { framebuffer: {}, texture: {} };
+  const afterSnapshot = { framebuffer: {}, texture: {} };
+  const beforeState = {
+    activeLayerId: "image-1",
+    entries: [{ id: "image-1", type: "image" }],
+  };
+  const layer = {
+    effects: [{ type: "gaussian-blur", radius: 8, enabled: true }],
+    id: "image-1",
+    type: "image",
+  };
+  const layerModel = {
+    activeLayerId: layer.id,
+    findEntryById(id) {
+      return id === layer.id ? layer : null;
+    },
+    updateLayer(id, patch) {
+      layer.effects = patch.effects.length > 0 ? patch.effects : undefined;
+      layer.type = patch.type || layer.type;
+      return true;
+    },
+  };
+  const history = {
+    flushLayerState() {},
+    getLayerSnapshot() {
+      return {
+        activeLayerId: layer.id,
+        entries: [{ ...layer }],
+      };
+    },
+    push(entry) {
+      this.entry = entry;
+      return true;
+    },
+  };
+
+  namespace.documentHistory = history;
+  namespace.documentLayerModel = layerModel;
+  namespace.documentRenderer = {
+    emitContentChange() {},
+    rasterizeLayerEffects() {
+      return { afterSnapshot, beforeSnapshot, layerId: layer.id };
+    },
+    requestDraw() {},
+  };
+
+  assert.equal(namespace.rasterizeActiveLayerEffects({ beforeState }), true);
+  assert.equal(layer.type, "paint");
+  assert.equal(history.entry.beforeEntries[0].type, "image");
+  assert.equal(history.entry.afterEntries[0].type, "paint");
 });
