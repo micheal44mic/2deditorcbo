@@ -665,9 +665,11 @@
       const dy = point.y - this.dragState.startPoint.y;
 
       if (this.dragState.mode === "move") {
+        const snappedDelta = this.getSnappedMoveDelta(dx, dy);
+
         this.currentQuad = this.dragState.startQuad.map((item) => ({
-          x: item.x + dx,
-          y: item.y + dy,
+          x: item.x + snappedDelta.dx,
+          y: item.y + snappedDelta.dy,
         }));
       } else if (this.dragState.mode === "scale") {
         this.currentQuad = this.getScaledQuad(dx, dy, event);
@@ -767,7 +769,7 @@
         y = centerY - height / 2;
       }
 
-      return rectToQuad({ x, y, width, height });
+      return rectToQuad(this.getSnappedScaledRect({ x, y, width, height }, dir, event));
     }
 
     getDistortedQuad(dx, dy) {
@@ -830,34 +832,375 @@
       line.setAttribute("y2", y2);
     }
 
+    getGuideDocumentSize() {
+      return {
+        documentWidth: Math.max(1, toFiniteNumber(this.documentRenderer?.width, 1)),
+        documentHeight: Math.max(1, toFiniteNumber(this.documentRenderer?.height, 1)),
+      };
+    }
+
+    getGuideSnapThreshold() {
+      return GUIDE_PROXIMITY_PX * this.dpr / this.camera.zoom;
+    }
+
+    getGuidePositions(documentWidth, documentHeight) {
+      return {
+        x: {
+          left: 0,
+          "center-x": documentWidth / 2,
+          right: documentWidth,
+        },
+        y: {
+          top: 0,
+          "center-y": documentHeight / 2,
+          bottom: documentHeight,
+        },
+      };
+    }
+
+    findClosestSnapOffset(objectPositions, guidePositions, threshold = this.getGuideSnapThreshold()) {
+      let snapOffset = 0;
+      let snapDistance = Infinity;
+
+      objectPositions.forEach((objectPosition) => {
+        const candidate = this.findClosestSnapCandidate(objectPosition, guidePositions, threshold);
+
+        if (candidate && candidate.distance < snapDistance) {
+          snapOffset = candidate.offset;
+          snapDistance = candidate.distance;
+        }
+      });
+
+      return snapOffset;
+    }
+
+    findClosestSnapCandidate(objectPosition, guidePositions, threshold = this.getGuideSnapThreshold()) {
+      let snapCandidate = null;
+
+      guidePositions.forEach((guidePosition) => {
+        const offset = guidePosition - objectPosition;
+        const distance = Math.abs(offset);
+
+        if (distance <= threshold && (!snapCandidate || distance < snapCandidate.distance)) {
+          snapCandidate = {
+            distance,
+            guidePosition,
+            offset,
+          };
+        }
+      });
+
+      return snapCandidate;
+    }
+
+    getRectGuidePositions(rect) {
+      return {
+        x: [rect.x, rect.x + rect.width / 2, rect.x + rect.width],
+        y: [rect.y, rect.y + rect.height / 2, rect.y + rect.height],
+      };
+    }
+
+    getSnapOffsetForRect(rect) {
+      if (!rect) {
+        return { x: 0, y: 0 };
+      }
+
+      const { documentWidth, documentHeight } = this.getGuideDocumentSize();
+      const guides = this.getGuidePositions(documentWidth, documentHeight);
+      const positions = this.getRectGuidePositions(rect);
+
+      return {
+        x: this.findClosestSnapOffset(positions.x, Object.values(guides.x)),
+        y: this.findClosestSnapOffset(positions.y, Object.values(guides.y)),
+      };
+    }
+
+    getSnappedMoveDelta(dx, dy) {
+      const startRect = this.dragState?.startRect;
+
+      if (!startRect) {
+        return { dx, dy };
+      }
+
+      const snapOffset = this.getSnapOffsetForRect({
+        x: startRect.x + dx,
+        y: startRect.y + dy,
+        width: startRect.width,
+        height: startRect.height,
+      });
+
+      return {
+        dx: dx + snapOffset.x,
+        dy: dy + snapOffset.y,
+      };
+    }
+
+    getScaleSnapCandidates(rect, dir) {
+      const { documentWidth, documentHeight } = this.getGuideDocumentSize();
+      const guides = this.getGuidePositions(documentWidth, documentHeight);
+      const candidates = [];
+
+      if (dir.includes("e")) {
+        const candidate = this.findClosestSnapCandidate(rect.x + rect.width, Object.values(guides.x));
+
+        if (candidate) {
+          candidates.push({ ...candidate, axis: "x", side: "e" });
+        }
+      }
+
+      if (dir.includes("w")) {
+        const candidate = this.findClosestSnapCandidate(rect.x, Object.values(guides.x));
+
+        if (candidate) {
+          candidates.push({ ...candidate, axis: "x", side: "w" });
+        }
+      }
+
+      if (dir.includes("s")) {
+        const candidate = this.findClosestSnapCandidate(rect.y + rect.height, Object.values(guides.y));
+
+        if (candidate) {
+          candidates.push({ ...candidate, axis: "y", side: "s" });
+        }
+      }
+
+      if (dir.includes("n")) {
+        const candidate = this.findClosestSnapCandidate(rect.y, Object.values(guides.y));
+
+        if (candidate) {
+          candidates.push({ ...candidate, axis: "y", side: "n" });
+        }
+      }
+
+      return candidates.sort((first, second) => first.distance - second.distance);
+    }
+
+    clampScaledRect(rect, dir) {
+      let { x, y, width, height } = rect;
+
+      if (width < MIN_TRANSFORM_SIZE) {
+        if (dir.includes("w")) {
+          x -= MIN_TRANSFORM_SIZE - width;
+        }
+
+        width = MIN_TRANSFORM_SIZE;
+      }
+
+      if (height < MIN_TRANSFORM_SIZE) {
+        if (dir.includes("n")) {
+          y -= MIN_TRANSFORM_SIZE - height;
+        }
+
+        height = MIN_TRANSFORM_SIZE;
+      }
+
+      return { x, y, width, height };
+    }
+
+    getEdgeSnappedScaledRect(rect, dir, candidates) {
+      let { x, y, width, height } = rect;
+
+      candidates.forEach((candidate) => {
+        if (candidate.side === "e") {
+          width += candidate.offset;
+        } else if (candidate.side === "w") {
+          x += candidate.offset;
+          width -= candidate.offset;
+        } else if (candidate.side === "s") {
+          height += candidate.offset;
+        } else if (candidate.side === "n") {
+          y += candidate.offset;
+          height -= candidate.offset;
+        }
+      });
+
+      return this.clampScaledRect({ x, y, width, height }, dir);
+    }
+
+    getCenteredSnappedScaledRect(rect, candidates) {
+      const startRect = this.dragState?.startRect;
+
+      if (!startRect) {
+        return rect;
+      }
+
+      const centerX = startRect.x + startRect.width / 2;
+      const centerY = startRect.y + startRect.height / 2;
+      let { width, height } = rect;
+
+      candidates.forEach((candidate) => {
+        if (candidate.side === "e") {
+          const nextWidth = (candidate.guidePosition - centerX) * 2;
+
+          if (nextWidth >= MIN_TRANSFORM_SIZE) {
+            width = nextWidth;
+          }
+        } else if (candidate.side === "w") {
+          const nextWidth = (centerX - candidate.guidePosition) * 2;
+
+          if (nextWidth >= MIN_TRANSFORM_SIZE) {
+            width = nextWidth;
+          }
+        } else if (candidate.side === "s") {
+          const nextHeight = (candidate.guidePosition - centerY) * 2;
+
+          if (nextHeight >= MIN_TRANSFORM_SIZE) {
+            height = nextHeight;
+          }
+        } else if (candidate.side === "n") {
+          const nextHeight = (centerY - candidate.guidePosition) * 2;
+
+          if (nextHeight >= MIN_TRANSFORM_SIZE) {
+            height = nextHeight;
+          }
+        }
+      });
+
+      return {
+        x: centerX - width / 2,
+        y: centerY - height / 2,
+        width,
+        height,
+      };
+    }
+
+    getAspectSnappedScaledRect(rect, dir, event, candidate) {
+      const startRect = this.dragState?.startRect;
+
+      if (!startRect || !candidate || startRect.height <= 0) {
+        return rect;
+      }
+
+      const aspect = startRect.width / startRect.height;
+      const centerX = startRect.x + startRect.width / 2;
+      const centerY = startRect.y + startRect.height / 2;
+      let x = rect.x;
+      let y = rect.y;
+      let width = rect.width;
+      let height = rect.height;
+
+      if (event.altKey) {
+        if (candidate.axis === "x") {
+          const halfWidth = candidate.side === "e"
+            ? candidate.guidePosition - centerX
+            : centerX - candidate.guidePosition;
+
+          if (halfWidth < MIN_TRANSFORM_SIZE / 2) {
+            return rect;
+          }
+
+          width = halfWidth * 2;
+          height = width / aspect;
+        } else {
+          const halfHeight = candidate.side === "s"
+            ? candidate.guidePosition - centerY
+            : centerY - candidate.guidePosition;
+
+          if (halfHeight < MIN_TRANSFORM_SIZE / 2) {
+            return rect;
+          }
+
+          height = halfHeight * 2;
+          width = height * aspect;
+        }
+
+        return {
+          x: centerX - width / 2,
+          y: centerY - height / 2,
+          width,
+          height,
+        };
+      }
+
+      if (candidate.axis === "x") {
+        if (candidate.side === "e") {
+          x = startRect.x;
+          width = candidate.guidePosition - x;
+        } else {
+          const right = startRect.x + startRect.width;
+
+          x = candidate.guidePosition;
+          width = right - x;
+        }
+
+        if (width < MIN_TRANSFORM_SIZE) {
+          return rect;
+        }
+
+        height = width / aspect;
+
+        if (dir.includes("n")) {
+          y = startRect.y + startRect.height - height;
+        } else if (dir.includes("s")) {
+          y = startRect.y;
+        } else {
+          y = centerY - height / 2;
+        }
+      } else {
+        if (candidate.side === "s") {
+          y = startRect.y;
+          height = candidate.guidePosition - y;
+        } else {
+          const bottom = startRect.y + startRect.height;
+
+          y = candidate.guidePosition;
+          height = bottom - y;
+        }
+
+        if (height < MIN_TRANSFORM_SIZE) {
+          return rect;
+        }
+
+        width = height * aspect;
+
+        if (dir.includes("w")) {
+          x = startRect.x + startRect.width - width;
+        } else if (dir.includes("e")) {
+          x = startRect.x;
+        } else {
+          x = centerX - width / 2;
+        }
+      }
+
+      return this.clampScaledRect({ x, y, width, height }, dir);
+    }
+
+    getSnappedScaledRect(rect, dir, event) {
+      const candidates = this.getScaleSnapCandidates(rect, dir);
+
+      if (candidates.length === 0) {
+        return rect;
+      }
+
+      if (event.shiftKey) {
+        return this.getAspectSnappedScaledRect(rect, dir, event, candidates[0]);
+      }
+
+      if (event.altKey) {
+        return this.getCenteredSnappedScaledRect(rect, candidates);
+      }
+
+      return this.getEdgeSnappedScaledRect(rect, dir, candidates);
+    }
+
     getActiveGuideNames(rect, documentWidth, documentHeight) {
       if (!rect) {
         return new Set();
       }
 
-      const threshold = GUIDE_PROXIMITY_PX * this.dpr / this.camera.zoom;
-      const objectX = [rect.x, rect.x + rect.width / 2, rect.x + rect.width];
-      const objectY = [rect.y, rect.y + rect.height / 2, rect.y + rect.height];
-      const guideX = {
-        left: 0,
-        "center-x": documentWidth / 2,
-        right: documentWidth,
-      };
-      const guideY = {
-        top: 0,
-        "center-y": documentHeight / 2,
-        bottom: documentHeight,
-      };
+      const threshold = this.getGuideSnapThreshold();
+      const positions = this.getRectGuidePositions(rect);
+      const guides = this.getGuidePositions(documentWidth, documentHeight);
       const activeGuides = new Set();
 
-      Object.entries(guideX).forEach(([name, guidePosition]) => {
-        if (objectX.some((position) => Math.abs(position - guidePosition) <= threshold)) {
+      Object.entries(guides.x).forEach(([name, guidePosition]) => {
+        if (positions.x.some((position) => Math.abs(position - guidePosition) <= threshold)) {
           activeGuides.add(name);
         }
       });
 
-      Object.entries(guideY).forEach(([name, guidePosition]) => {
-        if (objectY.some((position) => Math.abs(position - guidePosition) <= threshold)) {
+      Object.entries(guides.y).forEach(([name, guidePosition]) => {
+        if (positions.y.some((position) => Math.abs(position - guidePosition) <= threshold)) {
           activeGuides.add(name);
         }
       });
@@ -871,8 +1214,7 @@
         return;
       }
 
-      const documentWidth = Math.max(1, toFiniteNumber(this.documentRenderer?.width, 1));
-      const documentHeight = Math.max(1, toFiniteNumber(this.documentRenderer?.height, 1));
+      const { documentWidth, documentHeight } = this.getGuideDocumentSize();
       const left = this.documentToViewportPoint(0, 0).x;
       const centerX = this.documentToViewportPoint(documentWidth / 2, 0).x;
       const right = this.documentToViewportPoint(documentWidth, 0).x;

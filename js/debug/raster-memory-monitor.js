@@ -1,6 +1,7 @@
 (function registerRasterMemoryMonitor(namespace) {
   const MIB = 1024 * 1024;
   const OVERLAY_ID = "cbo-raster-memory-overlay";
+  const OVERLAY_PANEL_ID = "cbo-raster-memory-panel";
   const DEFAULT_UPDATE_HZ = 3;
   const DEFAULT_GPU_SAMPLE_EVERY = 10;
 
@@ -17,6 +18,7 @@
     lastStatsAt: 0,
     lastTrim: null,
     overlay: null,
+    overlayExpanded: false,
     rafEmaMs: null,
     rafId: 0,
     renderCountSinceUpdate: 0,
@@ -511,31 +513,209 @@
     if (!overlay) {
       overlay = document.createElement("div");
       overlay.id = OVERLAY_ID;
-      overlay.setAttribute("aria-hidden", "true");
-      overlay.style.cssText = [
-        "position:fixed",
-        "right:10px",
-        "bottom:10px",
-        "z-index:2147483647",
-        "min-width:252px",
-        "max-width:340px",
-        "box-sizing:border-box",
-        "padding:10px 12px",
-        "border:1px solid rgba(255,255,255,.14)",
-        "background:rgba(14,17,24,.86)",
-        "color:#eef3ff",
-        "font:12px/1.38 ui-monospace,SFMono-Regular,Consolas,monospace",
-        "letter-spacing:0",
-        "white-space:pre",
-        "pointer-events:none",
-        "box-shadow:0 12px 30px rgba(0,0,0,.32)",
-        "backdrop-filter:blur(8px)",
-      ].join(";");
       document.body.appendChild(overlay);
     }
 
+    overlay.removeAttribute("aria-hidden");
+    overlay.style.cssText = [
+      "position:fixed",
+      "right:10px",
+      "bottom:10px",
+      "z-index:2147483647",
+      "display:flex",
+      "flex-direction:column",
+      "align-items:flex-end",
+      "box-sizing:border-box",
+      "color:#eef3ff",
+      "font:12px/1.38 ui-monospace,SFMono-Regular,Consolas,monospace",
+      "letter-spacing:0",
+      "pointer-events:none",
+    ].join(";");
+
+    if (!overlay.querySelector("[data-raster-memory-toggle]")) {
+      overlay.replaceChildren();
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.dataset.rasterMemoryToggle = "true";
+      toggle.setAttribute("aria-controls", OVERLAY_PANEL_ID);
+      toggle.setAttribute("aria-label", "Apri monitor prestazioni");
+      toggle.title = "Apri monitor prestazioni";
+      toggle.style.cssText = [
+        "appearance:none",
+        "display:inline-flex",
+        "align-items:center",
+        "justify-content:center",
+        "gap:7px",
+        "min-width:64px",
+        "min-height:34px",
+        "box-sizing:border-box",
+        "padding:7px 10px",
+        "border:1px solid rgba(134,255,186,.35)",
+        "border-radius:8px",
+        "background:rgba(14,17,24,.9)",
+        "color:#eef3ff",
+        "font:600 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace",
+        "letter-spacing:0",
+        "cursor:pointer",
+        "pointer-events:auto",
+        "box-shadow:0 10px 24px rgba(0,0,0,.28)",
+        "backdrop-filter:blur(8px)",
+      ].join(";");
+
+      const statusDot = document.createElement("span");
+      statusDot.dataset.rasterMemoryStatusDot = "true";
+      statusDot.style.cssText = [
+        "display:block",
+        "width:7px",
+        "height:7px",
+        "border-radius:999px",
+        "background:rgba(134,255,186,.9)",
+        "box-shadow:0 0 0 2px rgba(134,255,186,.12)",
+        "flex:0 0 auto",
+      ].join(";");
+
+      const toggleText = document.createElement("span");
+      toggleText.textContent = "Perf";
+
+      toggle.append(statusDot, toggleText);
+
+      const panel = document.createElement("div");
+      panel.id = OVERLAY_PANEL_ID;
+      panel.dataset.rasterMemoryPanel = "true";
+      panel.setAttribute("role", "status");
+      panel.setAttribute("aria-live", "polite");
+      panel.style.cssText = [
+        "min-width:252px",
+        "max-width:min(340px,calc(100vw - 20px))",
+        "box-sizing:border-box",
+        "border:1px solid rgba(134,255,186,.35)",
+        "border-radius:8px",
+        "background:rgba(14,17,24,.9)",
+        "color:#eef3ff",
+        "box-shadow:0 12px 30px rgba(0,0,0,.32)",
+        "backdrop-filter:blur(8px)",
+        "overflow:hidden",
+        "pointer-events:auto",
+      ].join(";");
+
+      const header = document.createElement("div");
+      header.style.cssText = [
+        "display:flex",
+        "align-items:center",
+        "justify-content:space-between",
+        "gap:10px",
+        "padding:8px 10px",
+        "border-bottom:1px solid rgba(255,255,255,.1)",
+        "font:600 11px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace",
+        "text-transform:uppercase",
+      ].join(";");
+
+      const title = document.createElement("span");
+      title.textContent = "Raster monitor";
+
+      const close = document.createElement("button");
+      close.type = "button";
+      close.dataset.rasterMemoryClose = "true";
+      close.setAttribute("aria-label", "Chiudi monitor prestazioni");
+      close.title = "Chiudi monitor prestazioni";
+      close.textContent = "x";
+      close.style.cssText = [
+        "appearance:none",
+        "display:inline-flex",
+        "align-items:center",
+        "justify-content:center",
+        "width:24px",
+        "height:24px",
+        "border:1px solid rgba(255,255,255,.16)",
+        "border-radius:6px",
+        "background:rgba(255,255,255,.08)",
+        "color:#eef3ff",
+        "font:700 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace",
+        "cursor:pointer",
+        "padding:0",
+      ].join(";");
+
+      const body = document.createElement("pre");
+      body.dataset.rasterMemoryBody = "true";
+      body.style.cssText = [
+        "box-sizing:border-box",
+        "margin:0",
+        "padding:10px 12px",
+        "font:12px/1.38 ui-monospace,SFMono-Regular,Consolas,monospace",
+        "letter-spacing:0",
+        "white-space:pre-wrap",
+        "overflow-wrap:anywhere",
+      ].join(";");
+
+      toggle.addEventListener("click", () => {
+        setOverlayExpanded(true);
+        renderOverlay();
+      });
+
+      close.addEventListener("click", () => {
+        setOverlayExpanded(false);
+      });
+
+      overlay.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          setOverlayExpanded(false);
+        }
+      });
+
+      header.append(title, close);
+      panel.append(header, body);
+      overlay.append(toggle, panel);
+    }
+
     state.overlay = overlay;
+    syncOverlayChrome(overlay);
     return overlay;
+  }
+
+  function getStatusColor(status) {
+    return status === "critical"
+      ? "rgba(255,95,95,.85)"
+      : status === "medium"
+        ? "rgba(255,196,87,.85)"
+        : status === "warning"
+          ? "rgba(255,224,112,.72)"
+          : "rgba(134,255,186,.35)";
+  }
+
+  function syncOverlayChrome(overlay = state.overlay) {
+    if (!overlay) {
+      return;
+    }
+
+    const status = overlay.dataset.status || "ok";
+    const color = getStatusColor(status);
+    const toggle = overlay.querySelector("[data-raster-memory-toggle]");
+    const panel = overlay.querySelector("[data-raster-memory-panel]");
+    const dot = overlay.querySelector("[data-raster-memory-status-dot]");
+
+    if (toggle) {
+      toggle.hidden = state.overlayExpanded;
+      toggle.setAttribute("aria-expanded", String(state.overlayExpanded));
+      toggle.setAttribute("aria-label", "Apri monitor prestazioni");
+      toggle.title = "Apri monitor prestazioni";
+      toggle.style.borderColor = color;
+    }
+
+    if (panel) {
+      panel.hidden = !state.overlayExpanded;
+      panel.style.borderColor = color;
+    }
+
+    if (dot) {
+      dot.style.background = color;
+      dot.style.boxShadow = `0 0 0 2px ${color.replace(/,\s*(?:0?\.)?\d+\)$/, ",.12)")}`;
+    }
+  }
+
+  function setOverlayExpanded(expanded) {
+    state.overlayExpanded = expanded === true;
+    syncOverlayChrome();
   }
 
   function buildWarnings(memoryReport, categories, budget, cpuHistory) {
@@ -670,20 +850,15 @@
       `Warnings: ${warnings.length ? warnings.join(", ") : "none"}`,
     ];
     const text = lines.join("\n");
+    const body = overlay.querySelector("[data-raster-memory-body]");
 
-    if (state.lastOverlayText !== text) {
-      overlay.textContent = text;
+    if (body && state.lastOverlayText !== text) {
+      body.textContent = text;
       state.lastOverlayText = text;
     }
 
     overlay.dataset.status = status;
-    overlay.style.borderColor = status === "critical"
-      ? "rgba(255,95,95,.85)"
-      : status === "medium"
-        ? "rgba(255,196,87,.85)"
-        : status === "warning"
-          ? "rgba(255,224,112,.72)"
-          : "rgba(134,255,186,.35)";
+    syncOverlayChrome(overlay);
 
     state.renderCountSinceUpdate = 0;
     state.lastStatsAt = now();

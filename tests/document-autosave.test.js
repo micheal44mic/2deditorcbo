@@ -35,6 +35,9 @@ test("document autosave captures layer structure and sparse raster content only"
   assert.match(source, /renderer\.createRasterSnapshot\?\.\(layerId, tile\.rect, "autosave-tile"\)/);
   assert.match(source, /renderer\.dehydrateRasterSnapshot\?\.\(snapshot\)/);
   assert.match(source, /pixelsAreTransparent\(pixels\)/);
+  assert.match(source, /rect: \{ \.\.\.targetRect \}/);
+  assert.match(source, /rect: \{ \.\.\.snapshot\.rect \}/);
+  assert.doesNotMatch(source, /layerRecord\.rect = unionRects/);
   assert.match(source, /window\.addEventListener\("cbo:document-content-change", handleDocumentChange\)/);
   assert.match(source, /window\.addEventListener\("cbo:document-layers-change", handleDocumentChange\)/);
   assert.match(source, /window\.addEventListener\("cbo:history-change", handleDocumentChange\)/);

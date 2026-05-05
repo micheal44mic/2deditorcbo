@@ -167,34 +167,6 @@
     }, 0);
   }
 
-  function unionRects(rects) {
-    const valid = rects.filter((rect) =>
-      rect &&
-      Number.isFinite(rect.x) &&
-      Number.isFinite(rect.y) &&
-      Number.isFinite(rect.width) &&
-      Number.isFinite(rect.height) &&
-      rect.width > 0 &&
-      rect.height > 0,
-    );
-
-    if (valid.length === 0) {
-      return null;
-    }
-
-    const x0 = Math.min(...valid.map((rect) => rect.x));
-    const y0 = Math.min(...valid.map((rect) => rect.y));
-    const x1 = Math.max(...valid.map((rect) => rect.x + rect.width));
-    const y1 = Math.max(...valid.map((rect) => rect.y + rect.height));
-
-    return {
-      height: y1 - y0,
-      width: x1 - x0,
-      x: x0,
-      y: y0,
-    };
-  }
-
   function pixelsAreTransparent(pixels) {
     if (!(pixels instanceof Uint8Array) || pixels.byteLength === 0) {
       return true;
@@ -250,7 +222,7 @@
 
     const layerRecord = {
       layerId,
-      rect: null,
+      rect: { ...targetRect },
       tiles: [],
     };
     const tileRecords = [];
@@ -278,7 +250,7 @@
         const tileManifest = {
           byteLength: bytes.byteLength,
           key: tileKey,
-          rect: { ...tile.rect },
+          rect: { ...snapshot.rect },
           tx: tile.tx,
           ty: tile.ty,
         };
@@ -296,12 +268,6 @@
     }
 
     if (layerRecord.tiles.length === 0) {
-      return null;
-    }
-
-    layerRecord.rect = unionRects(layerRecord.tiles.map((tile) => tile.rect));
-
-    if (!layerRecord.rect) {
       return null;
     }
 
