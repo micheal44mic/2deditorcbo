@@ -53,6 +53,24 @@
     };
   }
 
+  function createImplicitCornerHandle(corner, centerHandle) {
+    return {
+      x: corner.x + (centerHandle.x - corner.x) / 2,
+      y: corner.y + (centerHandle.y - corner.y) / 2,
+    };
+  }
+
+  function getImplicitEnvelopeCornerHandles(grid) {
+    const safeGrid = cloneEnvelopeGrid(grid);
+
+    return {
+      TL_Handle: createImplicitCornerHandle(safeGrid.TL, safeGrid.TC_HandleL),
+      TR_Handle: createImplicitCornerHandle(safeGrid.TR, safeGrid.TC_HandleR),
+      BL_Handle: createImplicitCornerHandle(safeGrid.BL, safeGrid.BC_HandleL),
+      BR_Handle: createImplicitCornerHandle(safeGrid.BR, safeGrid.BC_HandleR),
+    };
+  }
+
   function mapCommandPoint(command, keyX, keyY, warpPoint) {
     const x = command[keyX];
     const y = command[keyY];
@@ -213,6 +231,7 @@
     const rawW = Number.isFinite(bounds.x2 - bounds.x1) ? bounds.x2 - bounds.x1 : 0;
     const rawH = Number.isFinite(bounds.y2 - bounds.y1) ? bounds.y2 - bounds.y1 : 0;
     const grid = cloneEnvelopeGrid(envelopeGrid);
+    const cornerHandles = getImplicitEnvelopeCornerHandles(grid);
 
     return (x, y) => {
       const u = rawW === 0 ? 0 : (x - bounds.x1) / rawW;
@@ -222,19 +241,13 @@
 
       if (u <= 0.5) {
         const t = u * 2;
-        const p1 = {
-          x: grid.TL.x + (grid.TC.x - grid.TL.x) / 3,
-          y: grid.TL.y,
-        };
+        const p1 = cornerHandles.TL_Handle;
 
         topX = bezier(t, grid.TL.x, p1.x, grid.TC_HandleL.x, grid.TC.x);
         topY = bezier(t, grid.TL.y, p1.y, grid.TC_HandleL.y, grid.TC.y);
       } else {
         const t = (u - 0.5) * 2;
-        const p2 = {
-          x: grid.TR.x - (grid.TR.x - grid.TC.x) / 3,
-          y: grid.TR.y,
-        };
+        const p2 = cornerHandles.TR_Handle;
 
         topX = bezier(t, grid.TC.x, grid.TC_HandleR.x, p2.x, grid.TR.x);
         topY = bezier(t, grid.TC.y, grid.TC_HandleR.y, p2.y, grid.TR.y);
@@ -245,19 +258,13 @@
 
       if (u <= 0.5) {
         const t = u * 2;
-        const p1 = {
-          x: grid.BL.x + (grid.BC.x - grid.BL.x) / 3,
-          y: grid.BL.y,
-        };
+        const p1 = cornerHandles.BL_Handle;
 
         botX = bezier(t, grid.BL.x, p1.x, grid.BC_HandleL.x, grid.BC.x);
         botY = bezier(t, grid.BL.y, p1.y, grid.BC_HandleL.y, grid.BC.y);
       } else {
         const t = (u - 0.5) * 2;
-        const p2 = {
-          x: grid.BR.x - (grid.BR.x - grid.BC.x) / 3,
-          y: grid.BR.y,
-        };
+        const p2 = cornerHandles.BR_Handle;
 
         botX = bezier(t, grid.BC.x, grid.BC_HandleR.x, p2.x, grid.BR.x);
         botY = bezier(t, grid.BC.y, grid.BC_HandleR.y, p2.y, grid.BR.y);
@@ -380,6 +387,7 @@
     createTextPath,
     getFontRecord,
     createWarpPoint,
+    getImplicitEnvelopeCornerHandles,
     getWarpedPathData,
     loadOpenTypeFont,
     updateEnvelopeGridNode,

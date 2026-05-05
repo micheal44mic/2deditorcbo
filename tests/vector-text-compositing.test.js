@@ -33,6 +33,32 @@ function loadDocumentLayerModel() {
   return context.window.CBO.DocumentLayerModel;
 }
 
+function loadVectorTextEngineNamespace() {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-engine.js"),
+    "utf8",
+  );
+  const window = {
+    CBO: {},
+  };
+  const context = vm.createContext({
+    Array,
+    Error,
+    Map,
+    Math,
+    Number,
+    Object,
+    Promise,
+    String,
+    Uint8Array,
+    window,
+  });
+
+  vm.runInContext(source, context);
+
+  return context.window.CBO;
+}
+
 function loadVectorTextRasterizerNamespace() {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "text", "vector-text-rasterizer.js"),
@@ -188,6 +214,38 @@ test("selected live text layer stays editable outside the text toolbar tool", ()
     css,
     /\.editor-vector-overlay\.text-tool-active,\s*\.editor-vector-overlay\.active-text-layer-selected\s*\{[\s\S]*?pointer-events:\s*auto;/,
   );
+});
+
+test("distort uses hidden corner handles derived from center handles", () => {
+  const namespace = loadVectorTextEngineNamespace();
+  const rendererSource = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+  const grid = {
+    TL: { x: 0, y: 0 },
+    TR: { x: 300, y: 0 },
+    BL: { x: 0, y: 100 },
+    BR: { x: 300, y: 100 },
+    TC: { x: 150, y: 30 },
+    BC: { x: 150, y: 130 },
+    TC_HandleL: { x: 90, y: 60 },
+    TC_HandleR: { x: 210, y: -40 },
+    BC_HandleL: { x: 80, y: 170 },
+    BC_HandleR: { x: 220, y: 80 },
+  };
+
+  const handles = JSON.parse(JSON.stringify(namespace.VectorTextEngine.getImplicitEnvelopeCornerHandles(grid)));
+
+  assert.deepEqual(handles, {
+    TL_Handle: { x: 45, y: 30 },
+    TR_Handle: { x: 255, y: -20 },
+    BL_Handle: { x: 40, y: 135 },
+    BR_Handle: { x: 260, y: 90 },
+  });
+  assert.equal(grid.TL_Handle, undefined);
+  assert.match(rendererSource, /const HANDLE_ENVELOPE_NODES = \["TC_HandleL", "TC_HandleR", "BC_HandleL", "BC_HandleR"\]/);
+  assert.match(rendererSource, /namespace\.VectorTextEngine\?\.getImplicitEnvelopeCornerHandles\?\.?\(grid\)/);
 });
 
 test("vector text drag and envelope edits use document history groups", () => {

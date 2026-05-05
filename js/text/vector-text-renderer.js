@@ -136,65 +136,52 @@
     return points.map((point) => `${point.x} ${point.y}`).join(" ");
   }
 
+  function createImplicitCornerHandle(corner, centerHandle) {
+    return {
+      x: corner.x + (centerHandle.x - corner.x) / 2,
+      y: corner.y + (centerHandle.y - corner.y) / 2,
+    };
+  }
+
+  function getImplicitEnvelopeCornerHandles(grid) {
+    return namespace.VectorTextEngine?.getImplicitEnvelopeCornerHandles?.(grid) || {
+      TL_Handle: createImplicitCornerHandle(grid.TL, grid.TC_HandleL),
+      TR_Handle: createImplicitCornerHandle(grid.TR, grid.TC_HandleR),
+      BL_Handle: createImplicitCornerHandle(grid.BL, grid.BC_HandleL),
+      BR_Handle: createImplicitCornerHandle(grid.BR, grid.BC_HandleR),
+    };
+  }
+
   function topCurvePath(grid) {
-    const p1 = {
-      x: grid.TL.x + (grid.TC.x - grid.TL.x) / 3,
-      y: grid.TL.y,
-    };
-    const p2 = {
-      x: grid.TR.x - (grid.TR.x - grid.TC.x) / 3,
-      y: grid.TR.y,
-    };
+    const cornerHandles = getImplicitEnvelopeCornerHandles(grid);
 
     return [
       `M ${grid.TL.x} ${grid.TL.y}`,
-      `C ${p1.x} ${p1.y} ${grid.TC_HandleL.x} ${grid.TC_HandleL.y} ${grid.TC.x} ${grid.TC.y}`,
-      `C ${grid.TC_HandleR.x} ${grid.TC_HandleR.y} ${p2.x} ${p2.y} ${grid.TR.x} ${grid.TR.y}`,
+      `C ${cornerHandles.TL_Handle.x} ${cornerHandles.TL_Handle.y} ${grid.TC_HandleL.x} ${grid.TC_HandleL.y} ${grid.TC.x} ${grid.TC.y}`,
+      `C ${grid.TC_HandleR.x} ${grid.TC_HandleR.y} ${cornerHandles.TR_Handle.x} ${cornerHandles.TR_Handle.y} ${grid.TR.x} ${grid.TR.y}`,
     ].join(" ");
   }
 
   function bottomCurvePath(grid) {
-    const p1 = {
-      x: grid.BL.x + (grid.BC.x - grid.BL.x) / 3,
-      y: grid.BL.y,
-    };
-    const p2 = {
-      x: grid.BR.x - (grid.BR.x - grid.BC.x) / 3,
-      y: grid.BR.y,
-    };
+    const cornerHandles = getImplicitEnvelopeCornerHandles(grid);
 
     return [
       `M ${grid.BL.x} ${grid.BL.y}`,
-      `C ${p1.x} ${p1.y} ${grid.BC_HandleL.x} ${grid.BC_HandleL.y} ${grid.BC.x} ${grid.BC.y}`,
-      `C ${grid.BC_HandleR.x} ${grid.BC_HandleR.y} ${p2.x} ${p2.y} ${grid.BR.x} ${grid.BR.y}`,
+      `C ${cornerHandles.BL_Handle.x} ${cornerHandles.BL_Handle.y} ${grid.BC_HandleL.x} ${grid.BC_HandleL.y} ${grid.BC.x} ${grid.BC.y}`,
+      `C ${grid.BC_HandleR.x} ${grid.BC_HandleR.y} ${cornerHandles.BR_Handle.x} ${cornerHandles.BR_Handle.y} ${grid.BR.x} ${grid.BR.y}`,
     ].join(" ");
   }
 
   function envelopeOutlinePath(grid) {
-    const topLeftControl = {
-      x: grid.TL.x + (grid.TC.x - grid.TL.x) / 3,
-      y: grid.TL.y,
-    };
-    const topRightControl = {
-      x: grid.TR.x - (grid.TR.x - grid.TC.x) / 3,
-      y: grid.TR.y,
-    };
-    const bottomLeftControl = {
-      x: grid.BL.x + (grid.BC.x - grid.BL.x) / 3,
-      y: grid.BL.y,
-    };
-    const bottomRightControl = {
-      x: grid.BR.x - (grid.BR.x - grid.BC.x) / 3,
-      y: grid.BR.y,
-    };
+    const cornerHandles = getImplicitEnvelopeCornerHandles(grid);
 
     return [
       `M ${grid.TL.x} ${grid.TL.y}`,
-      `C ${topLeftControl.x} ${topLeftControl.y} ${grid.TC_HandleL.x} ${grid.TC_HandleL.y} ${grid.TC.x} ${grid.TC.y}`,
-      `C ${grid.TC_HandleR.x} ${grid.TC_HandleR.y} ${topRightControl.x} ${topRightControl.y} ${grid.TR.x} ${grid.TR.y}`,
+      `C ${cornerHandles.TL_Handle.x} ${cornerHandles.TL_Handle.y} ${grid.TC_HandleL.x} ${grid.TC_HandleL.y} ${grid.TC.x} ${grid.TC.y}`,
+      `C ${grid.TC_HandleR.x} ${grid.TC_HandleR.y} ${cornerHandles.TR_Handle.x} ${cornerHandles.TR_Handle.y} ${grid.TR.x} ${grid.TR.y}`,
       `L ${grid.BR.x} ${grid.BR.y}`,
-      `C ${bottomRightControl.x} ${bottomRightControl.y} ${grid.BC_HandleR.x} ${grid.BC_HandleR.y} ${grid.BC.x} ${grid.BC.y}`,
-      `C ${grid.BC_HandleL.x} ${grid.BC_HandleL.y} ${bottomLeftControl.x} ${bottomLeftControl.y} ${grid.BL.x} ${grid.BL.y}`,
+      `C ${cornerHandles.BR_Handle.x} ${cornerHandles.BR_Handle.y} ${grid.BC_HandleR.x} ${grid.BC_HandleR.y} ${grid.BC.x} ${grid.BC.y}`,
+      `C ${grid.BC_HandleL.x} ${grid.BC_HandleL.y} ${cornerHandles.BL_Handle.x} ${cornerHandles.BL_Handle.y} ${grid.BL.x} ${grid.BL.y}`,
       "Z",
     ].join(" ");
   }
