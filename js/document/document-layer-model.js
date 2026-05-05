@@ -12,16 +12,16 @@
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
-    fill: "#f8efe2",
-    stroke: "#1b1713",
+    fill: "#000000",
+    stroke: "#000000",
     strokeAlign: "center",
-    strokeWidth: 7,
+    strokeWidth: 0,
     shadow: {
-      color: "#0f172a",
-      blur: 28,
-      offsetX: 20,
-      offsetY: 24,
-      opacity: 1,
+      color: "#000000",
+      blur: 0,
+      offsetX: 0,
+      offsetY: 0,
+      opacity: 0,
     },
   });
 
@@ -265,7 +265,7 @@
       return {
         ...base,
         kind: "text",
-        text: typeof options.text === "string" ? options.text : "BOIL THE OCEAN",
+        text: typeof options.text === "string" ? options.text : "CBOs",
         x: Number.isFinite(options.x) ? options.x : 850,
         y: Number.isFinite(options.y) ? options.y : 1420,
         scaleX: Number.isFinite(options.scaleX) ? options.scaleX : 1,
@@ -283,12 +283,12 @@
         ligatures: options.ligatures !== false,
         alternates: options.alternates === true,
         shadowType: options.shadowType || "drop",
-        shadowAngle: Number.isFinite(options.shadowAngle) ? options.shadowAngle : 42,
-        shadowDistance: Number.isFinite(options.shadowDistance) ? options.shadowDistance : 72,
+        shadowAngle: Number.isFinite(options.shadowAngle) ? options.shadowAngle : 0,
+        shadowDistance: Number.isFinite(options.shadowDistance) ? options.shadowDistance : 0,
         envelopeGrid: options.envelopeGrid ? this.cloneValue(options.envelopeGrid) : null,
         warp: {
-          type: options.warp?.type || "arch",
-          amount: Number.isFinite(options.warp?.amount) ? options.warp.amount : 170,
+          type: options.warp?.type || "none",
+          amount: Number.isFinite(options.warp?.amount) ? options.warp.amount : 0,
         },
         style: {
           fill: style.fill || DEFAULT_VECTOR_TEXT_STYLE.fill,

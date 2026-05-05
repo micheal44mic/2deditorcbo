@@ -82,10 +82,10 @@ function createDocumentRecoveryButton(summary) {
   button.className = "document-start-recovery";
   button.type = "button";
   button.dataset.documentRecovery = "latest";
-  button.setAttribute("aria-label", "Continue autosaved document");
+  button.setAttribute("aria-label", "Continue saved document");
 
   label.className = "document-start-recovery-label";
-  label.textContent = "Continue autosaved document";
+  label.textContent = "Continue saved document";
 
   meta.className = "document-start-recovery-meta";
   meta.textContent = [sizeLabel, layerLabel, tileLabel, savedAt].filter(Boolean).join(" | ");

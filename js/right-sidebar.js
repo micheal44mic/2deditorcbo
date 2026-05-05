@@ -17,7 +17,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
             <circle cx="12" cy="7" r="4" />
           </svg>
         </button>
-        <button class="right-sidebar-share-button" type="button" data-tooltip="SHARE">SHARE</button>
+        <div class="right-sidebar-primary-actions">
+          <button class="right-sidebar-save-button" type="button" aria-label="Save document" data-tooltip="SAVE" data-manual-save>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-save-icon lucide-save" aria-hidden="true">
+              <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+              <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+              <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+            </svg>
+          </button>
+          <button class="right-sidebar-share-button" type="button" data-tooltip="SHARE">SHARE</button>
+        </div>
       </div>
       <label class="right-sidebar-project-field right-sidebar-section" data-right-sidebar-project>
         <span class="right-sidebar-project-label">Project name</span>
@@ -32,7 +41,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           </div>
           <label class="text-sidebar-text-field">
             <span class="text-sidebar-label">Content</span>
-            <textarea class="text-sidebar-textarea" rows="3" autocomplete="off" spellcheck="false" data-text-content>BOIL THE OCEAN</textarea>
+            <textarea class="text-sidebar-textarea" rows="3" autocomplete="off" spellcheck="false" data-text-content>CBOs</textarea>
           </label>
         </section>
         <section class="text-sidebar-section" aria-label="Layer opacity">
@@ -53,9 +62,9 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           </div>
           <label class="text-sidebar-color-row">
             <span class="text-sidebar-color-swatch" data-text-color-swatch>
-              <input class="text-sidebar-color-input" type="color" value="#ffffff" aria-label="Text color" data-text-color-input />
+              <input class="text-sidebar-color-input" type="color" value="#000000" aria-label="Text color" data-text-color-input />
             </span>
-            <span class="text-sidebar-color-hex" data-text-color-hex>FFFFFF</span>
+            <span class="text-sidebar-color-hex" data-text-color-hex>000000</span>
             <span class="text-sidebar-color-opacity">100%</span>
           </label>
           <button class="text-sidebar-palette-button" type="button">Browse Color Palettes</button>
@@ -196,16 +205,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           </button>
           <div class="text-sidebar-transform-body" data-text-transform-panel hidden>
             <div class="text-sidebar-transform-modes" role="group" aria-label="Transformation type">
-              <button class="text-sidebar-transform-mode active" type="button" aria-pressed="true" data-text-transform-mode="arch">ARCH</button>
+              <button class="text-sidebar-transform-mode" type="button" aria-pressed="false" data-text-transform-mode="arch">ARCH</button>
               <button class="text-sidebar-transform-mode" type="button" aria-pressed="false" data-text-transform-mode="flag">FLAG</button>
               <button class="text-sidebar-transform-mode" type="button" aria-pressed="false" data-text-transform-mode="distort">DISTORT</button>
             </div>
             <label class="text-sidebar-range-field text-sidebar-transform-range-field">
               <span class="text-sidebar-control-header">
-                <span class="text-sidebar-label" data-text-transform-label>Arch Curve</span>
-              <output class="text-sidebar-value-pill" data-text-transform-value>170</output>
+                <span class="text-sidebar-label" data-text-transform-label>Transform</span>
+              <output class="text-sidebar-value-pill" data-text-transform-value>0</output>
             </span>
-              <input class="text-sidebar-range" type="range" min="-1200" max="1200" step="1" value="170" aria-label="Transformation amount" data-text-transform-amount />
+              <input class="text-sidebar-range" type="range" min="-1200" max="1200" step="1" value="0" aria-label="Transformation amount" data-text-transform-amount />
             </label>
             <div class="text-sidebar-transform-actions">
               <button class="text-sidebar-secondary-button" type="button" data-text-transform-reset>Reset</button>
@@ -365,6 +374,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   `;
 
   const projectInput = panel.querySelector(".right-sidebar-project-input");
+  const saveButton = panel.querySelector("[data-manual-save]");
   const rightSidebarContent = panel.querySelector(".right-sidebar-content");
   const globalSections = panel.querySelectorAll("[data-right-sidebar-global], [data-right-sidebar-project]");
   const smudgeSidebar = panel.querySelector("[data-smudge-sidebar]");
@@ -464,6 +474,33 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     projectInput.addEventListener("input", () => {
       window.localStorage.setItem(storageKey, projectInput.value);
     });
+  }
+
+  async function saveDocumentNow() {
+    const autosave = window.CBO.documentAutosave;
+
+    if (!saveButton || saveButton.disabled || !autosave?.saveNow) {
+      return;
+    }
+
+    saveButton.disabled = true;
+    saveButton.classList.add("saving", "active");
+    saveButton.setAttribute("aria-busy", "true");
+
+    try {
+      const didSave = await autosave.saveNow({ source: "manual-save" });
+
+      if (didSave) {
+        saveButton.classList.add("saved");
+        window.setTimeout(() => saveButton.classList.remove("saved"), 520);
+      }
+    } catch (error) {
+      console.warn("Salvataggio documento non riuscito.", error);
+    } finally {
+      saveButton.disabled = false;
+      saveButton.classList.remove("saving", "active");
+      saveButton.removeAttribute("aria-busy");
+    }
   }
 
   function clamp(value, min, max) {
@@ -1537,7 +1574,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     }
   }
 
-  function normalizeHexColor(value, fallback = "#ffffff") {
+  function normalizeHexColor(value, fallback = "#000000") {
     const color = String(value || "").trim();
 
     return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
@@ -1725,7 +1762,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       }
 
       if (textColorInput) {
-        textColorInput.value = normalizeHexColor(layer.style?.fill, "#ffffff");
+        textColorInput.value = normalizeHexColor(layer.style?.fill, "#000000");
       }
 
       if (textBorderColorInput) {
@@ -1833,7 +1870,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       return;
     }
 
-    const hex = String(textColorInput.value || "#ffffff").replace("#", "").toUpperCase();
+    const hex = String(textColorInput.value || "#000000").replace("#", "").toUpperCase();
 
     if (textColorHex) {
       textColorHex.textContent = hex;
@@ -1952,7 +1989,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       button.classList.contains("active"),
     );
 
-    return activeButton?.dataset.textTransformMode || "arch";
+    return activeButton?.dataset.textTransformMode || "none";
   }
 
   function getTextTransformLabel(mode) {
@@ -1962,6 +1999,10 @@ window.CBO.initRightSidebar = function initRightSidebar() {
 
     if (mode === "distort") {
       return "Distort Amount";
+    }
+
+    if (mode === "none") {
+      return "Transform";
     }
 
     return "Arch Curve";
@@ -1985,7 +2026,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   }
 
   function setTextTransformMode(mode) {
-    const nextMode = mode === "flag" || mode === "distort" ? mode : "arch";
+    const nextMode = mode === "arch" || mode === "flag" || mode === "distort" ? mode : "none";
 
     textTransformModeButtons.forEach((button) => {
       const isActive = button.dataset.textTransformMode === nextMode;
@@ -2060,7 +2101,17 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     }
 
     if (isOpen) {
-      setTextTransformMode(getActiveTextTransformMode());
+      const activeMode = getActiveTextTransformMode();
+
+      setTextTransformMode(activeMode === "none" ? "arch" : activeMode);
+      updateTextTransformAmount();
+    } else {
+      setTextTransformMode("none");
+
+      if (textTransformAmountInput) {
+        textTransformAmountInput.value = "0";
+      }
+
       updateTextTransformAmount();
     }
   }
@@ -2445,6 +2496,9 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   });
   textTransformToggle?.addEventListener("click", () => {
     setTextTransformationOpen(textTransformToggle.getAttribute("aria-expanded") !== "true");
+  });
+  saveButton?.addEventListener("click", () => {
+    void saveDocumentNow();
   });
 
   window.addEventListener("cbo:tool-change", (event) => {

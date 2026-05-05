@@ -656,6 +656,15 @@
   }
 
   function getCenteredDocumentPoint() {
+    const renderer = namespace.documentRenderer;
+
+    if (renderer && Number.isFinite(renderer.width) && Number.isFinite(renderer.height)) {
+      return {
+        x: Math.max(1, renderer.width) / 2,
+        y: Math.max(1, renderer.height) / 2,
+      };
+    }
+
     const stage = document.querySelector(".editor-stage");
     const { camera, dpr } = resolveCameraState();
     const rect = stage?.getBoundingClientRect();
@@ -1607,8 +1616,8 @@
 
     createTextPaintGroup(layer, pathData, options = {}) {
       const paintGroup = createSvgElement("g", { class: "editor-vector-text-paint" });
-      const fill = layer.style?.fill || "#f8efe2";
-      const stroke = layer.style?.stroke || "#1b1713";
+      const fill = layer.style?.fill || "#000000";
+      const stroke = layer.style?.stroke || "#000000";
       const strokeWidth = Math.max(0, toFiniteNumber(layer.style?.strokeWidth, 0));
       const strokeAlign = getStrokeAlign(layer);
 

@@ -66,7 +66,15 @@
   gap: 8px;
 }
 
+.right-sidebar-primary-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .right-sidebar-avatar,
+.right-sidebar-save-button,
 .right-sidebar-share-button {
   border: 0;
   color: var(--right-sidebar-svg-color);
@@ -85,17 +93,45 @@
 
 .right-sidebar-avatar:hover,
 .right-sidebar-avatar:focus-visible,
+.right-sidebar-save-button:hover,
+.right-sidebar-save-button:focus-visible,
+.right-sidebar-save-button.active,
+.right-sidebar-save-button.saved,
 .right-sidebar-share-button:hover,
 .right-sidebar-share-button:focus-visible {
   color: #ffffff;
   background: #3a3f4b;
 }
 
-.right-sidebar-avatar svg {
+.right-sidebar-avatar svg,
+.right-sidebar-save-button svg {
   width: 20px;
   height: 20px;
   fill: none;
   stroke: currentColor;
+}
+
+.right-sidebar-save-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 8px;
+  background: #2c303a;
+}
+
+.right-sidebar-save-button:disabled {
+  opacity: 0.68;
+}
+
+.right-sidebar-save-button.saving svg {
+  animation: right-sidebar-save-pulse 720ms ease-in-out infinite;
+}
+
+.right-sidebar-save-button.saved {
+  color: #7ee787;
 }
 
 .right-sidebar-share-button {
@@ -111,6 +147,13 @@
   font-weight: 800;
   letter-spacing: 0;
   line-height: 1;
+}
+
+@keyframes right-sidebar-save-pulse {
+  50% {
+    opacity: 0.46;
+    transform: scale(0.92);
+  }
 }
 
 .right-sidebar-project-field {

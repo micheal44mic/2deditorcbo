@@ -38,11 +38,24 @@ test("document autosave captures layer structure and sparse raster content only"
   assert.match(source, /rect: \{ \.\.\.targetRect \}/);
   assert.match(source, /rect: \{ \.\.\.snapshot\.rect \}/);
   assert.doesNotMatch(source, /layerRecord\.rect = unionRects/);
-  assert.match(source, /window\.addEventListener\("cbo:document-content-change", handleDocumentChange\)/);
-  assert.match(source, /window\.addEventListener\("cbo:document-layers-change", handleDocumentChange\)/);
-  assert.match(source, /window\.addEventListener\("cbo:history-change", handleDocumentChange\)/);
-  assert.match(source, /window\.addEventListener\("pagehide", \(\) => \{/);
+  assert.doesNotMatch(source, /window\.addEventListener\("cbo:document-content-change"/);
+  assert.doesNotMatch(source, /window\.addEventListener\("cbo:document-layers-change"/);
+  assert.doesNotMatch(source, /window\.addEventListener\("cbo:history-change"/);
+  assert.doesNotMatch(source, /window\.addEventListener\("pagehide"/);
+  assert.doesNotMatch(source, /window\.addEventListener\("visibilitychange"/);
+  assert.doesNotMatch(source, /scheduleSave/);
   assert.doesNotMatch(source, /undoStack|redoStack/);
+});
+
+test("document save is manual-only and does not show autosaving text", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+  const cssSource = readRepoFile("css", "layout.css");
+
+  assert.match(source, /const source = options\.source \|\| "manual-save"/);
+  assert.match(source, /emitSaveStatus\("saving", source\)/);
+  assert.match(source, /emitSaveStatus\(finishStatus, source\)/);
+  assert.doesNotMatch(source, /showAutosaveIndicator|hideAutosaveIndicator|autosaving\.\.\./);
+  assert.doesNotMatch(cssSource, /\.document-autosave-indicator/);
 });
 
 test("document autosave restores the latest session before the canvas is started", () => {

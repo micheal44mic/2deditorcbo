@@ -370,7 +370,7 @@
 }
 
 .editor-raster-transform-box {
-  fill: rgba(24, 160, 251, 0.05);
+  fill: none;
   stroke: #18a0fb;
   stroke-width: 1.5;
   stroke-dasharray: 4 4;

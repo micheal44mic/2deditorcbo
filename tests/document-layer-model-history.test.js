@@ -64,6 +64,25 @@ function waitForHistoryFlush() {
   });
 }
 
+test("vector text layers start plain black with no shadow or transform", () => {
+  const { DocumentLayerModel } = loadDocumentModules();
+  const model = new DocumentLayerModel();
+  const layer = model.createLayer({ type: "vector-text" });
+
+  assert.equal(layer.text, "CBOs");
+  assert.equal(layer.style.fill, "#000000");
+  assert.equal(layer.style.stroke, "#000000");
+  assert.equal(layer.style.strokeWidth, 0);
+  assert.equal(layer.style.shadow.color, "#000000");
+  assert.equal(layer.style.shadow.blur, 0);
+  assert.equal(layer.style.shadow.opacity, 0);
+  assert.equal(layer.shadowAngle, 0);
+  assert.equal(layer.shadowDistance, 0);
+  assert.equal(layer.warp.type, "none");
+  assert.equal(layer.warp.amount, 0);
+  assert.equal(layer.envelopeGrid, null);
+});
+
 test("setEntries and setActiveLayer are batched into one layer-state entry", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory({ maxEntries: 40 });

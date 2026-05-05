@@ -234,7 +234,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     });
   }
 
-  function setFocusedLayer(row) {
+  function setFocusedLayerUi(row) {
     const unlockedRow = row && !isLayerLocked(row) ? row : null;
 
     getLayerRows().forEach((layerRow) => {
@@ -242,8 +242,15 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     });
     focusedLayer = unlockedRow;
 
-    if (layerModel && unlockedRow && !isGroupRow(unlockedRow)) {
-      layerModel.setActiveLayer(getLayerId(unlockedRow), { source: "layers-panel-selection" });
+    return unlockedRow;
+  }
+
+  function setFocusedLayer(row) {
+    const unlockedRow = setFocusedLayerUi(row);
+    const layerId = getLayerId(unlockedRow);
+
+    if (layerModel && layerId && !isGroupRow(unlockedRow) && layerModel.activeLayerId !== layerId) {
+      layerModel.setActiveLayer(layerId, { source: "layers-panel-selection" });
     }
 
     syncActiveLayerUi();
@@ -405,7 +412,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
       layerModel.setEntries(entries, { source });
 
-      if (activeLayerId) {
+      if (activeLayerId && layerModel.activeLayerId !== activeLayerId) {
         layerModel.setActiveLayer(activeLayerId, { source });
       }
     } finally {
@@ -439,11 +446,20 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
   }
 
-  function insertLayerEntryAfter(entry, targetEntry) {
+  function insertLayerEntryAfter(entry, targetEntry, options = {}) {
     targetEntry.parentElement.insertBefore(entry, targetEntry.nextElementSibling);
-    updateLayerDepths();
-    syncLayerModelFromDom("insert-after");
-    panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
+
+    if (options.updateDepths !== false) {
+      updateLayerDepths();
+    }
+
+    if (options.sync !== false) {
+      syncLayerModelFromDom("insert-after");
+    }
+
+    if (options.scroll !== false) {
+      panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
+    }
   }
 
   function getLayerIcon(type) {
@@ -904,18 +920,25 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     selectedEntries.forEach((entry) => {
       const copiedEntry = cloneLayerEntryForUi(entry);
 
-      insertLayerEntryAfter(copiedEntry, insertAfterEntry);
+      insertLayerEntryAfter(copiedEntry, insertAfterEntry, {
+        scroll: false,
+        sync: false,
+        updateDepths: false,
+      });
       insertAfterEntry = copiedEntry;
       copiedEntries.push(copiedEntry);
       copiedRows.push(copiedEntry.querySelector(":scope > [data-layer-row]"));
     });
 
+    updateLayerDepths();
     clearLayerSelection();
     copiedRows.forEach((row) => setLayerBranchSelected(row, true));
     rangeAnchor = copiedRows[0] || null;
-    setFocusedLayer(copiedRows[0] || null);
+    setFocusedLayerUi(copiedRows[0] || null);
     syncLayerModelFromDom("copy");
+    syncActiveLayerUi();
     duplicateCopiedLayerRasterTargets(copiedEntries);
+    panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
   }
 
   function deleteSelectedLayers() {

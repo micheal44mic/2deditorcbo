@@ -6,15 +6,11 @@
   const TILES_STORE = "tiles";
   const LATEST_META_KEY = "latest";
   const TILE_SIZE = 256;
-  const AUTOSAVE_DELAY_MS = 1200;
   const RASTER_LAYER_TYPES = new Set(["paint", "image"]);
 
   let dbPromise = null;
-  let saveTimer = 0;
   let isSaving = false;
-  let needsSave = false;
   let isRestoring = false;
-  let listenersReady = false;
 
   function isObject(value) {
     return Boolean(value && typeof value === "object");
@@ -199,6 +195,15 @@
       tileCount: Math.max(0, Math.round(session?.tileCount || 0)),
       width: Math.max(0, Math.round(document.width || 0)),
     };
+  }
+
+  function emitSaveStatus(status, source) {
+    window.dispatchEvent(new CustomEvent("cbo:document-save-status", {
+      detail: {
+        source: source || "manual-save",
+        status,
+      },
+    }));
   }
 
   async function captureLayerTiles(sessionId, layerId, renderer) {
@@ -397,17 +402,21 @@
     }
 
     if (isSaving) {
-      needsSave = true;
       return false;
     }
 
+    const source = options.source || "manual-save";
+
     isSaving = true;
-    needsSave = false;
+    emitSaveStatus("saving", source);
+
+    let finishStatus = "saved";
 
     try {
       const payload = await buildCurrentSession();
 
       if (!payload) {
+        finishStatus = "skipped";
         return false;
       }
 
@@ -418,36 +427,19 @@
       window.dispatchEvent(new CustomEvent("cbo:document-autosave", {
         detail: {
           ...summary,
-          source: options.source || "autosave",
+          source,
         },
       }));
 
       return true;
     } catch (error) {
+      finishStatus = "failed";
       console.warn?.("Autosave documento non riuscito.", error);
       return false;
     } finally {
       isSaving = false;
-
-      if (needsSave) {
-        scheduleSave({ source: "autosave-reschedule" });
-      }
+      emitSaveStatus(finishStatus, source);
     }
-  }
-
-  function scheduleSave(options = {}) {
-    if (isRestoring || !namespace.documentRenderer || !namespace.documentLayerModel) {
-      return;
-    }
-
-    if (saveTimer) {
-      window.clearTimeout(saveTimer);
-    }
-
-    saveTimer = window.setTimeout(() => {
-      saveTimer = 0;
-      void saveNow(options);
-    }, Math.max(100, Math.floor(options.delayMs || AUTOSAVE_DELAY_MS)));
   }
 
   function getTileMap(tileRecords = []) {
@@ -622,44 +614,10 @@
     await transactionDone(transaction);
   }
 
-  function handleDocumentChange(event) {
-    const source = String(event?.detail?.source || "");
-
-    if (source.startsWith("autosave-restore")) {
-      return;
-    }
-
-    scheduleSave({ source: source || "document-change" });
-  }
-
-  function installListeners() {
-    if (listenersReady) {
-      return;
-    }
-
-    listenersReady = true;
-    window.addEventListener("cbo:document-content-change", handleDocumentChange);
-    window.addEventListener("cbo:document-layers-change", handleDocumentChange);
-    window.addEventListener("cbo:history-change", handleDocumentChange);
-    window.addEventListener("pagehide", () => {
-      if (namespace.documentRenderer) {
-        void saveNow({ source: "pagehide" });
-      }
-    });
-    window.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden" && namespace.documentRenderer) {
-        void saveNow({ source: "visibility-hidden" });
-      }
-    });
-  }
-
-  installListeners();
-
   namespace.documentAutosave = {
     clear,
     getLatestSummary,
     restoreLatest,
     saveNow,
-    scheduleSave,
   };
 })(window.CBO = window.CBO || {});

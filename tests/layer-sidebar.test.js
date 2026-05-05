@@ -5,6 +5,19 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..");
 
+test("right sidebar exposes a manual save button next to share", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "right-sidebar.js"), "utf8");
+  const css = fs.readFileSync(path.join(repoRoot, "css", "right-sidebar.css"), "utf8");
+
+  assert.match(source, /right-sidebar-primary-actions/);
+  assert.match(source, /data-manual-save/);
+  assert.match(source, /lucide-save-icon lucide-save/);
+  assert.match(source, /autosave\.saveNow\(\{ source: "manual-save" \}\)/);
+  assert.match(source, /saveButton\?\.addEventListener\("click"/);
+  assert.match(css, /\.right-sidebar-save-button/);
+  assert.match(css, /\.right-sidebar-primary-actions/);
+});
+
 test("right sidebar shows layer controls for the selection tool", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "right-sidebar.js"), "utf8");
   const css = fs.readFileSync(path.join(repoRoot, "css", "right-sidebar.css"), "utf8");
@@ -65,4 +78,13 @@ test("layer sidebar blend menu persists blend mode metadata", () => {
   assert.match(css, /\.layer-sidebar-blend-word-list/);
   assert.match(css, /\.layer-sidebar-blend-divider/);
   assert.match(css, /\.layer-sidebar-blend-word\.is-selected/);
+});
+
+test("closing the text transformation panel clears the active transform controls", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "right-sidebar.js"), "utf8");
+
+  assert.match(source, /return activeButton\?\.dataset\.textTransformMode \|\| "none"/);
+  assert.match(source, /const nextMode = mode === "arch" \|\| mode === "flag" \|\| mode === "distort" \? mode : "none"/);
+  assert.match(source, /setTextTransformMode\("none"\)/);
+  assert.match(source, /textTransformAmountInput\.value = "0"/);
 });

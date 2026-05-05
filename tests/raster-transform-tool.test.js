@@ -107,6 +107,7 @@ test("raster transform commits pad dirty rectangles for edge anti-aliasing", () 
 test("raster transform tool uses SVG overlay, resize/rotate activation, and deferred commit", () => {
   const source = readRepoFile("js", "raster-transform-tool.js");
   const cssSource = readRepoFile("css", "layout.css");
+  const transformBoxCss = cssSource.match(/\.editor-raster-transform-box \{[\s\S]*?\n\}/)?.[0] || "";
 
   assert.match(source, /document\.createElementNS\(SVG_NS/);
   assert.match(source, /class: "editor-raster-transform-overlay"/);
@@ -184,5 +185,7 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and defe
   assert.match(cssSource, /stroke: #f05022;/);
   assert.doesNotMatch(cssSource, /stroke-dasharray:\s*7 5;/);
   assert.match(cssSource, /\.editor-raster-transform-box/);
+  assert.match(transformBoxCss, /fill: none;/);
+  assert.doesNotMatch(transformBoxCss, /fill: rgba/);
   assert.match(cssSource, /\.editor-raster-transform-handle/);
 });
