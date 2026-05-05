@@ -29,7 +29,10 @@ test("right sidebar shows layer controls for the selection tool", () => {
   assert.match(source, /data-layer-opacity/);
   assert.match(source, /data-layer-blend-outline/);
   assert.match(source, /function shouldShowLayerSettings\(activeTool = currentToolName\)/);
-  assert.match(source, /activeTool === "selection" && isLayerSidebarEligible\(getActiveLayer\(\)\)/);
+  assert.match(source, /const activeLayer = getActiveLayer\(\);/);
+  assert.match(source, /activeTool === "selection" && !isVectorTextLayer\(activeLayer\) && isLayerSidebarEligible\(activeLayer\)/);
+  assert.match(source, /function shouldShowTextSettings\(activeTool = currentToolName\)/);
+  assert.match(source, /activeTool === "text" \|\| activeTool === "type" \|\| Boolean\(getActiveTextLayer\(\)\)/);
   assert.match(source, /normalized === "rect select"/);
   assert.match(source, /normalized === "lasso select"/);
   assert.match(source, /syncRightSidebarPanels\(activeTool\)/);

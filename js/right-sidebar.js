@@ -1124,7 +1124,9 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   }
 
   function shouldShowLayerSettings(activeTool = currentToolName) {
-    return activeTool === "selection" && isLayerSidebarEligible(getActiveLayer());
+    const activeLayer = getActiveLayer();
+
+    return activeTool === "selection" && !isVectorTextLayer(activeLayer) && isLayerSidebarEligible(activeLayer);
   }
 
   function syncRightSidebarPanels(activeTool = currentToolName) {

@@ -238,7 +238,8 @@
   pointer-events: none;
 }
 
-.editor-vector-overlay.text-tool-active {
+.editor-vector-overlay.text-tool-active,
+.editor-vector-overlay.active-text-layer-selected {
   pointer-events: auto;
 }
 

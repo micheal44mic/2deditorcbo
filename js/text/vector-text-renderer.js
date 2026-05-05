@@ -846,6 +846,7 @@
 
       this.mount();
       this.bindEvents();
+      this.syncOverlayInteractivity();
       this.scheduleContentRender();
     }
 
@@ -901,19 +902,35 @@
       namespace.brushEngine?.handleWheel?.(event);
     }
 
+    isTextToolActive() {
+      return this.activeTool === "text" || this.activeTool === "type";
+    }
+
+    syncOverlayInteractivity() {
+      if (!this.svg) {
+        return;
+      }
+
+      this.svg.classList.toggle("text-tool-active", this.isTextToolActive());
+      this.svg.classList.toggle("active-text-layer-selected", Boolean(this.getActiveTextLayer()));
+    }
+
     handleToolChange(event) {
       const detail = event.detail || {};
       const label = String(detail.label || "").toLowerCase();
       const toolMode = String(detail.toolMode || "").toLowerCase();
-      this.activeTool = toolMode || label;
-      this.svg.classList.toggle("text-tool-active", this.activeTool === "text" || this.activeTool === "type");
 
-      if (this.activeTool === "text" || this.activeTool === "type") {
+      this.activeTool = toolMode || label;
+      this.syncOverlayInteractivity();
+
+      if (this.isTextToolActive() && !this.getActiveTextLayer()) {
         namespace.createVectorTextLayer();
+        this.syncOverlayInteractivity();
       }
     }
 
     handleDocumentChange() {
+      this.syncOverlayInteractivity();
       this.scheduleContentRender();
     }
 

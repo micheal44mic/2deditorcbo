@@ -174,6 +174,22 @@ test("continuous text sidebar controls pass stable history groups", () => {
   assert.match(source, /getTextHistoryOptions\("transform-amount"\)/);
 });
 
+test("selected live text layer stays editable outside the text toolbar tool", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+  const css = fs.readFileSync(path.join(repoRoot, "css", "layout.css"), "utf8");
+
+  assert.match(source, /syncOverlayInteractivity\(\)/);
+  assert.match(source, /active-text-layer-selected/);
+  assert.match(source, /this\.isTextToolActive\(\) && !this\.getActiveTextLayer\(\)/);
+  assert.match(
+    css,
+    /\.editor-vector-overlay\.text-tool-active,\s*\.editor-vector-overlay\.active-text-layer-selected\s*\{[\s\S]*?pointer-events:\s*auto;/,
+  );
+});
+
 test("vector text drag and envelope edits use document history groups", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
