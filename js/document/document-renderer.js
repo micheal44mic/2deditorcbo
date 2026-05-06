@@ -820,6 +820,7 @@ void main() {
   const DEFAULT_GRAIN_SCALE = 42;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
+  const PREVIEW_CACHE_ZOOM_THRESHOLD = 25.0;
 
   function normalizeAngle(value) {
     const number = Number(value);
@@ -7998,11 +7999,11 @@ void main() {
             .slice(activeStrokeLayerIndex + 1)
             .some((layer) => this.rasterTargetsByLayerId.get(layer.id)?.texture)
         );
-      const isZoomedOut = (camera.zoom || 1) < 0.99;
       const allowPreviewCache = options.allowPreviewCache === true;
+      const isWithinPreviewCacheZoom = (camera.zoom || 1) < PREVIEW_CACHE_ZOOM_THRESHOLD;
       const canUsePreviewCache = Boolean(
         allowPreviewCache &&
-        isZoomedOut &&
+        isWithinPreviewCacheZoom &&
         !rasterTransformPreview &&
         !hasActiveEraserStroke &&
         !activeStrokeNeedsFullStack &&

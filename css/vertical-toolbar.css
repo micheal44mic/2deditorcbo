@@ -20,6 +20,10 @@
   justify-content: center;
 }
 
+.right-vertical-toolbar .mobile-transform-tool-group {
+  display: none;
+}
+
 .right-vertical-toolbar .vertical-selection-tool-group,
 .right-vertical-toolbar .vertical-resize-tool-group {
   flex-direction: column;
@@ -44,5 +48,47 @@
 @media (max-width: 900px) {
   .right-vertical-toolbar-dock {
     display: none;
+    top: auto;
+    right: 12px;
+    bottom: 88px;
+    z-index: 9010;
+  }
+
+  .right-vertical-toolbar-dock.mobile-transform-tools-open {
+    display: flex;
+  }
+
+  .right-vertical-toolbar {
+    gap: 0;
+    width: fit-content;
+    min-width: 64px;
+    height: fit-content;
+    padding: 6px;
+  }
+
+  .right-vertical-toolbar > :not(.mobile-transform-tool-group) {
+    display: none;
+  }
+
+  .right-vertical-toolbar .mobile-transform-tool-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .right-vertical-toolbar .mobile-transform-tool-button {
+    width: 52px;
+    min-width: 52px;
+    height: 52px;
+  }
+
+  .right-vertical-toolbar .mobile-transform-tool-button svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  .right-vertical-toolbar .mobile-transform-tool-button .transform-mode-fill-icon {
+    fill: currentColor;
+    stroke: none;
   }
 }

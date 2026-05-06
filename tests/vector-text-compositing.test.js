@@ -209,11 +209,28 @@ test("selected live text layer stays editable outside the text toolbar tool", ()
 
   assert.match(source, /syncOverlayInteractivity\(\)/);
   assert.match(source, /active-text-layer-selected/);
-  assert.match(source, /this\.isTextToolActive\(\) && !this\.getActiveTextLayer\(\)/);
+  assert.doesNotMatch(source, /this\.isTextToolActive\(\) && !this\.getActiveTextLayer\(\)/);
   assert.match(
     css,
     /\.editor-vector-overlay\.text-tool-active,\s*\.editor-vector-overlay\.active-text-layer-selected\s*\{[\s\S]*?pointer-events:\s*auto;/,
   );
+});
+
+test("mobile text tool exposes ADD TEXT as the layer creation action", () => {
+  const topToolbarSource = fs.readFileSync(path.join(repoRoot, "js", "top-toolbar.js"), "utf8");
+  const topToolbarCss = fs.readFileSync(path.join(repoRoot, "css", "top-toolbar.css"), "utf8");
+  const toolbarSource = fs.readFileSync(path.join(repoRoot, "js", "toolbar.js"), "utf8");
+
+  assert.match(topToolbarSource, /data-text-add-toolbar/);
+  assert.match(topToolbarSource, />ADD TEXT<\/button>/);
+  assert.match(topToolbarSource, /const isText = label === "TYPE" \|\| toolMode === "text"/);
+  assert.match(topToolbarSource, /showTextAddToolbar\(isText\)/);
+  assert.match(topToolbarSource, /window\.CBO\.createVectorTextLayer\?\.\(\)/);
+  assert.match(topToolbarCss, /\.text-add-toolbar:not\(\[hidden\]\) \{[\s\S]*bottom: 88px;/);
+  assert.match(topToolbarCss, /\.text-add-toolbar \{[\s\S]*min-width: 156px;/);
+  assert.match(topToolbarCss, /\.text-add-button \{[\s\S]*color: #dfe3ea;[\s\S]*font-size: 16px;[\s\S]*font-weight: 900;/);
+  assert.match(toolbarSource, /function isTextToolButton\(button\)/);
+  assert.match(toolbarSource, /if \(isTextToolButton\(button\)\) \{\s*setMobileTransformToolsOpen\(false\);/);
 });
 
 test("distort uses hidden corner handles derived from center handles", () => {

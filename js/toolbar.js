@@ -5,8 +5,64 @@ window.CBO.initToolbar = function initToolbar() {
   const menuButtons = document.querySelectorAll(".tool-menu-button");
   const toolsetOptions = document.querySelectorAll("[data-toolset-option]");
   const historyButtons = document.querySelectorAll("[data-history-action]");
+  const mobileTransformToggleButtons = document.querySelectorAll("[data-mobile-transform-toggle]");
+  const mobileTransformToolContainers = document.querySelectorAll("[data-mobile-transform-tools]");
+
+  function setMobileTransformToolsOpen(isOpen) {
+    const nextOpen = Boolean(isOpen) && mobileTransformToolContainers.length > 0;
+
+    mobileTransformToolContainers.forEach((container) => {
+      const dock = container.closest(".right-vertical-toolbar-dock");
+
+      dock?.classList.toggle("mobile-transform-tools-open", nextOpen);
+    });
+
+    mobileTransformToggleButtons.forEach((button) => {
+      button.classList.toggle("active", nextOpen);
+      button.setAttribute("aria-pressed", String(nextOpen));
+    });
+  }
+
+  function toggleMobileTransformTools() {
+    const isOpen = Array.from(mobileTransformToolContainers).some((container) =>
+      container.closest(".right-vertical-toolbar-dock")?.classList.contains("mobile-transform-tools-open")
+    );
+
+    setMobileTransformToolsOpen(!isOpen);
+  }
+
+  function syncTransformModeFromButton(button) {
+    const mode = String(button.dataset.transformSelectMode || "").trim().toLowerCase();
+
+    if (!mode) {
+      return;
+    }
+
+    window.CBO.transformMode = mode;
+    window.dispatchEvent(
+      new CustomEvent("cbo:transform-mode-change", {
+        detail: {
+          mode,
+          source: "mobile-transform-sidebar",
+        },
+      }),
+    );
+  }
+
+  function isTextToolButton(button) {
+    const label = String(button.getAttribute("aria-label") || "").trim().toLowerCase();
+    const toolMode = String(button.dataset.toolMode || "").trim().toLowerCase();
+
+    return toolMode === "text" || label === "type";
+  }
 
   function activateTool(button) {
+    syncTransformModeFromButton(button);
+
+    if (isTextToolButton(button)) {
+      setMobileTransformToolsOpen(false);
+    }
+
     const syncGroup = button.dataset.toolSync;
     const activeButtons = syncGroup
       ? Array.from(toolButtons).filter((toolButton) => toolButton.dataset.toolSync === syncGroup)
@@ -119,6 +175,13 @@ window.CBO.initToolbar = function initToolbar() {
   toolButtons.forEach((button) => {
     button.addEventListener("click", () => {
       activateTool(button);
+    });
+  });
+
+  mobileTransformToggleButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleMobileTransformTools();
     });
   });
 

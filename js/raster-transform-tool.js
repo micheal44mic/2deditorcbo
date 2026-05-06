@@ -613,12 +613,20 @@
       const transformToolMode = getTransformToolMode(detail);
 
       if (transformToolMode) {
+        const wasActive = this.isActive();
+        const activeLayer = this.getActiveLayer();
+        const isSameTransformTool = this.activeTool === transformToolMode;
+        const isSameLayerActive = activeLayer?.id && activeLayer.id === this.activeLayerId;
+
         if (this.isActive() && this.activeTool !== transformToolMode && this.hasPendingTransform()) {
           this.commitTransform();
         }
 
         this.activeTool = transformToolMode;
-        this.activateLayer(this.getActiveLayer());
+
+        if (!wasActive || !isSameTransformTool || !isSameLayerActive || !this.sourceSnapshot) {
+          this.activateLayer(activeLayer);
+        }
       } else {
         if (this.isActive()) {
           this.commitTransform();

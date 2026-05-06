@@ -83,6 +83,9 @@ window.CBO.initTopToolbar = function initTopToolbar() {
         ${TRANSFORM_MODE_ICONS.acceptTransform}
       </button>
     </nav>
+    <nav class="bottom-toolbar text-add-toolbar" aria-label="Text toolbar" data-text-add-toolbar hidden>
+      <button class="text-add-button" type="button" data-text-add-button>ADD TEXT</button>
+    </nav>
     <div class="brush-quick-controls" data-brush-quick-controls hidden>
       <label class="bottom-toolbar brush-quick-toolbar">
         <span class="brush-quick-label">SIZE</span>
@@ -185,6 +188,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const transformAngleInput = dock.querySelector("[data-transform-angle-input]");
   const rasterTransformActionDivider = dock.querySelector("[data-raster-transform-action-divider]");
   const rasterTransformActionButtons = dock.querySelectorAll("[data-raster-transform-action]");
+  const textAddToolbar = dock.querySelector("[data-text-add-toolbar]");
+  const textAddButton = dock.querySelector("[data-text-add-button]");
   const quickControls = dock.querySelector("[data-brush-quick-controls]");
   const quickInputs = dock.querySelectorAll("[data-brush-quick-input]");
   const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
@@ -334,6 +339,14 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     transformAngleControl.hidden = !isVisible;
   }
 
+  function showTextAddToolbar(isVisible) {
+    if (!textAddToolbar) {
+      return;
+    }
+
+    textAddToolbar.hidden = !isVisible;
+  }
+
   function syncTransformAngleInput(degrees = 0) {
     if (!transformAngleInput) {
       return;
@@ -367,6 +380,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
   function syncRasterTransformActions() {
     const shouldShow = isResizeToolActive && isRasterTransformPending;
+
+    transformModeToolbar?.classList.toggle("mobile-transform-actions-visible", shouldShow);
 
     if (rasterTransformActionDivider) {
       rasterTransformActionDivider.hidden = !shouldShow;
@@ -482,6 +497,10 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   });
 
+  window.addEventListener("cbo:transform-mode-change", (event) => {
+    setTransformMode(event.detail?.mode, { emit: false });
+  });
+
   rasterTransformActionButtons.forEach((button) => {
     button.addEventListener("click", () => {
       if (button.disabled) {
@@ -499,6 +518,17 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   });
 
+  textAddButton?.addEventListener("click", () => {
+    const layer = window.CBO.createVectorTextLayer?.();
+
+    if (layer) {
+      textAddButton.classList.add("active");
+      window.setTimeout(() => {
+        textAddButton.classList.remove("active");
+      }, 140);
+    }
+  });
+
   window.addEventListener("cbo:tool-change", (event) => {
     const label = String(event.detail?.label || "").toUpperCase();
     const toolMode = String(event.detail?.toolMode || "").toLowerCase();
@@ -506,9 +536,11 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const isBrush = label === "BRUSH" || label === "ERASER" || toolMode === "eraser" || (toolMode === "brush" && syncGroup === "brush");
     const isResize = label === "RESIZE" || toolMode === "resize";
     const isRotate = label === "ROTATE" || toolMode === "rotate";
+    const isText = label === "TYPE" || toolMode === "text";
 
     isRotateToolActive = isRotate;
     showBrushQuickControls(isBrush);
+    showTextAddToolbar(isText);
     showTransformModeToolbar(isResize || isRotate);
     showTransformAngleControl(isRotate);
   });

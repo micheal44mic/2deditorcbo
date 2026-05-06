@@ -18,6 +18,7 @@ window.CBO.initVerticalToolbar = function initVerticalToolbar() {
 
   dock.innerHTML = `
     <nav class="bottom-toolbar right-vertical-toolbar" aria-label="Canvas side toolbar">
+      ${window.CBO.createMobileTransformTools ? window.CBO.createMobileTransformTools() : ""}
       <div class="tool-group vertical-selection-tool-group" aria-label="Area select tools">
         <button class="tool-button" type="button" aria-label="RECT SELECT" aria-pressed="false" data-tooltip="RECT SELECT" data-toolset-primary="side-selection" data-tool>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

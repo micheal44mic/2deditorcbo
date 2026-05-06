@@ -4542,7 +4542,7 @@ void main() {
     draw() {
       const target = this.getDocumentDrawTarget();
       const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
-      const allowPreviewCache = this.userManipulatedCamera && !namespace.smudgeEngine?.isDragging;
+      const allowPreviewCache = !namespace.smudgeEngine?.isDragging;
 
       this.documentRenderer.drawToCanvas({
         allowPreviewCache,

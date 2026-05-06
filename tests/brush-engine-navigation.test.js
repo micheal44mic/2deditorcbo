@@ -29,12 +29,13 @@ test("temporary pan owns the cursor and blocks other tool handlers while active"
   assert.match(cssSource, /input,[\s\S]*?\[contenteditable="true"\] \*[\s\S]*?user-select: text;/);
 });
 
-test("preview cache is enabled only after explicit camera navigation", () => {
+test("preview cache is enabled without waiting for explicit camera navigation", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 
   assert.match(source, /this\.userManipulatedCamera = false/);
   assert.match(source, /this\.userManipulatedCamera = true;\s*this\.requestDraw\(\);/);
-  assert.match(source, /const allowPreviewCache = this\.userManipulatedCamera && !namespace\.smudgeEngine\?\.isDragging/);
+  assert.doesNotMatch(source, /const allowPreviewCache = this\.userManipulatedCamera && !namespace\.smudgeEngine\?\.isDragging/);
+  assert.match(source, /const allowPreviewCache = !namespace\.smudgeEngine\?\.isDragging/);
   assert.match(source, /allowPreviewCache,/);
 });
 

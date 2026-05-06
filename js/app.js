@@ -21,6 +21,7 @@ document.addEventListener(
     ".side-panel",
     ".toolbar-dock",
     ".top-toolbar-dock",
+    ".right-vertical-toolbar-dock",
     ".brush-studio-panel",
     ".brushes-gallery-popout",
     ".layer-effects-popover",

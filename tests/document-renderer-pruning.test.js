@@ -566,7 +566,7 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /gl\.deleteTexture\(snapshot\.texture\)/);
 });
 
-test("document renderer exposes mipmapped zoom-out preview cache helpers", () => {
+test("document renderer exposes mipmapped preview cache helpers", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),
     "utf8",
@@ -578,9 +578,10 @@ test("document renderer exposes mipmapped zoom-out preview cache helpers", () =>
   assert.doesNotMatch(source, /^\s*this\.createPreviewCache\(\);$/m);
   assert.match(source, /const didCreate = this\.createPreviewCache\(\)/);
   assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
-  assert.match(source, /const isZoomedOut = \(camera\.zoom \|\| 1\) < 0\.99/);
+  assert.match(source, /const PREVIEW_CACHE_ZOOM_THRESHOLD = 25\.0/);
+  assert.match(source, /const isWithinPreviewCacheZoom = \(camera\.zoom \|\| 1\) < PREVIEW_CACHE_ZOOM_THRESHOLD/);
   assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true/);
-  assert.match(source, /allowPreviewCache &&\s*isZoomedOut/);
+  assert.match(source, /allowPreviewCache &&\s*isWithinPreviewCacheZoom/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
 });

@@ -19,6 +19,39 @@
   display: none;
 }
 
+.text-add-toolbar {
+  display: none;
+  min-width: 156px;
+}
+
+.text-add-toolbar[hidden] {
+  display: none;
+}
+
+.text-add-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 31px;
+  width: 100%;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #dfe3ea;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.text-add-button:hover,
+.text-add-button:focus-visible,
+.text-add-button.active {
+  color: #ffffff;
+  background: rgb(44, 48, 58);
+}
+
 .brush-quick-controls {
   display: flex;
   align-items: center;
@@ -289,6 +322,37 @@
 }
 
 @media (max-width: 900px) {
+  .text-add-toolbar:not([hidden]) {
+    position: fixed;
+    bottom: 88px;
+    left: 50%;
+    z-index: 9020;
+    display: flex;
+    height: 43px;
+    padding: 6px;
+    transform: translateX(-50%);
+  }
+
+  .transform-mode-toolbar {
+    top: auto;
+    bottom: 88px;
+    left: 50%;
+    z-index: 9020;
+    justify-content: center;
+    max-width: calc(100vw - 24px);
+    transform: translateX(-50%);
+  }
+
+  .transform-mode-toolbar:not(.mobile-transform-actions-visible) {
+    display: none;
+  }
+
+  .transform-mode-toolbar [data-transform-mode],
+  .transform-mode-toolbar .transform-angle-control,
+  .transform-mode-toolbar .transform-mode-divider {
+    display: none;
+  }
+
   .top-layers-toolbar {
     display: none;
   }

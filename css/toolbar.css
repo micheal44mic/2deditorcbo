@@ -161,6 +161,10 @@
   display: none;
 }
 
+.mobile-transform-launcher-group {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .toolbar-dock {
     left: 0;
@@ -230,6 +234,14 @@
 
   .history-toolbar .mobile-rasterize-text-button[hidden] {
     display: none;
+  }
+
+  .toolbar-dock .mobile-pen-tool-group {
+    display: none;
+  }
+
+  .toolbar-dock .mobile-transform-launcher-group {
+    display: inline-flex;
   }
 
   .toolbar-dock .tool-popover {

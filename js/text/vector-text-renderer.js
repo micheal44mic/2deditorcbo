@@ -918,11 +918,6 @@
 
       this.activeTool = toolMode || label;
       this.syncOverlayInteractivity();
-
-      if (this.isTextToolActive() && !this.getActiveTextLayer()) {
-        namespace.createVectorTextLayer();
-        this.syncOverlayInteractivity();
-      }
     }
 
     handleDocumentChange() {
