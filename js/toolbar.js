@@ -38,11 +38,16 @@ window.CBO.initToolbar = function initToolbar() {
       return;
     }
 
+    const transformAspectLocked =
+      String(button.dataset.transformAspectLock || "").trim().toLowerCase() === "true";
+
     window.CBO.transformMode = mode;
+    window.CBO.transformAspectLocked = transformAspectLocked;
     window.dispatchEvent(
       new CustomEvent("cbo:transform-mode-change", {
         detail: {
           mode,
+          transformAspectLocked,
           source: "mobile-transform-sidebar",
         },
       }),
@@ -83,6 +88,8 @@ window.CBO.initToolbar = function initToolbar() {
         detail: {
           label: button.getAttribute("aria-label") || "",
           syncGroup: syncGroup || "",
+          transformAspectLocked:
+            String(button.dataset.transformAspectLock || "").trim().toLowerCase() === "true",
           toolMode: button.dataset.toolMode || "",
         },
       }),

@@ -575,6 +575,7 @@ void main() {
       this.currentStrokeTool = "brush";
       this.strokeTargetLayerId = null;
       this.activeStrokeBounds = null;
+      this.activeStrokeTilePatchRects = null;
       this.documentRenderer = options.documentRenderer;
       this.strokeTexture = null;
       this.strokeFBO = null;
@@ -3086,6 +3087,13 @@ void main() {
         return;
       }
 
+      this.includeStrokeTilePatchRect({
+        x: Math.floor(clampedBounds.minX),
+        y: Math.floor(clampedBounds.minY),
+        width: Math.max(1, Math.ceil(clampedBounds.maxX) - Math.floor(clampedBounds.minX)),
+        height: Math.max(1, Math.ceil(clampedBounds.maxY) - Math.floor(clampedBounds.minY)),
+      });
+
       if (!this.activeStrokeBounds) {
         this.activeStrokeBounds = clampedBounds;
         return;
@@ -3095,6 +3103,52 @@ void main() {
       this.activeStrokeBounds.minY = Math.min(this.activeStrokeBounds.minY, clampedBounds.minY);
       this.activeStrokeBounds.maxX = Math.max(this.activeStrokeBounds.maxX, clampedBounds.maxX);
       this.activeStrokeBounds.maxY = Math.max(this.activeStrokeBounds.maxY, clampedBounds.maxY);
+    }
+
+    includeStrokeTilePatchRect(rect) {
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+
+      const renderer = this.documentRenderer;
+      const tileSize = renderer?.getRasterHistoryTileSize?.() || 256;
+      const tileRects = renderer?.getRasterHistoryTileRects?.(rect, { tileSize }) || [];
+
+      if (tileRects.length === 0) {
+        return;
+      }
+
+      if (!this.activeStrokeTilePatchRects) {
+        this.activeStrokeTilePatchRects = new Map();
+      }
+
+      for (const tile of tileRects) {
+        const key = `${tile.tx}:${tile.ty}`;
+        const previous = this.activeStrokeTilePatchRects.get(key);
+        const patchRect = previous?.patchRect
+          ? renderer.unionRasterHistoryRects?.(previous.patchRect, tile.patchRect || tile.rect)
+          : tile.patchRect || tile.rect;
+
+        this.activeStrokeTilePatchRects.set(key, {
+          patchRect: { ...patchRect },
+          rect: { ...patchRect },
+          tileRect: tile.tileRect ? { ...tile.tileRect } : { ...tile.rect },
+          tx: tile.tx,
+          ty: tile.ty,
+        });
+      }
+    }
+
+    getActiveStrokeTilePatchRects() {
+      return this.activeStrokeTilePatchRects instanceof Map
+        ? Array.from(this.activeStrokeTilePatchRects.values(), (item) => ({
+            patchRect: { ...item.patchRect },
+            rect: { ...item.rect },
+            tileRect: item.tileRect ? { ...item.tileRect } : null,
+            tx: item.tx,
+            ty: item.ty,
+          }))
+        : null;
     }
 
     getActiveStrokeRect() {
@@ -3739,6 +3793,7 @@ void main() {
         ? this.documentRenderer?.beginRasterTileHistory?.(layerId, strokeRect, {
             label: "brush-stroke",
             source: this.currentStrokeTool,
+            tilePatchRects: this.getActiveStrokeTilePatchRects(),
           })
         : null;
       const beforeSnapshot = this.options.enableHistory && strokeRect && !tileHistory
@@ -4181,6 +4236,7 @@ void main() {
       this.strokeChargeRadius = null;
       this.strokeGrainOffset = { x: 0, y: 0 };
       this.activeStrokeBounds = null;
+      this.activeStrokeTilePatchRects = null;
       this.strokeTargetLayerId = null;
       this.currentStrokeTool = this.activeStrokeTool || "brush";
     }
@@ -4226,6 +4282,7 @@ void main() {
       // sequenza di jitter spaziale (lateral/linear/spacing) e colore.
       this.releaseStrokeLayerTarget();
       this.activeStrokeBounds = null;
+      this.activeStrokeTilePatchRects = null;
       this.strokeRandomState = { seed: this.strokeInitialSeed };
       this.initializeStrokeColorDynamics(this.strokeInitialSeed);
       this.initializeWetMixRandom(this.strokeInitialSeed);
@@ -4283,6 +4340,7 @@ void main() {
 
       this.clearAllLayers();
       this.activeStrokeBounds = null;
+      this.activeStrokeTilePatchRects = null;
 
       const firstSample = rawSamples[0];
       const startPoint = this.beginStrokeDynamics(firstSample);
@@ -4393,6 +4451,7 @@ void main() {
 
       this.releaseStrokeLayerTarget();
       this.activeStrokeBounds = null;
+      this.activeStrokeTilePatchRects = null;
       this.currentStrokeTool = strokeTool;
       this.strokeTargetLayerId = strokeTarget?.layerId || null;
       const rawSample = this.createPointerSample(event);

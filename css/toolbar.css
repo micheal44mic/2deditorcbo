@@ -157,7 +157,8 @@
 }
 
 .mobile-layers-button,
-.mobile-rasterize-text-button {
+.mobile-rasterize-text-button,
+.mobile-adjustment-layer-button {
   display: none;
 }
 
@@ -234,6 +235,10 @@
 
   .history-toolbar .mobile-rasterize-text-button[hidden] {
     display: none;
+  }
+
+  .toolbar-dock .mobile-adjustment-layer-button {
+    display: inline-flex;
   }
 
   .toolbar-dock .mobile-pen-tool-group {

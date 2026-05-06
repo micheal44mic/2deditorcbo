@@ -216,21 +216,84 @@ test("selected live text layer stays editable outside the text toolbar tool", ()
   );
 });
 
+test("desktop text tool creates text when the tool is activated", () => {
+  const topToolbarSource = fs.readFileSync(path.join(repoRoot, "js", "top-toolbar.js"), "utf8");
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(topToolbarSource, /function isMobileTextToolbarViewport\(\) \{[\s\S]*"\(max-width: 900px\)"/);
+  assert.match(topToolbarSource, /function getTextCreationCenter\(\)/);
+  assert.match(topToolbarSource, /const renderer = window\.CBO\.documentRenderer;[\s\S]*x: Math\.max\(1, renderer\.width\) \/ 2,[\s\S]*y: Math\.max\(1, renderer\.height\) \/ 2,/);
+  assert.doesNotMatch(topToolbarSource, /getTextCreationCenter\(\) \{[\s\S]*getBoundingClientRect/);
+  assert.match(topToolbarSource, /if \(isText && !isMobileTextToolbarViewport\(\)\) \{[\s\S]*window\.CBO\.createVectorTextLayer\?\.\(/);
+  assert.doesNotMatch(source, /centerAt: this\.clientToDocumentPoint\(event\.clientX, event\.clientY\)/);
+});
+
 test("mobile text tool exposes ADD TEXT as the layer creation action", () => {
   const topToolbarSource = fs.readFileSync(path.join(repoRoot, "js", "top-toolbar.js"), "utf8");
   const topToolbarCss = fs.readFileSync(path.join(repoRoot, "css", "top-toolbar.css"), "utf8");
   const toolbarSource = fs.readFileSync(path.join(repoRoot, "js", "toolbar.js"), "utf8");
+  const vectorRendererSource = fs.readFileSync(path.join(repoRoot, "js", "text", "vector-text-renderer.js"), "utf8");
+  const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
 
   assert.match(topToolbarSource, /data-text-add-toolbar/);
   assert.match(topToolbarSource, />ADD TEXT<\/button>/);
   assert.match(topToolbarSource, /const isText = label === "TYPE" \|\| toolMode === "text"/);
-  assert.match(topToolbarSource, /showTextAddToolbar\(isText\)/);
-  assert.match(topToolbarSource, /window\.CBO\.createVectorTextLayer\?\.\(\)/);
+  assert.match(topToolbarSource, /showTextAddToolbar\(currentToolIsText && !hasTextLayer\)/);
+  assert.match(topToolbarSource, /syncMobileTextState\(\)/);
+  assert.match(topToolbarSource, /function getTextCreationCenter\(\)/);
+  assert.match(topToolbarSource, /window\.CBO\.createVectorTextLayer\?\.\(\s*centerAt \? \{ centerAt \} : undefined,\s*\)/);
+  assert.match(topToolbarSource, /editorPage\.appendChild\(textAddToolbar\)/);
+  assert.match(topToolbarSource, /textAddToolbar\?\.querySelector\("\[data-text-add-button\]"\)/);
   assert.match(topToolbarCss, /\.text-add-toolbar:not\(\[hidden\]\) \{[\s\S]*bottom: 88px;/);
   assert.match(topToolbarCss, /\.text-add-toolbar \{[\s\S]*min-width: 156px;/);
   assert.match(topToolbarCss, /\.text-add-button \{[\s\S]*color: #dfe3ea;[\s\S]*font-size: 16px;[\s\S]*font-weight: 900;/);
   assert.match(toolbarSource, /function isTextToolButton\(button\)/);
   assert.match(toolbarSource, /if \(isTextToolButton\(button\)\) \{\s*setMobileTransformToolsOpen\(false\);/);
+  assert.match(vectorRendererSource, /const \{ centerAt, \.\.\.layerSeed \} = options;/);
+  assert.match(vectorRendererSource, /getFinitePoint\(centerAt\) \|\| getCenteredDocumentPoint\(\)/);
+  assert.match(appSource, /"\.text-add-toolbar"/);
+  assert.match(appSource, /"\.mobile-text-panel"/);
+});
+
+test("mobile text layer switches the bottom dock to icon settings panels", () => {
+  const topToolbarSource = fs.readFileSync(path.join(repoRoot, "js", "top-toolbar.js"), "utf8");
+  const topToolbarCss = fs.readFileSync(path.join(repoRoot, "css", "top-toolbar.css"), "utf8");
+
+  assert.match(topToolbarSource, /data-mobile-text-settings-toolbar/);
+  assert.ok((topToolbarSource.match(/data-mobile-text-panel-trigger/g) || []).length >= 2);
+  assert.match(topToolbarSource, /key: "color", label: "TEXT COLOR"/);
+  assert.match(topToolbarSource, /key: "border", label: "BORDER"/);
+  assert.match(topToolbarSource, /key: "style", label: "TEXT STYLE"/);
+  assert.match(topToolbarSource, /key: "transform", label: "TRANSFORMATION"/);
+  assert.match(topToolbarSource, /key: "shadow", label: "SHADOW"/);
+  assert.match(topToolbarSource, /data-mobile-text-panel-section="color"/);
+  assert.match(topToolbarSource, /data-mobile-text-panel-section="border"/);
+  assert.match(topToolbarSource, /data-mobile-text-panel-section="style"/);
+  assert.match(topToolbarSource, /data-mobile-text-content/);
+  assert.match(topToolbarSource, /data-mobile-text-panel-section="transform"/);
+  assert.match(topToolbarSource, /data-mobile-text-panel-section="shadow"/);
+  assert.match(topToolbarSource, /showMobileTextToolbar\(currentToolIsText && hasTextLayer\)/);
+  assert.match(topToolbarSource, /toolbarDock\.classList\.toggle\("mobile-text-settings-active", shouldShow\)/);
+  assert.match(topToolbarSource, /patchActiveTextLayer\(\s*\{ style: \{ fill: mobileTextFillInput\.value \} \}/);
+  assert.match(topToolbarSource, /enableMobileTextBorderEffect\(\)/);
+  assert.match(topToolbarSource, /patchMobileTextFontFromControls/);
+  assert.match(topToolbarSource, /initMobileEnvelopeForActiveTextLayer/);
+  assert.match(topToolbarSource, /enableMobileTextShadowEffect\(\)/);
+  assert.match(topToolbarSource, /editorPage\.appendChild\(mobileTextPanel\)/);
+  assert.match(topToolbarSource, /mobileTextPanel\?\.querySelector\("\[data-mobile-text-fill\]"\)/);
+  assert.match(topToolbarSource, /mobileTextContentInput\.value = layer\.text \|\| ""/);
+  assert.match(topToolbarSource, /\[mobileTextContentInput, "content"\]/);
+  assert.match(topToolbarSource, /patchActiveTextLayer\(\s*\{ text: mobileTextContentInput\.value \}/);
+  assert.match(topToolbarCss, /\.toolbar-dock\.mobile-text-settings-active \.main-tools-toolbar \{\s*display: none;/);
+  assert.match(topToolbarCss, /\.toolbar-dock \.mobile-text-settings-toolbar:not\(\[hidden\]\) \{\s*display: flex;/);
+  assert.doesNotMatch(topToolbarCss, /\.top-toolbar-dock \{\s*z-index: 9050;/);
+  assert.match(topToolbarCss, /\.mobile-text-panel:not\(\[hidden\]\) \{[\s\S]*bottom: 88px;/);
+  assert.match(topToolbarCss, /\.mobile-text-content-input \{[\s\S]*background: #242832;[\s\S]*color: #ffffff;/);
+  assert.match(topToolbarCss, /\.mobile-text-select \{[\s\S]*color-scheme: dark;/);
+  assert.match(topToolbarCss, /\.mobile-text-select option \{[\s\S]*background: #242832;[\s\S]*color: #ffffff;/);
 });
 
 test("distort uses hidden corner handles derived from center handles", () => {
@@ -263,6 +326,24 @@ test("distort uses hidden corner handles derived from center handles", () => {
   assert.equal(grid.TL_Handle, undefined);
   assert.match(rendererSource, /const HANDLE_ENVELOPE_NODES = \["TC_HandleL", "TC_HandleR", "BC_HandleL", "BC_HandleR"\]/);
   assert.match(rendererSource, /namespace\.VectorTextEngine\?\.getImplicitEnvelopeCornerHandles\?\.?\(grid\)/);
+});
+
+test("mobile text distort handles use touch-sized viewport controls", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /MOBILE_ENVELOPE_HANDLE_SIZES = Object\.freeze\(\{[\s\S]*anchor: 24,[\s\S]*control: 22,[\s\S]*corner: 24,/);
+  assert.match(source, /MOBILE_ENVELOPE_HIT_STROKE_WIDTH = 36/);
+  assert.match(source, /MOBILE_ENVELOPE_HIT_RADIUS = 30/);
+  assert.match(source, /window\.matchMedia\?\.\("\(pointer: coarse\), \(max-width: 900px\)"\)/);
+  assert.match(source, /function getEnvelopeHandleViewportScale\(layer\)/);
+  assert.match(source, /return 1 \/ \(zoom \* layerScale\)/);
+  assert.match(source, /const size = getEnvelopeHandleSize\(roleClass, desktopSize\)/);
+  assert.match(source, /const viewportScale = getEnvelopeHandleViewportScale\(layer\)/);
+  assert.match(source, /"stroke-width": getEnvelopeHitStrokeWidth\(\)/);
+  assert.match(source, /const hitRadius = getEnvelopePointerHitRadius\(pointerType\)/);
 });
 
 test("vector text drag and envelope edits use document history groups", () => {

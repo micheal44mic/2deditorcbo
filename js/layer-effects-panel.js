@@ -5,6 +5,8 @@ window.CBO = window.CBO || {};
   const MAX_MOTION_BLUR_DISTANCE = 300;
   const MAX_FIELD_BLUR_RADIUS = 200;
   const MAX_FIELD_BLUR_PINS = 8;
+  const FIELD_BLUR_TAP_TIMEOUT_MS = 360;
+  const FIELD_BLUR_TAP_MOVE_TOLERANCE = 12;
   const FIELD_BLUR_PREVIEW_DEBOUNCE_MS = 90;
   const MAX_RADIAL_BLUR_AMOUNT = 200;
   const MAX_GRAIN_AMOUNT = 100;
@@ -207,6 +209,96 @@ window.CBO = window.CBO || {};
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         ${pathsByIcon[icon] || pathsByIcon.blur}
       </svg>
+    `;
+  }
+
+  function getImplementedEffectItems() {
+    return EFFECT_GROUPS
+      .flatMap((group) => group.items)
+      .filter((effect) => effect.implemented === true);
+  }
+
+  function getMobileLayerEffectsToolbarMarkup() {
+    return `
+      <nav class="bottom-toolbar mobile-layer-effects-toolbar" aria-label="Adjustment effects toolbar" data-mobile-layer-effects-toolbar hidden>
+        ${getImplementedEffectItems().map((effect) => `
+          <button
+            class="tool-button mobile-layer-effect-button"
+            type="button"
+            aria-label="${effect.label}"
+            aria-pressed="false"
+            data-tooltip="${effect.label}"
+            data-mobile-layer-effect-trigger="${effect.type}"
+          >
+            ${getEffectIconMarkup(effect.icon)}
+          </button>
+        `).join("")}
+      </nav>
+    `;
+  }
+
+  function getMobileEffectRangeMarkup(label, value, max, dataName, options = {}) {
+    const min = Number.isFinite(options.min) ? options.min : 0;
+    const step = Number.isFinite(options.step) ? options.step : 1;
+    const suffix = options.suffix || "";
+
+    return `
+      <label class="mobile-layer-effect-range-field">
+        <span class="mobile-layer-effect-control-header">
+          <span class="mobile-layer-effect-label">${label}</span>
+          <output class="mobile-layer-effect-value" data-mobile-layer-effect-value="${dataName}">${value}${suffix}</output>
+        </span>
+        <input
+          class="mobile-layer-effect-range"
+          type="range"
+          min="${min}"
+          max="${max}"
+          step="${step}"
+          value="${value}"
+          aria-label="${label}"
+          data-mobile-layer-effect-input="${dataName}"
+        />
+      </label>
+    `;
+  }
+
+  function getMobileLayerEffectsPanelMarkup() {
+    return `
+      <section class="mobile-layer-effects-panel" aria-label="Adjustment effect values" data-mobile-layer-effects-panel hidden>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="gaussian-blur" hidden>
+          ${getMobileEffectRangeMarkup("Radius", 0, MAX_GAUSSIAN_BLUR_RADIUS, "gaussian-radius", { suffix: "px" })}
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="gaussian-blur">Reset</button>
+        </div>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="motion-blur" hidden>
+          ${getMobileEffectRangeMarkup("Distance", 0, MAX_MOTION_BLUR_DISTANCE, "motion-distance", { suffix: "px" })}
+          ${getMobileEffectRangeMarkup("Angle", 0, 360, "motion-angle")}
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="motion-blur">Reset</button>
+        </div>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="field-blur" hidden>
+          ${getMobileEffectRangeMarkup("Blur", 0, MAX_FIELD_BLUR_RADIUS, "field-blur", { suffix: "px" })}
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="field-blur">Reset</button>
+        </div>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="radial-blur" hidden>
+          <div class="mobile-layer-effect-segment-row" role="group" aria-label="Radial blur mode">
+            <button class="mobile-layer-effect-segment active" type="button" aria-pressed="true" data-mobile-radial-mode="spin">Spin</button>
+            <button class="mobile-layer-effect-segment" type="button" aria-pressed="false" data-mobile-radial-mode="zoom">Zoom</button>
+          </div>
+          ${getMobileEffectRangeMarkup("Amount", 0, MAX_RADIAL_BLUR_AMOUNT, "radial-amount")}
+          ${getMobileEffectRangeMarkup("Center X", 50, 100, "radial-center-x", { suffix: "%" })}
+          ${getMobileEffectRangeMarkup("Center Y", 50, 100, "radial-center-y", { suffix: "%" })}
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="radial-blur">Reset</button>
+        </div>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="grain" hidden>
+          ${getMobileEffectRangeMarkup("Amount", 0, MAX_GRAIN_AMOUNT, "grain-amount", { suffix: "%" })}
+          ${getMobileEffectRangeMarkup("Scale", DEFAULT_GRAIN_SCALE, MAX_GRAIN_SCALE, "grain-scale", { min: 1, suffix: "%" })}
+          <button class="mobile-layer-effect-toggle active" type="button" aria-pressed="true" data-mobile-grain-monochrome>Mono</button>
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="grain">Reset</button>
+        </div>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="threshold" hidden>
+          ${getMobileEffectRangeMarkup("Level", DEFAULT_THRESHOLD_VALUE, MAX_THRESHOLD_VALUE, "threshold-level")}
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="threshold">Reset</button>
+        </div>
+      </section>
     `;
   }
 
@@ -1004,8 +1096,9 @@ window.CBO = window.CBO || {};
 
   namespace.initLayerEffectsPanel = function initLayerEffectsPanel() {
     const button = document.querySelector(".vertical-adjustment-layer-button");
+    const mobileLauncherButton = document.querySelector(".mobile-adjustment-layer-button");
 
-    if (!button || document.querySelector("[data-layer-effects-panel]")) {
+    if ((!button && !mobileLauncherButton) || document.querySelector("[data-layer-effects-panel]")) {
       return;
     }
 
@@ -1099,9 +1192,9 @@ window.CBO = window.CBO || {};
           <section class="layer-effects-section" aria-label="Field blur" data-layer-effects-editor="field-blur" hidden>
             <div class="field-blur-pin-list" data-field-blur-pin-list></div>
             <p class="field-blur-guide" data-field-blur-guide>
-              <span>Double-click canvas: add pin</span>
+              <span>Double-click/tap canvas: add pin</span>
               <span>Drag pin: move</span>
-              <span>Alt-click pin: remove</span>
+              <span>Triple-click/tap pin: remove</span>
             </p>
           </section>
           <section class="layer-effects-section" aria-label="Radial blur" data-layer-effects-editor="radial-blur" hidden>
@@ -1177,6 +1270,32 @@ window.CBO = window.CBO || {};
       </div>
     `;
 
+    const editorPage = document.querySelector(".editor-page");
+    const toolbarDock = document.querySelector(".toolbar-dock");
+    const mainToolsToolbar = toolbarDock?.querySelector("[data-main-tools-toolbar]") ||
+      toolbarDock?.querySelector(".bottom-toolbar:not(.history-toolbar)");
+    let mobileLayerEffectsToolbar = toolbarDock?.querySelector("[data-mobile-layer-effects-toolbar]");
+    let mobileLayerEffectsPanel = document.querySelector("[data-mobile-layer-effects-panel]");
+
+    mainToolsToolbar?.classList.add("main-tools-toolbar");
+    mainToolsToolbar?.setAttribute("data-main-tools-toolbar", "");
+
+    if (toolbarDock && !mobileLayerEffectsToolbar) {
+      const template = document.createElement("template");
+
+      template.innerHTML = getMobileLayerEffectsToolbarMarkup().trim();
+      mobileLayerEffectsToolbar = template.content.firstElementChild;
+      toolbarDock.insertBefore(mobileLayerEffectsToolbar, toolbarDock.querySelector(".history-toolbar"));
+    }
+
+    if (editorPage && !mobileLayerEffectsPanel) {
+      const template = document.createElement("template");
+
+      template.innerHTML = getMobileLayerEffectsPanelMarkup().trim();
+      mobileLayerEffectsPanel = template.content.firstElementChild;
+      editorPage.appendChild(mobileLayerEffectsPanel);
+    }
+
     const title = panel.querySelector("[data-layer-effects-title]");
     const targetName = panel.querySelector("[data-layer-effects-target]");
     const pickerTargetName = panel.querySelector("[data-layer-effects-picker-target]");
@@ -1215,13 +1334,25 @@ window.CBO = window.CBO || {};
     const thresholdResetButton = panel.querySelector("[data-layer-threshold-reset]");
     const closeButton = panel.querySelector("[data-layer-effects-close]");
     const panelCloseButton = panel.querySelector("[data-layer-effects-panel-close]");
+    const mobileLayerEffectButtons = mobileLayerEffectsToolbar?.querySelectorAll("[data-mobile-layer-effect-trigger]") || [];
+    const mobileLayerEffectSections = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effects-editor]") || [];
+    const mobileLayerEffectInputs = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-input]") || [];
+    const mobileLayerEffectValues = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-value]") || [];
+    const mobileLayerEffectResets = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-reset]") || [];
+    const mobileRadialModeButtons = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-radial-mode]") || [];
+    const mobileGrainMonochromeButton = mobileLayerEffectsPanel?.querySelector("[data-mobile-grain-monochrome]");
     let activeEffectType = "";
+    let activeMobileEffectType = "";
     let fieldBlurDrag = null;
+    let fieldBlurPointerTap = null;
+    let fieldBlurTapSequence = null;
+    let fieldBlurTapTimer = 0;
     let activeFieldBlurPinId = "";
     let fieldBlurOverlay = null;
     let fieldBlurPinIdSequence = 0;
     let fieldBlurPreviewTimer = 0;
     let fieldBlurPins = [];
+    let mobileLayerEffectsSession = null;
     let previewSession = null;
 
     document.body.append(panel);
@@ -1256,6 +1387,495 @@ window.CBO = window.CBO || {};
 
     function getDefaultFieldBlurPoint() {
       return getLayerEffectCenterPoint(getActiveLayer());
+    }
+
+    function isMobileLayerEffectsViewport() {
+      return window.matchMedia?.("(max-width: 900px)")?.matches === true;
+    }
+
+    function getMobileLayerEffectInput(name) {
+      return mobileLayerEffectsPanel?.querySelector(`[data-mobile-layer-effect-input="${name}"]`) || null;
+    }
+
+    function getMobileLayerEffectValue(name) {
+      return mobileLayerEffectsPanel?.querySelector(`[data-mobile-layer-effect-value="${name}"]`) || null;
+    }
+
+    function getMobileLayerEffectSuffix(name) {
+      const suffixByName = {
+        "field-blur": "px",
+        "gaussian-radius": "px",
+        "grain-amount": "%",
+        "grain-scale": "%",
+        "motion-distance": "px",
+        "radial-center-x": "%",
+        "radial-center-y": "%",
+      };
+
+      return suffixByName[name] || "";
+    }
+
+    function updateMobileLayerEffectRangeProgress(input) {
+      if (!input) {
+        return;
+      }
+
+      const min = Number(input.min) || 0;
+      const max = Number(input.max) || 100;
+      const value = clamp(input.value, min, max);
+      const progress = max > min ? ((value - min) / (max - min)) * 100 : 0;
+
+      input.style.setProperty("--mobile-layer-effect-range-progress", `${progress}%`);
+    }
+
+    function setMobileLayerEffectControl(name, value) {
+      const input = getMobileLayerEffectInput(name);
+      const output = getMobileLayerEffectValue(name);
+      const nextValue = Math.round(Number(value) || 0);
+      const suffix = getMobileLayerEffectSuffix(name);
+
+      if (input && document.activeElement !== input) {
+        input.value = String(nextValue);
+      }
+
+      if (output) {
+        output.textContent = `${nextValue}${suffix}`;
+      }
+
+      updateMobileLayerEffectRangeProgress(input);
+    }
+
+    function setMobileRadialModeButtonState(mode) {
+      const nextMode = normalizeRadialBlurMode(mode);
+
+      mobileRadialModeButtons.forEach((modeButton) => {
+        const isActive = modeButton.dataset.mobileRadialMode === nextMode;
+
+        modeButton.classList.toggle("active", isActive);
+        modeButton.setAttribute("aria-pressed", String(isActive));
+      });
+    }
+
+    function getSelectedMobileRadialMode() {
+      const activeModeButton = Array.from(mobileRadialModeButtons)
+        .find((modeButton) => modeButton.classList.contains("active"));
+
+      return normalizeRadialBlurMode(activeModeButton?.dataset.mobileRadialMode);
+    }
+
+    function setMobileGrainMonochromeState(isMonochrome) {
+      if (!mobileGrainMonochromeButton) {
+        return;
+      }
+
+      mobileGrainMonochromeButton.classList.toggle("active", isMonochrome);
+      mobileGrainMonochromeButton.setAttribute("aria-pressed", String(isMonochrome));
+    }
+
+    function isMobileGrainMonochromeEnabled() {
+      return mobileGrainMonochromeButton?.getAttribute("aria-pressed") !== "false";
+    }
+
+    function closeMobileLayerEffectsPanel() {
+      if (activeMobileEffectType === "field-blur") {
+        deactivateFieldBlurUi();
+        activeEffectType = "";
+      }
+
+      activeMobileEffectType = "";
+
+      if (mobileLayerEffectsPanel) {
+        mobileLayerEffectsPanel.hidden = true;
+        delete mobileLayerEffectsPanel.dataset.activeEffect;
+      }
+
+      mobileLayerEffectSections.forEach((section) => {
+        section.hidden = true;
+      });
+
+      mobileLayerEffectButtons.forEach((effectButton) => {
+        effectButton.classList.remove("active");
+        effectButton.setAttribute("aria-pressed", "false");
+      });
+    }
+
+    function showMobileLayerEffectsToolbar(isVisible) {
+      if (!mobileLayerEffectsToolbar || !toolbarDock) {
+        return;
+      }
+
+      const shouldShow = Boolean(isVisible);
+
+      mobileLayerEffectsToolbar.hidden = !shouldShow;
+      toolbarDock.classList.toggle("mobile-layer-effects-active", shouldShow);
+
+      if (!shouldShow) {
+        finalizeMobileLayerEffectsSession();
+        closeMobileLayerEffectsPanel();
+      }
+    }
+
+    function getMobileFieldBlurPins(layer, blur) {
+      const nextBlur = clamp(blur, 0, MAX_FIELD_BLUR_RADIUS);
+      const currentPins = getFieldBlur(layer).pins;
+
+      if (nextBlur <= 0) {
+        return [];
+      }
+
+      if (currentPins.length > 0) {
+        return currentPins.map((pin) => ({
+          ...pin,
+          blur: nextBlur,
+        }));
+      }
+
+      const point = getLayerEffectCenterPoint(layer);
+
+      return [{
+        blur: nextBlur,
+        id: "mobile-field-blur-pin",
+        x: point.x,
+        y: point.y,
+      }];
+    }
+
+    function getMobileLayerEffectsHistoryGroup(layerId) {
+      return `mobile-layer-effects-${layerId}`;
+    }
+
+    function startMobileLayerEffectsSession() {
+      const layerModel = getLayerModel();
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer) || !layerModel) {
+        return null;
+      }
+
+      if (mobileLayerEffectsSession?.layerId === layer.id) {
+        return mobileLayerEffectsSession;
+      }
+
+      if (mobileLayerEffectsSession?.layerId && mobileLayerEffectsSession.layerId !== layer.id) {
+        finalizeMobileLayerEffectsSession();
+      }
+
+      mobileLayerEffectsSession = {
+        beforeState: namespace.documentHistory?.getLayerSnapshot?.(layerModel) ||
+          getLayerStateSnapshot(layerModel),
+        layerId: layer.id,
+      };
+
+      return mobileLayerEffectsSession;
+    }
+
+    function recordMobileLayerEffectsMetadata(session) {
+      const layerModel = getLayerModel();
+      const history = namespace.documentHistory;
+
+      if (!session?.beforeState || !layerModel || !history?.recordLayerStateChange) {
+        return false;
+      }
+
+      const didRecord = history.recordLayerStateChange(layerModel, session.beforeState, {
+        historyGroup: getMobileLayerEffectsHistoryGroup(session.layerId),
+        source: "mobile-layer-effects-finalize",
+      });
+
+      if (didRecord) {
+        history.flushLayerState?.(layerModel);
+      }
+
+      return didRecord;
+    }
+
+    function flushMobileFieldBlurPins() {
+      if (activeMobileEffectType !== "field-blur" && activeEffectType !== "field-blur") {
+        return false;
+      }
+
+      const layerModel = getLayerModel();
+      const layer = mobileLayerEffectsSession?.layerId
+        ? layerModel?.findEntryById?.(mobileLayerEffectsSession.layerId)
+        : getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        return false;
+      }
+
+      clearFieldBlurPreviewTimer();
+
+      return namespace.setLayerFieldBlurPins(layer.id, normalizeFieldBlurPins(fieldBlurPins), {
+        history: false,
+        source: "mobile-layer-effects-field-blur-preview",
+      });
+    }
+
+    function finalizeMobileLayerEffectsSession() {
+      const session = mobileLayerEffectsSession;
+
+      if (!session) {
+        return false;
+      }
+
+      flushMobileFieldBlurPins();
+
+      const layerModel = getLayerModel();
+      const layer = layerModel?.findEntryById?.(session.layerId) || null;
+      const shouldRasterize = namespace.hasRasterizableLayerEffects?.(layer) === true;
+
+      mobileLayerEffectsSession = null;
+
+      if (!layer) {
+        return false;
+      }
+
+      if (shouldRasterize && namespace.rasterizeLayerEffects?.(session.layerId, {
+        beforeState: session.beforeState,
+      }) === true) {
+        return true;
+      }
+
+      return recordMobileLayerEffectsMetadata(session);
+    }
+
+    function syncMobileLayerEffectsControls() {
+      const layer = getActiveLayer();
+      const isEligible = isBlurEligibleLayer(layer);
+      const radius = isEligible ? getGaussianBlurRadius(layer) : 0;
+      const motionBlur = isEligible ? getMotionBlur(layer) : { angle: 0, distance: 0 };
+      const fieldBlur = isEligible ? getFieldBlur(layer) : { pins: [] };
+      const activeFieldBlurPin = activeMobileEffectType === "field-blur"
+        ? fieldBlurPins.find((pin) => pin.id === activeFieldBlurPinId) || fieldBlurPins[0] || null
+        : null;
+      const fieldBlurAmount = activeFieldBlurPin
+        ? activeFieldBlurPin.blur
+        : (fieldBlur.pins.length
+          ? Math.max(...fieldBlur.pins.map((pin) => clamp(pin.blur, 0, MAX_FIELD_BLUR_RADIUS)))
+          : 0);
+      const radialBlur = isEligible
+        ? getRadialBlur(layer, { defaultToLayerCenter: activeMobileEffectType === "radial-blur" })
+        : { amount: 0, centerX: 50, centerY: 50, mode: "spin" };
+      const grain = isEligible
+        ? getGrain(layer)
+        : { amount: 0, scale: DEFAULT_GRAIN_SCALE, monochrome: true };
+      const threshold = isEligible
+        ? getThreshold(layer)
+        : { enabled: false, threshold: DEFAULT_THRESHOLD_VALUE };
+
+      mobileLayerEffectButtons.forEach((effectButton) => {
+        const isActive = effectButton.dataset.mobileLayerEffectTrigger === activeMobileEffectType;
+
+        effectButton.disabled = !isEligible;
+        effectButton.classList.toggle("active", isActive);
+        effectButton.setAttribute("aria-pressed", String(isActive));
+      });
+
+      mobileLayerEffectInputs.forEach((input) => {
+        input.disabled = !isEligible;
+        updateMobileLayerEffectRangeProgress(input);
+      });
+
+      mobileLayerEffectResets.forEach((reset) => {
+        reset.disabled = !isEligible;
+      });
+
+      mobileRadialModeButtons.forEach((modeButton) => {
+        modeButton.disabled = !isEligible;
+      });
+
+      if (mobileGrainMonochromeButton) {
+        mobileGrainMonochromeButton.disabled = !isEligible;
+      }
+
+      setMobileLayerEffectControl("gaussian-radius", radius);
+      setMobileLayerEffectControl("motion-distance", motionBlur.distance);
+      setMobileLayerEffectControl("motion-angle", getDisplayAngle(motionBlur.angle));
+      setMobileLayerEffectControl("field-blur", fieldBlurAmount);
+      setMobileLayerEffectControl("radial-amount", radialBlur.amount);
+      setMobileLayerEffectControl("radial-center-x", radialBlur.centerX);
+      setMobileLayerEffectControl("radial-center-y", radialBlur.centerY);
+      setMobileRadialModeButtonState(radialBlur.mode);
+      setMobileLayerEffectControl("grain-amount", grain.amount);
+      setMobileLayerEffectControl("grain-scale", grain.scale);
+      setMobileGrainMonochromeState(grain.monochrome);
+      setMobileLayerEffectControl("threshold-level", threshold.threshold);
+
+      mobileLayerEffectsPanel?.classList.toggle("disabled", !isEligible);
+    }
+
+    function openMobileLayerEffectPanel(effectType) {
+      const definition = getEffectDefinition(effectType);
+
+      if (!definition?.implemented || !isBlurEligibleLayer(getActiveLayer())) {
+        syncMobileLayerEffectsControls();
+        return;
+      }
+
+      startMobileLayerEffectsSession();
+
+      const isAlreadyOpen = !mobileLayerEffectsPanel?.hidden && activeMobileEffectType === effectType;
+
+      if (isAlreadyOpen) {
+        closeMobileLayerEffectsPanel();
+        return;
+      }
+
+      if (activeMobileEffectType === "field-blur" && effectType !== "field-blur") {
+        flushMobileFieldBlurPins();
+        deactivateFieldBlurUi();
+        activeEffectType = "";
+      }
+
+      activeMobileEffectType = effectType;
+
+      if (mobileLayerEffectsPanel) {
+        mobileLayerEffectsPanel.hidden = false;
+        mobileLayerEffectsPanel.dataset.activeEffect = effectType;
+      }
+
+      mobileLayerEffectSections.forEach((section) => {
+        section.hidden = section.dataset.mobileLayerEffectsEditor !== effectType;
+      });
+
+      if (effectType === "field-blur") {
+        activeEffectType = "field-blur";
+        activateFieldBlurUi();
+      }
+
+      syncMobileLayerEffectsControls();
+    }
+
+    function applyMobileLayerEffectValue(name, value) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncMobileLayerEffectsControls();
+        return;
+      }
+
+      startMobileLayerEffectsSession();
+
+      if (name === "gaussian-radius") {
+        namespace.setLayerGaussianBlurRadius(layer.id, value, {
+          history: false,
+          source: "mobile-layer-effects-gaussian-blur",
+        });
+      } else if (name === "motion-distance" || name === "motion-angle") {
+        namespace.setLayerMotionBlur(
+          layer.id,
+          getMobileLayerEffectInput("motion-distance")?.value,
+          getMobileLayerEffectInput("motion-angle")?.value,
+          {
+            history: false,
+            source: "mobile-layer-effects-motion-blur",
+          },
+        );
+      } else if (name === "field-blur") {
+        if (activeMobileEffectType === "field-blur") {
+          ensureFieldBlurPins();
+
+          const pinId = activeFieldBlurPinId || fieldBlurPins[0]?.id || "";
+
+          if (pinId) {
+            setFieldBlurPinBlur(pinId, value, { flush: true });
+            syncMobileLayerEffectsControls();
+            return;
+          }
+        }
+
+        namespace.setLayerFieldBlurPins(
+          layer.id,
+          getMobileFieldBlurPins(layer, value),
+          {
+            history: false,
+            source: "mobile-layer-effects-field-blur",
+          },
+        );
+      } else if (name === "radial-amount" || name === "radial-center-x" || name === "radial-center-y") {
+        namespace.setLayerRadialBlur(
+          layer.id,
+          getMobileLayerEffectInput("radial-amount")?.value,
+          getMobileLayerEffectInput("radial-center-x")?.value,
+          getMobileLayerEffectInput("radial-center-y")?.value,
+          getSelectedMobileRadialMode(),
+          {
+            history: false,
+            source: "mobile-layer-effects-radial-blur",
+          },
+        );
+      } else if (name === "grain-amount" || name === "grain-scale") {
+        namespace.setLayerGrain(
+          layer.id,
+          getMobileLayerEffectInput("grain-amount")?.value,
+          getMobileLayerEffectInput("grain-scale")?.value,
+          isMobileGrainMonochromeEnabled(),
+          {
+            history: false,
+            source: "mobile-layer-effects-grain",
+          },
+        );
+      } else if (name === "threshold-level") {
+        namespace.setLayerThreshold(layer.id, value, {
+          history: false,
+          source: "mobile-layer-effects-threshold",
+        });
+      }
+
+      syncMobileLayerEffectsControls();
+    }
+
+    function resetMobileLayerEffect(effectType) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncMobileLayerEffectsControls();
+        return;
+      }
+
+      startMobileLayerEffectsSession();
+
+      if (effectType === "gaussian-blur") {
+        namespace.setLayerGaussianBlurRadius(layer.id, 0, {
+          history: false,
+          source: "mobile-layer-effects-reset",
+        });
+      } else if (effectType === "motion-blur") {
+        namespace.setLayerMotionBlur(layer.id, 0, getMobileLayerEffectInput("motion-angle")?.value, {
+          history: false,
+          source: "mobile-layer-effects-reset",
+        });
+      } else if (effectType === "field-blur") {
+        namespace.setLayerFieldBlurPins(layer.id, [], {
+          history: false,
+          source: "mobile-layer-effects-reset",
+        });
+      } else if (effectType === "radial-blur") {
+        namespace.setLayerRadialBlur(
+          layer.id,
+          0,
+          getMobileLayerEffectInput("radial-center-x")?.value,
+          getMobileLayerEffectInput("radial-center-y")?.value,
+          getSelectedMobileRadialMode(),
+          {
+            history: false,
+            source: "mobile-layer-effects-reset",
+          },
+        );
+      } else if (effectType === "grain") {
+        namespace.setLayerGrain(layer.id, 0, DEFAULT_GRAIN_SCALE, true, {
+          history: false,
+          source: "mobile-layer-effects-reset",
+        });
+      } else if (effectType === "threshold") {
+        namespace.setLayerThreshold(layer.id, DEFAULT_THRESHOLD_VALUE, {
+          enabled: false,
+          history: false,
+          source: "mobile-layer-effects-reset",
+        });
+      }
+
+      syncMobileLayerEffectsControls();
     }
 
     function createFieldBlurPin(point = getDefaultFieldBlurPoint(), blur = 0, id = "") {
@@ -1417,6 +2037,7 @@ window.CBO = window.CBO || {};
     function setActiveFieldBlurPin(pinId) {
       activeFieldBlurPinId = pinId;
       syncFieldBlurUi();
+      syncMobileLayerEffectsControls();
     }
 
     function focusFieldBlurPinControl(pinId) {
@@ -1504,6 +2125,74 @@ window.CBO = window.CBO || {};
       syncFieldBlurUi();
       scheduleFieldBlurPreview();
       syncFieldBlurAcceptState();
+      syncMobileLayerEffectsControls();
+    }
+
+    function clearFieldBlurTapTimer() {
+      if (fieldBlurTapTimer) {
+        window.clearTimeout(fieldBlurTapTimer);
+        fieldBlurTapTimer = 0;
+      }
+    }
+
+    function resetFieldBlurTapSequence() {
+      clearFieldBlurTapTimer();
+      fieldBlurTapSequence = null;
+    }
+
+    function queueFieldBlurTapReset() {
+      clearFieldBlurTapTimer();
+
+      fieldBlurTapTimer = window.setTimeout(() => {
+        fieldBlurTapTimer = 0;
+        fieldBlurTapSequence = null;
+      }, FIELD_BLUR_TAP_TIMEOUT_MS);
+    }
+
+    function handleFieldBlurTap(pinId, point) {
+      const targetKey = pinId ? `pin:${pinId}` : "canvas";
+      const now = Date.now();
+      const isSameSequence = fieldBlurTapSequence &&
+        fieldBlurTapSequence.targetKey === targetKey &&
+        now - fieldBlurTapSequence.time <= FIELD_BLUR_TAP_TIMEOUT_MS;
+      const count = isSameSequence ? fieldBlurTapSequence.count + 1 : 1;
+
+      fieldBlurTapSequence = {
+        count,
+        targetKey,
+        time: now,
+      };
+
+      if (pinId && count >= 3) {
+        removeFieldBlurPin(pinId);
+        resetFieldBlurTapSequence();
+        return;
+      }
+
+      if (!pinId && count === 2) {
+        addFieldBlurPin(point);
+        resetFieldBlurTapSequence();
+        return;
+      }
+
+      queueFieldBlurTapReset();
+    }
+
+    function markFieldBlurPointerTapMoved(event) {
+      if (!fieldBlurPointerTap || fieldBlurPointerTap.pointerId !== event.pointerId) {
+        return;
+      }
+
+      const dx = event.clientX - fieldBlurPointerTap.clientX;
+      const dy = event.clientY - fieldBlurPointerTap.clientY;
+
+      if (Math.hypot(dx, dy) > FIELD_BLUR_TAP_MOVE_TOLERANCE) {
+        fieldBlurPointerTap.moved = true;
+
+        if (fieldBlurDrag?.pointerId === event.pointerId) {
+          fieldBlurDrag.moved = true;
+        }
+      }
     }
 
     function moveFieldBlurPin(pinId, point) {
@@ -1514,6 +2203,7 @@ window.CBO = window.CBO || {};
       renderFieldBlurPins();
       scheduleFieldBlurPreview();
       syncFieldBlurAcceptState();
+      syncMobileLayerEffectsControls();
     }
 
     function updateFieldBlurPinControlValue(pinId, blur) {
@@ -1551,6 +2241,7 @@ window.CBO = window.CBO || {};
         scheduleFieldBlurPreview();
       }
       syncFieldBlurAcceptState();
+      syncMobileLayerEffectsControls();
     }
 
     function commitFieldBlurPinInput(input) {
@@ -1593,15 +2284,24 @@ window.CBO = window.CBO || {};
 
       const pinElement = event.target?.closest?.("[data-field-blur-pin]");
       const pinId = pinElement?.dataset.fieldBlurPin || "";
+      fieldBlurPointerTap = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        moved: false,
+        pinId,
+        pointerId: event.pointerId,
+      };
 
       if (event.altKey && pinId) {
         removeFieldBlurPin(pinId);
+        fieldBlurPointerTap = null;
         return;
       }
 
       if (pinId) {
         setActiveFieldBlurPin(pinId);
         fieldBlurDrag = {
+          moved: false,
           pinId,
           pointerId: event.pointerId,
         };
@@ -1611,6 +2311,8 @@ window.CBO = window.CBO || {};
     }
 
     function handleFieldBlurOverlayPointerMove(event) {
+      markFieldBlurPointerTapMoved(event);
+
       if (activeEffectType !== "field-blur" || !fieldBlurDrag || fieldBlurDrag.pointerId !== event.pointerId) {
         return;
       }
@@ -1620,29 +2322,32 @@ window.CBO = window.CBO || {};
       moveFieldBlurPin(fieldBlurDrag.pinId, clientToFieldBlurPoint(event.clientX, event.clientY));
     }
 
-    function stopFieldBlurDrag(event) {
-      if (!fieldBlurDrag || fieldBlurDrag.pointerId !== event.pointerId) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      fieldBlurOverlay?.releasePointerCapture?.(event.pointerId);
-      fieldBlurDrag = null;
-    }
-
-    function handleFieldBlurOverlayDoubleClick(event) {
+    function stopFieldBlurDrag(event, options = {}) {
       if (activeEffectType !== "field-blur") {
         return;
       }
 
+      const tap = fieldBlurPointerTap?.pointerId === event.pointerId ? fieldBlurPointerTap : null;
+      const drag = fieldBlurDrag?.pointerId === event.pointerId ? fieldBlurDrag : null;
+
+      if (!tap && !drag) {
+        return;
+      }
+
       event.preventDefault();
       event.stopPropagation();
 
-      const pinElement = event.target?.closest?.("[data-field-blur-pin]");
+      if (drag) {
+        fieldBlurOverlay?.releasePointerCapture?.(event.pointerId);
+        fieldBlurDrag = null;
+      }
 
-      if (!pinElement && !event.altKey) {
-        addFieldBlurPin(clientToFieldBlurPoint(event.clientX, event.clientY));
+      if (tap && options.cancel !== true && !tap.moved && drag?.moved !== true) {
+        handleFieldBlurTap(tap.pinId, clientToFieldBlurPoint(event.clientX, event.clientY));
+      }
+
+      if (tap) {
+        fieldBlurPointerTap = null;
       }
     }
 
@@ -1657,11 +2362,10 @@ window.CBO = window.CBO || {};
         fieldBlurOverlay = document.createElement("div");
         fieldBlurOverlay.className = "field-blur-pin-overlay";
         fieldBlurOverlay.setAttribute("data-field-blur-pin-overlay", "");
-        fieldBlurOverlay.addEventListener("dblclick", handleFieldBlurOverlayDoubleClick);
         fieldBlurOverlay.addEventListener("pointerdown", handleFieldBlurOverlayPointerDown);
         fieldBlurOverlay.addEventListener("pointermove", handleFieldBlurOverlayPointerMove);
         fieldBlurOverlay.addEventListener("pointerup", stopFieldBlurDrag);
-        fieldBlurOverlay.addEventListener("pointercancel", stopFieldBlurDrag);
+        fieldBlurOverlay.addEventListener("pointercancel", (event) => stopFieldBlurDrag(event, { cancel: true }));
         fieldBlurOverlay.addEventListener("wheel", handleFieldBlurOverlayWheel, { passive: false });
         stage.append(fieldBlurOverlay);
       }
@@ -1686,6 +2390,8 @@ window.CBO = window.CBO || {};
       }
 
       fieldBlurDrag = null;
+      fieldBlurPointerTap = null;
+      resetFieldBlurTapSequence();
       clearFieldBlurPreviewTimer();
       activeFieldBlurPinId = "";
       fieldBlurPins = [];
@@ -2100,13 +2806,24 @@ window.CBO = window.CBO || {};
     }
 
     function handleLayerChange(event) {
+      const layer = getActiveLayer();
+
+      if (mobileLayerEffectsSession?.layerId && layer?.id !== mobileLayerEffectsSession.layerId) {
+        finalizeMobileLayerEffectsSession();
+        closeMobileLayerEffectsPanel();
+      }
+
+      if (mobileLayerEffectsToolbar && !mobileLayerEffectsToolbar.hidden) {
+        syncMobileLayerEffectsControls();
+      }
+
       if (panel.hidden) {
         return;
       }
 
-      const layer = getActiveLayer();
+      const activeLayer = getActiveLayer();
 
-      if (previewSession?.layerId && layer?.id !== previewSession.layerId) {
+      if (previewSession?.layerId && activeLayer?.id !== previewSession.layerId) {
         showEffectPicker({ cancel: true });
         return;
       }
@@ -2119,6 +2836,62 @@ window.CBO = window.CBO || {};
 
       syncControls();
     }
+
+    function handleMobileLayerEffectsBeforeHistory(event) {
+      const action = String(event.detail?.action || "").trim().toLowerCase();
+
+      if ((action === "undo" || action === "redo") && mobileLayerEffectsSession) {
+        finalizeMobileLayerEffectsSession();
+        closeMobileLayerEffectsPanel();
+      }
+    }
+
+    function handleMobileLayerEffectsToolChange(event) {
+      const label = String(event.detail?.label || "").trim().toUpperCase();
+      const toolMode = String(event.detail?.toolMode || "").trim().toLowerCase();
+      const isAdjustmentLayer = label === "ADJUSTMENT LAYER" || toolMode === "adjustments";
+      const shouldShow = isAdjustmentLayer && isMobileLayerEffectsViewport();
+
+      showMobileLayerEffectsToolbar(shouldShow);
+
+      if (shouldShow) {
+        closePanel({ cancel: true });
+        syncMobileLayerEffectsControls();
+      }
+    }
+
+    mobileLayerEffectButtons.forEach((effectButton) => {
+      effectButton.addEventListener("click", () => {
+        openMobileLayerEffectPanel(effectButton.dataset.mobileLayerEffectTrigger);
+      });
+    });
+
+    mobileLayerEffectInputs.forEach((input) => {
+      input.addEventListener("input", () => {
+        updateMobileLayerEffectRangeProgress(input);
+        applyMobileLayerEffectValue(input.dataset.mobileLayerEffectInput, input.value);
+      });
+    });
+
+    mobileRadialModeButtons.forEach((modeButton) => {
+      modeButton.addEventListener("click", () => {
+        setMobileRadialModeButtonState(modeButton.dataset.mobileRadialMode);
+        applyMobileLayerEffectValue("radial-amount", getMobileLayerEffectInput("radial-amount")?.value);
+      });
+    });
+
+    mobileGrainMonochromeButton?.addEventListener("click", () => {
+      const isMonochrome = mobileGrainMonochromeButton.getAttribute("aria-pressed") !== "true";
+
+      setMobileGrainMonochromeState(isMonochrome);
+      applyMobileLayerEffectValue("grain-amount", getMobileLayerEffectInput("grain-amount")?.value);
+    });
+
+    mobileLayerEffectResets.forEach((reset) => {
+      reset.addEventListener("click", () => {
+        resetMobileLayerEffect(reset.dataset.mobileLayerEffectReset);
+      });
+    });
 
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -2344,8 +3117,15 @@ window.CBO = window.CBO || {};
     });
 
     window.addEventListener("resize", positionPanel);
+    window.addEventListener("resize", () => {
+      if (!isMobileLayerEffectsViewport()) {
+        showMobileLayerEffectsToolbar(false);
+      }
+    });
     window.addEventListener("resize", renderFieldBlurPins);
     window.addEventListener("cbo:camera-change", renderFieldBlurPins);
+    window.addEventListener("cbo:before-history-action", handleMobileLayerEffectsBeforeHistory);
+    window.addEventListener("cbo:tool-change", handleMobileLayerEffectsToolChange);
     window.addEventListener("cbo:document-layers-change", handleLayerChange);
     window.addEventListener("cbo:layer-effects-rasterized", handleLayerChange);
     setEffectView("");

@@ -10,6 +10,10 @@ test("brush stroke history prefers tile-memento before and after snapshots", () 
 
   assert.match(source, /beginRasterTileHistory\?\.\(layerId, strokeRect/);
   assert.match(source, /commitRasterTileHistory\?\.\(tileHistory,/);
+  assert.match(source, /activeStrokeTilePatchRects/);
+  assert.match(source, /includeStrokeTilePatchRect\(rect\)/);
+  assert.match(source, /getActiveStrokeTilePatchRects\(\)/);
+  assert.match(source, /tilePatchRects: this\.getActiveStrokeTilePatchRects\(\)/);
   assert.match(source, /historyMode = hasTileHistory[\s\S]*"tile-before-after"/);
   assert.match(source, /tileHistory[\s\S]*this\.createHistorySnapshot\(target, strokeRect, "before-stroke"\)/);
   assert.match(source, /this\.createHistorySnapshot\(target, strokeRect, "before-stroke"\)/);

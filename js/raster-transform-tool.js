@@ -1,5 +1,6 @@
 (function registerRasterTransformTool(namespace) {
   const SVG_NS = "http://www.w3.org/2000/svg";
+  const SELECTION_TOOL_MODE = "selection";
   const RESIZE_TOOL_MODE = "resize";
   const ROTATE_TOOL_MODE = "rotate";
   const WARP_TRANSFORM_MODE = "warp";
@@ -14,6 +15,8 @@
   const WARP_GRID_SAMPLE_STEPS = 28;
   const MIN_TRANSFORM_SIZE = 2;
   const GUIDE_PROXIMITY_PX = 3;
+  const TOUCH_SELECTION_HIT_RADIUS_PX = 8;
+  const SELECTION_MOVE_HOLD_MS = 200;
   const ROTATION_SNAP_RADIANS = Math.PI / 12;
   const ROTATION_FREE_SNAP_THRESHOLD_RADIANS = Math.PI / 90;
   const TRIG_EPSILON = 1e-10;
@@ -93,6 +96,13 @@
     const toolMode = String(detail.toolMode || "").trim().toLowerCase();
 
     return toolMode === ROTATE_TOOL_MODE || label === ROTATE_TOOL_MODE;
+  }
+
+  function isSelectionToolDetail(detail = {}) {
+    const label = String(detail.label || "").trim().toLowerCase();
+    const toolMode = String(detail.toolMode || "").trim().toLowerCase();
+
+    return toolMode === SELECTION_TOOL_MODE || label === SELECTION_TOOL_MODE;
   }
 
   function getTransformToolMode(detail = {}) {
@@ -408,6 +418,7 @@
       this.handles = [];
       this.activeTool = "";
       this.transformMode = normalizeTransformMode(namespace.transformMode);
+      this.transformAspectLocked = namespace.transformAspectLocked === true;
       this.activeLayerId = null;
       this.contentRect = null;
       this.sourceSnapshot = null;
@@ -417,6 +428,7 @@
       this.currentWarpPoints = null;
       this.currentRotationRadians = 0;
       this.dragState = null;
+      this.selectionMoveHoldState = null;
       this.isCommitting = false;
       this.camera = { x: 0, y: 0, zoom: 1 };
       this.dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -441,6 +453,7 @@
       this.createOverlay();
       this.bindEvents();
       this.syncViewState();
+      this.syncActiveToolFromToolbar();
       this.render();
     }
 
@@ -590,6 +603,14 @@
       return this.activeTool === RESIZE_TOOL_MODE || this.activeTool === ROTATE_TOOL_MODE;
     }
 
+    isSelectionActive() {
+      return this.activeTool === SELECTION_TOOL_MODE;
+    }
+
+    isOverlayActive() {
+      return this.isActive() || this.isSelectionActive();
+    }
+
     isRotateActive() {
       return this.activeTool === ROTATE_TOOL_MODE;
     }
@@ -602,6 +623,10 @@
       );
     }
 
+    isSelectableLayer(layer) {
+      return Boolean(layer && layer.locked !== true && layer.type !== "group");
+    }
+
     getActiveLayer() {
       const layerId = this.layerModel?.activeLayerId;
 
@@ -611,6 +636,14 @@
     handleToolChange(event) {
       const detail = event.detail || {};
       const transformToolMode = getTransformToolMode(detail);
+
+      if (Object.prototype.hasOwnProperty.call(detail, "transformAspectLocked")) {
+        this.transformAspectLocked = detail.transformAspectLocked === true;
+      }
+
+      if (this.isSelectionActive() && !isSelectionToolDetail(detail) && this.hasPendingTransform()) {
+        this.commitTransform();
+      }
 
       if (transformToolMode) {
         const wasActive = this.isActive();
@@ -627,6 +660,13 @@
         if (!wasActive || !isSameTransformTool || !isSameLayerActive || !this.sourceSnapshot) {
           this.activateLayer(activeLayer);
         }
+      } else if (isSelectionToolDetail(detail)) {
+        if (this.isActive()) {
+          this.commitTransform();
+        }
+
+        this.activeTool = SELECTION_TOOL_MODE;
+        this.activateLayer(this.getActiveLayer(), { selection: true });
       } else {
         if (this.isActive()) {
           this.commitTransform();
@@ -637,6 +677,24 @@
       }
 
       this.render();
+    }
+
+    syncActiveToolFromToolbar() {
+      const activeTool = document.querySelector("[data-tool].active");
+
+      if (!activeTool) {
+        return;
+      }
+
+      this.handleToolChange({
+        detail: {
+          label: activeTool.getAttribute("aria-label") || "",
+          syncGroup: activeTool.dataset.toolSync || "",
+          transformAspectLocked:
+            String(activeTool.dataset.transformAspectLock || "").trim().toLowerCase() === "true",
+          toolMode: activeTool.dataset.toolMode || "",
+        },
+      });
     }
 
     handleTransformModeChange(event) {
@@ -716,6 +774,26 @@
     }
 
     handleDocumentChange() {
+      if (this.isSelectionActive()) {
+        if (this.dragState || this.selectionMoveHoldState || this.isCommitting) {
+          return;
+        }
+
+        if (this.hasPendingTransform()) {
+          const activeLayer = this.getActiveLayer();
+
+          if (activeLayer?.id !== this.activeLayerId) {
+            this.commitTransform();
+            this.activateLayer(activeLayer, { selection: true });
+          }
+
+          return;
+        }
+
+        this.activateLayer(this.getActiveLayer(), { selection: true });
+        return;
+      }
+
       if (!this.isActive() || this.dragState || this.isCommitting) {
         return;
       }
@@ -743,13 +821,19 @@
     }
 
     handleKeyDown(event) {
-      if (!this.isActive()) {
+      if (!this.isActive() && !this.isSelectionActive()) {
         return;
       }
 
       if (event.key === "Escape") {
         event.preventDefault();
-        this.cancelTransform();
+        if (this.isSelectionActive()) {
+          this.commitTransform();
+          this.layerModel?.setActiveLayer?.(null, { source: "selection-tool-escape" });
+          this.activateLayer(null, { selection: true });
+        } else {
+          this.cancelTransform();
+        }
       } else if (event.key === "Enter") {
         event.preventDefault();
         this.commitTransform();
@@ -796,10 +880,89 @@
       return this.documentRenderer?.getRasterContentBounds?.(layerId, PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS) || null;
     }
 
-    activateLayer(layer) {
+    getSelectionHitRadius(pointerType = "") {
+      return pointerType === "touch"
+        ? TOUCH_SELECTION_HIT_RADIUS_PX * this.dpr / this.camera.zoom
+        : 0;
+    }
+
+    hasLayerAlphaNearPoint(layerId, point, hitRadius = 0) {
+      if (this.documentRenderer?.getRasterAlphaAtPoint?.(layerId, point.x, point.y) > RASTER_ALPHA_HIT_THRESHOLD) {
+        return true;
+      }
+
+      if (!(hitRadius > 0)) {
+        return false;
+      }
+
+      const diagonal = hitRadius * Math.SQRT1_2;
+      const sampleOffsets = [
+        [-hitRadius, 0],
+        [hitRadius, 0],
+        [0, -hitRadius],
+        [0, hitRadius],
+        [-diagonal, -diagonal],
+        [diagonal, -diagonal],
+        [diagonal, diagonal],
+        [-diagonal, diagonal],
+      ];
+
+      return sampleOffsets.some(([dx, dy]) =>
+        this.documentRenderer?.getRasterAlphaAtPoint?.(layerId, point.x + dx, point.y + dy) > RASTER_ALPHA_HIT_THRESHOLD
+      );
+    }
+
+    isPointInCurrentQuad(point) {
+      if (!point || !Array.isArray(this.currentQuad) || this.currentQuad.length < 4) {
+        return false;
+      }
+
+      let expectedSign = 0;
+
+      for (let index = 0; index < this.currentQuad.length; index += 1) {
+        const first = this.currentQuad[index];
+        const second = this.currentQuad[(index + 1) % this.currentQuad.length];
+        const cross =
+          (second.x - first.x) * (point.y - first.y) -
+          (second.y - first.y) * (point.x - first.x);
+
+        if (Math.abs(cross) <= AXIS_ALIGNED_QUAD_EPSILON) {
+          continue;
+        }
+
+        const sign = Math.sign(cross);
+
+        if (expectedSign === 0) {
+          expectedSign = sign;
+        } else if (sign !== expectedSign) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    getPendingSelectionMoveLayerAtClient(clientX, clientY) {
+      const layer = this.getActiveLayer();
+
+      if (!this.hasPendingTransform() || !this.isTransformableLayer(layer)) {
+        return null;
+      }
+
+      const point = this.clientToDocumentPoint(clientX, clientY);
+
+      return this.isPointInCurrentQuad(point) ? layer : null;
+    }
+
+    activateLayer(layer, options = {}) {
       this.cancelTransform({ keepGeometry: false });
 
-      if (!this.isTransformableLayer(layer)) {
+      const selectionOnly = options.selection === true;
+      const canActivateLayer = selectionOnly
+        ? this.isSelectableLayer(layer)
+        : this.isTransformableLayer(layer);
+
+      if (!canActivateLayer) {
         this.activeLayerId = null;
         this.contentRect = null;
         this.startQuad = null;
@@ -811,7 +974,9 @@
         return false;
       }
 
-      this.rasterizePuppetIfNeeded(layer);
+      if (!selectionOnly) {
+        this.rasterizePuppetIfNeeded(layer);
+      }
 
       const bounds = this.getPixelTightRasterContentBounds(layer.id);
 
@@ -882,6 +1047,8 @@
     }
 
     cancelTransform(options = {}) {
+      this.clearSelectionMoveHold({ releaseCapture: true });
+
       if (this.sourceSnapshot) {
         this.documentRenderer?.deleteRasterSnapshot?.(this.sourceSnapshot);
         this.sourceSnapshot = null;
@@ -903,6 +1070,8 @@
     }
 
     commitTransform() {
+      this.clearSelectionMoveHold({ releaseCapture: true });
+
       const effectiveTransformMode = this.getEffectiveTransformMode();
 
       if (!this.sourceSnapshot || !this.activeLayerId || !this.contentRect || !this.currentQuad) {
@@ -965,18 +1134,23 @@
       return isAxisAlignedQuad(quad) ? 0 : undefined;
     }
 
-    pickLayerAtClient(clientX, clientY) {
+    pickLayerAtClient(clientX, clientY, options = {}) {
       const point = this.clientToDocumentPoint(clientX, clientY);
       const layers = this.documentRenderer?.getRenderableLayers?.() || this.layerModel?.getRenderableLayers?.() || [];
+      const selectionOnly = options.selection === true;
+      const hitRadius = selectionOnly ? this.getSelectionHitRadius(options.pointerType) : 0;
 
       for (let index = layers.length - 1; index >= 0; index -= 1) {
         const layer = layers[index];
+        const canPickLayer = selectionOnly
+          ? this.isSelectableLayer(layer)
+          : this.isTransformableLayer(layer);
 
-        if (!this.isTransformableLayer(layer)) {
+        if (!canPickLayer) {
           continue;
         }
 
-        if (this.documentRenderer?.getRasterAlphaAtPoint?.(layer.id, point.x, point.y) > RASTER_ALPHA_HIT_THRESHOLD) {
+        if (this.hasLayerAlphaNearPoint(layer.id, point, hitRadius)) {
           return layer;
         }
       }
@@ -996,8 +1170,90 @@
       return target?.closest?.(".editor-raster-transform-warp-point") || null;
     }
 
+    clearSelectionMoveHold(options = {}) {
+      const holdState = this.selectionMoveHoldState;
+
+      if (!holdState) {
+        return null;
+      }
+
+      if (holdState.timerId != null) {
+        window.clearTimeout(holdState.timerId);
+      }
+
+      this.selectionMoveHoldState = null;
+
+      if (
+        options.releaseCapture === true &&
+        holdState.pointerId != null &&
+        this.svg.hasPointerCapture?.(holdState.pointerId)
+      ) {
+        this.svg.releasePointerCapture(holdState.pointerId);
+      }
+
+      return holdState;
+    }
+
+    beginSelectionMoveHold(event, layer) {
+      if (!this.isTransformableLayer(layer) || !this.currentQuad || !this.contentRect) {
+        return false;
+      }
+
+      this.clearSelectionMoveHold({ releaseCapture: true });
+
+      this.selectionMoveHoldState = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        layerId: layer.id,
+        pointerId: event.pointerId,
+        timerId: window.setTimeout(() => {
+          this.beginSelectionMoveDrag();
+        }, SELECTION_MOVE_HOLD_MS),
+      };
+
+      this.svg.setPointerCapture?.(event.pointerId);
+
+      return true;
+    }
+
+    beginSelectionMoveDrag() {
+      const holdState = this.clearSelectionMoveHold();
+
+      if (!holdState) {
+        return false;
+      }
+
+      const layer = this.layerModel?.findEntryById?.(holdState.layerId);
+
+      if (!this.isSelectionActive() || !this.isTransformableLayer(layer) || layer.id !== this.activeLayerId || !this.currentQuad || !this.contentRect) {
+        if (this.svg.hasPointerCapture?.(holdState.pointerId)) {
+          this.svg.releasePointerCapture(holdState.pointerId);
+        }
+
+        return false;
+      }
+
+      const point = this.clientToDocumentPoint(holdState.clientX, holdState.clientY);
+
+      this.dragState = {
+        didChange: false,
+        dir: "",
+        handleIndex: -1,
+        mode: "move",
+        pointerId: holdState.pointerId,
+        selectionMove: true,
+        startPoint: point,
+        startQuad: cloneValue(this.currentQuad),
+        startRect: getRectFromQuad(this.currentQuad),
+      };
+      this.updatePreview();
+      this.render();
+
+      return true;
+    }
+
     isWarpMode() {
-      return this.transformMode === WARP_TRANSFORM_MODE && !this.isRotateActive();
+      return this.isActive() && this.transformMode === WARP_TRANSFORM_MODE && !this.isRotateActive();
     }
 
     getEffectiveTransformMode() {
@@ -1196,12 +1452,41 @@
     }
 
     handlePointerDown(event) {
-      if (!this.isActive() || event.button !== 0) {
+      if (!this.isOverlayActive() || event.button !== 0) {
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
+
+      if (this.isSelectionActive()) {
+        const pendingMoveLayer = this.getPendingSelectionMoveLayerAtClient(event.clientX, event.clientY);
+        const hitLayer = pendingMoveLayer || this.pickLayerAtClient(event.clientX, event.clientY, {
+          pointerType: event.pointerType,
+          selection: true,
+        });
+
+        if (this.hasPendingTransform() && (!hitLayer || hitLayer.id !== this.activeLayerId)) {
+          this.commitTransform();
+        }
+
+        if (hitLayer) {
+          if (this.layerModel?.activeLayerId !== hitLayer.id) {
+            this.layerModel?.setActiveLayer?.(hitLayer.id, { source: "selection-tool" });
+          }
+
+          if (!this.hasPendingTransform() || hitLayer.id !== this.activeLayerId) {
+            this.activateLayer(hitLayer, { selection: true });
+          }
+
+          this.beginSelectionMoveHold(event, hitLayer);
+        } else {
+          this.layerModel?.setActiveLayer?.(null, { source: "selection-tool" });
+          this.activateLayer(null, { selection: true });
+        }
+
+        return;
+      }
 
       const handle = this.getHandleTarget(event.target);
       const box = this.getBoxTarget(event.target);
@@ -1292,6 +1577,14 @@
     }
 
     handlePointerMove(event) {
+      if (this.selectionMoveHoldState?.pointerId === event.pointerId) {
+        this.selectionMoveHoldState.clientX = event.clientX;
+        this.selectionMoveHoldState.clientY = event.clientY;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (!this.dragState || event.pointerId !== this.dragState.pointerId) {
         return;
       }
@@ -1302,6 +1595,13 @@
     }
 
     handlePointerUp(event) {
+      if (this.selectionMoveHoldState?.pointerId === event.pointerId) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.clearSelectionMoveHold({ releaseCapture: true });
+        return;
+      }
+
       if (!this.dragState || event.pointerId !== this.dragState.pointerId) {
         return;
       }
@@ -1324,6 +1624,11 @@
     }
 
     handlePointerCancel(event) {
+      if (this.selectionMoveHoldState?.pointerId === event.pointerId) {
+        this.clearSelectionMoveHold({ releaseCapture: true });
+        return;
+      }
+
       if (this.dragState?.pointerId === event.pointerId) {
         this.cancelTransform();
       }
@@ -1421,7 +1726,7 @@
         height = MIN_TRANSFORM_SIZE;
       }
 
-      if (event.shiftKey && startRect.height > 0) {
+      if (this.isScaleAspectLocked(event) && startRect.height > 0) {
         const aspect = startRect.width / startRect.height;
 
         if (dir === "e" || dir === "w") {
@@ -1462,6 +1767,10 @@
       }
 
       return rectToQuad(this.getSnappedScaledRect({ x, y, width, height }, dir, event));
+    }
+
+    isScaleAspectLocked(event = {}) {
+      return this.transformAspectLocked === true || event.shiftKey === true;
     }
 
     getRotatedQuad(point, event) {
@@ -1896,7 +2205,7 @@
         return rect;
       }
 
-      if (event.shiftKey) {
+      if (this.isScaleAspectLocked(event)) {
         return this.getAspectSnappedScaledRect(rect, dir, event, candidates[0]);
       }
 
@@ -2064,9 +2373,9 @@
     render() {
       this.syncViewState();
 
-      const isVisible = this.isActive() && Array.isArray(this.currentQuad);
+      const isVisible = this.isOverlayActive() && Array.isArray(this.currentQuad);
 
-      if (this.isActive()) {
+      if (this.isOverlayActive()) {
         this.svg.removeAttribute("hidden");
         this.svg.style.display = "block";
       } else {
@@ -2075,13 +2384,14 @@
       }
 
       this.svg.classList.toggle("raster-transform-tool-active", this.isActive());
+      this.svg.classList.toggle("raster-selection-tool-active", this.isSelectionActive());
       setSvgElementVisible(this.box, isVisible && !this.isWarpMode());
       this.renderGuides(isVisible && this.shouldShowGuides());
       this.renderWarpControls(isVisible);
       this.handles.forEach((handle) => {
-        setSvgElementVisible(handle, isVisible && !this.isWarpMode());
+        setSvgElementVisible(handle, isVisible && this.isActive() && !this.isWarpMode());
 
-        if (!isVisible || this.isWarpMode()) {
+        if (!isVisible || !this.isActive() || this.isWarpMode()) {
           handle.setAttribute("x", "-9999");
           handle.setAttribute("y", "-9999");
         }
@@ -2094,26 +2404,26 @@
       }
 
       const points = this.currentQuad.map((point) => this.documentToViewportPoint(point.x, point.y));
-      const handlePoints = this.getHandlePoints(points);
       const transformCursor = this.isRotateActive()
         ? (this.dragState?.mode === "rotate" ? "grabbing" : "grab")
         : "move";
+      const boxCursor = this.isSelectionActive() ? "default" : transformCursor;
 
       this.box.setAttribute("points", points.map((point) => `${point.x},${point.y}`).join(" "));
-      this.box.style.cursor = transformCursor;
+      this.box.style.cursor = boxCursor;
 
-      this.handles.forEach((handle, index) => {
-        if (this.isWarpMode()) {
-          return;
-        }
+      if (this.isActive() && !this.isWarpMode()) {
+        const handlePoints = this.getHandlePoints(points);
 
-        setSvgElementVisible(handle, true);
-        handle.setAttribute("x", handlePoints[index].x - HANDLE_SIZE / 2);
-        handle.setAttribute("y", handlePoints[index].y - HANDLE_SIZE / 2);
-        handle.style.cursor = this.isRotateActive()
-          ? transformCursor
-          : HANDLE_DEFS[index].cursor;
-      });
+        this.handles.forEach((handle, index) => {
+          setSvgElementVisible(handle, true);
+          handle.setAttribute("x", handlePoints[index].x - HANDLE_SIZE / 2);
+          handle.setAttribute("y", handlePoints[index].y - HANDLE_SIZE / 2);
+          handle.style.cursor = this.isRotateActive()
+            ? transformCursor
+            : HANDLE_DEFS[index].cursor;
+        });
+      }
 
       this.emitStateChange();
     }

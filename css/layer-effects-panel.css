@@ -16,6 +16,17 @@
   display: none;
 }
 
+.mobile-layer-effects-toolbar,
+.mobile-layer-effects-panel {
+  display: none;
+}
+
+.mobile-layer-effects-toolbar[hidden],
+.mobile-layer-effects-panel[hidden],
+.mobile-layer-effects-section[hidden] {
+  display: none;
+}
+
 .layer-effects-header {
   display: flex;
   align-items: flex-start;
@@ -528,4 +539,192 @@
 .layer-effects-icon-button:disabled {
   cursor: default;
   opacity: 0.38;
+}
+
+@media (max-width: 900px) {
+  .field-blur-pin-overlay {
+    touch-action: none;
+  }
+
+  .field-blur-pin {
+    width: 56px;
+    height: 56px;
+  }
+
+  .field-blur-pin-ring {
+    inset: 5px;
+  }
+
+  .field-blur-pin-core {
+    width: 18px;
+    height: 18px;
+  }
+
+  .toolbar-dock.mobile-layer-effects-active .main-tools-toolbar {
+    display: none;
+  }
+
+  .toolbar-dock .mobile-layer-effects-toolbar:not([hidden]) {
+    display: flex;
+  }
+
+  .toolbar-dock .mobile-layer-effect-button.active {
+    color: #ffffff;
+    background: rgb(44, 48, 58);
+  }
+
+  .mobile-layer-effects-panel:not([hidden]) {
+    position: fixed;
+    right: 12px;
+    bottom: 88px;
+    left: 12px;
+    z-index: 9021;
+    display: block;
+    max-height: min(54vh, 372px);
+    padding: 10px;
+    overflow: auto;
+    border-radius: 9px;
+    background: #181a1f;
+    box-shadow:
+      0 4px 8px rgba(0, 0, 0, 0.18),
+      0 8px 18px rgba(0, 0, 0, 0.16);
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-layer-effects-panel:not([hidden])::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  .mobile-layer-effects-section {
+    display: grid;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .mobile-layer-effect-range-field {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .mobile-layer-effect-control-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .mobile-layer-effect-label,
+  .mobile-layer-effect-value {
+    color: #dfe3ea;
+    font-size: 11px;
+    font-weight: 850;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .mobile-layer-effect-value {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 8px;
+    background: #242832;
+    color: #ffffff;
+  }
+
+  .mobile-layer-effect-range {
+    width: 100%;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    appearance: none;
+    background: transparent;
+  }
+
+  .mobile-layer-effect-range::-webkit-slider-runnable-track {
+    height: 5px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      #dfe3ea 0 var(--mobile-layer-effect-range-progress, 0%),
+      #2c303a var(--mobile-layer-effect-range-progress, 0%) 100%
+    );
+  }
+
+  .mobile-layer-effect-range::-webkit-slider-thumb {
+    width: 15px;
+    height: 15px;
+    margin-top: -5px;
+    appearance: none;
+    border: 2px solid #dfe3ea;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 0 0 2px #181a1f;
+  }
+
+  .mobile-layer-effect-range::-moz-range-track {
+    height: 5px;
+    border: 0;
+    border-radius: 999px;
+    background: #2c303a;
+  }
+
+  .mobile-layer-effect-range::-moz-range-progress {
+    height: 5px;
+    border-radius: 999px;
+    background: #dfe3ea;
+  }
+
+  .mobile-layer-effect-range::-moz-range-thumb {
+    width: 15px;
+    height: 15px;
+    border: 2px solid #dfe3ea;
+    border-radius: 50%;
+    background: #ffffff;
+  }
+
+  .mobile-layer-effect-segment-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .mobile-layer-effect-segment,
+  .mobile-layer-effect-toggle,
+  .mobile-layer-effect-reset {
+    height: 34px;
+    min-width: 0;
+    border: 0;
+    border-radius: 8px;
+    outline: 0;
+    background: #242832;
+    color: #c3c8d1;
+    font-size: 11px;
+    font-weight: 850;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .mobile-layer-effect-segment.active,
+  .mobile-layer-effect-toggle.active,
+  .mobile-layer-effect-reset:hover,
+  .mobile-layer-effect-reset:focus-visible {
+    color: #ffffff;
+    background: #2c303a;
+  }
+
+  .mobile-layer-effect-reset {
+    justify-self: stretch;
+  }
+
+  .mobile-layer-effects-panel.disabled {
+    opacity: 0.58;
+  }
 }

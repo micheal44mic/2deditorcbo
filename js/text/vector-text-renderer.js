@@ -4,6 +4,15 @@
   const CORNER_ENVELOPE_NODES = ["TL", "TR", "BL", "BR"];
   const CENTER_ENVELOPE_NODES = ["TC", "BC"];
   const HANDLE_ENVELOPE_NODES = ["TC_HandleL", "TC_HandleR", "BC_HandleL", "BC_HandleR"];
+  const MOBILE_ENVELOPE_HANDLE_SIZES = Object.freeze({
+    anchor: 24,
+    control: 22,
+    corner: 24,
+  });
+  const DESKTOP_ENVELOPE_HIT_STROKE_WIDTH = 24;
+  const MOBILE_ENVELOPE_HIT_STROKE_WIDTH = 36;
+  const DESKTOP_ENVELOPE_HIT_RADIUS = 18;
+  const MOBILE_ENVELOPE_HIT_RADIUS = 30;
   const ACTIVE_TEXT_RASTER_DEBOUNCE_MS = 180;
   const TEXT_RASTER_PREVIEW_MS = 260;
   const TEXT_RASTER_BOUNDS_PADDING = 2;
@@ -120,6 +129,56 @@
 
   function toFiniteNumber(value, fallback) {
     return Number.isFinite(value) ? value : fallback;
+  }
+
+  function getFinitePoint(value) {
+    const x = value?.x;
+    const y = value?.y;
+
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  }
+
+  function isMobileViewport() {
+    return window.matchMedia?.("(pointer: coarse), (max-width: 900px)")?.matches === true;
+  }
+
+  function isMobileEnvelopeControlViewport() {
+    return isMobileViewport();
+  }
+
+  function getEnvelopeHandleViewportScale(layer) {
+    if (!isMobileEnvelopeControlViewport()) {
+      return 1;
+    }
+
+    const { camera, dpr } = resolveCameraState();
+    const zoom = Math.max(0.0001, (camera.zoom || 1) / dpr);
+    const layerScale = Math.max(
+      0.0001,
+      (Math.abs(toFiniteNumber(layer?.scaleX, 1)) + Math.abs(toFiniteNumber(layer?.scaleY, 1))) / 2,
+    );
+
+    return 1 / (zoom * layerScale);
+  }
+
+  function getEnvelopeHandleSize(roleClass, desktopSize) {
+    if (!isMobileEnvelopeControlViewport()) {
+      return desktopSize;
+    }
+
+    return MOBILE_ENVELOPE_HANDLE_SIZES[roleClass] || desktopSize;
+  }
+
+  function getEnvelopeHitStrokeWidth() {
+    return isMobileEnvelopeControlViewport()
+      ? MOBILE_ENVELOPE_HIT_STROKE_WIDTH
+      : DESKTOP_ENVELOPE_HIT_STROKE_WIDTH;
+  }
+
+  function getEnvelopePointerHitRadius(pointerType = "mouse") {
+    return pointerType === "touch" || isMobileEnvelopeControlViewport()
+      ? MOBILE_ENVELOPE_HIT_RADIUS
+      : DESKTOP_ENVELOPE_HIT_RADIUS;
   }
 
   function formatLayerTransform(layer) {
@@ -755,6 +814,8 @@
   }
 
   namespace.createVectorTextLayer = function createVectorTextLayer(seed = {}) {
+    const options = seed && typeof seed === "object" ? seed : {};
+    const { centerAt, ...layerSeed } = options;
     const layerModel = namespace.documentLayerModel ||
       (namespace.DocumentLayerModel ? new namespace.DocumentLayerModel() : null);
 
@@ -764,13 +825,13 @@
 
     namespace.documentLayerModel = layerModel;
 
-    const centeredPoint = getCenteredDocumentPoint();
-    const shouldCenterVisually = !Number.isFinite(seed.x) && !Number.isFinite(seed.y);
+    const centeredPoint = getFinitePoint(centerAt) || getCenteredDocumentPoint();
+    const shouldCenterVisually = !Number.isFinite(layerSeed.x) && !Number.isFinite(layerSeed.y);
     const layer = layerModel.createLayer({
+      ...layerSeed,
       type: TEXT_LAYER_TYPE,
-      x: Number.isFinite(seed.x) ? seed.x : centeredPoint.x,
-      y: Number.isFinite(seed.y) ? seed.y : centeredPoint.y,
-      ...seed,
+      x: Number.isFinite(layerSeed.x) ? layerSeed.x : centeredPoint.x,
+      y: Number.isFinite(layerSeed.y) ? layerSeed.y : centeredPoint.y,
     });
     const entries = layerModel.getEntries();
     const activeLayer = findEntryById(entries, layerModel.activeLayerId);
@@ -1447,7 +1508,7 @@
         ...CENTER_ENVELOPE_NODES,
         ...HANDLE_ENVELOPE_NODES,
       ];
-      const hitRadius = pointerType === "touch" ? 24 : 18;
+      const hitRadius = getEnvelopePointerHitRadius(pointerType);
       let closest = null;
 
       nodeIds.forEach((nodeId) => {
@@ -1774,12 +1835,16 @@
 
     createEnvelopeHandle(layer, nodeId, options = {}) {
       const point = layer.envelopeGrid[nodeId];
-      const size = Number.isFinite(options.size) ? options.size : 12;
       const roleClass = options.className || "anchor";
+      const desktopSize = Number.isFinite(options.size) ? options.size : 12;
+      const size = getEnvelopeHandleSize(roleClass, desktopSize);
+      const viewportScale = getEnvelopeHandleViewportScale(layer);
       const group = createSvgElement("g", {
         class: `editor-vector-envelope-handle-group ${roleClass}`,
         "data-envelope-node": nodeId,
-        transform: `translate(${point.x} ${point.y})`,
+        transform: viewportScale === 1
+          ? `translate(${point.x} ${point.y})`
+          : `translate(${point.x} ${point.y}) scale(${viewportScale})`,
       });
       const hitTarget = createSvgElement("circle", {
         class: "editor-vector-envelope-hit",
@@ -1790,7 +1855,7 @@
         r: Math.max(7, size / 2),
         stroke: "#1473e6",
         "stroke-opacity": 0.001,
-        "stroke-width": 24,
+        "stroke-width": getEnvelopeHitStrokeWidth(),
         "vector-effect": "non-scaling-stroke",
       });
       let marker;
@@ -1902,6 +1967,10 @@
 
       event.preventDefault();
       event.stopPropagation();
+
+      if (isMobileViewport()) {
+        return;
+      }
     }
 
     handleTextLayerPointerDown(event, layerId) {

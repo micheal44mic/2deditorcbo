@@ -11,7 +11,7 @@ test("resize tool exposes the top transform mode toolbar", () => {
   const topToolbarSource = fs.readFileSync(path.join(repoRoot, "js", "top-toolbar.js"), "utf8");
   const topToolbarCss = fs.readFileSync(path.join(repoRoot, "css", "top-toolbar.css"), "utf8");
   const toolbarStart = topToolbarSource.indexOf('<nav class="bottom-toolbar transform-mode-toolbar"');
-  const toolbarEnd = topToolbarSource.indexOf('<div class="brush-quick-controls"', toolbarStart);
+  const toolbarEnd = topToolbarSource.indexOf("</nav>", toolbarStart) + "</nav>".length;
   const transformToolbarMarkup = topToolbarSource.slice(toolbarStart, toolbarEnd);
 
   assert.match(resizeButtonSource, /data-tool-mode="resize"/);

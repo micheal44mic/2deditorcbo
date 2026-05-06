@@ -7,6 +7,10 @@
   const LATEST_META_KEY = "latest";
   const PROJECT_NAME_STORAGE_KEY = namespace.documentProjectNameStorageKey || "cbo-project-name";
   const TILE_SIZE = 256;
+  const AUTOSAVE_FORMAT_VERSION = 2;
+  const TILE_PIXEL_FORMAT = "rgba8";
+  const TILE_CODECS = Object.freeze(["zstd", "gzip", "deflate"]);
+  const RAW_TILE_CODEC = "raw";
   const RASTER_LAYER_TYPES = new Set(["paint", "image"]);
 
   namespace.documentProjectNameStorageKey = PROJECT_NAME_STORAGE_KEY;
@@ -14,6 +18,7 @@
   let dbPromise = null;
   let isSaving = false;
   let isRestoring = false;
+  let cachedTileCodec = null;
 
   function isObject(value) {
     return Boolean(value && typeof value === "object");
@@ -187,6 +192,141 @@
     return copy;
   }
 
+  function supportsTileCodec(codec) {
+    if (codec === RAW_TILE_CODEC) {
+      return true;
+    }
+
+    if (typeof CompressionStream !== "function" || typeof DecompressionStream !== "function") {
+      return false;
+    }
+
+    try {
+      new CompressionStream(codec);
+      new DecompressionStream(codec);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function getPreferredTileCodec() {
+    if (cachedTileCodec) {
+      return cachedTileCodec;
+    }
+
+    cachedTileCodec = TILE_CODECS.find((codec) => supportsTileCodec(codec)) || RAW_TILE_CODEC;
+
+    return cachedTileCodec;
+  }
+
+  function createRawTilePayload(bytes) {
+    return {
+      blob: new Blob([bytes], { type: "application/octet-stream" }),
+      codec: RAW_TILE_CODEC,
+      rawByteLength: bytes.byteLength,
+      storedByteLength: bytes.byteLength,
+    };
+  }
+
+  async function createCompressedTilePayload(bytes) {
+    const codec = getPreferredTileCodec();
+
+    if (codec === RAW_TILE_CODEC) {
+      return createRawTilePayload(bytes);
+    }
+
+    try {
+      const compressedStream = new Blob([bytes], { type: "application/octet-stream" })
+        .stream()
+        .pipeThrough(new CompressionStream(codec));
+      const blob = await new Response(compressedStream).blob();
+
+      if (!blob || blob.size <= 0 || blob.size >= bytes.byteLength) {
+        return createRawTilePayload(bytes);
+      }
+
+      return {
+        blob,
+        codec,
+        rawByteLength: bytes.byteLength,
+        storedByteLength: blob.size,
+      };
+    } catch (error) {
+      return createRawTilePayload(bytes);
+    }
+  }
+
+  function getTileRawByteLength(tileManifest = {}, tileRecord = {}) {
+    const value = tileManifest.rawByteLength ??
+      tileRecord.rawByteLength ??
+      tileManifest.byteLength ??
+      tileRecord.byteLength;
+    const number = Number(value);
+
+    return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
+  }
+
+  async function decodeTileBytes(tileRecord = {}, tileManifest = {}) {
+    const blob = tileRecord.bytes;
+
+    if (!blob) {
+      return null;
+    }
+
+    const codec = tileRecord.codec || tileManifest.codec || RAW_TILE_CODEC;
+    const rawByteLength = getTileRawByteLength(tileManifest, tileRecord);
+    let buffer;
+
+    if (codec === RAW_TILE_CODEC) {
+      buffer = await blob.arrayBuffer();
+    } else {
+      if (typeof DecompressionStream !== "function") {
+        throw new Error(`Codec autosave non disponibile per il tile: ${codec}`);
+      }
+
+      const decompressedStream = blob
+        .stream()
+        .pipeThrough(new DecompressionStream(codec));
+
+      buffer = await new Response(decompressedStream).arrayBuffer();
+    }
+
+    const bytes = new Uint8Array(buffer);
+
+    if (rawByteLength != null && bytes.byteLength !== rawByteLength) {
+      throw new Error(
+        `Dimensione tile autosave non valida: ${bytes.byteLength} byte, attesi ${rawByteLength}.`,
+      );
+    }
+
+    return bytes;
+  }
+
+  function getTileStorageSummary(tileRecords = []) {
+    const codecs = {};
+    let rawByteLength = 0;
+    let storedByteLength = 0;
+
+    for (const tileRecord of tileRecords) {
+      const codec = tileRecord?.codec || RAW_TILE_CODEC;
+      const rawBytes = Number(tileRecord?.rawByteLength ?? tileRecord?.byteLength) || 0;
+      const storedBytes = Number(tileRecord?.storedByteLength ?? tileRecord?.bytes?.size ?? rawBytes) || 0;
+
+      codecs[codec] = (codecs[codec] || 0) + 1;
+      rawByteLength += Math.max(0, Math.round(rawBytes));
+      storedByteLength += Math.max(0, Math.round(storedBytes));
+    }
+
+    return {
+      codecs,
+      format: TILE_PIXEL_FORMAT,
+      rawByteLength,
+      storedByteLength,
+      tileSize: TILE_SIZE,
+    };
+  }
+
   function createSummary(session) {
     const document = session?.document || {};
     const project = session?.project || {};
@@ -337,10 +477,16 @@
 
         const tileKey = `${sessionId}/${layerId}/${tile.tx}/${tile.ty}`;
         const bytes = clonePixels(pixels);
+        const encoded = await createCompressedTilePayload(bytes);
         const tileManifest = {
-          byteLength: bytes.byteLength,
+          byteLength: encoded.rawByteLength,
+          codec: encoded.codec,
+          format: TILE_PIXEL_FORMAT,
           key: tileKey,
+          premultipliedAlpha: true,
+          rawByteLength: encoded.rawByteLength,
           rect: { ...snapshot.rect },
+          storedByteLength: encoded.storedByteLength,
           tx: tile.tx,
           ty: tile.ty,
         };
@@ -348,7 +494,7 @@
         layerRecord.tiles.push(tileManifest);
         tileRecords.push({
           ...tileManifest,
-          bytes: new Blob([bytes], { type: "application/octet-stream" }),
+          bytes: encoded.blob,
           layerId,
           sessionId,
         });
@@ -396,6 +542,8 @@
       tileRecords.push(...captured.tileRecords);
     }
 
+    const rasterStorage = getTileStorageSummary(tileRecords);
+
     return {
       session: {
         activeLayerId: layerModel.activeLayerId || null,
@@ -413,10 +561,13 @@
           name: projectName,
         },
         rasterLayers,
+        rasterStorage,
         referenceLayerId: history?.getReferenceLayerId?.() || null,
         savedAt: new Date().toISOString(),
         tileCount: tileRecords.length,
-        version: 1,
+        tileRawByteLength: rasterStorage.rawByteLength,
+        tileStoredByteLength: rasterStorage.storedByteLength,
+        version: AUTOSAVE_FORMAT_VERSION,
       },
       tileRecords,
     };
@@ -571,14 +722,13 @@
     return new Map(tileRecords.map((record) => [record.key, record]));
   }
 
-  async function blobToPixels(blob) {
-    const buffer = await blob.arrayBuffer();
-
-    return new Uint8Array(buffer);
-  }
-
   async function restoreTile(layerId, layerRecord, tileManifest, tileRecord, renderer) {
-    const pixels = await blobToPixels(tileRecord.bytes);
+    const pixels = await decodeTileBytes(tileRecord, tileManifest);
+
+    if (!(pixels instanceof Uint8Array)) {
+      return false;
+    }
+
     const snapshot = {
       bytes: pixels.byteLength,
       cpuBytes: pixels.byteLength,

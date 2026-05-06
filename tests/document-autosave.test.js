@@ -14,6 +14,7 @@ test("document autosave stores one recoverable IndexedDB session with raster til
 
   assert.match(source, /const DB_NAME = "cbo-editor-autosave"/);
   assert.match(source, /const TILE_SIZE = 256/);
+  assert.match(source, /const AUTOSAVE_FORMAT_VERSION = 2/);
   assert.match(source, /db\.createObjectStore\(META_STORE, \{ keyPath: "key" \}\)/);
   assert.match(source, /db\.createObjectStore\(SESSIONS_STORE, \{ keyPath: "id" \}\)/);
   assert.match(source, /db\.createObjectStore\(TILES_STORE, \{ keyPath: "key" \}\)/);
@@ -59,8 +60,13 @@ test("document autosave captures layer structure and sparse raster content only"
   assert.match(source, /renderer\.createRasterSnapshot\?\.\(layerId, tile\.rect, "autosave-tile"\)/);
   assert.match(source, /renderer\.dehydrateRasterSnapshot\?\.\(snapshot\)/);
   assert.match(source, /pixelsAreTransparent\(pixels\)/);
+  assert.match(source, /createCompressedTilePayload\(bytes\)/);
+  assert.match(source, /codec: encoded\.codec/);
+  assert.match(source, /rawByteLength: encoded\.rawByteLength/);
+  assert.match(source, /storedByteLength: encoded\.storedByteLength/);
   assert.match(source, /rect: \{ \.\.\.targetRect \}/);
   assert.match(source, /rect: \{ \.\.\.snapshot\.rect \}/);
+  assert.match(source, /version: AUTOSAVE_FORMAT_VERSION/);
   assert.doesNotMatch(source, /layerRecord\.rect = unionRects/);
   assert.doesNotMatch(source, /window\.addEventListener\("cbo:document-content-change"/);
   assert.doesNotMatch(source, /window\.addEventListener\("cbo:document-layers-change"/);
@@ -69,6 +75,45 @@ test("document autosave captures layer structure and sparse raster content only"
   assert.doesNotMatch(source, /window\.addEventListener\("visibilitychange"/);
   assert.doesNotMatch(source, /scheduleSave/);
   assert.doesNotMatch(source, /undoStack|redoStack/);
+});
+
+test("document autosave compresses raster tiles with raw fallback metadata", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+
+  assert.match(source, /const TILE_PIXEL_FORMAT = "rgba8"/);
+  assert.match(source, /const TILE_CODECS = Object\.freeze\(\["zstd", "gzip", "deflate"\]\)/);
+  assert.match(source, /const RAW_TILE_CODEC = "raw"/);
+  assert.match(source, /function supportsTileCodec\(codec\)/);
+  assert.match(source, /new CompressionStream\(codec\)/);
+  assert.match(source, /new DecompressionStream\(codec\)/);
+  assert.match(source, /function getPreferredTileCodec\(\)/);
+  assert.match(source, /function createRawTilePayload\(bytes\)/);
+  assert.match(source, /async function createCompressedTilePayload\(bytes\)/);
+  assert.match(source, /pipeThrough\(new CompressionStream\(codec\)\)/);
+  assert.match(source, /blob\.size >= bytes\.byteLength/);
+  assert.match(source, /return createRawTilePayload\(bytes\)/);
+  assert.match(source, /format: TILE_PIXEL_FORMAT/);
+  assert.match(source, /premultipliedAlpha: true/);
+  assert.match(source, /byteLength: encoded\.rawByteLength/);
+  assert.match(source, /bytes: encoded\.blob/);
+  assert.match(source, /const rasterStorage = getTileStorageSummary\(tileRecords\)/);
+  assert.match(source, /tileRawByteLength: rasterStorage\.rawByteLength/);
+  assert.match(source, /tileStoredByteLength: rasterStorage\.storedByteLength/);
+});
+
+test("document autosave restores compressed and legacy raw tile payloads", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+
+  assert.match(source, /function getTileRawByteLength\(tileManifest = \{\}, tileRecord = \{\}\)/);
+  assert.match(source, /tileManifest\.rawByteLength[\s\S]*tileRecord\.rawByteLength[\s\S]*tileManifest\.byteLength[\s\S]*tileRecord\.byteLength/);
+  assert.match(source, /async function decodeTileBytes\(tileRecord = \{\}, tileManifest = \{\}\)/);
+  assert.match(source, /const codec = tileRecord\.codec \|\| tileManifest\.codec \|\| RAW_TILE_CODEC/);
+  assert.match(source, /if \(codec === RAW_TILE_CODEC\) \{[\s\S]*blob\.arrayBuffer\(\)/);
+  assert.match(source, /pipeThrough\(new DecompressionStream\(codec\)\)/);
+  assert.match(source, /bytes\.byteLength !== rawByteLength/);
+  assert.match(source, /async function restoreTile\(layerId, layerRecord, tileManifest, tileRecord, renderer\)/);
+  assert.match(source, /const pixels = await decodeTileBytes\(tileRecord, tileManifest\)/);
+  assert.doesNotMatch(source, /async function blobToPixels/);
 });
 
 test("document save is manual-only and does not show autosaving text", () => {

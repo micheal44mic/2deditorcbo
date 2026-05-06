@@ -125,11 +125,18 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /field-blur-number-input brush-studio-setting-value-input/);
   assert.match(source, /function focusFieldBlurPinControl\(pinId\)/);
   assert.match(source, /valueControl = event\.target\?\.closest\?\.\("\[data-field-blur-pin-input\], \[data-field-blur-pin-number\], \.field-blur-number"\)/);
-  assert.match(source, /Double-click canvas: add pin/);
+  assert.match(source, /Double-click\/tap canvas: add pin/);
   assert.match(source, /Drag pin: move/);
-  assert.match(source, /Alt-click pin: remove/);
+  assert.match(source, /Triple-click\/tap pin: remove/);
   assert.match(source, /event\.altKey && pinId/);
-  assert.match(source, /fieldBlurOverlay\.addEventListener\("dblclick", handleFieldBlurOverlayDoubleClick\)/);
+  assert.match(source, /FIELD_BLUR_TAP_TIMEOUT_MS = 360/);
+  assert.match(source, /FIELD_BLUR_TAP_MOVE_TOLERANCE = 12/);
+  assert.match(source, /function handleFieldBlurTap\(pinId, point\)/);
+  assert.match(source, /if \(pinId && count >= 3\) \{[\s\S]*removeFieldBlurPin\(pinId\)/);
+  assert.match(source, /if \(!pinId && count === 2\) \{[\s\S]*addFieldBlurPin\(point\)/);
+  assert.match(source, /fieldBlurOverlay\.addEventListener\("pointerup", stopFieldBlurDrag\)/);
+  assert.match(source, /fieldBlurOverlay\.addEventListener\("pointercancel", \(event\) => stopFieldBlurDrag\(event, \{ cancel: true \}\)\)/);
+  assert.doesNotMatch(source, /fieldBlurOverlay\.addEventListener\("dblclick"/);
   assert.match(source, /fieldBlurOverlay\.addEventListener\("pointermove", handleFieldBlurOverlayPointerMove\)/);
   assert.match(source, /fieldBlurOverlay\.addEventListener\("wheel", handleFieldBlurOverlayWheel, \{ passive: false \}\)/);
   assert.match(source, /brushEngine\.handleWheel\(event\)/);
@@ -176,6 +183,56 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(topToolbarSource, /RASTERIZE IMAGE/);
   assert.match(topToolbarSource, /cbo:layer-effects-rasterized/);
   assert.match(topToolbarSource, /cbo:image-layer-rasterized/);
+});
+
+test("mobile adjustment layer exposes implemented effects as bottom toolbar panels", () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
+  const source = fs.readFileSync(path.join(repoRoot, "js", "layer-effects-panel.js"), "utf8");
+  const cssSource = fs.readFileSync(path.join(repoRoot, "css", "layer-effects-panel.css"), "utf8");
+  const toolbarCss = fs.readFileSync(path.join(repoRoot, "css", "toolbar.css"), "utf8");
+  const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
+
+  assert.match(indexSource, /class="tool-button mobile-adjustment-layer-button"[\s\S]*data-tool-mode="adjustments"/);
+  assert.match(toolbarCss, /\.mobile-adjustment-layer-button[\s\S]*display: none;/);
+  assert.match(toolbarCss, /\.toolbar-dock \.mobile-adjustment-layer-button \{\s*display: inline-flex;/);
+  assert.match(source, /function getImplementedEffectItems\(\)/);
+  assert.match(source, /data-mobile-layer-effects-toolbar/);
+  assert.match(source, /data-mobile-layer-effect-trigger="\$\{effect\.type\}"/);
+  assert.match(source, /data-mobile-layer-effects-panel/);
+  assert.match(source, /data-mobile-layer-effects-editor="gaussian-blur"/);
+  assert.match(source, /data-mobile-layer-effects-editor="motion-blur"/);
+  assert.match(source, /data-mobile-layer-effects-editor="field-blur"/);
+  assert.match(source, /if \(effectType === "field-blur"\) \{[\s\S]*activeEffectType = "field-blur";[\s\S]*activateFieldBlurUi\(\)/);
+  assert.match(source, /if \(activeMobileEffectType === "field-blur"\) \{[\s\S]*deactivateFieldBlurUi\(\)/);
+  assert.match(source, /data-mobile-layer-effects-editor="radial-blur"/);
+  assert.match(source, /data-mobile-layer-effects-editor="grain"/);
+  assert.match(source, /data-mobile-layer-effects-editor="threshold"/);
+  assert.match(source, /label === "ADJUSTMENT LAYER" \|\| toolMode === "adjustments"/);
+  assert.match(source, /showMobileLayerEffectsToolbar\(shouldShow\)/);
+  assert.match(source, /toolbarDock\.classList\.toggle\("mobile-layer-effects-active", shouldShow\)/);
+  assert.match(source, /function startMobileLayerEffectsSession\(\)/);
+  assert.match(source, /function finalizeMobileLayerEffectsSession\(\)/);
+  assert.match(source, /namespace\.rasterizeLayerEffects\?\.\(session\.layerId, \{[\s\S]*beforeState: session\.beforeState/);
+  assert.match(source, /window\.addEventListener\("cbo:before-history-action", handleMobileLayerEffectsBeforeHistory\)/);
+  assert.match(source, /openMobileLayerEffectPanel\(effectButton\.dataset\.mobileLayerEffectTrigger\)/);
+  assert.match(source, /namespace\.setLayerGaussianBlurRadius\(layer\.id, value/);
+  assert.match(source, /namespace\.setLayerMotionBlur\(/);
+  assert.match(source, /namespace\.setLayerFieldBlurPins\(/);
+  assert.match(source, /namespace\.setLayerRadialBlur\(/);
+  assert.match(source, /namespace\.setLayerGrain\(/);
+  assert.match(source, /namespace\.setLayerThreshold\(layer\.id, value/);
+  assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-gaussian-blur"/);
+  assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-motion-blur"/);
+  assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-field-blur"/);
+  assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-radial-blur"/);
+  assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-grain"/);
+  assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-threshold"/);
+  assert.match(cssSource, /\.toolbar-dock\.mobile-layer-effects-active \.main-tools-toolbar \{\s*display: none;/);
+  assert.match(cssSource, /\.toolbar-dock \.mobile-layer-effects-toolbar:not\(\[hidden\]\) \{\s*display: flex;/);
+  assert.match(cssSource, /\.mobile-layer-effects-panel:not\(\[hidden\]\) \{[\s\S]*bottom: 88px;/);
+  assert.match(cssSource, /\.field-blur-pin-overlay \{[\s\S]*touch-action: none;/);
+  assert.match(cssSource, /\.field-blur-pin \{[\s\S]*width: 56px;[\s\S]*height: 56px;/);
+  assert.match(appSource, /"\.mobile-layer-effects-panel"/);
 });
 
 test("gaussian blur preview writes bypass document history", () => {

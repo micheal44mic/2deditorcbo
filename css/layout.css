@@ -456,6 +456,10 @@ body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay {
   pointer-events: auto;
 }
 
+.editor-raster-transform-overlay.raster-selection-tool-active {
+  pointer-events: auto;
+}
+
 .editor-raster-transform-hit-area {
   pointer-events: all;
 }
@@ -502,6 +506,11 @@ body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay {
   cursor: move;
   pointer-events: all;
   vector-effect: non-scaling-stroke;
+}
+
+.editor-raster-transform-overlay.raster-selection-tool-active .editor-raster-transform-box {
+  cursor: default;
+  pointer-events: none;
 }
 
 .editor-raster-transform-handle {

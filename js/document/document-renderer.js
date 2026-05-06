@@ -1316,6 +1316,57 @@ void main() {
       return Math.max(16, Math.min(1024, Math.round(requested)));
     }
 
+    getRasterHistoryTileBounds(tx, ty, options = {}) {
+      const tileSize = this.getRasterHistoryTileSize(options);
+      const tileX = tx * tileSize;
+      const tileY = ty * tileSize;
+      const x0 = Math.max(0, tileX);
+      const y0 = Math.max(0, tileY);
+      const x1 = Math.min(tileX + tileSize, this.width);
+      const y1 = Math.min(tileY + tileSize, this.height);
+
+      if (x1 <= x0 || y1 <= y0) {
+        return null;
+      }
+
+      return {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+      };
+    }
+
+    emitRasterHistoryTileDebug(detail = {}) {
+      if (namespace.debugRasterHistoryTiles !== true) {
+        return;
+      }
+
+      const tx = Math.round(Number(detail.tx) || 0);
+      const ty = Math.round(Number(detail.ty) || 0);
+      const tileSize = this.getRasterHistoryTileSize({ tileSize: detail.tileSize });
+      const tileRect = detail.tileRect || this.getRasterHistoryTileBounds(tx, ty, { tileSize });
+      const patchRect = detail.patchRect || detail.rect || null;
+
+      if (!tileRect || !patchRect) {
+        return;
+      }
+
+      window.dispatchEvent(new CustomEvent("cbo:raster-history-tile-debug", {
+        detail: {
+          bytes: Math.max(0, Math.round(Number(detail.bytes) || 0)),
+          layerId: detail.layerId || "",
+          patchRect: { ...patchRect },
+          phase: detail.phase || "tile",
+          source: detail.source || "",
+          tileRect: { ...tileRect },
+          tileSize,
+          tx,
+          ty,
+        },
+      }));
+    }
+
     getRasterHistoryTileRects(rect, options = {}) {
       const captureRect = this.getClampedDocumentRect(rect);
 
@@ -1328,28 +1379,31 @@ void main() {
       const startTy = Math.floor(captureRect.y / tileSize);
       const endTx = Math.floor((captureRect.x + captureRect.width - 1) / tileSize);
       const endTy = Math.floor((captureRect.y + captureRect.height - 1) / tileSize);
+      const patchLookup = this.getRasterHistoryPatchLookup(options.tilePatchRects || options.patchRects, { tileSize });
       const rects = [];
 
       for (let ty = startTy; ty <= endTy; ty += 1) {
         for (let tx = startTx; tx <= endTx; tx += 1) {
-          const tileX = tx * tileSize;
-          const tileY = ty * tileSize;
-          const x0 = Math.max(0, tileX);
-          const y0 = Math.max(0, tileY);
-          const x1 = Math.min(tileX + tileSize, this.width);
-          const y1 = Math.min(tileY + tileSize, this.height);
+          const tileRect = this.getRasterHistoryTileBounds(tx, ty, { tileSize });
 
-          if (x1 <= x0 || y1 <= y0) {
+          if (!tileRect) {
+            continue;
+          }
+
+          const lookupPatchRect = patchLookup?.get(`${tx}:${ty}`) || null;
+          const capturePatchRect = this.intersectRasterHistoryRects(tileRect, captureRect);
+          const patchRect = lookupPatchRect
+            ? this.intersectRasterHistoryRects(lookupPatchRect, capturePatchRect)
+            : capturePatchRect;
+
+          if (!patchRect) {
             continue;
           }
 
           rects.push({
-            rect: {
-              x: x0,
-              y: y0,
-              width: x1 - x0,
-              height: y1 - y0,
-            },
+            patchRect: { ...patchRect },
+            rect: { ...patchRect },
+            tileRect: { ...tileRect },
             tx,
             ty,
           });
@@ -1381,6 +1435,188 @@ void main() {
       };
     }
 
+    intersectRasterHistoryRects(a, b) {
+      if (!a || !b) {
+        return null;
+      }
+
+      const x0 = Math.max(a.x, b.x);
+      const y0 = Math.max(a.y, b.y);
+      const x1 = Math.min(a.x + a.width, b.x + b.width);
+      const y1 = Math.min(a.y + a.height, b.y + b.height);
+
+      if (x1 <= x0 || y1 <= y0) {
+        return null;
+      }
+
+      return {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+      };
+    }
+
+    containsRasterHistoryRect(container, rect) {
+      return Boolean(
+        container &&
+        rect &&
+        rect.x >= container.x &&
+        rect.y >= container.y &&
+        rect.x + rect.width <= container.x + container.width &&
+        rect.y + rect.height <= container.y + container.height
+      );
+    }
+
+    getRasterHistoryPatchLookup(patchRects = null, options = {}) {
+      const items = patchRects instanceof Map
+        ? Array.from(patchRects.values())
+        : Array.isArray(patchRects)
+          ? patchRects
+          : [];
+
+      if (items.length === 0) {
+        return null;
+      }
+
+      const tileSize = this.getRasterHistoryTileSize(options);
+      const lookup = new Map();
+
+      for (const item of items) {
+        const sourceRect = item?.patchRect || item?.rect || item;
+        const rect = this.getClampedDocumentRect(sourceRect);
+
+        if (!rect) {
+          continue;
+        }
+
+        const startTx = Math.floor(rect.x / tileSize);
+        const startTy = Math.floor(rect.y / tileSize);
+        const endTx = Math.floor((rect.x + rect.width - 1) / tileSize);
+        const endTy = Math.floor((rect.y + rect.height - 1) / tileSize);
+
+        for (let ty = startTy; ty <= endTy; ty += 1) {
+          for (let tx = startTx; tx <= endTx; tx += 1) {
+            const tileRect = this.getRasterHistoryTileBounds(tx, ty, { tileSize });
+            const patchRect = this.intersectRasterHistoryRects(tileRect, rect);
+
+            if (!patchRect) {
+              continue;
+            }
+
+            const key = `${tx}:${ty}`;
+            lookup.set(key, this.unionRasterHistoryRects(lookup.get(key), patchRect));
+          }
+        }
+      }
+
+      return lookup.size > 0 ? lookup : null;
+    }
+
+    copyRasterSnapshotToSnapshot(sourceSnapshot, destSnapshot) {
+      if (!sourceSnapshot || !destSnapshot) {
+        return false;
+      }
+
+      if ((!sourceSnapshot.framebuffer || !sourceSnapshot.texture) && !this.hydrateRasterSnapshot(sourceSnapshot)) {
+        return false;
+      }
+
+      if ((!destSnapshot.framebuffer || !destSnapshot.texture) && !this.hydrateRasterSnapshot(destSnapshot)) {
+        return false;
+      }
+
+      if (!sourceSnapshot.framebuffer || !destSnapshot.framebuffer || !sourceSnapshot.rect || !destSnapshot.rect) {
+        return false;
+      }
+
+      const sourceRect = sourceSnapshot.rect;
+      const destRect = destSnapshot.rect;
+      const destX0 = sourceRect.x - destRect.x;
+      const destY0 = destRect.height - ((sourceRect.y - destRect.y) + sourceRect.height);
+      const destX1 = destX0 + sourceRect.width;
+      const destY1 = destY0 + sourceRect.height;
+
+      if (
+        destX0 < 0 ||
+        destY0 < 0 ||
+        destX1 > destRect.width ||
+        destY1 > destRect.height
+      ) {
+        return false;
+      }
+
+      const gl = this.gl;
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, sourceSnapshot.framebuffer);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, destSnapshot.framebuffer);
+      gl.blitFramebuffer(
+        0,
+        0,
+        sourceRect.width,
+        sourceRect.height,
+        destX0,
+        destY0,
+        destX1,
+        destY1,
+        gl.COLOR_BUFFER_BIT,
+        gl.NEAREST,
+      );
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+
+      return true;
+    }
+
+    expandRasterTileHistoryDelta(capture, delta, nextRect, options = {}) {
+      if (!capture || !delta || !nextRect) {
+        return false;
+      }
+
+      if (this.containsRasterHistoryRect(delta.rect, nextRect)) {
+        return true;
+      }
+
+      const label = options.label || capture.label || options.source || "raster-tile-history";
+      const layerId = delta.layerId || capture.layerId;
+      const unionRect = this.unionRasterHistoryRects(delta.rect, nextRect);
+      const previousBefore = delta.before;
+      const nextBefore = this.createRasterSnapshot(
+        layerId,
+        unionRect,
+        `${label}-before-tile-${delta.tx}-${delta.ty}-expanded`,
+      );
+
+      if (!nextBefore?.texture && !nextBefore?.cpuPixels) {
+        return false;
+      }
+
+      if (!this.copyRasterSnapshotToSnapshot(previousBefore, nextBefore)) {
+        this.deleteRasterSnapshot(nextBefore);
+        return false;
+      }
+
+      this.deleteRasterSnapshot(previousBefore);
+      this.deleteRasterSnapshot(delta.after);
+      delta.after = null;
+      delta.before = nextBefore;
+      delta.rect = nextBefore.rect ? { ...nextBefore.rect } : { ...unionRect };
+
+      this.emitRasterHistoryTileDebug({
+        bytes: nextBefore.bytes,
+        layerId,
+        patchRect: delta.rect,
+        phase: "before-expand",
+        source: label,
+        tileRect: delta.tileRect,
+        tileSize: capture.tileSize,
+        tx: delta.tx,
+        ty: delta.ty,
+      });
+
+      return true;
+    }
+
     extendRasterTileHistory(capture, dirtyRect, options = {}) {
       if (!capture || capture.destroyed === true || !Array.isArray(capture.tileDeltas)) {
         return false;
@@ -1396,15 +1632,23 @@ void main() {
         tileSize: capture.tileSize,
         ...options,
       });
-      const existingKeys = new Set(capture.tileDeltas.map((delta) => `${delta.storeId}:${delta.tx}:${delta.ty}`));
+      const existingDeltas = new Map(capture.tileDeltas.map((delta) => [`${delta.storeId}:${delta.tx}:${delta.ty}`, delta]));
       const label = options.label || capture.label || options.source || "raster-tile-history";
       const layerId = options.layerId || capture.layerId;
 
-      for (const tile of this.getRasterHistoryTileRects(captureRect, { tileSize })) {
+      for (const tile of this.getRasterHistoryTileRects(captureRect, {
+        patchRects: options.patchRects,
+        tilePatchRects: options.tilePatchRects,
+        tileSize,
+      })) {
         const storeId = `LayerPixels:${layerId}`;
         const key = `${storeId}:${tile.tx}:${tile.ty}`;
+        const existingDelta = existingDeltas.get(key);
 
-        if (existingKeys.has(key)) {
+        if (existingDelta) {
+          if (!this.expandRasterTileHistoryDelta(capture, existingDelta, tile.rect, { label, source: options.source })) {
+            return false;
+          }
           continue;
         }
 
@@ -1420,10 +1664,22 @@ void main() {
           layerId,
           rect: before.rect ? { ...before.rect } : { ...tile.rect },
           storeId,
+          tileRect: tile.tileRect ? { ...tile.tileRect } : { ...tile.rect },
           tx: tile.tx,
           ty: tile.ty,
         });
-        existingKeys.add(key);
+        this.emitRasterHistoryTileDebug({
+          bytes: before.bytes,
+          layerId,
+          patchRect: before.rect ? { ...before.rect } : { ...tile.rect },
+          phase: "before",
+          source: label,
+          tileRect: tile.tileRect || tile.rect,
+          tileSize,
+          tx: tile.tx,
+          ty: tile.ty,
+        });
+        existingDeltas.set(key, capture.tileDeltas[capture.tileDeltas.length - 1]);
       }
 
       capture.rect = this.unionRasterHistoryRects(capture.rect, captureRect);
@@ -1474,7 +1730,13 @@ void main() {
         type: "raster-tile-history-capture",
       };
 
-      if (!this.extendRasterTileHistory(capture, captureRect, { label, layerId, tileSize })) {
+      if (!this.extendRasterTileHistory(capture, captureRect, {
+        label,
+        layerId,
+        patchRects: options.patchRects,
+        tilePatchRects: options.tilePatchRects,
+        tileSize,
+      })) {
         this.deleteRasterTileHistoryCapture(capture);
         return null;
       }
@@ -1507,6 +1769,17 @@ void main() {
         }
 
         delta.after = after;
+        this.emitRasterHistoryTileDebug({
+          bytes: after.bytes,
+          layerId: delta.layerId || capture.layerId,
+          patchRect: after.rect ? { ...after.rect } : { ...delta.rect },
+          phase: "after",
+          source: label,
+          tileRect: delta.tileRect,
+          tileSize: capture.tileSize,
+          tx: delta.tx,
+          ty: delta.ty,
+        });
       }
 
       const renderer = this;
@@ -1564,6 +1837,18 @@ void main() {
         if (!didRestore) {
           return false;
         }
+
+        this.emitRasterHistoryTileDebug({
+          bytes: delta[snapshotKey]?.bytes,
+          layerId,
+          patchRect: delta[snapshotKey]?.rect || delta.rect,
+          phase: `restore-${snapshotKey}`,
+          source: options.source || "raster-tile-history-restore",
+          tileRect: delta.tileRect,
+          tileSize: entry.tileSize,
+          tx: delta.tx,
+          ty: delta.ty,
+        });
       }
 
       if (options.emit !== false) {
