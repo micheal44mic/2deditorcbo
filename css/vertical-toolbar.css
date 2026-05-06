@@ -40,3 +40,9 @@
   left: auto;
   transform: translateY(-50%);
 }
+
+@media (max-width: 900px) {
+  .right-vertical-toolbar-dock {
+    display: none;
+  }
+}

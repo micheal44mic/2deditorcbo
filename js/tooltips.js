@@ -4,10 +4,16 @@ window.CBO.initTooltips = function initTooltips() {
   const tooltipButtons = document.querySelectorAll("[data-tooltip]");
   const resetZones = document.querySelectorAll("[data-tooltip-zone]");
   const tooltipDelay = 1000;
+  const touchHoldDelay = 520;
+  const touchReleaseHideDelay = 1000;
   const tooltipGap = 10;
   let tooltipTimer = null;
+  let touchHoldTimer = null;
+  let touchHideTimer = null;
   let tooltipWarm = false;
   let activeButton = null;
+  let suppressNextFocus = false;
+  let lastTouchInteractionAt = 0;
 
   const tooltip = document.createElement("div");
   tooltip.className = "floating-tooltip";
@@ -62,7 +68,11 @@ window.CBO.initTooltips = function initTooltips() {
 
   function hideTooltips() {
     window.clearTimeout(tooltipTimer);
+    window.clearTimeout(touchHoldTimer);
+    window.clearTimeout(touchHideTimer);
     tooltipTimer = null;
+    touchHoldTimer = null;
+    touchHideTimer = null;
     activeButton = null;
     tooltip.classList.remove("visible");
     tooltip.textContent = "";
@@ -77,7 +87,15 @@ window.CBO.initTooltips = function initTooltips() {
       return;
     }
 
-    hideTooltips();
+    window.clearTimeout(tooltipTimer);
+    window.clearTimeout(touchHoldTimer);
+    window.clearTimeout(touchHideTimer);
+    tooltipTimer = null;
+    touchHoldTimer = null;
+    touchHideTimer = null;
+    tooltipButtons.forEach((tooltipButton) => {
+      tooltipButton.classList.remove("tooltip-visible");
+    });
     activeButton = button;
     tooltip.textContent = button.dataset.tooltip;
     positionTooltip(button);
@@ -103,12 +121,93 @@ window.CBO.initTooltips = function initTooltips() {
     }, tooltipDelay);
   }
 
+  function isTouchLikePointer(event) {
+    return event.pointerType === "touch" || event.pointerType === "pen";
+  }
+
+  function isAfterRecentTouch() {
+    return Date.now() - lastTouchInteractionAt < touchReleaseHideDelay;
+  }
+
+  function queueTouchTooltip(button) {
+    window.clearTimeout(tooltipTimer);
+    window.clearTimeout(touchHoldTimer);
+    window.clearTimeout(touchHideTimer);
+    tooltipTimer = null;
+    touchHoldTimer = null;
+    touchHideTimer = null;
+    suppressNextFocus = true;
+    lastTouchInteractionAt = Date.now();
+
+    touchHoldTimer = window.setTimeout(() => {
+      showTooltip(button);
+    }, touchHoldDelay);
+  }
+
+  function releaseTouchTooltip(button) {
+    lastTouchInteractionAt = Date.now();
+    window.clearTimeout(touchHoldTimer);
+    touchHoldTimer = null;
+
+    if (activeButton !== button) {
+      return;
+    }
+
+    window.clearTimeout(touchHideTimer);
+    touchHideTimer = window.setTimeout(() => {
+      if (activeButton === button) {
+        hideTooltips();
+      }
+    }, touchReleaseHideDelay);
+  }
+
   tooltipButtons.forEach((button) => {
+    button.addEventListener("pointerdown", (event) => {
+      if (!isTouchLikePointer(event)) {
+        return;
+      }
+
+      queueTouchTooltip(button);
+    });
+
+    button.addEventListener("pointerup", (event) => {
+      if (!isTouchLikePointer(event)) {
+        return;
+      }
+
+      releaseTouchTooltip(button);
+    });
+
+    button.addEventListener("pointercancel", (event) => {
+      if (!isTouchLikePointer(event)) {
+        return;
+      }
+
+      releaseTouchTooltip(button);
+    });
+
+    button.addEventListener("lostpointercapture", () => {
+      releaseTouchTooltip(button);
+    });
+
     button.addEventListener("mouseenter", () => {
+      if (isAfterRecentTouch()) {
+        return;
+      }
+
       queueTooltip(button);
     });
 
-    button.addEventListener("focus", () => {
+    button.addEventListener("focus", (event) => {
+      if (suppressNextFocus || isAfterRecentTouch()) {
+        suppressNextFocus = false;
+        return;
+      }
+
+      if (window.matchMedia?.("(pointer: coarse)")?.matches && event.target.matches?.(":active")) {
+        return;
+      }
+
       queueTooltip(button);
     });
 

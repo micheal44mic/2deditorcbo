@@ -537,3 +537,13 @@
   height: 100vh;
   background: #181a1f;
 }
+
+@media (max-width: 900px) {
+  .editor-page {
+    --right-panel-width: 0px;
+  }
+
+  .side-panel.right-panel {
+    display: none;
+  }
+}

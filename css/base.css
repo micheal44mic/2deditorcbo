@@ -6,22 +6,49 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
 body,
 .editor-page,
 .side-panel,
 .brush-studio-panel,
 .brushes-gallery-popout,
 .layer-effects-popover {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
 
+.editor-stage,
+.editor-webgl-canvas,
+.editor-vector-overlay,
+.editor-raster-transform-overlay,
+.editor-puppet-overlay {
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
 input,
 textarea,
+select,
 [contenteditable="true"],
 [contenteditable="true"] * {
+  -webkit-touch-callout: default;
   -webkit-user-select: text;
   user-select: text;
+}
+
+button,
+input,
+textarea,
+select,
+[role="button"] {
+  touch-action: manipulation;
 }
 
 body.cbo-drag-scroll-active,
@@ -38,6 +65,7 @@ body.cbo-drag-scroll-active * {
   overflow-x: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   touch-action: pan-y;
 }

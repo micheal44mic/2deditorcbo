@@ -2,9 +2,9 @@
 <html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Editor 2D</title>
-    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/base.css?v=mobile-gesture-guard" />
     <link rel="stylesheet" href="./css/layout.css?v=raster-transform-no-free-distort" />
     <link rel="stylesheet" href="./css/left-sidebar.css" />
     <link rel="stylesheet" href="./css/right-sidebar.css?v=text-sidebar-font-controls" />
@@ -295,6 +295,23 @@
         </nav>
 
         <nav class="bottom-toolbar history-toolbar" aria-label="History toolbar">
+          <button class="tool-button mobile-layers-button top-layers-button" type="button" aria-label="LAYERS" aria-pressed="false" data-tooltip="LAYERS" data-drawer-sync="layers">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+              <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+              <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+            </svg>
+          </button>
+          <button class="tool-button mobile-rasterize-text-button" type="button" aria-label="RASTERIZE" aria-pressed="false" data-tooltip="RASTERIZE TEXT" data-rasterize-text hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 4h6v6H4z" />
+              <path d="M14 4h6v6h-6z" />
+              <path d="M4 14h6v6H4z" />
+              <path d="M14 14h6v6h-6z" />
+              <path d="M10 12h4" />
+              <path d="M12 10v4" />
+            </svg>
+          </button>
           <button class="tool-button" type="button" aria-label="UNDO" aria-pressed="false" data-tooltip="UNDO Ctrl+Z" data-history-action="undo">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20 4v7a4 4 0 0 1-4 4H4" />
@@ -358,7 +375,7 @@
     <script src="./js/editor-canvas.js"></script>
     <script src="./js/debug/raster-resource-manager.js"></script>
     <script src="./js/debug/raster-memory-report.js"></script>
-    <script src="./js/app.js"></script>
+    <script src="./js/app.js?v=mobile-gesture-guard"></script>
     <script src="./js/debug/raster-memory-monitor.js"></script>
   </body>
 </html>

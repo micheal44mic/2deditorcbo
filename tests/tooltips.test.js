@@ -13,3 +13,13 @@ test("floating tooltips stay on a single line", () => {
   assert.match(source, /max-width: calc\(100vw - 24px\)/);
   assert.match(source, /text-overflow: ellipsis/);
 });
+
+test("touch tooltips require hold and hide after release", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "tooltips.js"), "utf8");
+
+  assert.match(source, /const touchHoldDelay = 520/);
+  assert.match(source, /const touchReleaseHideDelay = 1000/);
+  assert.match(source, /button\.addEventListener\("pointerdown"/);
+  assert.match(source, /button\.addEventListener\("pointerup"/);
+  assert.match(source, /releaseTouchTooltip\(button\)/);
+});

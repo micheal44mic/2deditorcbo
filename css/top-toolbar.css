@@ -15,6 +15,10 @@
   bottom: auto;
 }
 
+.top-history-toolbar {
+  display: none;
+}
+
 .brush-quick-controls {
   display: flex;
   align-items: center;
@@ -281,5 +285,59 @@
   .transform-mode-toolbar {
     gap: 5px;
     padding: 6px;
+  }
+}
+
+@media (max-width: 900px) {
+  .top-layers-toolbar {
+    display: none;
+  }
+
+  .top-history-toolbar {
+    display: flex;
+  }
+
+  .brush-quick-controls:not([hidden]) {
+    position: fixed;
+    top: 88px;
+    left: calc(var(--left-panel-width) + 12px);
+    right: 12px;
+    z-index: 8990;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    min-width: 0;
+    pointer-events: auto;
+  }
+
+  .brush-quick-controls[hidden] {
+    display: none;
+  }
+
+  .brush-quick-controls .brush-quick-toolbar {
+    width: 100%;
+    min-width: 0;
+    height: 40px;
+    padding: 0 10px;
+    gap: 8px;
+    border-radius: 8px;
+  }
+
+  .brush-quick-controls .brush-quick-label {
+    min-width: 52px;
+  }
+
+  .brush-quick-controls .brush-quick-range {
+    min-width: 0;
+  }
+
+  .brush-quick-controls .brush-quick-value {
+    min-width: 44px;
+  }
+}
+
+@media (min-width: 560px) and (max-width: 900px) {
+  .brush-quick-controls:not([hidden]) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -95,6 +95,20 @@ window.CBO.initTopToolbar = function initTopToolbar() {
         <span class="brush-quick-value" data-brush-quick-value="opacity"></span>
       </label>
     </div>
+    <nav class="bottom-toolbar top-history-toolbar" aria-label="History toolbar">
+      <button class="tool-button" type="button" aria-label="UNDO" aria-pressed="false" data-tooltip="UNDO Ctrl+Z" data-history-action="undo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+          <path d="m9 10-5 5 5 5" />
+        </svg>
+      </button>
+      <button class="tool-button" type="button" aria-label="REDO" aria-pressed="false" data-tooltip="REDO Ctrl+Shift+Z" data-history-action="redo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m15 10 5 5-5 5" />
+          <path d="M4 4v7a4 4 0 0 0 4 4h12" />
+        </svg>
+      </button>
+    </nav>
     <nav class="bottom-toolbar top-layers-toolbar" aria-label="Layers toolbar">
       <button class="tool-button top-layers-button" type="button" aria-label="LAYERS" aria-pressed="false" data-tooltip="LAYERS" data-drawer-sync="layers">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -163,8 +177,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
   editorPage.appendChild(dock);
 
-  const layersButton = dock.querySelector(".top-layers-button");
-  const rasterizeTextButton = dock.querySelector("[data-rasterize-text]");
+  const layersButtons = document.querySelectorAll(".top-layers-button");
+  const rasterizeTextButtons = document.querySelectorAll("[data-rasterize-text]");
   const transformModeToolbar = dock.querySelector("[data-transform-mode-toolbar]");
   const transformModeButtons = dock.querySelectorAll("[data-transform-mode]");
   const transformAngleControl = dock.querySelector("[data-transform-angle-control]");
@@ -386,7 +400,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   }
 
   function syncRasterizeTextButton() {
-    if (!rasterizeTextButton) {
+    if (!rasterizeTextButtons.length) {
       return;
     }
 
@@ -402,44 +416,56 @@ window.CBO.initTopToolbar = function initTopToolbar() {
         ? "RASTERIZE IMAGE"
         : "RASTERIZE TEXT";
 
-    rasterizeTextButton.hidden = !canRasterize;
-    rasterizeTextButton.disabled = !canRasterize;
-    rasterizeTextButton.dataset.rasterizeMode = canRasterizeEffects
-      ? "effects"
-      : canRasterizeImage
-        ? "image"
-        : "text";
-    rasterizeTextButton.dataset.tooltip = tooltip;
+    rasterizeTextButtons.forEach((button) => {
+      const isMobileToolbarButton = button.classList.contains("mobile-rasterize-text-button");
+
+      button.hidden = !canRasterize && !isMobileToolbarButton;
+      button.disabled = !canRasterize;
+      button.dataset.rasterizeMode = canRasterizeEffects
+        ? "effects"
+        : canRasterizeImage
+          ? "image"
+          : "text";
+      button.dataset.tooltip = tooltip;
+    });
   }
 
-  layersButton.addEventListener("click", () => {
-    if (window.CBO.openDrawerPanel) {
-      window.CBO.openDrawerPanel("layers");
-    }
+  layersButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      if (window.CBO.openDrawerPanel) {
+        window.CBO.openDrawerPanel("layers");
+      }
+    });
   });
 
-  rasterizeTextButton?.addEventListener("click", async () => {
-    if (rasterizeTextButton.disabled) {
-      return;
-    }
-
-    rasterizeTextButton.disabled = true;
-    rasterizeTextButton.classList.add("active");
-
-    try {
-      if (rasterizeTextButton.dataset.rasterizeMode === "effects") {
-        await window.CBO.rasterizeActiveLayerEffects?.();
-      } else if (rasterizeTextButton.dataset.rasterizeMode === "image") {
-        await window.CBO.rasterizeActiveImageLayer?.();
-      } else {
-        await window.CBO.rasterizeActiveVectorTextLayer?.();
+  rasterizeTextButtons.forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (button.disabled) {
+        return;
       }
-    } catch (error) {
-      console.warn("Impossibile rasterizzare il layer attivo.", error);
-    } finally {
-      rasterizeTextButton.classList.remove("active");
-      syncRasterizeTextButton();
-    }
+
+      rasterizeTextButtons.forEach((rasterizeButton) => {
+        rasterizeButton.disabled = true;
+        rasterizeButton.classList.add("active");
+      });
+
+      try {
+        if (button.dataset.rasterizeMode === "effects") {
+          await window.CBO.rasterizeActiveLayerEffects?.();
+        } else if (button.dataset.rasterizeMode === "image") {
+          await window.CBO.rasterizeActiveImageLayer?.();
+        } else {
+          await window.CBO.rasterizeActiveVectorTextLayer?.();
+        }
+      } catch (error) {
+        console.warn("Impossibile rasterizzare il layer attivo.", error);
+      } finally {
+        rasterizeTextButtons.forEach((rasterizeButton) => {
+          rasterizeButton.classList.remove("active");
+        });
+        syncRasterizeTextButton();
+      }
+    });
   });
 
   quickInputs.forEach((input) => {
