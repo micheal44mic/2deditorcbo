@@ -18,3 +18,17 @@ test("layers panel copies raster targets when duplicating layers", () => {
   assert.match(source, /source: "layers-panel-copy"/);
   assert.match(source, /duplicateCopiedLayerRasterTargets\(copiedEntries\)/);
 });
+
+test("layers panel blocks new raster layers when the layer memory cap is exceeded", () => {
+  const source = readRepoFile("js", "layers-panel.js");
+  const cssSource = readRepoFile("css", "layout.css");
+
+  assert.match(source, /function showLayerLimitToast\(message = "You can't create new layers"\)/);
+  assert.match(source, /window\.setTimeout\(\(\) => \{[\s\S]*toast\.hidden = true;[\s\S]*\}, 1000\)/);
+  assert.match(source, /window\.CBO\.getRasterLayerCreationBudget\?\.\(\{/);
+  assert.match(source, /source: "layers-panel-new-layer"/);
+  assert.match(source, /source: "layers-panel-copy"/);
+  assert.match(source, /estimateEntryRasterBytes\(selectedEntries\)/);
+  assert.match(source, /if \(!allowNewRasterLayers\(\{[\s\S]*return;[\s\S]*\}/);
+  assert.match(cssSource, /\.cbo-layer-limit-toast/);
+});

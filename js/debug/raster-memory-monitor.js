@@ -1,7 +1,13 @@
 (function registerRasterMemoryMonitor(namespace) {
   const MIB = 1024 * 1024;
+  const AUTO_RECOVERY_COOLDOWN_MS = 90 * 1000;
+  const AUTO_RECOVERY_CRITICAL_COOLDOWN_MS = 15 * 1000;
+  const AUTO_RECOVERY_HIDE_DELAY_MS = 900;
+  const AUTO_RECOVERY_LOW_GAIN_COOLDOWN_MS = 5 * 60 * 1000;
+  const LAYER_GPU_WARNING_RATIO = 0.75;
   const OVERLAY_ID = "cbo-raster-memory-overlay";
   const OVERLAY_PANEL_ID = "cbo-raster-memory-panel";
+  const AUTOSAVE_OVERLAY_ID = "cbo-memory-autosave-overlay";
   const DEFAULT_UPDATE_HZ = 3;
   const DEFAULT_GPU_SAMPLE_EVERY = 10;
 
@@ -27,6 +33,13 @@
     stutter33: 0,
     updateTimer: 0,
     updateHz: DEFAULT_UPDATE_HZ,
+    autoRecoveryCheckpointBlocked: false,
+    autoRecoveryEnabled: true,
+    autoRecoveryHideTimer: 0,
+    autoRecoveryCooldownUntil: 0,
+    autoRecoveryLastAt: 0,
+    autoRecoveryOverlay: null,
+    autoRecoveryRunning: false,
   };
 
   function now() {
@@ -49,6 +62,28 @@
 
   function formatFps(value) {
     return Number.isFinite(value) && value > 0 ? value.toFixed(1) : "Idle";
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, Math.max(0, Math.round(Number(ms) || 0)));
+    });
+  }
+
+  function getStatusSeverity(status) {
+    if (status === "critical") {
+      return 3;
+    }
+
+    if (status === "medium") {
+      return 2;
+    }
+
+    if (status === "warning") {
+      return 1;
+    }
+
+    return 0;
   }
 
   function clampPercent(value) {
@@ -141,6 +176,7 @@
       deviceClass,
       historyCpuBytes: deviceClass === "mobile" ? 512 * MIB : 1024 * MIB,
       historyGpuBytes: deviceClass === "software" ? 0 : deviceClass === "mobile" ? 64 * MIB : 256 * MIB,
+      layerGpuBytes: criticalBytes * 0.65 * LAYER_GPU_WARNING_RATIO,
       mediumBytes: criticalBytes * 0.8,
       renderer: rendererInfo.renderer,
       vendor: rendererInfo.vendor,
@@ -173,6 +209,43 @@
     }
 
     return "ok";
+  }
+
+  function getDocumentRasterBytes() {
+    const renderer = namespace.documentRenderer;
+    const width = Math.max(1, Math.round(Number(renderer?.width) || Number(namespace.documentSettings?.width) || 1));
+    const height = Math.max(1, Math.round(Number(renderer?.height) || Number(namespace.documentSettings?.height) || 1));
+
+    return width * height * 4;
+  }
+
+  function getRasterLayerCreationBudget(options = {}) {
+    const budget = getBudget();
+    const memoryReport = options.memoryReport || namespace.collectRasterMemory?.({ log: false }) || null;
+    const currentLayerBytes = Number(memoryReport?.liveLayerBytes) || 0;
+    const estimatedNewBytes = Number.isFinite(Number(options.estimatedNewBytes))
+      ? Math.max(0, Math.round(Number(options.estimatedNewBytes)))
+      : getDocumentRasterBytes();
+    const limitBytes = Math.max(0, Math.round(Number(budget.layerGpuBytes) || budget.warningBytes * LAYER_GPU_WARNING_RATIO));
+    const projectedLayerBytes = currentLayerBytes + estimatedNewBytes;
+    const allowed = limitBytes <= 0 || projectedLayerBytes <= limitBytes;
+
+    return {
+      allowed,
+      currentLayerBytes,
+      estimatedNewBytes,
+      limitBytes,
+      projectedLayerBytes,
+      reason: allowed ? "" : "layer-gpu-budget",
+      source: options.source || "layer-create",
+    };
+  }
+
+  function canCreateRasterLayer(options = {}) {
+    const result = getRasterLayerCreationBudget(options);
+
+    namespace.lastRasterLayerCreationBudget = result;
+    return result.allowed;
   }
 
   function isArrayBuffer(value) {
@@ -503,6 +576,85 @@
     state.rafId = requestAnimationFrame(tickRaf);
   }
 
+  function ensureAutoRecoveryOverlay() {
+    if (state.autoRecoveryOverlay?.isConnected) {
+      return state.autoRecoveryOverlay;
+    }
+
+    let overlay = document.getElementById(AUTOSAVE_OVERLAY_ID);
+
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = AUTOSAVE_OVERLAY_ID;
+      overlay.className = "cbo-memory-autosave-overlay";
+      overlay.hidden = true;
+      overlay.setAttribute("role", "status");
+      overlay.setAttribute("aria-live", "assertive");
+      overlay.innerHTML = [
+        '<div class="cbo-memory-autosave-panel">',
+        '  <div class="cbo-memory-autosave-spinner" aria-hidden="true"></div>',
+        '  <p class="cbo-memory-autosave-title" data-memory-autosave-title>Autosaving...</p>',
+        '  <p class="cbo-memory-autosave-detail" data-memory-autosave-detail>Ottimizzo memoria</p>',
+        "</div>",
+      ].join("");
+      document.body.appendChild(overlay);
+    }
+
+    state.autoRecoveryOverlay = overlay;
+    return overlay;
+  }
+
+  function showAutoRecoveryOverlay(title = "Autosaving...", detail = "Ottimizzo memoria") {
+    const overlay = ensureAutoRecoveryOverlay();
+
+    if (state.autoRecoveryHideTimer) {
+      clearTimeout(state.autoRecoveryHideTimer);
+      state.autoRecoveryHideTimer = 0;
+    }
+
+    const titleNode = overlay.querySelector("[data-memory-autosave-title]");
+    const detailNode = overlay.querySelector("[data-memory-autosave-detail]");
+
+    if (titleNode) {
+      titleNode.textContent = title;
+    }
+
+    if (detailNode) {
+      detailNode.textContent = detail;
+    }
+
+    document.body.classList.add("cbo-memory-recovery-active");
+    overlay.hidden = false;
+    return overlay;
+  }
+
+  function hideAutoRecoveryOverlay(delayMs = 0) {
+    if (state.autoRecoveryHideTimer) {
+      clearTimeout(state.autoRecoveryHideTimer);
+      state.autoRecoveryHideTimer = 0;
+    }
+
+    const hide = () => {
+      const overlay = state.autoRecoveryOverlay;
+
+      if (overlay) {
+        overlay.hidden = true;
+      }
+
+      document.body.classList.remove("cbo-memory-recovery-active");
+    };
+
+    if (delayMs > 0) {
+      state.autoRecoveryHideTimer = window.setTimeout(() => {
+        state.autoRecoveryHideTimer = 0;
+        hide();
+      }, delayMs);
+      return;
+    }
+
+    hide();
+  }
+
   function ensureOverlay() {
     if (state.overlay?.isConnected) {
       return state.overlay;
@@ -722,6 +874,7 @@
     const warnings = [];
     const totalBytes = Number(memoryReport?.totalBytes) || 0;
     const historyGpu = Number(memoryReport?.historyGpuBytes) || getGroupBytes(categories, ["history snapshots"]);
+    const liveLayers = Number(memoryReport?.liveLayerBytes) || getGroupBytes(categories, ["persistent layer targets"]);
     const previewCache = Number(memoryReport?.previewCacheBytes) || categories["renderer caches"] || 0;
 
     if (totalBytes >= budget.criticalBytes) {
@@ -734,6 +887,10 @@
 
     if (previewCache > budget.cacheGpuBytes) {
       warnings.push("cache over budget");
+    }
+
+    if (liveLayers > budget.layerGpuBytes && budget.layerGpuBytes > 0) {
+      warnings.push("layers over budget");
     }
 
     if (historyGpu > budget.historyGpuBytes && budget.historyGpuBytes > 0) {
@@ -838,6 +995,7 @@
       "",
       `GPU app est: ${formatMiB(totalBytes)} MiB`,
       `GPU budget: ${formatMiB(budget.warningBytes)} warn / ${formatMiB(budget.criticalBytes)} crit`,
+      `Layer cap: ${formatMiB(budget.layerGpuBytes)} MiB`,
       `Headroom warn: ${warningHeadroom >= 0 ? formatMiB(warningHeadroom) : `-${formatMiB(-warningHeadroom)}`} MiB`,
       "Hardware VRAM: unavailable",
       "",
@@ -862,6 +1020,7 @@
 
     state.renderCountSinceUpdate = 0;
     state.lastStatsAt = now();
+    maybeStartAutoMemoryRecovery(telemetry);
   }
 
   function startRasterMemoryMonitor(options = {}) {
@@ -873,6 +1032,7 @@
     state.running = true;
     state.updateHz = Math.max(1, Math.min(10, Number(options.updateHz) || DEFAULT_UPDATE_HZ));
     state.previousRafAt = 0;
+    state.autoRecoveryEnabled = options.autoRecovery !== false;
 
     if (options.budget) {
       state.budgetOverride = {
@@ -928,6 +1088,7 @@
     const before = namespace.collectRasterMemory?.({ log: false })?.totalBytes || 0;
     const normalizedLevel = ["soft", "medium", "critical"].includes(level) ? level : "soft";
     const deleted = [];
+    let historyGpuPrune = null;
 
     if (!renderer) {
       return {
@@ -996,6 +1157,17 @@
       }
     }
 
+    if (normalizedLevel === "medium" || normalizedLevel === "critical") {
+      historyGpuPrune = namespace.documentHistory?.pruneRasterHistoryGpuHotBudget?.({
+        minProtectedEntries: 0,
+        targetGpuHotBytes: normalizedLevel === "critical" ? 0 : 64 * MIB,
+      }) || null;
+
+      if (historyGpuPrune?.cooled?.length) {
+        deleted.push("historyGpuHot");
+      }
+    }
+
     renderer.invalidatePreviewCache?.(`trim-raster-memory-${normalizedLevel}`);
     renderer.requestDraw?.();
 
@@ -1016,8 +1188,293 @@
       beforeBytes: before,
       deleted,
       freedBytes,
+      historyGpuPrune,
       level: normalizedLevel,
     };
+  }
+
+  function isRasterInteractionBusy() {
+    return Boolean(
+      namespace.brushEngine?.isDrawing ||
+      namespace.smudgeEngine?.isDrawing ||
+      namespace.rasterTransformTool?.dragState ||
+      namespace.rasterTransformTool?.sourceSnapshot
+    );
+  }
+
+  function compactPaintTargetsForAutoRecovery(status, options = {}) {
+    const renderer = namespace.documentRenderer;
+
+    if (!renderer?.compactInactivePaintTargets) {
+      return null;
+    }
+
+    return renderer.compactInactivePaintTargets({
+      includeActive: options.includeActive === true || !isRasterInteractionBusy(),
+      maxCropCoverage: status === "critical" ? 0.95 : 0.9,
+      maxTargets: status === "critical" ? 64 : 24,
+      minSavingsMiB: status === "critical" ? 2 : 4,
+      padding: 2,
+      precise: true,
+      source: "memory-auto-recovery-compact",
+    });
+  }
+
+  function performSoftMemoryRecovery(reason = "memory-soft-recovery") {
+    const renderer = namespace.documentRenderer;
+    const beforeBytes = namespace.collectRasterMemory?.({ log: false })?.totalBytes || 0;
+    const trim = trimRasterMemory("medium", { reason });
+    const orphanPrunedCount = renderer?.pruneOrphanRasterTargets?.() || 0;
+    const afterBytes = namespace.collectRasterMemory?.({ log: false })?.totalBytes || 0;
+    const freedBytes = Math.max(0, beforeBytes - afterBytes);
+
+    renderer?.invalidatePreviewCache?.(reason);
+    renderer?.requestDraw?.();
+
+    return {
+      afterBytes,
+      beforeBytes,
+      freedBytes,
+      orphanPrunedCount,
+      trim,
+    };
+  }
+
+  function getAutosaveFailureTitle() {
+    const errorName = namespace.lastDocumentAutosaveError?.name || "";
+
+    return errorName === "QuotaExceededError" ? "Storage full" : "Checkpoint failed";
+  }
+
+  async function runRasterMemoryAutoRecovery(triggerTelemetry = null) {
+    const triggerStatus = triggerTelemetry?.status || "medium";
+    const beforeBytes = namespace.collectRasterMemory?.({ log: false })?.totalBytes || 0;
+    const historyBefore = {
+      redoCount: namespace.documentHistory?.redoStack?.length || 0,
+      undoCount: namespace.documentHistory?.undoStack?.length || 0,
+    };
+    let checkpointBlocked = false;
+    let checkpointMode = "persistent";
+    let didRestore = false;
+    let saveResult = false;
+    let saveSucceeded = false;
+    let recovery = null;
+
+    showAutoRecoveryOverlay("Autosaving...", "Creo un checkpoint pulito");
+
+    try {
+      const preSaveCompaction = compactPaintTargetsForAutoRecovery("critical", {
+        includeActive: true,
+      });
+      const preSaveTrim = trimRasterMemory("medium", {
+        reason: "memory-checkpoint-presave",
+      });
+
+      await sleep(80);
+      saveResult = await Promise.resolve(
+        namespace.documentAutosave?.saveNow?.({
+          cleanupBeforeWrite: true,
+          memoryFallback: true,
+          source: "memory-checkpoint",
+        }) || false,
+      );
+      checkpointMode = saveResult === "memory" ? "memory" : "persistent";
+      saveSucceeded = saveResult === true || saveResult === "memory";
+
+      if (!saveSucceeded) {
+        checkpointBlocked = true;
+        state.autoRecoveryCheckpointBlocked = true;
+        recovery = {
+          checkpointBlocked,
+          preSaveCompaction,
+          preSaveTrim,
+          soft: performSoftMemoryRecovery("memory-checkpoint-failed-soft-trim"),
+        };
+
+        showAutoRecoveryOverlay(getAutosaveFailureTitle(), "Checkpoint automatico sospeso");
+        hideAutoRecoveryOverlay(AUTO_RECOVERY_HIDE_DELAY_MS);
+        state.autoRecoveryLastAt = now();
+        state.autoRecoveryCooldownUntil = state.autoRecoveryLastAt + AUTO_RECOVERY_LOW_GAIN_COOLDOWN_MS;
+
+        const afterBytes = namespace.collectRasterMemory?.({ log: false })?.totalBytes || 0;
+        const result = {
+          afterBytes,
+          beforeBytes,
+          checkpointBlocked,
+          error: namespace.lastDocumentAutosaveError || null,
+          freedBytes: Math.max(0, beforeBytes - afterBytes),
+          generatedAt: new Date().toISOString(),
+          recovery,
+          saveSucceeded,
+          triggerStatus,
+        };
+
+        namespace.lastRasterMemoryAutoRecovery = result;
+        window.dispatchEvent(new CustomEvent("cbo:raster-memory-auto-recovery", {
+          detail: result,
+        }));
+
+        renderOverlay();
+        return result;
+      }
+
+      state.autoRecoveryCheckpointBlocked = false;
+      showAutoRecoveryOverlay("Resetting canvas...", "Ricarico il documento senza undo");
+      await sleep(60);
+
+      namespace.documentHistory?.clear?.();
+      const restoreOptions = {
+        clearAfterRestore: true,
+        resetRenderer: true,
+        source: "memory-auto-recovery",
+      };
+      const restorePromise = checkpointMode === "memory"
+        ? namespace.documentAutosave?.restoreMemoryCheckpoint?.(restoreOptions)
+        : namespace.documentAutosave?.restoreLatest?.({
+          resetRenderer: true,
+          source: "memory-auto-recovery",
+        });
+
+      didRestore = await Promise.resolve(restorePromise || false);
+
+      const postRestoreTrim = trimRasterMemory("critical", {
+        reason: "memory-auto-recovery-post-restore",
+      });
+
+      const afterBytes = namespace.collectRasterMemory?.({ log: false })?.totalBytes || 0;
+      const freedBytes = Math.max(0, beforeBytes - afterBytes);
+      recovery = {
+        checkpointMode,
+        didRestore,
+        historyBefore,
+        postRestoreTrim,
+        preSaveCompaction,
+        preSaveTrim,
+      };
+      const result = {
+        afterBytes,
+        beforeBytes,
+        checkpointMode,
+        didRestore,
+        freedBytes,
+        generatedAt: new Date().toISOString(),
+        historyBefore,
+        recovery,
+        saveSucceeded,
+        triggerStatus,
+      };
+
+      state.autoRecoveryLastAt = now();
+      state.autoRecoveryCooldownUntil = freedBytes < MIB
+        ? state.autoRecoveryLastAt + AUTO_RECOVERY_LOW_GAIN_COOLDOWN_MS
+        : 0;
+      state.lastTrim = {
+        at: now(),
+        freedBytes,
+        level: saveSucceeded ? "auto-critical" : "auto-medium",
+        reason: "memory-auto-recovery",
+      };
+      namespace.lastRasterMemoryAutoRecovery = result;
+      window.dispatchEvent(new CustomEvent("cbo:raster-memory-auto-recovery", {
+        detail: result,
+      }));
+
+      showAutoRecoveryOverlay(
+        didRestore ? "Memory reset" : "Memory cleaned",
+        `-${formatMiB(freedBytes)} MiB`,
+      );
+      hideAutoRecoveryOverlay(AUTO_RECOVERY_HIDE_DELAY_MS);
+      renderOverlay();
+
+      return result;
+    } catch (error) {
+      state.autoRecoveryLastAt = now();
+      state.autoRecoveryCooldownUntil = state.autoRecoveryLastAt + AUTO_RECOVERY_LOW_GAIN_COOLDOWN_MS;
+      state.autoRecoveryCheckpointBlocked = true;
+      console.warn?.("Recupero memoria automatico non riuscito.", error);
+      showAutoRecoveryOverlay("Checkpoint failed", "Recovery automatico sospeso");
+      hideAutoRecoveryOverlay(AUTO_RECOVERY_HIDE_DELAY_MS);
+
+      return {
+        beforeBytes,
+        checkpointBlocked: true,
+        error: error?.message || String(error),
+        generatedAt: new Date().toISOString(),
+        didRestore,
+        recovery,
+        saveSucceeded,
+        triggerStatus,
+      };
+    } finally {
+      state.autoRecoveryRunning = false;
+    }
+  }
+
+  function maybeStartAutoMemoryRecovery(telemetry) {
+    if (!state.autoRecoveryEnabled || state.autoRecoveryRunning || isRasterInteractionBusy()) {
+      return false;
+    }
+
+    const severity = getStatusSeverity(telemetry?.status);
+
+    if (severity < 1) {
+      return false;
+    }
+
+    const elapsed = now() - (state.autoRecoveryLastAt || 0);
+    const cooldown = severity >= 3 ? AUTO_RECOVERY_CRITICAL_COOLDOWN_MS : AUTO_RECOVERY_COOLDOWN_MS;
+
+    if (state.autoRecoveryCooldownUntil && now() < state.autoRecoveryCooldownUntil) {
+      return false;
+    }
+
+    if (elapsed < cooldown) {
+      return false;
+    }
+
+    if (severity === 1 || state.autoRecoveryCheckpointBlocked) {
+      state.autoRecoveryRunning = true;
+
+      try {
+        const soft = performSoftMemoryRecovery(
+          state.autoRecoveryCheckpointBlocked
+            ? "memory-checkpoint-blocked-soft-trim"
+            : "memory-warning-soft-trim",
+        );
+
+        state.autoRecoveryLastAt = now();
+        state.autoRecoveryCooldownUntil = soft.freedBytes < MIB
+          ? state.autoRecoveryLastAt + AUTO_RECOVERY_LOW_GAIN_COOLDOWN_MS
+          : 0;
+        namespace.lastRasterMemoryAutoRecovery = {
+          ...soft,
+          generatedAt: new Date().toISOString(),
+          mode: "soft",
+          triggerStatus: telemetry?.status || "warning",
+        };
+      } finally {
+        state.autoRecoveryRunning = false;
+      }
+
+      return true;
+    }
+
+    state.autoRecoveryRunning = true;
+    window.setTimeout(() => {
+      void runRasterMemoryAutoRecovery(telemetry);
+    }, 0);
+
+    return true;
+  }
+
+  function setRasterMemoryAutoRecovery(enabled = true) {
+    state.autoRecoveryEnabled = enabled !== false;
+    if (state.autoRecoveryEnabled) {
+      state.autoRecoveryCheckpointBlocked = false;
+      state.autoRecoveryCooldownUntil = 0;
+    }
+
+    return state.autoRecoveryEnabled;
   }
 
   function dumpRasterTelemetry() {
@@ -1037,22 +1494,34 @@
     return telemetry.performance;
   };
   namespace.collectRasterTelemetry = collectRasterTelemetry;
+  namespace.canCreateRasterLayer = canCreateRasterLayer;
   namespace.dumpRasterTelemetry = dumpRasterTelemetry;
   namespace.getRasterMemoryBudget = getBudget;
+  namespace.getRasterLayerCreationBudget = getRasterLayerCreationBudget;
   namespace.setRasterMemoryBudget = setRasterMemoryBudget;
+  namespace.setRasterMemoryAutoRecovery = setRasterMemoryAutoRecovery;
   namespace.showRasterMemoryOverlay = showRasterMemoryOverlay;
   namespace.startRasterMemoryMonitor = startRasterMemoryMonitor;
   namespace.stopRasterMemoryMonitor = stopRasterMemoryMonitor;
   namespace.trimRasterMemory = trimRasterMemory;
+  namespace.runRasterMemoryAutoRecovery = runRasterMemoryAutoRecovery;
   namespace.Memory = {
     ...(namespace.Memory || {}),
     dumpTelemetry: dumpRasterTelemetry,
+    canCreateLayer: canCreateRasterLayer,
+    getLayerCreationBudget: getRasterLayerCreationBudget,
     getBudget,
+    runAutoRecovery: runRasterMemoryAutoRecovery,
     setBudget: setRasterMemoryBudget,
+    setAutoRecovery: setRasterMemoryAutoRecovery,
     startMonitor: startRasterMemoryMonitor,
     stopMonitor: stopRasterMemoryMonitor,
     trim: trimRasterMemory,
   };
+
+  window.addEventListener("cbo:document-autosave", () => {
+    state.autoRecoveryCheckpointBlocked = false;
+  });
 
   document.addEventListener("DOMContentLoaded", () => {
     window.setTimeout(() => {

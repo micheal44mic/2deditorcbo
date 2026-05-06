@@ -6555,15 +6555,117 @@ void main() {
       return result;
     }
 
+    getCurrentRasterTargetLayerIds() {
+      const currentLayerIds = this.collectEntryLayerIds(this.layerModel?.getEntries?.() || []);
+      const activePaintLayerId = this.resolvePaintLayerId?.();
+
+      currentLayerIds.add("background");
+
+      if (activePaintLayerId) {
+        currentLayerIds.add(activePaintLayerId);
+      }
+
+      return currentLayerIds;
+    }
+
+    syncActivePaintLayerReference() {
+      const activePaintLayerId = this.resolvePaintLayerId?.();
+
+      if (!activePaintLayerId || !this.rasterTargetsByLayerId) {
+        return activePaintLayerId || "";
+      }
+
+      if (this.paintLayerId === activePaintLayerId) {
+        return activePaintLayerId;
+      }
+
+      const previousTarget = this.paintLayerId
+        ? this.rasterTargetsByLayerId.get(this.paintLayerId)
+        : null;
+      const nextTarget = this.rasterTargetsByLayerId.get(activePaintLayerId);
+
+      this.paintLayerId = activePaintLayerId;
+
+      if (nextTarget?.texture && nextTarget?.framebuffer) {
+        nextTarget.layerId = activePaintLayerId;
+        this.texture = nextTarget.texture;
+        this.framebuffer = nextTarget.framebuffer;
+        this.updateRasterTargetResourceMetadata?.(nextTarget, {
+          kind: "paintTarget",
+          label: "main paint raster target",
+          layerId: activePaintLayerId,
+          ownerId: activePaintLayerId,
+          ownerType: "live",
+          purgeable: false,
+          reason: "sync-active-paint-layer",
+        });
+      } else if (previousTarget?.texture === this.texture) {
+        this.texture = null;
+        this.framebuffer = null;
+      }
+
+      return activePaintLayerId;
+    }
+
+    reconcileRasterTargetResourceOwnership() {
+      if (this.isDisposed || !this.rasterTargetsByLayerId?.size) {
+        return 0;
+      }
+
+      const currentLayerIds = this.getCurrentRasterTargetLayerIds();
+      const historyLayerIds = this.collectHistoryLayerIds(new Set());
+      let updatedCount = 0;
+
+      for (const [layerId, target] of this.rasterTargetsByLayerId.entries()) {
+        if (!target) {
+          continue;
+        }
+
+        const isLiveTarget = currentLayerIds.has(layerId) || target.texture === this.texture;
+        const isHistoryTarget = historyLayerIds.has(layerId);
+
+        if (!isLiveTarget && !isHistoryTarget) {
+          continue;
+        }
+
+        target.layerId = layerId;
+
+        if (isLiveTarget) {
+          const isPaintTarget = layerId !== "background" && this.isPaintRasterLayer(layerId, target);
+
+          this.updateRasterTargetResourceMetadata?.(target, {
+            kind: layerId === "background" ? "background" : isPaintTarget ? "paintTarget" : "layer",
+            label: layerId,
+            layerId,
+            ownerId: layerId,
+            ownerType: "live",
+            purgeable: false,
+            reason: "raster-target-live",
+          });
+          updatedCount += 1;
+          continue;
+        }
+
+        this.updateRasterTargetResourceMetadata?.(target, {
+          kind: "historyLayerTarget",
+          label: layerId,
+          layerId,
+          ownerId: layerId,
+          ownerType: "historyGpu",
+          purgeable: true,
+          reason: "history-retained-layer-target",
+          state: "GPU_HOT",
+        });
+        updatedCount += 1;
+      }
+
+      return updatedCount;
+    }
+
     getRetainedRasterTargetLayerIds() {
-      const retainedLayerIds = this.collectEntryLayerIds(this.layerModel?.getEntries?.() || []);
+      const retainedLayerIds = this.getCurrentRasterTargetLayerIds();
 
       this.collectHistoryLayerIds(retainedLayerIds);
-      retainedLayerIds.add("background");
-
-      if (this.paintLayerId) {
-        retainedLayerIds.add(this.paintLayerId);
-      }
 
       return retainedLayerIds;
     }
@@ -6572,6 +6674,8 @@ void main() {
       if (this.isDisposed || !this.rasterTargetsByLayerId?.size) {
         return 0;
       }
+
+      this.syncActivePaintLayerReference();
 
       const retainedLayerIds = this.getRetainedRasterTargetLayerIds();
       let prunedCount = 0;
@@ -6587,6 +6691,8 @@ void main() {
           prunedCount += 1;
         }
       }
+
+      this.reconcileRasterTargetResourceOwnership();
 
       return prunedCount;
     }

@@ -202,6 +202,32 @@
     };
   }
 
+  function clearMemoryCheckpoint() {
+    namespace.lastDocumentMemoryCheckpoint = null;
+    namespace.lastDocumentMemoryCheckpointSummary = null;
+  }
+
+  function storeMemoryCheckpoint(payload, detail = {}) {
+    if (!payload?.session) {
+      return null;
+    }
+
+    const summary = {
+      ...createSummary(payload.session),
+      fallback: "memory",
+      source: detail.source || "memory-checkpoint",
+    };
+
+    namespace.lastDocumentMemoryCheckpoint = payload;
+    namespace.lastDocumentMemoryCheckpointSummary = summary;
+
+    window.dispatchEvent(new CustomEvent("cbo:document-memory-checkpoint", {
+      detail: summary,
+    }));
+
+    return summary;
+  }
+
   function normalizeProjectName(value) {
     return String(value ?? "").trim();
   }
@@ -431,12 +457,17 @@
     await transactionDone(writeTransaction);
   }
 
-  async function writeSession(payload) {
+  async function writeSession(payload, options = {}) {
     if (!payload?.session) {
       return null;
     }
 
     const db = await openDb();
+
+    if (options.cleanupBeforeWrite === true) {
+      await cleanupOldSessions(db, payload.session.id);
+    }
+
     const transaction = db.transaction([META_STORE, SESSIONS_STORE, TILES_STORE], "readwrite");
     const metaStore = transaction.objectStore(META_STORE);
     const sessionStore = transaction.objectStore(SESSIONS_STORE);
@@ -454,7 +485,10 @@
     });
 
     await transactionDone(transaction);
-    await cleanupOldSessions(db, payload.session.id);
+
+    if (options.cleanupBeforeWrite !== true) {
+      await cleanupOldSessions(db, payload.session.id);
+    }
 
     return payload.session;
   }
@@ -474,19 +508,23 @@
     emitSaveStatus("saving", source);
 
     let finishStatus = "saved";
+    let payload = null;
 
     try {
-      const payload = await buildCurrentSession();
+      payload = await buildCurrentSession();
 
       if (!payload) {
         finishStatus = "skipped";
         return false;
       }
 
-      const session = await writeSession(payload);
+      const session = await writeSession(payload, {
+        cleanupBeforeWrite: options.cleanupBeforeWrite === true,
+      });
       const summary = createSummary(session);
 
       namespace.lastDocumentAutosave = summary;
+      namespace.lastDocumentAutosaveError = null;
       window.dispatchEvent(new CustomEvent("cbo:document-autosave", {
         detail: {
           ...summary,
@@ -496,7 +534,31 @@
 
       return true;
     } catch (error) {
+      if (options.memoryFallback === true && payload?.session) {
+        finishStatus = "saved";
+        const summary = storeMemoryCheckpoint(payload, {
+          error,
+          source,
+        });
+
+        namespace.lastDocumentAutosaveError = null;
+        namespace.lastDocumentAutosaveWarning = {
+          fallback: "memory",
+          message: error?.message || String(error),
+          name: error?.name || "",
+          source,
+        };
+        console.info?.("Autosave persistente saltato: uso un checkpoint in memoria per liberare GPU.");
+
+        return summary ? "memory" : false;
+      }
+
       finishStatus = "failed";
+      namespace.lastDocumentAutosaveError = {
+        message: error?.message || String(error),
+        name: error?.name || "",
+        source,
+      };
       console.warn?.("Autosave documento non riuscito.", error);
       return false;
     } finally {
@@ -582,25 +644,91 @@
     return true;
   }
 
-  async function restoreSession(session, tileRecords) {
+  function resetRendererForRestore(session) {
+    const previousRenderer = namespace.documentRenderer;
+    const canvas = previousRenderer?.gl?.canvas || document.querySelector(".editor-webgl-canvas");
+    const gl = previousRenderer?.gl || null;
+    const layerModel = namespace.documentLayerModel ||
+      previousRenderer?.layerModel ||
+      (namespace.DocumentLayerModel ? new namespace.DocumentLayerModel() : null);
+
+    if (!canvas || !gl || !layerModel || !namespace.DocumentRenderer) {
+      namespace.initEditorCanvas?.({
+        documentHeight: session.document.height,
+        documentWidth: session.document.width,
+        presetId: session.document.presetId,
+      });
+      return namespace.documentRenderer || null;
+    }
+
+    namespace.documentHistory?.clear?.();
+    previousRenderer?.dispose?.();
+    namespace.documentLayerModel = layerModel;
+
+    const viewport = namespace.DocumentRenderer.resizeCanvasViewport(canvas, gl);
+    const nextRenderer = new namespace.DocumentRenderer({
+      documentHeight: session.document.height,
+      documentWidth: session.document.width,
+      gl,
+      layerModel,
+      presetId: session.document.presetId,
+      viewportHeight: viewport.height,
+      viewportWidth: viewport.width,
+    });
+
+    namespace.documentRenderer = nextRenderer;
+
+    if (namespace.brushEngine) {
+      namespace.brushEngine.documentRenderer = nextRenderer;
+    }
+
+    if (namespace.smudgeEngine) {
+      namespace.smudgeEngine.documentRenderer = nextRenderer;
+    }
+
+    if (namespace.rasterTransformTool) {
+      namespace.rasterTransformTool.cancelTransform?.({ keepGeometry: false });
+      namespace.rasterTransformTool.documentRenderer = nextRenderer;
+    }
+
+    if (namespace.puppetTransformTool) {
+      namespace.puppetTransformTool.documentRenderer = nextRenderer;
+    }
+
+    window.dispatchEvent(new CustomEvent("cbo:editor-canvas-reset", {
+      detail: {
+        documentHeight: nextRenderer.height,
+        documentWidth: nextRenderer.width,
+        source: "autosave-restore-reset",
+      },
+    }));
+
+    return nextRenderer;
+  }
+
+  async function restoreSession(session, tileRecords, options = {}) {
     if (!session?.document || !Array.isArray(session.entries)) {
       return false;
     }
 
     const stage = document.querySelector(".editor-stage");
 
-    if (stage?.dataset.canvasReady === "true") {
+    if (stage?.dataset.canvasReady === "true" && options.resetRenderer !== true) {
       return false;
     }
 
     isRestoring = true;
 
     try {
-      namespace.initEditorCanvas?.({
-        documentHeight: session.document.height,
-        documentWidth: session.document.width,
-        presetId: session.document.presetId,
-      });
+      if (options.resetRenderer === true && stage?.dataset.canvasReady === "true") {
+        resetRendererForRestore(session);
+      } else {
+        namespace.initEditorCanvas?.({
+          documentHeight: session.document.height,
+          documentWidth: session.document.width,
+          presetId: session.document.presetId,
+        });
+      }
 
       const layerModel = namespace.documentLayerModel;
       const history = namespace.documentHistory;
@@ -644,7 +772,7 @@
     }
   }
 
-  async function restoreLatest() {
+  async function restoreLatest(options = {}) {
     const sessionId = await getLatestSessionId();
     const session = await getSession(sessionId);
 
@@ -654,7 +782,23 @@
 
     const tileRecords = await getTilesForSession(session.id);
 
-    return restoreSession(session, tileRecords);
+    return restoreSession(session, tileRecords, options);
+  }
+
+  async function restoreMemoryCheckpoint(options = {}) {
+    const payload = namespace.lastDocumentMemoryCheckpoint;
+
+    if (!payload?.session) {
+      return false;
+    }
+
+    const didRestore = await restoreSession(payload.session, payload.tileRecords || [], options);
+
+    if (didRestore && options.clearAfterRestore !== false) {
+      clearMemoryCheckpoint();
+    }
+
+    return didRestore;
   }
 
   async function getLatestSummary() {
@@ -680,7 +824,9 @@
 
   namespace.documentAutosave = {
     clear,
+    clearMemoryCheckpoint,
     getLatestSummary,
+    restoreMemoryCheckpoint,
     restoreLatest,
     saveNow,
   };

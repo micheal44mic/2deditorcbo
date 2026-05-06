@@ -22,6 +22,28 @@ test("document autosave stores one recoverable IndexedDB session with raster til
   assert.match(source, /cleanupOldSessions\(db, payload\.session\.id\)/);
 });
 
+test("document autosave can replace old sessions before writing memory checkpoints", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+
+  assert.match(source, /async function writeSession\(payload, options = \{\}\)/);
+  assert.match(source, /if \(options\.cleanupBeforeWrite === true\) \{[\s\S]*await cleanupOldSessions\(db, payload\.session\.id\)/);
+  assert.match(source, /cleanupBeforeWrite: options\.cleanupBeforeWrite === true/);
+  assert.match(source, /namespace\.lastDocumentAutosaveError = \{/);
+});
+
+test("document autosave keeps a memory checkpoint when persistent storage is full", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+
+  assert.match(source, /function storeMemoryCheckpoint\(payload, detail = \{\}\)/);
+  assert.match(source, /namespace\.lastDocumentMemoryCheckpoint = payload/);
+  assert.match(source, /new CustomEvent\("cbo:document-memory-checkpoint"/);
+  assert.match(source, /options\.memoryFallback === true && payload\?\.session/);
+  assert.match(source, /return summary \? "memory" : false/);
+  assert.match(source, /async function restoreMemoryCheckpoint\(options = \{\}\)/);
+  assert.match(source, /restoreSession\(payload\.session, payload\.tileRecords \|\| \[\], options\)/);
+  assert.match(source, /clearMemoryCheckpoint/);
+});
+
 test("document autosave captures layer structure and sparse raster content only", () => {
   const source = readRepoFile("js", "document", "document-autosave.js");
 
@@ -64,7 +86,7 @@ test("document autosave restores the latest session before the canvas is started
   const source = readRepoFile("js", "document", "document-autosave.js");
   const editorCanvasSource = readRepoFile("js", "editor-canvas.js");
 
-  assert.match(source, /async function restoreLatest\(\)/);
+  assert.match(source, /async function restoreLatest\(options = \{\}\)/);
   assert.match(source, /namespace\.initEditorCanvas\?\.\(\{[\s\S]*documentHeight: session\.document\.height,[\s\S]*documentWidth: session\.document\.width/);
   assert.match(source, /stage\?\.dataset\.canvasReady === "true"/);
   assert.match(source, /layerModel\?\.setEntries\?\.\(cloneValue\(session\.entries\)/);
@@ -75,6 +97,18 @@ test("document autosave restores the latest session before the canvas is started
   assert.match(editorCanvasSource, /createDocumentRecoveryButton\(summary\)/);
   assert.match(editorCanvasSource, /const projectName = String\(summary\?\.projectName \|\| ""\)\.trim\(\)/);
   assert.match(editorCanvasSource, /autosave\.restoreLatest\(\)/);
+});
+
+test("document autosave can reset the active renderer when restoring a memory checkpoint", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+
+  assert.match(source, /function resetRendererForRestore\(session\)/);
+  assert.match(source, /previousRenderer\?\.dispose\?\.\(\)/);
+  assert.match(source, /new namespace\.DocumentRenderer\(\{/);
+  assert.match(source, /namespace\.brushEngine\.documentRenderer = nextRenderer/);
+  assert.match(source, /namespace\.smudgeEngine\.documentRenderer = nextRenderer/);
+  assert.match(source, /options\.resetRenderer === true/);
+  assert.match(source, /return restoreSession\(session, tileRecords, options\)/);
 });
 
 test("manual document save includes project metadata from the sidebar", () => {

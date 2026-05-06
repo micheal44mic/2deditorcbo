@@ -17,6 +17,8 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   let focusedLayer = null;
   let dragState = null;
   let layerContextMenu = null;
+  let layerLimitToast = null;
+  let layerLimitToastTimer = 0;
   let contextMenuLayerId = "";
   let suppressNextClick = false;
   let isRenderingLayerModel = false;
@@ -62,6 +64,64 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
   function getLayerId(row) {
     return row?.dataset.layerId || "";
+  }
+
+  function ensureLayerLimitToast() {
+    if (layerLimitToast?.isConnected) {
+      return layerLimitToast;
+    }
+
+    layerLimitToast = document.getElementById("cbo-layer-limit-toast");
+
+    if (!layerLimitToast) {
+      layerLimitToast = document.createElement("div");
+      layerLimitToast.id = "cbo-layer-limit-toast";
+      layerLimitToast.className = "cbo-layer-limit-toast";
+      layerLimitToast.hidden = true;
+      layerLimitToast.setAttribute("role", "status");
+      layerLimitToast.setAttribute("aria-live", "polite");
+      document.body.appendChild(layerLimitToast);
+    }
+
+    return layerLimitToast;
+  }
+
+  function showLayerLimitToast(message = "You can't create new layers") {
+    const toast = ensureLayerLimitToast();
+
+    if (layerLimitToastTimer) {
+      clearTimeout(layerLimitToastTimer);
+      layerLimitToastTimer = 0;
+    }
+
+    toast.textContent = message;
+    toast.hidden = false;
+    layerLimitToastTimer = window.setTimeout(() => {
+      toast.hidden = true;
+      layerLimitToastTimer = 0;
+    }, 1000);
+  }
+
+  function getDocumentRasterBytes() {
+    const renderer = window.CBO.documentRenderer;
+    const width = Math.max(1, Math.round(Number(renderer?.width) || Number(window.CBO.documentSettings?.width) || 1));
+    const height = Math.max(1, Math.round(Number(renderer?.height) || Number(window.CBO.documentSettings?.height) || 1));
+
+    return width * height * 4;
+  }
+
+  function allowNewRasterLayers(options = {}) {
+    const budget = window.CBO.getRasterLayerCreationBudget?.({
+      estimatedNewBytes: options.estimatedNewBytes,
+      source: options.source,
+    });
+
+    if (!budget || budget.allowed !== false) {
+      return true;
+    }
+
+    showLayerLimitToast();
+    return false;
   }
 
   function normalizeLayerOpacity(value, fallback = 1) {
@@ -799,6 +859,28 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return Array.from(new Set(rows));
   }
 
+  function estimateLayerRowRasterBytes(row) {
+    if (!isContentLayerRow(row)) {
+      return 0;
+    }
+
+    const renderer = window.CBO.documentRenderer;
+    const layerId = getLayerId(row);
+    const target = layerId ? renderer?.rasterTargetsByLayerId?.get?.(layerId) : null;
+
+    if (target && typeof renderer?.estimateRasterTargetBytes === "function") {
+      return renderer.estimateRasterTargetBytes(target);
+    }
+
+    return getDocumentRasterBytes();
+  }
+
+  function estimateEntryRasterBytes(entries) {
+    const rows = getContentLayerRowsInside(entries);
+
+    return rows.reduce((total, row) => total + estimateLayerRowRasterBytes(row), 0);
+  }
+
   function clearLayerContents(rows) {
     const renderer = window.CBO.documentRenderer;
     const layerIds = Array.from(new Set(rows.map(getLayerId).filter(Boolean)));
@@ -881,6 +963,13 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   }
 
   function addPaintLayer() {
+    if (!allowNewRasterLayers({
+      estimatedNewBytes: getDocumentRasterBytes(),
+      source: "layers-panel-new-layer",
+    })) {
+      return;
+    }
+
     const layerEntry = createLayerEntry(getNextNewLayerName(), "paint");
 
     insertLayerEntry(layerEntry);
@@ -920,6 +1009,13 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const copiedRows = [];
 
     if (!insertAfterEntry) {
+      return;
+    }
+
+    if (!allowNewRasterLayers({
+      estimatedNewBytes: estimateEntryRasterBytes(selectedEntries),
+      source: "layers-panel-copy",
+    })) {
       return;
     }
 

@@ -199,6 +199,59 @@ test("raster history cools old GPU snapshots without dropping logical undo budge
   assert.equal(history.lastRasterGpuHotPrune.cooled.length, 1);
 });
 
+test("raster history can force-cool protected recent GPU snapshots during memory pressure", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const mib = 1024 * 1024;
+  const cooled = [];
+  const history = new DocumentHistory({
+    maxEntries: 40,
+    maxRasterHistoryBytes: 10 * mib,
+    maxRasterHistoryGpuHotBytes: 10 * mib,
+    minRasterHistoryGpuHotEntries: 6,
+  });
+  const createSnapshot = (id) => ({
+    bytes: mib,
+    id,
+    rect: { width: 512, height: 512 },
+    state: "GPU_HOT",
+    texture: {},
+    dehydrateGpu() {
+      cooled.push(id);
+      this.cpuBytes = this.bytes;
+      this.state = "CPU_COLD";
+      this.texture = null;
+      return true;
+    },
+  });
+
+  history.push({
+    before: createSnapshot("snapshot-1"),
+    redo: () => true,
+    undo: () => true,
+  });
+  history.push({
+    before: createSnapshot("snapshot-2"),
+    redo: () => true,
+    undo: () => true,
+  });
+
+  assert.equal(history.getRasterHistoryGpuHotBytes(), 2 * mib);
+
+  const result = history.pruneRasterHistoryGpuHotBudget({
+    minProtectedEntries: 0,
+    targetGpuHotBytes: 0,
+  });
+
+  assert.equal(result.beforeBytes, 2 * mib);
+  assert.equal(result.afterBytes, 0);
+  assert.equal(result.minProtectedEntries, 0);
+  assert.deepEqual(cooled, ["snapshot-1", "snapshot-2"]);
+  assert.equal(history.undoStack.length, 2);
+  assert.equal(history.getRasterHistoryBytes(), 2 * mib);
+  assert.equal(history.getRasterHistoryGpuHotBytes(), 0);
+  assert.equal(history.getRasterHistoryCpuColdBytes(), 2 * mib);
+});
+
 test("raster history budget destroys the oldest raster entries by byte size", () => {
   const DocumentHistory = loadDocumentHistory();
   const mib = 1024 * 1024;

@@ -497,8 +497,11 @@
       return result;
     }
 
-    collectGpuHotSnapshotCandidates() {
+    collectGpuHotSnapshotCandidates(options = {}) {
       const candidates = [];
+      const minProtectedEntries = Number.isFinite(Number(options.minProtectedEntries))
+        ? Math.max(0, Math.floor(Number(options.minProtectedEntries)))
+        : this.minRasterHistoryGpuHotEntries;
       const collectStack = (stack, stackName, protectedFromIndex = Infinity) => {
         if (!Array.isArray(stack)) {
           return;
@@ -530,8 +533,8 @@
           });
         });
       };
-      const protectedUndoStart = Math.max(0, this.undoStack.length - this.minRasterHistoryGpuHotEntries);
-      const protectedRedoStart = Math.max(0, this.redoStack.length - this.minRasterHistoryGpuHotEntries);
+      const protectedUndoStart = Math.max(0, this.undoStack.length - minProtectedEntries);
+      const protectedRedoStart = Math.max(0, this.redoStack.length - minProtectedEntries);
 
       collectStack(this.redoStack, "redo", protectedRedoStart);
       collectStack(this.undoStack, "undo", protectedUndoStart);
@@ -545,8 +548,12 @@
       return candidates;
     }
 
-    pruneRasterHistoryGpuHotBudget() {
-      const budgetBytes = Math.max(0, Math.floor(Number(this.maxRasterHistoryGpuHotBytes) || 0));
+    pruneRasterHistoryGpuHotBudget(options = {}) {
+      const requestedBudget = options.budgetBytes ?? options.targetGpuHotBytes ?? this.maxRasterHistoryGpuHotBytes;
+      const budgetBytes = Math.max(0, Math.floor(Number(requestedBudget) || 0));
+      const minProtectedEntries = Number.isFinite(Number(options.minProtectedEntries))
+        ? Math.max(0, Math.floor(Number(options.minProtectedEntries)))
+        : this.minRasterHistoryGpuHotEntries;
       const beforeBytes = this.getRasterHistoryGpuHotBytes();
       const cooled = [];
 
@@ -556,10 +563,11 @@
           beforeBytes,
           budgetBytes,
           cooled,
+          minProtectedEntries,
         };
       }
 
-      let candidates = this.collectGpuHotSnapshotCandidates();
+      let candidates = this.collectGpuHotSnapshotCandidates({ minProtectedEntries });
 
       while (this.getRasterHistoryGpuHotBytes() > budgetBytes && candidates.length > 0) {
         const candidate = candidates.shift();
@@ -575,7 +583,7 @@
           });
         }
 
-        candidates = this.collectGpuHotSnapshotCandidates();
+        candidates = this.collectGpuHotSnapshotCandidates({ minProtectedEntries });
       }
 
       const afterBytes = this.getRasterHistoryGpuHotBytes();
@@ -584,6 +592,7 @@
         beforeBytes,
         budgetBytes,
         cooled,
+        minProtectedEntries,
       };
 
       this.lastRasterGpuHotPrune = result;

@@ -107,6 +107,115 @@ test("pruneOrphanRasterTargets keeps current and history-referenced raster targe
   assert.equal(renderer.rasterTargetsByLayerId.has("nested-history"), true);
 });
 
+test("pruneOrphanRasterTargets reports deleted undoable layer targets as history GPU", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const activeTexture = {};
+  const historyTexture = {};
+  const metadataUpdates = [];
+  const deleted = [];
+
+  window.CBO.documentHistory = {
+    redoStack: [],
+    undoStack: [
+      {
+        beforeEntries: [{ id: "deleted-layer", type: "paint" }],
+      },
+    ],
+  };
+  renderer.isDisposed = false;
+  renderer.layerModel = {
+    activeLayerId: "active-layer",
+    findEntryById: (layerId) => {
+      if (layerId === "active-layer") {
+        return { id: "active-layer", type: "paint" };
+      }
+
+      return null;
+    },
+    flattenTopToBottom: () => [{ id: "active-layer", type: "paint" }],
+    getEntries: () => [{ id: "active-layer", type: "paint" }],
+  };
+  renderer.paintLayerId = "deleted-layer";
+  renderer.texture = historyTexture;
+  renderer.framebuffer = {};
+  renderer.rasterTargetsByLayerId = new Map([
+    ["active-layer", { framebuffer: {}, texture: activeTexture }],
+    ["deleted-layer", { framebuffer: {}, texture: historyTexture }],
+    ["orphan", { framebuffer: {}, texture: {} }],
+  ]);
+  renderer.updateRasterTargetResourceMetadata = (target, metadata = {}) => {
+    metadataUpdates.push({ layerId: metadata.layerId, metadata, target });
+    return target;
+  };
+  renderer.deleteRasterTarget = (layerId, options = {}) => {
+    assert.equal(options.emit, false);
+    deleted.push(layerId);
+    renderer.rasterTargetsByLayerId.delete(layerId);
+    return true;
+  };
+
+  assert.equal(renderer.pruneOrphanRasterTargets(), 1);
+  assert.deepEqual(deleted, ["orphan"]);
+  assert.equal(renderer.paintLayerId, "active-layer");
+  assert.equal(renderer.texture, activeTexture);
+
+  const activeUpdate = metadataUpdates.find((update) => update.layerId === "active-layer");
+  const historyUpdate = metadataUpdates.find((update) => update.layerId === "deleted-layer");
+
+  assert.equal(activeUpdate.metadata.ownerType, "live");
+  assert.equal(historyUpdate.metadata.ownerType, "historyGpu");
+  assert.equal(historyUpdate.metadata.kind, "historyLayerTarget");
+  assert.equal(historyUpdate.metadata.purgeable, true);
+  assert.equal(historyUpdate.metadata.reason, "history-retained-layer-target");
+});
+
+test("pruneOrphanRasterTargets releases stale paint targets after history is cleared", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const activeTexture = {};
+  const staleTexture = {};
+  const deleted = [];
+
+  window.CBO.documentHistory = {
+    redoStack: [],
+    undoStack: [],
+  };
+  renderer.isDisposed = false;
+  renderer.layerModel = {
+    activeLayerId: "active-layer",
+    findEntryById: (layerId) => {
+      if (layerId === "active-layer") {
+        return { id: "active-layer", type: "paint" };
+      }
+
+      return null;
+    },
+    flattenTopToBottom: () => [{ id: "active-layer", type: "paint" }],
+    getEntries: () => [{ id: "active-layer", type: "paint" }],
+  };
+  renderer.paintLayerId = "deleted-layer";
+  renderer.texture = staleTexture;
+  renderer.framebuffer = {};
+  renderer.rasterTargetsByLayerId = new Map([
+    ["active-layer", { framebuffer: {}, texture: activeTexture }],
+    ["deleted-layer", { framebuffer: {}, texture: staleTexture }],
+  ]);
+  renderer.updateRasterTargetResourceMetadata = (target) => target;
+  renderer.deleteRasterTarget = (layerId, options = {}) => {
+    assert.equal(options.emit, false);
+    deleted.push(layerId);
+    renderer.rasterTargetsByLayerId.delete(layerId);
+    return true;
+  };
+
+  assert.equal(renderer.pruneOrphanRasterTargets(), 1);
+  assert.deepEqual(deleted, ["deleted-layer"]);
+  assert.equal(renderer.rasterTargetsByLayerId.has("deleted-layer"), false);
+  assert.equal(renderer.paintLayerId, "active-layer");
+  assert.equal(renderer.texture, activeTexture);
+});
+
 test("raster snapshot rectangles clamp crop bounds safely", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
