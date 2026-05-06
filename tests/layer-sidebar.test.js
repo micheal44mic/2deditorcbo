@@ -53,6 +53,17 @@ test("right sidebar shows layer controls for the selection tool", () => {
   assert.match(css, /--layer-sidebar-range-progress/);
 });
 
+test("layers panel serializes layers without resetting opacity", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "layers-panel.js"), "utf8");
+  const serializeBody = source.match(
+    /function serializeLayerEntry\(entry\) \{([\s\S]*?)\n  function syncLayerModelFromDom/,
+  )?.[1] || "";
+
+  assert.match(source, /function normalizeLayerOpacity\(value, fallback = 1\)/);
+  assert.doesNotMatch(serializeBody, /\.filter\(\(\[key\]\) => !\[[^\]]*"opacity"/);
+  assert.match(serializeBody, /opacity: normalizeLayerOpacity\(existingEntry\?\.opacity\)/);
+});
+
 test("layer sidebar blend menu persists blend mode metadata", () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
   const blendModesSource = fs.readFileSync(path.join(repoRoot, "js", "blend-modes.js"), "utf8");

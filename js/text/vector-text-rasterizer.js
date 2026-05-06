@@ -17,6 +17,12 @@
     return value;
   }
 
+  function normalizeLayerOpacity(value, fallback = 1) {
+    const opacity = Number(value);
+
+    return Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : fallback;
+  }
+
   function safeSelectorId(value) {
     if (window.CSS?.escape) {
       return window.CSS.escape(value);
@@ -78,6 +84,7 @@
     };
 
     clonedLayer.classList.remove("active");
+    clonedLayer.setAttribute("opacity", "1");
     clonedLayer.querySelectorAll(".editor-vector-envelope-ui").forEach((node) => node.remove());
 
     svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
@@ -303,9 +310,10 @@
 
     const beforeState = history?.getLayerSnapshot?.(layerModel) || null;
     const rasterLayer = layerModel.createLayer({
+      blendMode: layer.blendMode,
       locked: layer.locked === true,
       name: layer.name || "Text",
-      opacity: 1,
+      opacity: normalizeLayerOpacity(layer.opacity),
       type: "paint",
       visible: layer.visible !== false,
     });

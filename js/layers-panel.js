@@ -64,6 +64,12 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return row?.dataset.layerId || "";
   }
 
+  function normalizeLayerOpacity(value, fallback = 1) {
+    const opacity = Number(value);
+
+    return Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : fallback;
+  }
+
   function isInsideCollapsedGroup(row) {
     let entry = getLayerEntry(row);
 
@@ -368,7 +374,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const preservedEntry = existingEntry
       ? Object.fromEntries(
           Object.entries(existingEntry)
-            .filter(([key]) => !["id", "type", "name", "visible", "locked", "opacity", "children"].includes(key)),
+            .filter(([key]) => !["id", "type", "name", "visible", "locked", "children"].includes(key)),
         )
       : {};
     const serialized = {
@@ -380,7 +386,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
         : row?.querySelector(":scope .layer-name")?.textContent.trim() || (type === "group" ? "Group" : "Layer"),
       visible: !row?.classList.contains("hidden-layer"),
       locked: isBackground || row?.classList.contains("locked") === true,
-      opacity: 1,
+      opacity: normalizeLayerOpacity(existingEntry?.opacity),
     };
 
     if (type === "group") {

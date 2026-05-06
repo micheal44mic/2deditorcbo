@@ -303,6 +303,17 @@ test("manual vector text rasterization records one custom entry for layer and pi
   assert.match(source, /layerModel\.setActiveLayer\(rasterLayer\.id, \{ history: false, source: "vector-text-rasterize" \}\)/);
 });
 
+test("manual vector text rasterization preserves layer opacity on the paint replacement", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-rasterizer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /function normalizeLayerOpacity\(value, fallback = 1\)/);
+  assert.match(source, /clonedLayer\.setAttribute\("opacity", "1"\)/);
+  assert.match(source, /opacity: normalizeLayerOpacity\(layer\.opacity\)/);
+});
+
 test("vector text rasterize history entry restores pixels and releases GPU snapshots", () => {
   const namespace = loadVectorTextRasterizerNamespace();
   const calls = [];
