@@ -10,6 +10,10 @@
   max-width: calc(100vw - var(--left-panel-width) - var(--right-panel-width) - 24px);
 }
 
+.top-toolbar-dock.color-picker-open {
+  z-index: 10020;
+}
+
 .top-toolbar-dock .tool-popover {
   top: calc(100% + 12px);
   bottom: auto;

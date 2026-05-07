@@ -324,6 +324,7 @@ window.CBO.initColorPicker = function initColorPicker() {
   function setOpen(isOpen) {
     popover.hidden = !isOpen;
     button.classList.toggle("open", isOpen);
+    dock.classList.toggle("color-picker-open", isOpen);
     button.classList.remove("tooltip-visible");
     button.setAttribute("aria-expanded", String(isOpen));
 

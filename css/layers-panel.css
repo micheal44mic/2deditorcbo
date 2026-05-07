@@ -377,3 +377,135 @@
   color: #747b88;
   pointer-events: none;
 }
+
+@media (max-width: 900px), (pointer: coarse) {
+  .left-drawer[data-drawer-panel="layers"] .drawer-panel-header {
+    height: 42px;
+  }
+
+  .left-drawer[data-drawer-panel="layers"] .drawer-panel-action {
+    width: 42px;
+    height: 42px;
+    border-radius: 8px;
+  }
+
+  .left-drawer[data-drawer-panel="layers"] .drawer-panel-action svg {
+    width: 27px;
+    height: 27px;
+  }
+
+  .left-drawer[data-drawer-panel="layers"] .drawer-content {
+    top: 116px;
+  }
+
+  .layers-list,
+  .layer-children {
+    gap: 3px;
+  }
+
+  .layer-children {
+    margin-left: 18px;
+  }
+
+  .layer-row {
+    min-height: 46px;
+    height: 46px;
+    padding: 0 7px 0 calc(7px + var(--layer-indent));
+    border-radius: 7px;
+    touch-action: pan-y;
+  }
+
+  .layer-row.active::before {
+    top: 8px;
+    bottom: 8px;
+    width: 4px;
+  }
+
+  .layer-info {
+    gap: 6px;
+  }
+
+  .layer-disclosure-button,
+  .layer-disclosure-spacer {
+    width: 28px;
+    height: 40px;
+    flex-basis: 28px;
+  }
+
+  .layer-disclosure-button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .layer-icon-stack {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+  }
+
+  .layer-file-icon,
+  .layer-file-icon svg {
+    width: 23px;
+    height: 23px;
+  }
+
+  .layer-name {
+    font-size: 13px;
+  }
+
+  .layer-actions {
+    gap: 4px;
+  }
+
+  .layer-action {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+  }
+
+  .layer-action svg {
+    width: 21px;
+    height: 21px;
+  }
+
+  .layer-lock-button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .layer-row.reference-layer .layer-info::after {
+    height: 20px;
+    padding: 0 7px;
+    margin-left: 2px;
+    font-size: 10px;
+  }
+
+  .layer-clipping-indicator {
+    top: -7px;
+    left: -9px;
+    width: 18px;
+    height: 18px;
+  }
+
+  .layer-clipping-indicator svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .layer-row.clipping-mask .layer-icon-stack {
+    margin-left: 8px;
+  }
+
+  .layer-context-menu {
+    min-width: 210px;
+    padding: 8px;
+    border-radius: 8px;
+  }
+
+  .layer-context-menu-item {
+    height: 44px;
+    padding: 0 13px;
+    border-radius: 7px;
+    font-size: 12px;
+  }
+}

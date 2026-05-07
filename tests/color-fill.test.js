@@ -122,6 +122,7 @@ function createFakeGl() {
 test("color drop is wired to the Procreate-style fill module", () => {
   const indexSource = readRepoFile("index.html");
   const colorDropSource = readRepoFile("js", "color-drop.js");
+  const cssSource = readRepoFile("css", "color-drop.css");
   const imageRasterizerIndex = indexSource.indexOf("./js/images/image-rasterizer.js");
   const colorFillIndex = indexSource.indexOf("./js/color-fill.js");
   const editorCanvasIndex = indexSource.indexOf("./js/editor-canvas.js");
@@ -135,6 +136,10 @@ test("color drop is wired to the Procreate-style fill module", () => {
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.dropColorAt\?\.\(dropX, dropY, color\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.endDropDrag\?\.\(\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.cancelDropDrag\?\.\(\)/);
+  assert.match(colorDropSource, /function isPrimaryColorPointer\(event\)/);
+  assert.match(colorDropSource, /event\.pointerType === "touch"/);
+  assert.match(colorDropSource, /event\.pointerType === "pen"/);
+  assert.match(cssSource, /\.color-picker-button,\s*\.color-picker-swatch \{[\s\S]*touch-action: none;/);
 });
 
 test("color fill uses active layer pixels unless a reference layer is set", () => {
@@ -443,9 +448,12 @@ test("color fill exposes a top-center threshold range styled like quick brush co
   const cssSource = readRepoFile("css", "color-drop.css");
 
   assert.match(source, /DEFAULT_FILL_TOLERANCE = 48/);
+  assert.match(source, /THRESHOLD_HIDE_DELAY_MS = 5000/);
   assert.match(source, /className = "bottom-toolbar color-fill-threshold-toolbar"/);
   assert.match(source, /type="range" min="0" max="\$\{MAX_FILL_TOLERANCE\}" step="1"/);
   assert.match(source, /setTolerance\(thresholdInput\.value\)/);
+  assert.match(source, /thresholdInput\?\.addEventListener\("focus", showThresholdControl\)/);
+  assert.match(source, /function isThresholdControlInteractive\(\)/);
   assert.match(cssSource, /\.color-fill-threshold-toolbar/);
   assert.match(cssSource, /left: calc\(var\(--left-panel-width\) \+ \(\(100vw - var\(--left-panel-width\) - var\(--right-panel-width\)\) \/ 2\)\)/);
   assert.match(cssSource, /--color-fill-threshold-progress/);

@@ -652,6 +652,7 @@ body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay {
 
 @media (max-width: 900px) {
   .editor-page {
+    --left-drawer-width: min(336px, calc(100vw - var(--left-rail-width) - 10px));
     --right-panel-width: 0px;
   }
 

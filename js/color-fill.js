@@ -5,7 +5,7 @@
   const FILL_EDGE_AA_RADIUS = 1;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_MIB = 1024 * 1024;
-  const THRESHOLD_HIDE_DELAY_MS = 1400;
+  const THRESHOLD_HIDE_DELAY_MS = 5000;
   const FILL_MEMORY_POLICY = Object.freeze({
     hugeCoverage: 0.35,
     largeMaxBytes: 128 * RASTER_MIB,
@@ -143,6 +143,11 @@
       setTolerance(thresholdInput.value);
       showThresholdControl();
     });
+    thresholdInput?.addEventListener("focus", showThresholdControl);
+    thresholdInput?.addEventListener("blur", () => hideThresholdControl());
+
+    thresholdToolbar.addEventListener("pointerenter", showThresholdControl);
+    thresholdToolbar.addEventListener("pointerleave", () => hideThresholdControl());
 
     ["pointerdown", "pointermove", "pointerup", "click"].forEach((eventName) => {
       thresholdToolbar.addEventListener(eventName, (event) => {
@@ -165,6 +170,16 @@
     updateThresholdToolbar();
   }
 
+  function isThresholdControlInteractive() {
+    return Boolean(
+      thresholdToolbar &&
+      (
+        document.activeElement === thresholdInput ||
+        (typeof thresholdToolbar.matches === "function" && thresholdToolbar.matches(":hover"))
+      ),
+    );
+  }
+
   function hideThresholdControl(delay = THRESHOLD_HIDE_DELAY_MS) {
     if (!thresholdToolbar) {
       return;
@@ -172,6 +187,11 @@
 
     window.clearTimeout(thresholdHideTimer);
     thresholdHideTimer = window.setTimeout(() => {
+      if (delay > 0 && isThresholdControlInteractive()) {
+        hideThresholdControl();
+        return;
+      }
+
       thresholdToolbar?.classList.remove("visible");
       if (thresholdToolbar) {
         thresholdToolbar.hidden = true;

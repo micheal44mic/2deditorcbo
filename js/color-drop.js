@@ -26,6 +26,14 @@ window.CBO.initColorDrop = function initColorDrop() {
   let isDragging = false;
   let suppressNextClick = false;
 
+  function isPrimaryColorPointer(event) {
+    if (event.isPrimary === false) {
+      return false;
+    }
+
+    return event.button === 0 || event.pointerType === "touch" || event.pointerType === "pen";
+  }
+
   function ensureGooFilter() {
     if (document.getElementById("color-drop-goo")) {
       return;
@@ -117,6 +125,7 @@ window.CBO.initColorDrop = function initColorDrop() {
 
     if (popover && !popover.hidden) {
       popover.hidden = true;
+      popover.closest(".top-toolbar-dock")?.classList.remove("color-picker-open");
       button.classList.remove("open");
       button.setAttribute("aria-expanded", "false");
     }
@@ -200,7 +209,7 @@ window.CBO.initColorDrop = function initColorDrop() {
   }
 
   button.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest(".color-picker-popover")) {
+    if (!isPrimaryColorPointer(event) || event.target.closest(".color-picker-popover")) {
       return;
     }
 

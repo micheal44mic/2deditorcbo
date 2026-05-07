@@ -64,6 +64,23 @@ test("layers panel serializes layers without resetting opacity", () => {
   assert.match(serializeBody, /opacity: normalizeLayerOpacity\(existingEntry\?\.opacity\)/);
 });
 
+test("layers panel has mobile-sized touch controls and long-press context menu", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "layers-panel.js"), "utf8");
+  const css = fs.readFileSync(path.join(repoRoot, "css", "layers-panel.css"), "utf8");
+  const layoutCss = fs.readFileSync(path.join(repoRoot, "css", "layout.css"), "utf8");
+
+  assert.match(source, /const layerTouchLongPressDelay = 520/);
+  assert.match(source, /function beginLayerLongPress\(row, event\)/);
+  assert.match(source, /return event\.pointerType === "touch"/);
+  assert.match(source, /selectLayerFromPointer\(row, event\);\s*beginLayerLongPress\(row, event\);/);
+  assert.match(source, /openLayerContextMenu\(state\.row, \{\s*clientX: state\.clientX,\s*clientY: state\.clientY,\s*\}\)/);
+  assert.match(css, /@media \(max-width: 900px\), \(pointer: coarse\)/);
+  assert.match(css, /\.layer-row \{\s*min-height: 46px;\s*height: 46px;/);
+  assert.match(css, /\.layer-action \{\s*width: 38px;\s*height: 38px;/);
+  assert.match(css, /\.layer-context-menu-item \{\s*height: 44px;/);
+  assert.match(layoutCss, /--left-drawer-width: min\(336px, calc\(100vw - var\(--left-rail-width\) - 10px\)\)/);
+});
+
 test("layer sidebar blend menu persists blend mode metadata", () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
   const blendModesSource = fs.readFileSync(path.join(repoRoot, "js", "blend-modes.js"), "utf8");

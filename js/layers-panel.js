@@ -21,8 +21,12 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   let layerLimitToastTimer = 0;
   let contextMenuLayerId = "";
   let suppressNextClick = false;
+  let suppressNextClickTimer = 0;
+  let layerLongPressState = null;
   let isRenderingLayerModel = false;
   let isSyncingLayerModelFromDom = false;
+  const layerTouchLongPressDelay = 520;
+  const layerTouchMoveTolerance = 10;
   const layerModel = window.CBO.documentLayerModel ||
     (window.CBO.DocumentLayerModel ? new window.CBO.DocumentLayerModel() : null);
 
@@ -328,6 +332,36 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     rangeAnchor = null;
     focusedLayer = null;
     syncActiveLayerUi();
+  }
+
+  function suppressUpcomingLayerClick(duration = 450) {
+    suppressNextClick = true;
+
+    if (suppressNextClickTimer) {
+      window.clearTimeout(suppressNextClickTimer);
+    }
+
+    suppressNextClickTimer = window.setTimeout(() => {
+      suppressNextClick = false;
+      suppressNextClickTimer = 0;
+    }, duration);
+  }
+
+  function consumeSuppressedLayerClick(event) {
+    if (!suppressNextClick) {
+      return false;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    suppressNextClick = false;
+
+    if (suppressNextClickTimer) {
+      window.clearTimeout(suppressNextClickTimer);
+      suppressNextClickTimer = 0;
+    }
+
+    return true;
   }
 
   function finishLayerRename(name, shouldCommit) {
@@ -1193,6 +1227,110 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
   }
 
+  function isTouchLayerPointer(event) {
+    return event.pointerType === "touch";
+  }
+
+  function cancelLayerDrag(pointerId) {
+    if (!dragState || dragState.pointerId !== pointerId) {
+      return;
+    }
+
+    dragState.sourceEntries.forEach((entry) => entry.classList.remove("dragging"));
+    clearDropHints();
+
+    if (dragState.sourceRow.hasPointerCapture(pointerId)) {
+      dragState.sourceRow.releasePointerCapture(pointerId);
+    }
+
+    dragState = null;
+  }
+
+  function clearLayerLongPressState(options = {}) {
+    const state = layerLongPressState;
+
+    if (!state) {
+      return;
+    }
+
+    window.clearTimeout(state.timer);
+
+    if (options.suppressClick && state.didOpen) {
+      suppressUpcomingLayerClick();
+    }
+
+    layerLongPressState = null;
+  }
+
+  function beginLayerLongPress(row, event) {
+    if (!isTouchLayerPointer(event) || event.isPrimary === false) {
+      return;
+    }
+
+    clearLayerLongPressState();
+
+    const state = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      didOpen: false,
+      pointerId: event.pointerId,
+      row,
+      startX: event.clientX,
+      startY: event.clientY,
+      timer: 0,
+    };
+
+    state.timer = window.setTimeout(() => {
+      if (layerLongPressState !== state || !state.row.isConnected) {
+        return;
+      }
+
+      state.didOpen = true;
+      cancelLayerDrag(state.pointerId);
+      selectOnlyLayer(state.row);
+      openLayerContextMenu(state.row, {
+        clientX: state.clientX,
+        clientY: state.clientY,
+      });
+      suppressUpcomingLayerClick();
+    }, layerTouchLongPressDelay);
+
+    layerLongPressState = state;
+  }
+
+  function updateLayerLongPress(event) {
+    const state = layerLongPressState;
+
+    if (!state || state.pointerId !== event.pointerId) {
+      return;
+    }
+
+    state.clientX = event.clientX;
+    state.clientY = event.clientY;
+
+    if (state.didOpen) {
+      event.preventDefault();
+      return;
+    }
+
+    const distanceX = event.clientX - state.startX;
+    const distanceY = event.clientY - state.startY;
+
+    if (Math.hypot(distanceX, distanceY) > layerTouchMoveTolerance) {
+      clearLayerLongPressState();
+    }
+  }
+
+  function stopLayerLongPress(event) {
+    const state = layerLongPressState;
+
+    if (!state || state.pointerId !== event.pointerId) {
+      return;
+    }
+
+    clearLayerLongPressState({ suppressClick: true });
+  }
+
   function startLayerDrag(row, event) {
     if (isLayerLocked(row)) {
       return;
@@ -1209,6 +1347,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       dropIntent: null,
       isDragging: false,
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
       sourceEntries,
       sourceRow: row,
       startX: event.clientX,
@@ -1223,14 +1362,21 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
+    if (layerLongPressState?.pointerId === event.pointerId && layerLongPressState.didOpen) {
+      event.preventDefault();
+      return;
+    }
+
     const distanceX = event.clientX - dragState.startX;
     const distanceY = event.clientY - dragState.startY;
+    const dragThreshold = dragState.pointerType === "touch" ? layerTouchMoveTolerance : 4;
 
-    if (!dragState.isDragging && Math.hypot(distanceX, distanceY) < 4) {
+    if (!dragState.isDragging && Math.hypot(distanceX, distanceY) < dragThreshold) {
       return;
     }
 
     if (!dragState.isDragging) {
+      clearLayerLongPressState();
       dragState.isDragging = true;
       dragState.sourceEntries.forEach((entry) => entry.classList.add("dragging"));
     }
@@ -1248,10 +1394,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
     if (wasDragging) {
       applyDropIntent();
-      suppressNextClick = true;
-      window.setTimeout(() => {
-        suppressNextClick = false;
-      }, 0);
+      suppressUpcomingLayerClick();
     }
 
     dragState.sourceEntries.forEach((entry) => entry.classList.remove("dragging"));
@@ -1424,12 +1567,26 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
+    if (isTouchLayerPointer(event)) {
+      selectLayerFromPointer(row, event);
+      beginLayerLongPress(row, event);
+    }
+
     startLayerDrag(row, event);
   });
 
-  panel.addEventListener("pointermove", updateLayerDrag);
-  panel.addEventListener("pointerup", stopLayerDrag);
-  panel.addEventListener("pointercancel", stopLayerDrag);
+  panel.addEventListener("pointermove", (event) => {
+    updateLayerLongPress(event);
+    updateLayerDrag(event);
+  });
+  panel.addEventListener("pointerup", (event) => {
+    stopLayerLongPress(event);
+    stopLayerDrag(event);
+  });
+  panel.addEventListener("pointercancel", (event) => {
+    stopLayerLongPress(event);
+    stopLayerDrag(event);
+  });
   panel.addEventListener("contextmenu", (event) => {
     const target = event.target;
     const row = target instanceof Element ? target.closest("[data-layer-row]") : null;
@@ -1526,8 +1683,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
-    if (suppressNextClick) {
-      event.preventDefault();
+    if (consumeSuppressedLayerClick(event)) {
       return;
     }
 

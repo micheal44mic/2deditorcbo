@@ -8,6 +8,11 @@
   pointer-events: none;
 }
 
+.color-picker-button,
+.color-picker-swatch {
+  touch-action: none;
+}
+
 .color-drop-ghost,
 .color-drop-ripple {
   position: fixed;
