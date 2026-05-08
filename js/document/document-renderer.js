@@ -822,6 +822,7 @@ void main() {
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
   const PREVIEW_CACHE_ZOOM_THRESHOLD = 25.0;
+  const PREVIEW_CACHE_MAX_SIZE = 2048;
 
   function normalizeAngle(value) {
     const number = Number(value);
@@ -936,6 +937,9 @@ void main() {
         documentSizeCap: Number.isFinite(options.documentSizeCap) && options.documentSizeCap > 0
           ? Math.floor(options.documentSizeCap)
           : null,
+        previewCacheMaxSize: Number.isFinite(options.previewCacheMaxSize) && options.previewCacheMaxSize > 0
+          ? Math.floor(options.previewCacheMaxSize)
+          : PREVIEW_CACHE_MAX_SIZE,
       };
       this.layerModel = options.layerModel ||
         (namespace.DocumentLayerModel ? new namespace.DocumentLayerModel() : null);
@@ -950,6 +954,9 @@ void main() {
       this.rasterTransformPreview = null;
       this.previewTexture = null;
       this.previewFramebuffer = null;
+      this.previewCacheWidth = 0;
+      this.previewCacheHeight = 0;
+      this.previewCacheScale = 1;
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewCacheReady = false;
@@ -3547,8 +3554,33 @@ void main() {
       return { vao, buffer };
     }
 
+    getPreviewCacheDimensions() {
+      const documentWidth = Math.max(1, Math.round(this.width || 1));
+      const documentHeight = Math.max(1, Math.round(this.height || 1));
+      const maxSize = Math.max(1, Math.floor(Number(this.options.previewCacheMaxSize) || PREVIEW_CACHE_MAX_SIZE));
+      const scale = Math.min(1, maxSize / Math.max(documentWidth, documentHeight));
+      const width = Math.max(1, Math.floor(documentWidth * scale));
+      const height = Math.max(1, Math.floor(documentHeight * scale));
+      const effectiveScale = Math.min(width / documentWidth, height / documentHeight);
+
+      return {
+        documentHeight,
+        documentWidth,
+        height,
+        scale: Math.max(0.0001, effectiveScale),
+        width,
+      };
+    }
+
     createPreviewCache() {
-      if (this.previewTexture && this.previewFramebuffer) {
+      const dimensions = this.getPreviewCacheDimensions();
+
+      if (
+        this.previewTexture &&
+        this.previewFramebuffer &&
+        this.previewCacheWidth === dimensions.width &&
+        this.previewCacheHeight === dimensions.height
+      ) {
         return true;
       }
 
@@ -3573,8 +3605,7 @@ void main() {
         return false;
       }
 
-      const width = Math.max(1, Math.round(this.width || 1));
-      const height = Math.max(1, Math.round(this.height || 1));
+      const { documentHeight, documentWidth, height, scale, width } = dimensions;
       const levels = Math.max(1, Math.floor(Math.log2(Math.max(width, height))) + 1);
 
       gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -3607,12 +3638,21 @@ void main() {
 
       this.previewTexture = texture;
       this.previewFramebuffer = framebuffer;
+      this.previewCacheWidth = width;
+      this.previewCacheHeight = height;
+      this.previewCacheScale = scale;
       this.previewMipLevels = levels;
       this.previewCacheDirty = true;
       this.previewCacheReady = false;
       this.previewCacheReason = "init";
 
       const textureRow = this.registerRasterTexture(texture, {
+        bbox: {
+          x: 0,
+          y: 0,
+          width: documentWidth,
+          height: documentHeight,
+        },
         height,
         kind: "previewMip",
         label: "preview mip cache",
@@ -3625,6 +3665,12 @@ void main() {
       });
 
       this.registerRasterFramebuffer(framebuffer, {
+        bbox: {
+          x: 0,
+          y: 0,
+          width: documentWidth,
+          height: documentHeight,
+        },
         height,
         kind: "previewMipFramebuffer",
         label: "preview mip framebuffer",
@@ -3654,6 +3700,9 @@ void main() {
         this.previewTexture = null;
       }
 
+      this.previewCacheWidth = 0;
+      this.previewCacheHeight = 0;
+      this.previewCacheScale = 1;
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewCacheReady = false;
@@ -8506,31 +8555,37 @@ void main() {
       }
 
       const gl = this.gl;
-      const width = Math.max(1, Math.round(this.width || 1));
-      const height = Math.max(1, Math.round(this.height || 1));
+      const documentWidth = Math.max(1, Math.round(this.width || 1));
+      const documentHeight = Math.max(1, Math.round(this.height || 1));
+      const cacheWidth = Math.max(1, Math.round(this.previewCacheWidth || documentWidth));
+      const cacheHeight = Math.max(1, Math.round(this.previewCacheHeight || documentHeight));
+      const cacheScale = Math.max(
+        0.0001,
+        Number(this.previewCacheScale) || Math.min(cacheWidth / documentWidth, cacheHeight / documentHeight),
+      );
       const { program, uniforms } = this.programInfo;
-      const flatCamera = { x: 0, y: 0, zoom: 1 };
-      const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
-        gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
+      const flatCamera = { x: 0, y: 0, zoom: cacheScale };
+      const setDocumentProjection = (projectionWidth, projectionHeight, cameraX, cameraY, cameraZoom = cacheScale) => {
+        gl.uniform2f(uniforms.documentSize, projectionWidth, projectionHeight);
         gl.uniform2f(uniforms.cameraPosition, cameraX, cameraY);
+        gl.uniform1f(uniforms.cameraZoom, cameraZoom);
       };
       const bindArtboardProgram = () => {
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
-        gl.viewport(0, 0, width, height);
+        gl.viewport(0, 0, cacheWidth, cacheHeight);
         gl.useProgram(program);
-        gl.uniform2f(uniforms.viewportSize, width, height);
-        setDocumentProjection(width, height, 0, 0);
-        gl.uniform1f(uniforms.cameraZoom, 1);
+        gl.uniform2f(uniforms.viewportSize, cacheWidth, cacheHeight);
+        setDocumentProjection(documentWidth, documentHeight, 0, 0);
         gl.uniform1i(uniforms.texture, 0);
         gl.uniform1i(uniforms.maskTexture, 1);
         gl.uniform1i(uniforms.clipTexture, 2);
         gl.uniform1f(uniforms.maskMode, 0.0);
         gl.uniform1f(uniforms.maskRectMode, 0.0);
-        gl.uniform4f(uniforms.maskRect, 0, 0, width, height);
+        gl.uniform4f(uniforms.maskRect, 0, 0, documentWidth, documentHeight);
         gl.uniform1f(uniforms.clipMode, 0.0);
         gl.uniform1f(uniforms.clipOpacity, 1.0);
         gl.uniform2f(uniforms.clipOrigin, 0, 0);
-        gl.uniform2f(uniforms.clipTextureSize, width, height);
+        gl.uniform2f(uniforms.clipTextureSize, documentWidth, documentHeight);
         gl.uniform2f(uniforms.drawOrigin, 0, 0);
         gl.uniform1f(uniforms.previewCutMode, 0.0);
         gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
@@ -8543,10 +8598,10 @@ void main() {
       };
       const drawTexture = (texture, opacity = 1, rect = null, clipBase = null) => {
         if (rect) {
-          setDocumentProjection(rect.width, rect.height, rect.x, rect.y);
+          setDocumentProjection(rect.width, rect.height, rect.x * cacheScale, rect.y * cacheScale);
           gl.uniform2f(uniforms.drawOrigin, rect.x, rect.y);
         } else {
-          setDocumentProjection(width, height, 0, 0);
+          setDocumentProjection(documentWidth, documentHeight, 0, 0);
           gl.uniform2f(uniforms.drawOrigin, 0, 0);
         }
 
@@ -8567,15 +8622,15 @@ void main() {
           );
           gl.uniform2f(
             uniforms.clipTextureSize,
-            clipBase.target.width || width,
-            clipBase.target.height || height,
+            clipBase.target.width || documentWidth,
+            clipBase.target.height || documentHeight,
           );
           gl.activeTexture(gl.TEXTURE0);
         } else {
           gl.uniform1f(uniforms.clipMode, 0.0);
           gl.uniform1f(uniforms.clipOpacity, 1.0);
           gl.uniform2f(uniforms.clipOrigin, 0, 0);
-          gl.uniform2f(uniforms.clipTextureSize, width, height);
+          gl.uniform2f(uniforms.clipTextureSize, documentWidth, documentHeight);
         }
 
         gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -8599,32 +8654,32 @@ void main() {
           return;
         }
 
-        const backdropTexture = this.copyCurrentFramebufferToLayerBlendBackdrop(width, height);
+        const backdropTexture = this.copyCurrentFramebufferToLayerBlendBackdrop(cacheWidth, cacheHeight);
         const { program: blendProgram, uniforms: blendUniforms } = this.ensureLayerBlendProgramInfo();
 
         gl.disable(gl.BLEND);
         gl.useProgram(blendProgram);
-        gl.uniform2f(blendUniforms.viewportSize, width, height);
+        gl.uniform2f(blendUniforms.viewportSize, cacheWidth, cacheHeight);
         if (rect) {
           gl.uniform2f(blendUniforms.documentSize, rect.width, rect.height);
-          gl.uniform2f(blendUniforms.cameraPosition, rect.x, rect.y);
+          gl.uniform2f(blendUniforms.cameraPosition, rect.x * cacheScale, rect.y * cacheScale);
           gl.uniform2f(blendUniforms.drawOrigin, rect.x, rect.y);
         } else {
-          gl.uniform2f(blendUniforms.documentSize, width, height);
+          gl.uniform2f(blendUniforms.documentSize, documentWidth, documentHeight);
           gl.uniform2f(blendUniforms.cameraPosition, 0, 0);
           gl.uniform2f(blendUniforms.drawOrigin, 0, 0);
         }
-        gl.uniform1f(blendUniforms.cameraZoom, 1);
+        gl.uniform1f(blendUniforms.cameraZoom, cacheScale);
         gl.uniform1i(blendUniforms.texture, 0);
         gl.uniform1i(blendUniforms.backdropTexture, 3);
         gl.uniform1i(blendUniforms.maskTexture, 1);
         gl.uniform1i(blendUniforms.clipTexture, 2);
         gl.uniform1f(blendUniforms.opacity, opacity);
         gl.uniform1i(blendUniforms.blendMode, blendModeId);
-        gl.uniform2f(blendUniforms.backdropSize, width, height);
+        gl.uniform2f(blendUniforms.backdropSize, cacheWidth, cacheHeight);
         gl.uniform1f(blendUniforms.maskMode, 0.0);
         gl.uniform1f(blendUniforms.maskRectMode, 0.0);
-        gl.uniform4f(blendUniforms.maskRect, 0, 0, width, height);
+        gl.uniform4f(blendUniforms.maskRect, 0, 0, documentWidth, documentHeight);
         if (clipBase?.target?.texture) {
           const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
             ? Math.min(1, Math.max(0, clipBase.layer.opacity))
@@ -8641,14 +8696,14 @@ void main() {
           );
           gl.uniform2f(
             blendUniforms.clipTextureSize,
-            clipBase.target.width || width,
-            clipBase.target.height || height,
+            clipBase.target.width || documentWidth,
+            clipBase.target.height || documentHeight,
           );
         } else {
           gl.uniform1f(blendUniforms.clipMode, 0.0);
           gl.uniform1f(blendUniforms.clipOpacity, 1.0);
           gl.uniform2f(blendUniforms.clipOrigin, 0, 0);
-          gl.uniform2f(blendUniforms.clipTextureSize, width, height);
+          gl.uniform2f(blendUniforms.clipTextureSize, documentWidth, documentHeight);
         }
         gl.uniform1f(blendUniforms.previewCutMode, 0.0);
         gl.uniform4f(blendUniforms.previewCutRect, 0, 0, 0, 0);
@@ -8668,7 +8723,7 @@ void main() {
       };
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
-      gl.viewport(0, 0, width, height);
+      gl.viewport(0, 0, cacheWidth, cacheHeight);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.enable(gl.BLEND);
@@ -8761,8 +8816,8 @@ void main() {
               const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
                 camera: flatCamera,
                 sourceTexture: layerTexture,
-                viewportHeight: height,
-                viewportWidth: width,
+                viewportHeight: cacheHeight,
+                viewportWidth: cacheWidth,
               });
 
               bindArtboardProgram();

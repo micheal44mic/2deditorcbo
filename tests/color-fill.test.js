@@ -149,11 +149,16 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /recordReferenceStateChange\?\.\(previousLayerId, nextLayerId,/);
   assert.match(source, /function clearReferenceLayerId\(options = \{\}\)/);
   assert.match(source, /function getExistingRasterTarget\(layerId\)/);
-  assert.match(source, /function getReferenceTarget\(writeTarget\)/);
-  assert.match(source, /function createReferencePixelSource\(gl, referenceTarget\)/);
+  assert.match(source, /function getReferenceTarget\(writeLayerId, fallbackTarget = null\)/);
+  assert.match(source, /function createSparseReferencePixelSource\(gl, sparseTarget, options = \{\}\)/);
+  assert.match(source, /function createReferencePixelSource\(gl, referenceTarget, options = \{\}\)/);
+  assert.match(source, /function getFillAnalysisRect\(referenceSource, targetWidth, targetHeight, seedX, seedY\)/);
   assert.match(source, /function getReferencePixelOffset\(referenceSource, documentX, documentY\)/);
-  assert.match(source, /const referenceTarget = getReferenceTarget\(target\)/);
+  assert.match(source, /const referenceTarget = getReferenceTarget\(writableLayer\.layerId, writableLayer\.existingTarget\)/);
   assert.match(source, /const referenceFramebuffer = referenceTarget\.framebuffer/);
+  assert.match(source, /renderer\?\.isSparseRasterTarget\?\.\(existingTarget\) === true/);
+  assert.match(source, /renderer\?\.isSparseRasterTarget\?\.\(referenceTarget\) === true/);
+  assert.match(source, /reason: "color-fill-reference-hydrate"/);
   assert.match(source, /return null;/);
   assert.doesNotMatch(source, /updatePreviewCacheIfNeeded/);
   assert.doesNotMatch(source, /previewFramebuffer/);
@@ -203,6 +208,366 @@ test("color fill reference changes are recorded in document history", () => {
     { afterLayerId: "ref", beforeLayerId: "", source: "unit-reference" },
     { afterLayerId: "", beforeLayerId: "ref", source: "unit-clear-reference" },
   ]);
+});
+
+test("color fill samples sparse reference layer tiles instead of falling back to the target", () => {
+  const CBO = loadColorFillModule();
+  const gl = createFakeGl();
+  const activeFramebuffer = createFramebuffer(8, 8);
+  const referenceFramebuffer = createFramebuffer(4, 4);
+  const activeTarget = {
+    cropped: false,
+    framebuffer: activeFramebuffer,
+    height: 8,
+    layerId: "paint",
+    texture: {},
+    width: 8,
+    x: 0,
+    y: 0,
+  };
+  const referenceTile = {
+    framebuffer: referenceFramebuffer,
+    height: 4,
+    texture: {},
+    tx: 0,
+    ty: 0,
+    width: 4,
+    x: 2,
+    y: 2,
+  };
+  const referenceTarget = {
+    layerId: "ref",
+    sparse: true,
+    tileSize: 4,
+    tiles: new Map([["0:0", referenceTile]]),
+  };
+  const snapshots = [];
+
+  setTopDownPixel(referenceFramebuffer, 1, 1, [255, 255, 255, 255]);
+
+  CBO.brushEngine = {
+    screenToDocumentSpace: () => ({
+      docX: 3,
+      docY: 3,
+    }),
+  };
+  CBO.documentLayerModel = {
+    activeLayerId: "paint",
+    findEntryById(layerId) {
+      if (layerId === "paint") {
+        return { id: "paint", type: "paint" };
+      }
+
+      if (layerId === "ref") {
+        return { id: "ref", type: "paint" };
+      }
+
+      return null;
+    },
+  };
+  CBO.documentRenderer = {
+    gl,
+    height: 8,
+    rasterTargetsByLayerId: new Map([
+      ["paint", activeTarget],
+      ["ref", referenceTarget],
+    ]),
+    width: 8,
+    createRasterSnapshot(layerId, dirtyRect, source) {
+      snapshots.push({
+        dirtyRect: { ...dirtyRect },
+        layerId,
+        source,
+      });
+
+      return { texture: {} };
+    },
+    deleteRasterSnapshot() {},
+    emitContentChange() {},
+    getRasterTarget(layerId) {
+      return {
+        ...activeTarget,
+        layerId,
+      };
+    },
+    getRasterTargetDocumentRect(target) {
+      return {
+        height: target.height,
+        width: target.width,
+        x: target.x,
+        y: target.y,
+      };
+    },
+    invalidatePreviewCache() {},
+    isCroppedRasterTarget(target) {
+      return Boolean(target?.cropped);
+    },
+    isSparseRasterTarget(target) {
+      return target?.sparse === true;
+    },
+    requestDraw() {},
+  };
+
+  CBO.colorFill.setReferenceLayerId("ref", { emit: false });
+
+  assert.equal(CBO.colorFill.dropColorAt(0, 0, "#445566", { tolerance: 0 }), true);
+  assert.deepEqual(snapshots[0].dirtyRect, {
+    height: 3,
+    width: 3,
+    x: 2,
+    y: 2,
+  });
+  assert.equal(gl.uploads[0].x, 2);
+  assert.equal(gl.uploads[0].width, 3);
+  assert.equal(gl.uploads[0].height, 3);
+});
+
+test("color fill bounds sparse reference analysis to reference tiles", () => {
+  const CBO = loadColorFillModule();
+  const gl = createFakeGl();
+  const activeFramebuffer = createFramebuffer(64, 64);
+  const referenceFramebuffer = createFramebuffer(4, 4);
+  const activeTarget = {
+    cropped: false,
+    framebuffer: activeFramebuffer,
+    height: 64,
+    layerId: "paint",
+    texture: {},
+    width: 64,
+    x: 0,
+    y: 0,
+  };
+  const referenceTile = {
+    framebuffer: referenceFramebuffer,
+    height: 4,
+    texture: {},
+    tx: 7,
+    ty: 7,
+    width: 4,
+    x: 28,
+    y: 28,
+  };
+  const referenceTarget = {
+    layerId: "ref",
+    sparse: true,
+    tileSize: 4,
+    tiles: new Map([["7:7", referenceTile]]),
+  };
+  const reports = [];
+
+  setTopDownPixel(referenceFramebuffer, 1, 1, [255, 255, 255, 255]);
+
+  CBO.brushEngine = {
+    screenToDocumentSpace: () => ({
+      docX: 29,
+      docY: 29,
+    }),
+  };
+  CBO.documentLayerModel = {
+    activeLayerId: "paint",
+    findEntryById(layerId) {
+      if (layerId === "paint") {
+        return { id: "paint", type: "paint" };
+      }
+
+      if (layerId === "ref") {
+        return { id: "ref", type: "paint" };
+      }
+
+      return null;
+    },
+  };
+  CBO.documentRenderer = {
+    gl,
+    height: 64,
+    rasterTargetsByLayerId: new Map([
+      ["paint", activeTarget],
+      ["ref", referenceTarget],
+    ]),
+    width: 64,
+    createRasterSnapshot() {
+      return { texture: {} };
+    },
+    deleteRasterSnapshot() {},
+    emitContentChange() {},
+    getRasterTarget(layerId) {
+      return {
+        ...activeTarget,
+        layerId,
+      };
+    },
+    getRasterTargetDocumentRect(target) {
+      return {
+        height: target.height,
+        width: target.width,
+        x: target.x,
+        y: target.y,
+      };
+    },
+    invalidatePreviewCache() {},
+    isCroppedRasterTarget(target) {
+      return Boolean(target?.cropped);
+    },
+    isSparseRasterTarget(target) {
+      return target?.sparse === true;
+    },
+    recordRasterOperation(report) {
+      reports.push(report);
+      return report;
+    },
+    requestDraw() {},
+  };
+
+  CBO.colorFill.setReferenceLayerId("ref", { emit: false });
+
+  assert.equal(CBO.colorFill.dropColorAt(0, 0, "#445566", { tolerance: 0 }), true);
+  assert.equal(reports[0].fillMaskBytes, 144);
+  assert.equal(reports[0].fillCoverageMaskBytes, 144);
+  assert.equal(reports[0].sourceBytes, 64);
+  assert.deepEqual({ ...reports[0].targetRect }, {
+    height: 3,
+    width: 3,
+    x: 28,
+    y: 28,
+  });
+});
+
+test("color fill creates write targets from the dirty rect instead of materializing full canvas", () => {
+  const CBO = loadColorFillModule();
+  const gl = createFakeGl();
+  const referenceFramebuffer = createFramebuffer(4, 4);
+  const writeFramebuffer = createFramebuffer(4, 4);
+  const referenceTile = {
+    framebuffer: referenceFramebuffer,
+    height: 4,
+    texture: {},
+    tx: 7,
+    ty: 7,
+    width: 4,
+    x: 28,
+    y: 28,
+  };
+  const referenceTarget = {
+    layerId: "ref",
+    sparse: true,
+    tileSize: 4,
+    tiles: new Map([["7:7", referenceTile]]),
+  };
+  const writeTarget = {
+    cropped: true,
+    framebuffer: writeFramebuffer,
+    height: 4,
+    layerId: "paint",
+    texture: {},
+    width: 4,
+    x: 28,
+    y: 28,
+  };
+  const ensureCalls = [];
+  let getRasterTargetCalls = 0;
+
+  setTopDownPixel(referenceFramebuffer, 1, 1, [255, 255, 255, 255]);
+
+  CBO.brushEngine = {
+    screenToDocumentSpace: () => ({
+      docX: 29,
+      docY: 29,
+    }),
+  };
+  CBO.documentHistory = {
+    push() {},
+  };
+  CBO.documentLayerModel = {
+    activeLayerId: "paint",
+    findEntryById(layerId) {
+      if (layerId === "paint") {
+        return { id: "paint", type: "paint" };
+      }
+
+      if (layerId === "ref") {
+        return { id: "ref", type: "paint" };
+      }
+
+      return null;
+    },
+  };
+  CBO.documentRenderer = {
+    gl,
+    height: 64,
+    rasterTargetsByLayerId: new Map([
+      ["ref", referenceTarget],
+    ]),
+    width: 64,
+    beginRasterTileHistory(layerId, dirtyRect) {
+      return {
+        layerId,
+        rect: { ...dirtyRect },
+      };
+    },
+    commitRasterTileHistory(capture) {
+      return {
+        destroy() {},
+        layerId: capture.layerId,
+        rect: capture.rect,
+        redo() {
+          return true;
+        },
+        undo() {
+          return true;
+        },
+      };
+    },
+    emitContentChange() {},
+    ensureRasterTargetsForPaintRect(layerId, dirtyRect) {
+      ensureCalls.push({
+        layerId,
+        rect: { ...dirtyRect },
+      });
+      return [{ target: writeTarget }];
+    },
+    finalizeRasterEditHistoryEntry(_layerId, entry) {
+      return entry;
+    },
+    getRasterTarget() {
+      getRasterTargetCalls += 1;
+      return null;
+    },
+    getRasterTargetDocumentRect(target) {
+      return {
+        height: target.height,
+        width: target.width,
+        x: target.x,
+        y: target.y,
+      };
+    },
+    invalidatePreviewCache() {},
+    isCroppedRasterTarget(target) {
+      return Boolean(target?.cropped);
+    },
+    isSparseRasterTarget(target) {
+      return target?.sparse === true;
+    },
+    requestDraw() {},
+  };
+
+  CBO.colorFill.setReferenceLayerId("ref", { emit: false });
+
+  assert.equal(CBO.colorFill.dropColorAt(0, 0, "#445566", { tolerance: 0 }), true);
+  assert.equal(getRasterTargetCalls, 0);
+  assert.deepEqual(ensureCalls, [
+    {
+      layerId: "paint",
+      rect: {
+        height: 3,
+        width: 3,
+        x: 28,
+        y: 28,
+      },
+    },
+  ]);
+  assert.equal(gl.uploads[0].x, 0);
+  assert.equal(gl.uploads[0].width, 3);
+  assert.equal(gl.uploads[0].height, 3);
 });
 
 test("color fill maps cropped reference layers into document coordinates", () => {

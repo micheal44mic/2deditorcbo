@@ -1890,7 +1890,13 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
     "utf8",
   );
 
+  assert.match(source, /const PREVIEW_CACHE_MAX_SIZE = 2048/);
   assert.match(source, /createPreviewCache\(\)/);
+  assert.match(source, /getPreviewCacheDimensions\(\)/);
+  assert.match(source, /previewCacheMaxSize/);
+  assert.match(source, /this\.previewCacheWidth = width/);
+  assert.match(source, /this\.previewCacheHeight = height/);
+  assert.match(source, /this\.previewCacheScale = scale/);
   assert.match(source, /updatePreviewCacheIfNeeded\(\)/);
   assert.match(source, /drawPreviewCacheToCanvas\(options = \{\}\)/);
   assert.doesNotMatch(source, /^\s*this\.createPreviewCache\(\);$/m);
@@ -1902,6 +1908,31 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /allowPreviewCache &&\s*isWithinPreviewCacheZoom/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
+});
+
+test("preview cache dimensions cap large documents while preserving aspect", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = { previewCacheMaxSize: 2048 };
+  renderer.width = 4000;
+  renderer.height = 3000;
+
+  let dimensions = renderer.getPreviewCacheDimensions();
+
+  assert.equal(dimensions.width, 2048);
+  assert.equal(dimensions.height, 1536);
+  assert.equal(dimensions.documentWidth, 4000);
+  assert.equal(dimensions.documentHeight, 3000);
+  assert.equal(dimensions.scale, 2048 / 4000);
+
+  renderer.width = 1200;
+  renderer.height = 800;
+  dimensions = renderer.getPreviewCacheDimensions();
+
+  assert.equal(dimensions.width, 1200);
+  assert.equal(dimensions.height, 800);
+  assert.equal(dimensions.scale, 1);
 });
 
 test("document renderer uses a procedural background texture", () => {

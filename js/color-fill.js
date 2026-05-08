@@ -252,11 +252,11 @@
     });
   }
 
-  function getWritableLayerTarget() {
+  function getWritableLayerInfo() {
     const layerModel = namespace.documentLayerModel;
     const renderer = namespace.documentRenderer;
 
-    if (!layerModel || !renderer?.getRasterTarget) {
+    if (!layerModel || !renderer) {
       return null;
     }
 
@@ -267,26 +267,35 @@
       activeLayer.locked !== true &&
       (activeLayer.type === "paint" || activeLayer.type === "image");
 
-    if (canWriteActiveLayer) {
-      const existingTarget = renderer.rasterTargetsByLayerId?.get?.(activeLayer.id);
-
-      if (renderer.isCroppedRasterTarget?.(existingTarget)) {
-        return renderer.materializeRasterTarget?.(activeLayer.id, {
-          source: "color-fill-materialize",
-        }) || renderer.getRasterTarget(activeLayer.id);
-      }
-
-      return renderer.getRasterTarget(activeLayer.id);
+    if (!canWriteActiveLayer) {
+      return null;
     }
 
-    return null;
+    return {
+      existingTarget: renderer.rasterTargetsByLayerId?.get?.(activeLayer.id) || null,
+      layer: activeLayer,
+      layerId: activeLayer.id,
+    };
   }
 
   function getExistingRasterTarget(layerId) {
     const renderer = namespace.documentRenderer;
     const existingTarget = renderer?.rasterTargetsByLayerId?.get?.(layerId);
 
-    if (!layerId || !existingTarget?.framebuffer || !existingTarget?.texture) {
+    if (!layerId || !existingTarget) {
+      return null;
+    }
+
+    if (renderer?.isSparseRasterTarget?.(existingTarget) === true) {
+      return existingTarget.tiles?.size > 0
+        ? {
+            ...existingTarget,
+            layerId,
+          }
+        : null;
+    }
+
+    if (!existingTarget.framebuffer || !existingTarget.texture) {
       return null;
     }
 
@@ -296,12 +305,12 @@
     };
   }
 
-  function getReferenceTarget(writeTarget) {
+  function getReferenceTarget(writeLayerId, fallbackTarget = null) {
     const layerModel = namespace.documentLayerModel;
     const referenceId = getReferenceLayerId();
 
-    if (!referenceId || referenceId === writeTarget.layerId) {
-      return writeTarget;
+    if (!referenceId || referenceId === writeLayerId) {
+      return fallbackTarget;
     }
 
     const referenceLayer = layerModel?.findEntryById?.(referenceId);
@@ -309,7 +318,7 @@
       ? getExistingRasterTarget(referenceId)
       : null;
 
-    return referenceTarget || writeTarget;
+    return referenceTarget || fallbackTarget;
   }
 
   function readFramebufferPixelsTopDown(gl, framebuffer, width, height) {
@@ -338,7 +347,108 @@
     };
   }
 
-  function createReferencePixelSource(gl, referenceTarget) {
+  function createSparseReferencePixelSource(gl, sparseTarget, options = {}) {
+    const renderer = namespace.documentRenderer;
+    const tileSources = [];
+    const tileMap = new Map();
+    const tileSize = Math.max(1, Math.round(sparseTarget.tileSize || 256));
+    let bytes = 0;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    sparseTarget.tiles?.forEach?.((tileTarget) => {
+      if (!tileTarget) {
+        return;
+      }
+
+      if ((!tileTarget.framebuffer || !tileTarget.texture) && renderer?.hydrateRasterTarget) {
+        renderer.hydrateRasterTarget(tileTarget, {
+          kind: "paintTile",
+          label: `${sparseTarget.layerId || "reference"} tile ${tileTarget.tx},${tileTarget.ty}`,
+          layerId: sparseTarget.layerId || "",
+          ownerId: tileTarget.ownerId || `${sparseTarget.layerId || "reference"}:${tileTarget.tx}:${tileTarget.ty}`,
+          ownerType: "live",
+          reason: "color-fill-reference-hydrate",
+        });
+      }
+
+      if (!tileTarget.framebuffer || !tileTarget.texture) {
+        return;
+      }
+
+      const width = Math.max(1, Math.round(tileTarget.width || tileSize));
+      const height = Math.max(1, Math.round(tileTarget.height || tileSize));
+      const rect = getReferenceDocumentRect(tileTarget, width, height);
+      const pixels = readFramebufferPixelsTopDown(gl, tileTarget.framebuffer, width, height);
+      const tx = Number.isFinite(tileTarget.tx) ? Math.round(tileTarget.tx) : Math.floor(rect.x / tileSize);
+      const ty = Number.isFinite(tileTarget.ty) ? Math.round(tileTarget.ty) : Math.floor(rect.y / tileSize);
+      const tileSource = {
+        height,
+        pixels,
+        width,
+        x: rect.x,
+        y: rect.y,
+      };
+
+      bytes += pixels.byteLength;
+      minX = Math.min(minX, rect.x);
+      minY = Math.min(minY, rect.y);
+      maxX = Math.max(maxX, rect.x + width);
+      maxY = Math.max(maxY, rect.y + height);
+      tileSources.push(tileSource);
+      tileMap.set(`${tx}:${ty}`, tileSource);
+    });
+
+    const hasBounds =
+      Number.isFinite(minX) &&
+      Number.isFinite(minY) &&
+      Number.isFinite(maxX) &&
+      Number.isFinite(maxY) &&
+      maxX > minX &&
+      maxY > minY;
+
+    return {
+      bounds: hasBounds
+        ? {
+            height: maxY - minY,
+            width: maxX - minX,
+            x: minX,
+            y: minY,
+          }
+        : null,
+      boundAnalysis: options.boundAnalysis === true,
+      bytes,
+      height: Math.max(1, Math.round(renderer?.height || sparseTarget.height || 1)),
+      sparse: true,
+      tileMap,
+      tileSize,
+      tiles: tileSources,
+      width: Math.max(1, Math.round(renderer?.width || sparseTarget.width || 1)),
+      x: 0,
+      y: 0,
+    };
+  }
+
+  function createReferencePixelSource(gl, referenceTarget, options = {}) {
+    const renderer = namespace.documentRenderer;
+
+    if (!referenceTarget) {
+      return {
+        bytes: 0,
+        empty: true,
+        height: Math.max(1, Math.round(renderer?.height || 1)),
+        width: Math.max(1, Math.round(renderer?.width || 1)),
+        x: 0,
+        y: 0,
+      };
+    }
+
+    if (renderer?.isSparseRasterTarget?.(referenceTarget) === true) {
+      return createSparseReferencePixelSource(gl, referenceTarget, options);
+    }
+
     const referenceFramebuffer = referenceTarget.framebuffer;
     const width = Math.max(1, Math.round(referenceTarget.width || 1));
     const height = Math.max(1, Math.round(referenceTarget.height || 1));
@@ -363,6 +473,40 @@
   }
 
   function getReferencePixelOffset(referenceSource, documentX, documentY) {
+    if (referenceSource?.sparse === true) {
+      const x = Math.floor(documentX);
+      const y = Math.floor(documentY);
+      const tileSize = Math.max(1, Math.round(referenceSource.tileSize || 1));
+      const tx = Math.floor(x / tileSize);
+      const ty = Math.floor(y / tileSize);
+      const tileSource = referenceSource.tileMap?.get?.(`${tx}:${ty}`);
+
+      if (!tileSource) {
+        return null;
+      }
+
+      const localX = x - tileSource.x;
+      const localY = y - tileSource.y;
+
+      if (
+        localX < 0 ||
+        localY < 0 ||
+        localX >= tileSource.width ||
+        localY >= tileSource.height
+      ) {
+        return null;
+      }
+
+      return {
+        offset: getTopDownRgbaOffset(
+          localY * tileSource.width + localX,
+          tileSource.width,
+          tileSource.height,
+        ),
+        pixels: tileSource.pixels,
+      };
+    }
+
     const localX = documentX - referenceSource.x;
     const localY = documentY - referenceSource.y;
 
@@ -383,7 +527,120 @@
   }
 
   function getReferenceChannel(referenceSource, offset, channel) {
+    if (referenceSource?.empty === true) {
+      return 0;
+    }
+
+    if (referenceSource?.sparse === true) {
+      return offset?.pixels && offset.offset >= 0 ? offset.pixels[offset.offset + channel] : 0;
+    }
+
     return offset >= 0 ? referenceSource.pixels[offset + channel] : 0;
+  }
+
+  function clampRectToTarget(rect, targetWidth, targetHeight) {
+    const x = Math.max(0, Math.min(targetWidth, Math.floor(rect?.x || 0)));
+    const y = Math.max(0, Math.min(targetHeight, Math.floor(rect?.y || 0)));
+    const right = Math.max(x, Math.min(targetWidth, Math.ceil((rect?.x || 0) + (rect?.width || 0))));
+    const bottom = Math.max(y, Math.min(targetHeight, Math.ceil((rect?.y || 0) + (rect?.height || 0))));
+
+    return {
+      height: bottom - y,
+      width: right - x,
+      x,
+      y,
+    };
+  }
+
+  function getFillAnalysisRect(referenceSource, targetWidth, targetHeight, seedX, seedY) {
+    if (referenceSource?.sparse !== true || referenceSource.boundAnalysis !== true || !referenceSource.bounds) {
+      return {
+        height: targetHeight,
+        width: targetWidth,
+        x: 0,
+        y: 0,
+      };
+    }
+
+    const padding = Math.max(1, Math.round(referenceSource.tileSize || FILL_EDGE_AA_RADIUS));
+    const rect = clampRectToTarget(
+      {
+        height: referenceSource.bounds.height + padding * 2,
+        width: referenceSource.bounds.width + padding * 2,
+        x: referenceSource.bounds.x - padding,
+        y: referenceSource.bounds.y - padding,
+      },
+      targetWidth,
+      targetHeight,
+    );
+
+    if (
+      rect.width <= 0 ||
+      rect.height <= 0 ||
+      seedX < rect.x ||
+      seedY < rect.y ||
+      seedX >= rect.x + rect.width ||
+      seedY >= rect.y + rect.height
+    ) {
+      return null;
+    }
+
+    return rect;
+  }
+
+  function offsetRect(rect, offsetX, offsetY) {
+    return {
+      height: rect.height,
+      width: rect.width,
+      x: rect.x + offsetX,
+      y: rect.y + offsetY,
+    };
+  }
+
+  function intersectRects(a, b) {
+    if (!a || !b) {
+      return null;
+    }
+
+    const x = Math.max(a.x, b.x);
+    const y = Math.max(a.y, b.y);
+    const right = Math.min(a.x + a.width, b.x + b.width);
+    const bottom = Math.min(a.y + a.height, b.y + b.height);
+
+    if (right <= x || bottom <= y) {
+      return null;
+    }
+
+    return {
+      height: bottom - y,
+      width: right - x,
+      x,
+      y,
+    };
+  }
+
+  function getWritableTargetsForDirtyRect(layerId, dirtyRect) {
+    const renderer = namespace.documentRenderer;
+
+    if (!renderer || !layerId || !dirtyRect) {
+      return [];
+    }
+
+    const paintTargets = renderer.ensureRasterTargetsForPaintRect?.(layerId, dirtyRect, {
+      source: "color-fill",
+    });
+
+    if (Array.isArray(paintTargets) && paintTargets.length > 0) {
+      return paintTargets
+        .map((entry) => entry?.target || entry)
+        .filter((target) => target?.framebuffer && target?.texture);
+    }
+
+    const target = renderer.ensureRasterTargetForPaintRect?.(layerId, dirtyRect, {
+      source: "color-fill",
+    }) || renderer.getRasterTarget?.(layerId);
+
+    return target?.framebuffer && target?.texture ? [target] : [];
   }
 
   function colorDistanceSq(referenceSource, documentX, documentY, red, green, blue, alpha) {
@@ -396,10 +653,10 @@
     return dr * dr + dg * dg + db * db + da * da;
   }
 
-  function floodFillMask(referenceSource, width, height, seedX, seedY, tolerance) {
+  function floodFillMask(referenceSource, width, height, seedX, seedY, tolerance, originX = 0, originY = 0) {
     const pixelCount = width * height;
     const seedIndex = seedY * width + seedX;
-    const seedOffset = getReferencePixelOffset(referenceSource, seedX, seedY);
+    const seedOffset = getReferencePixelOffset(referenceSource, originX + seedX, originY + seedY);
     const seedR = getReferenceChannel(referenceSource, seedOffset, 0);
     const seedG = getReferenceChannel(referenceSource, seedOffset, 1);
     const seedB = getReferenceChannel(referenceSource, seedOffset, 2);
@@ -441,8 +698,10 @@
       const index = stack[stackPtr];
       const y = Math.floor(index / width);
       const x = index - y * width;
+      const documentX = originX + x;
+      const documentY = originY + y;
 
-      if (colorDistanceSq(referenceSource, x, y, seedR, seedG, seedB, seedA) > toleranceSq) {
+      if (colorDistanceSq(referenceSource, documentX, documentY, seedR, seedG, seedB, seedA) > toleranceSq) {
         continue;
       }
 
@@ -642,11 +901,14 @@
 
   function readTargetDirtyPixels(gl, target, dirtyRect) {
     const pixels = new Uint8Array(dirtyRect.width * dirtyRect.height * 4);
-    const readY = target.height - (dirtyRect.y + dirtyRect.height);
+    const targetRect = getReferenceDocumentRect(target, target.width, target.height);
+    const textureX = dirtyRect.x - targetRect.x;
+    const textureYTopDown = dirtyRect.y - targetRect.y;
+    const readY = target.height - (textureYTopDown + dirtyRect.height);
 
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.framebuffer);
     gl.readPixels(
-      dirtyRect.x,
+      textureX,
       readY,
       dirtyRect.width,
       dirtyRect.height,
@@ -658,6 +920,7 @@
 
     return {
       pixels,
+      textureX,
       textureY: readY,
     };
   }
@@ -697,13 +960,26 @@
     );
   }
 
-  function applyFillToDirtyPixels(targetPixels, coverageMask, dirtyRect, documentWidth, fillColor) {
+  function applyFillToDirtyPixels(
+    targetPixels,
+    coverageMask,
+    dirtyRect,
+    documentWidth,
+    fillColor,
+    maskOriginX = 0,
+    maskOriginY = 0,
+    maskWidth = documentWidth,
+  ) {
     for (let row = 0; row < dirtyRect.height; row += 1) {
       const docY = dirtyRect.y + dirtyRect.height - 1 - row;
 
       for (let col = 0; col < dirtyRect.width; col += 1) {
         const docX = dirtyRect.x + col;
-        const coverageByte = coverageMask[docY * documentWidth + docX];
+        const maskX = docX - maskOriginX;
+        const maskY = docY - maskOriginY;
+        const coverageByte = maskX >= 0 && maskY >= 0
+          ? coverageMask[maskY * maskWidth + maskX]
+          : 0;
 
         if (coverageByte <= 0) {
           continue;
@@ -716,7 +992,7 @@
     }
   }
 
-  function writeDirtyPixelsToTarget(gl, target, dirtyRect, textureY, pixels) {
+  function writeDirtyPixelsToTarget(gl, target, dirtyRect, textureX, textureY, pixels) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, target.texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
@@ -724,7 +1000,7 @@
     gl.texSubImage2D(
       gl.TEXTURE_2D,
       0,
-      dirtyRect.x,
+      textureX,
       textureY,
       dirtyRect.width,
       dirtyRect.height,
@@ -844,7 +1120,9 @@
     } = details;
     const beforeBytes = getRasterRectBytes(beforeSnapshot?.rect);
     const afterBytes = getRasterRectBytes(dirtyRect);
-    const referenceBytes = referenceSource?.pixels?.byteLength || getRasterRectBytes(referenceSource || target);
+    const referenceBytes = Number.isFinite(referenceSource?.bytes)
+      ? Math.max(0, Math.round(referenceSource.bytes))
+      : referenceSource?.pixels?.byteLength || getRasterRectBytes(referenceSource || target);
     const maskBytes = fillResult?.mask?.byteLength || 0;
     const stackBytes = fillResult?.stackBytes || 0;
     const coverageMaskBytes = coverageMask?.byteLength || 0;
@@ -895,30 +1173,56 @@
     const renderer = namespace.documentRenderer;
     const gl = renderer?.gl || renderer?.context;
 
-    if (!brushEngine?.screenToDocumentSpace || !renderer?.getRasterTarget || !gl) {
+    if (!brushEngine?.screenToDocumentSpace || !renderer || !gl) {
       return false;
     }
 
-    const target = getWritableLayerTarget();
+    const writableLayer = getWritableLayerInfo();
 
-    if (!target?.framebuffer || !target?.texture) {
+    if (!writableLayer?.layerId) {
       return false;
     }
 
     const point = brushEngine.screenToDocumentSpace(clientX, clientY);
     const seedX = Math.floor(point.docX);
     const seedY = Math.floor(point.docY);
-    const width = Math.max(1, Math.round(target.width));
-    const height = Math.max(1, Math.round(target.height));
+    const width = Math.max(1, Math.round(renderer.width || writableLayer.existingTarget?.width || 1));
+    const height = Math.max(1, Math.round(renderer.height || writableLayer.existingTarget?.height || 1));
 
     if (seedX < 0 || seedY < 0 || seedX >= width || seedY >= height) {
       return false;
     }
 
     const tolerance = clamp(options.tolerance ?? fillTolerance, 0, MAX_FILL_TOLERANCE);
-    const referenceTarget = getReferenceTarget(target);
-    const referenceSource = createReferencePixelSource(gl, referenceTarget);
-    const fillResult = floodFillMask(referenceSource, width, height, seedX, seedY, tolerance);
+    const referenceLayerId = getReferenceLayerId();
+    const referenceTarget = getReferenceTarget(writableLayer.layerId, writableLayer.existingTarget);
+    const useExplicitReference = Boolean(
+      referenceLayerId &&
+      referenceLayerId !== writableLayer.layerId &&
+      referenceTarget &&
+      referenceTarget !== writableLayer.existingTarget
+    );
+    const referenceSource = createReferencePixelSource(gl, referenceTarget, {
+      boundAnalysis: useExplicitReference,
+    });
+    const analysisRect = getFillAnalysisRect(referenceSource, width, height, seedX, seedY);
+
+    if (!analysisRect) {
+      return false;
+    }
+
+    const analysisSeedX = seedX - analysisRect.x;
+    const analysisSeedY = seedY - analysisRect.y;
+    const fillResult = floodFillMask(
+      referenceSource,
+      analysisRect.width,
+      analysisRect.height,
+      analysisSeedX,
+      analysisSeedY,
+      tolerance,
+      analysisRect.x,
+      analysisRect.y,
+    );
 
     if (!fillResult) {
       return false;
@@ -927,23 +1231,33 @@
     const coverageRadius = getDilationRadius(tolerance);
     const coverageMask = createFillCoverageMask(
       fillResult.mask,
-      width,
-      height,
+      analysisRect.width,
+      analysisRect.height,
       fillResult.bounds,
       coverageRadius,
     );
-    const dirtyRect = createDirtyRect(
-      fillResult.bounds,
-      width,
-      height,
-      getFillCoveragePadding(tolerance),
+    const dirtyRect = offsetRect(
+      createDirtyRect(
+        fillResult.bounds,
+        analysisRect.width,
+        analysisRect.height,
+        getFillCoveragePadding(tolerance),
+      ),
+      analysisRect.x,
+      analysisRect.y,
     );
 
     if (dirtyRect.width <= 0 || dirtyRect.height <= 0) {
       return false;
     }
 
-    const layerId = target.layerId;
+    const layerId = writableLayer.layerId;
+    const writeTargets = getWritableTargetsForDirtyRect(layerId, dirtyRect);
+
+    if (writeTargets.length === 0) {
+      return false;
+    }
+
     const tileHistory = renderer.beginRasterTileHistory?.(layerId, dirtyRect, {
       label: "color-fill",
       source: "color-fill",
@@ -951,28 +1265,55 @@
     const beforeSnapshot = tileHistory
       ? null
       : renderer.createRasterSnapshot?.(layerId, dirtyRect, "color-fill-before");
-    const dirtyRead = readTargetDirtyPixels(gl, target, dirtyRect);
-    const targetPixels = dirtyRead.pixels;
+    const fillColor = parseHexColor(colorHex);
+    let dirtyReadBytes = 0;
 
-    applyFillToDirtyPixels(
-      targetPixels,
-      coverageMask,
-      dirtyRect,
-      width,
-      parseHexColor(colorHex),
-    );
-    writeDirtyPixelsToTarget(gl, target, dirtyRect, dirtyRead.textureY, targetPixels);
+    writeTargets.forEach((writeTarget) => {
+      const targetRect = getReferenceDocumentRect(writeTarget, writeTarget.width, writeTarget.height);
+      const targetDirtyRect = intersectRects(dirtyRect, targetRect);
+
+      if (!targetDirtyRect) {
+        return;
+      }
+
+      const dirtyRead = readTargetDirtyPixels(gl, writeTarget, targetDirtyRect);
+      const targetPixels = dirtyRead.pixels;
+
+      dirtyReadBytes += targetPixels.byteLength;
+      applyFillToDirtyPixels(
+        targetPixels,
+        coverageMask,
+        targetDirtyRect,
+        width,
+        fillColor,
+        analysisRect.x,
+        analysisRect.y,
+        analysisRect.width,
+      );
+      writeDirtyPixelsToTarget(
+        gl,
+        writeTarget,
+        targetDirtyRect,
+        dirtyRead.textureX,
+        dirtyRead.textureY,
+        targetPixels,
+      );
+    });
 
     const memoryPolicy = recordColorFillMemory(renderer, {
       beforeSnapshot,
       coverageMask,
-      dirtyRead,
+      dirtyRead: {
+        pixels: {
+          byteLength: dirtyReadBytes,
+        },
+      },
       dirtyRect,
       fillResult,
       height,
       layerId,
       referenceSource,
-      target,
+      target: writeTargets[0],
       width,
     });
     pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy, tileHistory);
