@@ -471,3 +471,28 @@ test("ensureActivePaintLayer records automatic paint layer creation", async () =
   assert.equal(model.findEntryById(paintLayer.id), null);
   assert.equal(model.activeLayerId, textLayer.id);
 });
+
+test("ensureActivePaintLayer without an active layer inserts above everything", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory();
+  const model = new DocumentLayerModel();
+  const topLayer = model.createLayer({
+    id: "top-image",
+    name: "Top Image",
+    type: "image",
+  });
+
+  window.CBO.documentHistory = history;
+  model.setEntries([topLayer, ...model.getEntries()], { history: false, source: "seed" });
+  model.setActiveLayer(null, { history: false, source: "seed" });
+
+  const paintLayer = model.ensureActivePaintLayer({ source: "brush-stroke" });
+  await waitForHistoryFlush();
+
+  const entries = model.getEntries();
+
+  assert.equal(entries[0].id, paintLayer.id);
+  assert.equal(entries[1].id, topLayer.id);
+  assert.equal(model.activeLayerId, paintLayer.id);
+  assert.equal(history.undoStack.length, 1);
+});

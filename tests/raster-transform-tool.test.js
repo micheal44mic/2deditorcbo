@@ -155,7 +155,7 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /padding: 0,/);
   assert.match(source, /pixelPerfect: true,/);
   assert.match(source, /const TOUCH_SELECTION_HIT_RADIUS_PX = 8;/);
-  assert.match(source, /const SELECTION_MOVE_HOLD_MS = 200;/);
+  assert.match(source, /const SELECTION_MOVE_HOLD_MS = 120;/);
   assert.match(source, /selectionMoveHoldState/);
   assert.match(source, /window\.setTimeout\(\(\) => \{\s*this\.beginSelectionMoveDrag\(\);\s*\}, SELECTION_MOVE_HOLD_MS\)/);
   assert.match(source, /getSelectionHitRadius\(pointerType = ""\)/);
@@ -173,6 +173,7 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.doesNotMatch(source, /this\.documentRenderer\?\.clearRasterTransformPreview\?\.\(layerId\);/);
   assert.match(source, /const isVisible = !isCommitting && this\.isOverlayActive\(\) && Array\.isArray\(this\.currentQuad\);/);
   assert.match(source, /pickLayerAtClient\(clientX, clientY, options = \{\}\)/);
+  assert.match(source, /if \(this\.isActive\(\) \|\| this\.hasPendingTransform\(\)\) \{\s*this\.commitTransform\(\);/);
   assert.match(source, /this\.activeTool = SELECTION_TOOL_MODE;[\s\S]*this\.activateLayer\(this\.getActiveLayer\(\), \{ selection: true \}\);/);
   assert.match(source, /this\.transformAspectLocked = namespace\.transformAspectLocked === true;/);
   assert.match(source, /this\.transformAspectLocked = detail\.transformAspectLocked === true;/);
@@ -183,6 +184,7 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /this\.layerModel\?\.setActiveLayer\?\.\(null, \{ source: "selection-tool" \}\);/);
   assert.match(source, /this\.activateLayer\(null, \{ selection: true \}\);/);
   assert.match(source, /pointerType: event\.pointerType,[\s\S]*selection: true,/);
+  assert.match(source, /if \(this\.hasPendingTransform\(\) && !pendingMoveLayer\) \{\s*this\.commitTransform\(\);[\s\S]*hitLayer = this\.pickLayerAtClient\(event\.clientX, event\.clientY, \{/);
   assert.match(source, /beginSelectionMoveHold\(event, hitLayer\)/);
   assert.match(source, /selectionMove: true/);
   assert.match(source, /handlePointerUp\(event\) \{/);

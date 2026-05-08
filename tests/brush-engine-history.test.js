@@ -105,6 +105,8 @@ test("brush first paint stroke can defer full live target materialization", () =
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 
   assert.match(source, /ensurePaintLayerForBrush\?\.\(\{ materialize: false \}\)/);
+  assert.match(source, /if \(!this\.isDocumentPointInside\(documentPoint\)\) \{\s*event\.preventDefault\(\);\s*return;\s*\}/);
+  assert.doesNotMatch(source, /clearActiveLayer\?\.\(\{ source: "canvas-empty-click" \}\)/);
   assert.match(source, /showEmptyEraserLayerToast\(message = "Nothing to erase on this layer"\)/);
   assert.match(source, /const existingTarget = this\.documentRenderer\?\.rasterTargetsByLayerId\?\.get\?\.\(activeId\)/);
   assert.match(source, /if \(!existingTarget \|\| isEmptySparseTarget\) \{\s*this\.showEmptyEraserLayerToast\(\);\s*return null;\s*\}/);

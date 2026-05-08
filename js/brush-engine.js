@@ -4793,7 +4793,6 @@ void main() {
 
       if (!this.isDocumentPointInside(documentPoint)) {
         event.preventDefault();
-        this.documentRenderer?.clearActiveLayer?.({ source: "canvas-empty-click" });
         return;
       }
 

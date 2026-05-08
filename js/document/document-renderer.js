@@ -6681,20 +6681,16 @@ void main() {
       }
     }
 
-    getRasterContentBounds(layerId, options = {}) {
-      const target = this.rasterTargetsByLayerId.get(layerId);
-
-      if (this.isSparseRasterTarget(target)) {
-        return this.getRasterTargetDocumentRect(target);
-      }
-
-      if (!layerId || !target?.framebuffer || !target?.texture) {
+    getRasterTargetPixelContentBounds(target, options = {}) {
+      if (!target) {
         return null;
       }
 
       const bounds = namespace.documentBounds;
       const targetWidth = Math.max(1, Math.round(target.width || this.width || 1));
       const targetHeight = Math.max(1, Math.round(target.height || this.height || 1));
+      const hasGpuPixels = Boolean(target.framebuffer && target.texture);
+      const hasCpuPixels = target.cpuPixels instanceof Uint8Array;
       const sampleCols = Math.max(16, Math.min(512, Math.floor(options.sampleCols || 256)));
       const sampleRows = Math.max(16, Math.min(512, Math.floor(options.sampleRows || 256)));
       const alphaThreshold = Number.isFinite(options.alphaThreshold)
@@ -6703,7 +6699,11 @@ void main() {
       const pixelPerfect = options.pixelPerfect === true;
       let coarseRect = null;
 
-      if (pixelPerfect) {
+      if (!hasGpuPixels && !hasCpuPixels) {
+        return null;
+      }
+
+      if (pixelPerfect || hasCpuPixels) {
         coarseRect = { x: 0, y: 0, width: targetWidth, height: targetHeight };
       } else {
         const samples = this.getPuppetAlphaSamples(target, sampleCols, sampleRows);
@@ -6759,11 +6759,25 @@ void main() {
 
       const gl = this.gl;
       const pixels = new Uint8Array(coarseRect.width * coarseRect.height * 4);
-      const readY = targetHeight - (coarseRect.y + coarseRect.height);
 
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.framebuffer);
-      gl.readPixels(coarseRect.x, readY, coarseRect.width, coarseRect.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      if (hasCpuPixels) {
+        const readY = targetHeight - (coarseRect.y + coarseRect.height);
+
+        for (let row = 0; row < coarseRect.height; row += 1) {
+          const sourceStart = ((readY + row) * targetWidth + coarseRect.x) * 4;
+          const destStart = row * coarseRect.width * 4;
+          pixels.set(
+            target.cpuPixels.subarray(sourceStart, sourceStart + coarseRect.width * 4),
+            destStart,
+          );
+        }
+      } else {
+        const readY = targetHeight - (coarseRect.y + coarseRect.height);
+
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.framebuffer);
+        gl.readPixels(coarseRect.x, readY, coarseRect.width, coarseRect.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      }
 
       let minX = coarseRect.width;
       let minY = coarseRect.height;
@@ -6808,6 +6822,32 @@ void main() {
         width: localBounds.width,
         height: localBounds.height,
       }, this.width, this.height) || null;
+    }
+
+    getRasterContentBounds(layerId, options = {}) {
+      const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (this.isSparseRasterTarget(target)) {
+        if (options.coarseOnly === true) {
+          return this.getRasterTargetDocumentRect(target);
+        }
+
+        let sparseBounds = null;
+
+        target.tiles.forEach((tileTarget) => {
+          const tileBounds = this.getRasterTargetPixelContentBounds(tileTarget, options);
+
+          sparseBounds = sparseBounds ? this.unionRasterHistoryRects(sparseBounds, tileBounds) : tileBounds;
+        });
+
+        return sparseBounds;
+      }
+
+      if (!layerId) {
+        return null;
+      }
+
+      return this.getRasterTargetPixelContentBounds(target, options);
     }
 
     isPaintRasterLayer(layerId, target = null) {

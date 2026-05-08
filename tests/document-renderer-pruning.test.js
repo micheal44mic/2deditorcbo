@@ -1305,6 +1305,98 @@ test("getRasterAlphaAtPoint samples the matching sparse tile", () => {
   assert.equal(renderer.getRasterAlphaAtPoint(sparseTarget, 20, 20), 0);
 });
 
+test("getRasterContentBounds fits sparse targets to painted pixels", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const readCalls = [];
+  let currentFramebuffer = null;
+
+  window.CBO.documentBounds = {
+    getClampedRasterBox(rect, width, height) {
+      const x0 = Math.max(0, Math.floor(rect.x));
+      const y0 = Math.max(0, Math.floor(rect.y));
+      const x1 = Math.min(width, Math.ceil(rect.x + rect.width));
+      const y1 = Math.min(height, Math.ceil(rect.y + rect.height));
+
+      return x1 > x0 && y1 > y0
+        ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+        : null;
+    },
+  };
+
+  renderer.width = 1024;
+  renderer.height = 1024;
+  renderer.gl = {
+    bindFramebuffer: (target, framebuffer) => {
+      readCalls.push(["bindFramebuffer", target, framebuffer]);
+      currentFramebuffer = framebuffer;
+    },
+    readPixels: (x, y, width, height, format, type, pixels) => {
+      readCalls.push(["readPixels", currentFramebuffer?.id, x, y, width, height, format, type]);
+      pixels.fill(0);
+
+      if (currentFramebuffer?.id === "tile-a") {
+        const paintX = 12;
+        const paintY = 18;
+        const webglY = height - paintY - 1;
+
+        pixels[(webglY * width + paintX) * 4 + 3] = 255;
+      } else if (currentFramebuffer?.id === "tile-b") {
+        for (let localY = 7; localY < 10; localY += 1) {
+          for (let localX = 5; localX < 9; localX += 1) {
+            const webglY = height - localY - 1;
+
+            pixels[(webglY * width + localX) * 4 + 3] = 255;
+          }
+        }
+      }
+    },
+    READ_FRAMEBUFFER: "READ_FRAMEBUFFER",
+    RGBA: "RGBA",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+  };
+
+  renderer.rasterTargetsByLayerId = new Map([[
+    "paint-1",
+    {
+      layerId: "paint-1",
+      sparse: true,
+      tileSize: 256,
+      tiles: new Map([
+        ["0:0", {
+          framebuffer: { id: "tile-a" },
+          height: 256,
+          texture: { id: "texture-a" },
+          width: 256,
+          x: 0,
+          y: 0,
+        }],
+        ["2:2", {
+          framebuffer: { id: "tile-b" },
+          height: 256,
+          texture: { id: "texture-b" },
+          width: 256,
+          x: 512,
+          y: 512,
+        }],
+      ]),
+    },
+  ]]);
+
+  const contentBounds = renderer.getRasterContentBounds("paint-1", {
+    alphaThreshold: 2,
+    padding: 0,
+    pixelPerfect: true,
+  });
+
+  assert.equal(contentBounds.x, 12);
+  assert.equal(contentBounds.y, 18);
+  assert.equal(contentBounds.width, 509);
+  assert.equal(contentBounds.height, 504);
+  assert.ok(readCalls.some((call) => call[0] === "readPixels" && call[1] === "tile-a"));
+  assert.ok(readCalls.some((call) => call[0] === "readPixels" && call[1] === "tile-b"));
+});
+
 test("sparse restore prunes tiles that become fully transparent", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);

@@ -16,7 +16,7 @@
   const MIN_TRANSFORM_SIZE = 2;
   const GUIDE_PROXIMITY_PX = 3;
   const TOUCH_SELECTION_HIT_RADIUS_PX = 8;
-  const SELECTION_MOVE_HOLD_MS = 200;
+  const SELECTION_MOVE_HOLD_MS = 120;
   const ROTATION_SNAP_RADIANS = Math.PI / 12;
   const ROTATION_FREE_SNAP_THRESHOLD_RADIANS = Math.PI / 90;
   const TRIG_EPSILON = 1e-10;
@@ -661,7 +661,7 @@
           this.activateLayer(activeLayer);
         }
       } else if (isSelectionToolDetail(detail)) {
-        if (this.isActive()) {
+        if (this.isActive() || this.hasPendingTransform()) {
           this.commitTransform();
         }
 
@@ -1477,13 +1477,17 @@
 
       if (this.isSelectionActive()) {
         const pendingMoveLayer = this.getPendingSelectionMoveLayerAtClient(event.clientX, event.clientY);
-        const hitLayer = pendingMoveLayer || this.pickLayerAtClient(event.clientX, event.clientY, {
+        let hitLayer = pendingMoveLayer || this.pickLayerAtClient(event.clientX, event.clientY, {
           pointerType: event.pointerType,
           selection: true,
         });
 
-        if (this.hasPendingTransform() && (!hitLayer || hitLayer.id !== this.activeLayerId)) {
+        if (this.hasPendingTransform() && !pendingMoveLayer) {
           this.commitTransform();
+          hitLayer = this.pickLayerAtClient(event.clientX, event.clientY, {
+            pointerType: event.pointerType,
+            selection: true,
+          });
         }
 
         if (hitLayer) {

@@ -447,6 +447,15 @@
       this.entries.splice(insertIndex, 0, entry);
     }
 
+    insertAtTop(entry) {
+      if (!entry) {
+        return false;
+      }
+
+      this.entries.unshift(entry);
+      return true;
+    }
+
     ensureActivePaintLayer(options = {}) {
       const activeEntry = this.findEntryById(this.activeLayerId);
 
@@ -461,7 +470,7 @@
       });
       const inserted = activeEntry
         ? this.insertEntryAbove(activeEntry.id, paintLayer)
-        : false;
+        : this.insertAtTop(paintLayer);
 
       if (!inserted) {
         this.insertAboveBottomSystemLayer(paintLayer);
