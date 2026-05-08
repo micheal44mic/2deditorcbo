@@ -78,6 +78,10 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /getRasterContentBounds\?\.\(layer\.id/);
   assert.match(source, /getLayerEffectCenterPoint\(getActiveLayer\(\)\)/);
   assert.match(source, /defaultToLayerCenter: activeEffectType === "radial-blur"/);
+  assert.match(source, /preferSparse: beforePreferSparse/);
+  assert.match(source, /replaceSparse: beforePreferSparse/);
+  assert.match(source, /preferSparse: afterPreferSparse/);
+  assert.match(source, /replaceSparse: afterPreferSparse/);
   assert.match(source, /layerModel\.updateLayer\(layerId,/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `gaussian-blur-\$\{layerId\}`/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `motion-blur-\$\{layerId\}`/);

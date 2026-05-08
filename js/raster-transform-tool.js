@@ -1072,6 +1072,10 @@
     commitTransform() {
       this.clearSelectionMoveHold({ releaseCapture: true });
 
+      if (this.isCommitting) {
+        return false;
+      }
+
       const effectiveTransformMode = this.getEffectiveTransformMode();
 
       if (!this.sourceSnapshot || !this.activeLayerId || !this.contentRect || !this.currentQuad) {
@@ -1093,25 +1097,37 @@
       }
 
       this.isCommitting = true;
+      const sourceSnapshot = this.sourceSnapshot;
+      const layerId = this.activeLayerId;
+      const sourceRect = cloneValue(this.contentRect);
+      const destQuad = cloneValue(this.currentQuad);
+      const warpControlPoints = effectiveTransformMode === WARP_TRANSFORM_MODE
+        ? cloneValue(this.currentWarpPoints)
+        : null;
+      const edgeFeatherPixels = this.getEdgeFeatherPixelsForQuad(destQuad);
+
+      this.render();
 
       const didCommit = this.documentRenderer?.commitRasterTransform?.({
-        destQuad: this.currentQuad,
-        edgeFeatherPixels: this.getEdgeFeatherPixelsForQuad(this.currentQuad),
-        layerId: this.activeLayerId,
+        destQuad,
+        edgeFeatherPixels,
+        layerId,
         source: "raster-transform",
-        sourceRect: this.contentRect,
-        sourceSnapshot: this.sourceSnapshot,
+        sourceRect,
+        sourceSnapshot,
         transformMode: effectiveTransformMode,
-        warpControlPoints: effectiveTransformMode === WARP_TRANSFORM_MODE
-          ? this.currentWarpPoints
-          : null,
+        warpControlPoints,
       }) === true;
 
-      this.documentRenderer?.deleteRasterSnapshot?.(this.sourceSnapshot);
-      this.sourceSnapshot = null;
+      this.documentRenderer?.deleteRasterSnapshot?.(sourceSnapshot);
+
+      if (this.sourceSnapshot === sourceSnapshot) {
+        this.sourceSnapshot = null;
+      }
+
       this.dragState = null;
 
-      const layer = this.getActiveLayer();
+      const layer = this.layerModel?.findEntryById?.(layerId) || this.getActiveLayer();
 
       if (didCommit && this.isTransformableLayer(layer)) {
         const bounds = this.getPixelTightRasterContentBounds(layer.id);
@@ -2373,9 +2389,10 @@
     render() {
       this.syncViewState();
 
-      const isVisible = this.isOverlayActive() && Array.isArray(this.currentQuad);
+      const isCommitting = this.isCommitting === true;
+      const isVisible = !isCommitting && this.isOverlayActive() && Array.isArray(this.currentQuad);
 
-      if (this.isOverlayActive()) {
+      if (!isCommitting && this.isOverlayActive()) {
         this.svg.removeAttribute("hidden");
         this.svg.style.display = "block";
       } else {

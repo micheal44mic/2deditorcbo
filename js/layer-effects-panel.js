@@ -975,6 +975,7 @@ window.CBO = window.CBO || {};
 
         const didRestorePixels = renderer.restoreRasterSnapshot?.(layerId, beforeSnapshot, {
           preferSparse: beforePreferSparse,
+          replaceSparse: beforePreferSparse,
           source: "history-undo-layer-effects-rasterize",
         }) !== false;
 
@@ -992,6 +993,7 @@ window.CBO = window.CBO || {};
 
         const didRestorePixels = renderer.restoreRasterSnapshot?.(layerId, afterSnapshot, {
           preferSparse: afterPreferSparse,
+          replaceSparse: afterPreferSparse,
           source: "history-redo-layer-effects-rasterize",
         }) !== false;
 

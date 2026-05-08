@@ -6068,6 +6068,61 @@ void main() {
       return true;
     }
 
+    restoreRasterSnapshotAsSparseTarget(layerId, snapshot, options = {}) {
+      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      if (
+        !layerId ||
+        !snapshot ||
+        options.sparse === false ||
+        !this.isPaintRasterLayer(layerId, existingTarget)
+      ) {
+        return false;
+      }
+
+      const sparseTarget = this.createSparseRasterTarget(layerId, {
+        clearColor: existingTarget?.clearColor,
+        tileSize: options.tileSize || existingTarget?.sparseTileSize || existingTarget?.tileSize,
+      });
+      const source = options.source || "raster-snapshot-sparse-restore";
+      const didRestoreSparse = this.restoreRasterSnapshotToSparseTarget(layerId, sparseTarget, snapshot, {
+        ...options,
+        emit: false,
+        source,
+      });
+
+      if (!didRestoreSparse) {
+        this.deleteRasterTargetObject(sparseTarget);
+        return false;
+      }
+
+      const previousTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      this.rasterTargetsByLayerId.set(layerId, sparseTarget);
+
+      if (layerId === this.paintLayerId || previousTarget?.texture === this.texture) {
+        this.texture = null;
+        this.framebuffer = null;
+      }
+
+      if (previousTarget && previousTarget !== sparseTarget) {
+        this.deleteRasterTargetObject(previousTarget);
+      }
+
+      this.deletePuppetMeshResource(layerId);
+      this.invalidatePreviewCache(source);
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId,
+          source,
+        });
+      }
+
+      this.requestDraw();
+      return true;
+    }
+
     restoreRasterSnapshot(layerId, snapshot, options = {}) {
       if (!layerId || !snapshot) {
         return false;
@@ -6078,55 +6133,22 @@ void main() {
       }
 
       const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      const shouldRestoreAsSparseTarget = Boolean(
+        options.sparse !== false &&
+        (options.preferSparse === true || options.replaceSparse === true) &&
+        this.isPaintRasterLayer(layerId, existingTarget)
+      );
 
       if (this.isSparseRasterTarget(existingTarget)) {
+        if (options.replaceSparse === true && shouldRestoreAsSparseTarget) {
+          return this.restoreRasterSnapshotAsSparseTarget(layerId, snapshot, options);
+        }
+
         return this.restoreRasterSnapshotToSparseTarget(layerId, existingTarget, snapshot, options);
       }
 
-      if (
-        options.preferSparse === true &&
-        options.sparse !== false &&
-        this.isPaintRasterLayer(layerId, existingTarget)
-      ) {
-        const sparseTarget = this.createSparseRasterTarget(layerId, {
-          clearColor: existingTarget?.clearColor,
-          tileSize: options.tileSize || existingTarget?.sparseTileSize || existingTarget?.tileSize,
-        });
-        const didRestoreSparse = this.restoreRasterSnapshotToSparseTarget(layerId, sparseTarget, snapshot, {
-          ...options,
-          emit: false,
-          source: options.source || "raster-snapshot-sparse-restore",
-        });
-
-        if (didRestoreSparse) {
-          const previousTarget = this.rasterTargetsByLayerId.get(layerId);
-
-          this.rasterTargetsByLayerId.set(layerId, sparseTarget);
-
-          if (layerId === this.paintLayerId || previousTarget?.texture === this.texture) {
-            this.texture = null;
-            this.framebuffer = null;
-          }
-
-          if (previousTarget && previousTarget !== sparseTarget) {
-            this.deleteRasterTargetObject(previousTarget);
-          }
-
-          this.deletePuppetMeshResource(layerId);
-          this.invalidatePreviewCache(options.source || "raster-snapshot-sparse-restore");
-
-          if (options.emit !== false) {
-            this.emitContentChange({
-              layerId,
-              source: options.source || "raster-snapshot-sparse-restore",
-            });
-          }
-
-          this.requestDraw();
-          return true;
-        }
-
-        this.deleteRasterTargetObject(sparseTarget);
+      if (shouldRestoreAsSparseTarget && this.restoreRasterSnapshotAsSparseTarget(layerId, snapshot, options)) {
+        return true;
       }
 
       let target = this.getRasterTarget(layerId);
@@ -7545,8 +7567,9 @@ void main() {
         destDirtyRect || destRect,
         CROPPED_TARGET_EDGE_PADDING,
       );
+      const wasSparseTarget = this.isSparseRasterTarget(target);
 
-      if (this.isSparseRasterTarget(target)) {
+      if (wasSparseTarget) {
         target = this.materializeRasterTarget(layerId, {
           emit: false,
           source,
@@ -7557,6 +7580,7 @@ void main() {
         return false;
       }
 
+      const preferSparseRestore = wasSparseTarget || target.materializedFromSparse === true;
       const beforeSnapshot = this.createRasterSnapshot(target, null, `${source}-before-target`);
 
       if (!beforeSnapshot?.texture) {
@@ -7568,6 +7592,11 @@ void main() {
       if (!nextTarget?.framebuffer) {
         this.deleteRasterSnapshot(beforeSnapshot);
         return false;
+      }
+
+      if (preferSparseRestore) {
+        nextTarget.materializedFromSparse = true;
+        nextTarget.sparseTileSize = target.sparseTileSize || target.tileSize;
       }
 
       const localDestQuad = destQuad.map((point) => ({
@@ -7610,8 +7639,22 @@ void main() {
 
       const currentTargetRect = this.getRasterTargetDocumentRect(target);
       const sourceBytes = this.estimateRasterTargetBytes(target);
-      const targetBytes = this.estimateRasterTargetBytes(nextTarget);
       const scratchBytes = this.estimateRasterSnapshotBytes(sourceSnapshot);
+
+      this.replaceRasterTarget(layerId, nextTarget, {
+        emit: false,
+        source,
+      });
+
+      const afterPreferSparse = Boolean(preferSparseRestore && this.isPaintRasterLayer(layerId, nextTarget));
+      const finalLiveTarget = afterPreferSparse
+        ? this.sparsifyRasterTarget(layerId, nextTarget, {
+            emit: false,
+            source: `${source}-retile`,
+            tileSize: nextTarget.sparseTileSize || target.sparseTileSize || target.tileSize,
+          }) || nextTarget
+        : nextTarget;
+      const targetBytes = this.estimateRasterTargetBytes(finalLiveTarget);
 
       const memoryPolicy = this.recordRasterOperation(this.createRasterOperationMemoryReport({
         afterSnapshot,
@@ -7639,11 +7682,6 @@ void main() {
         tool: "raster-transform",
       }));
 
-      this.replaceRasterTarget(layerId, nextTarget, {
-        emit: false,
-        source,
-      });
-
       const history = namespace.documentHistory;
       const entry = this.finalizeRasterEditHistoryEntry(layerId, {
         type: "custom",
@@ -7653,9 +7691,13 @@ void main() {
         memoryPolicy,
         source,
         undo: () => this.restoreRasterSnapshot(layerId, beforeSnapshot, {
+          preferSparse: preferSparseRestore,
+          replaceSparse: preferSparseRestore,
           source: `history-undo-${source}`,
         }),
         redo: () => this.restoreRasterSnapshot(layerId, afterSnapshot, {
+          preferSparse: afterPreferSparse,
+          replaceSparse: afterPreferSparse,
           source: `history-redo-${source}`,
         }),
         destroy: () => {
@@ -7695,12 +7737,16 @@ void main() {
         return false;
       }
 
-      if (this.isSparseRasterTarget(target)) {
+      const wasSparseTarget = this.isSparseRasterTarget(target);
+
+      if (wasSparseTarget) {
         target = this.materializeRasterTarget(layerId, {
           emit: false,
           source,
         }) || target;
       }
+
+      const preferSparseRestore = wasSparseTarget || target?.materializedFromSparse === true;
 
       const destBounds = normalizedTransformMode === "warp"
         ? bounds?.rectToBounds?.(this.getRasterWarpBounds(warpControlPoints))
@@ -7725,10 +7771,13 @@ void main() {
         return false;
       }
 
-      const tileHistory = this.beginRasterTileHistory(layerId, dirtyRect, {
-        label: source,
-        source,
-      });
+      const useAuthoritativeSparseHistory = Boolean(preferSparseRestore && this.isPaintRasterLayer(layerId, target));
+      const tileHistory = useAuthoritativeSparseHistory
+        ? null
+        : this.beginRasterTileHistory(layerId, dirtyRect, {
+            label: source,
+            source,
+          });
       const beforeSnapshot = tileHistory
         ? null
         : this.createRasterSnapshot(layerId, dirtyRect, `${source}-before`);
@@ -7763,6 +7812,7 @@ void main() {
         } else {
           this.restoreRasterSnapshot(layerId, beforeSnapshot, {
             emit: false,
+            preferSparse: preferSparseRestore,
             source: `${source}-rollback`,
           });
           this.deleteRasterSnapshot(beforeSnapshot);
@@ -7771,6 +7821,7 @@ void main() {
       }
 
       if (tileHistory) {
+        const afterPreferSparse = Boolean(preferSparseRestore && this.isPaintRasterLayer(layerId, target));
         const memoryPolicy = this.recordRasterOperation(this.createRasterOperationMemoryReport({
           afterRect: dirtyRect,
           beforeRect: dirtyRect,
@@ -7808,6 +7859,14 @@ void main() {
         const entry = this.finalizeRasterEditHistoryEntry(layerId, tileEntry, { source });
         const history = namespace.documentHistory;
 
+        if (afterPreferSparse) {
+          this.sparsifyRasterTarget(layerId, target, {
+            emit: false,
+            source: `${source}-retile`,
+            tileSize: target.sparseTileSize || target.tileSize,
+          });
+        }
+
         if (history?.push) {
           history.push(entry);
         } else {
@@ -7826,6 +7885,7 @@ void main() {
       if (!afterSnapshot?.texture) {
         this.restoreRasterSnapshot(layerId, beforeSnapshot, {
           emit: false,
+          preferSparse: preferSparseRestore,
           source: `${source}-rollback`,
         });
         this.deleteRasterSnapshot(beforeSnapshot);
@@ -7852,6 +7912,16 @@ void main() {
       }));
 
       const history = namespace.documentHistory;
+      const afterPreferSparse = Boolean(preferSparseRestore && this.isPaintRasterLayer(layerId, target));
+
+      if (afterPreferSparse) {
+        this.sparsifyRasterTarget(layerId, target, {
+          emit: false,
+          source: `${source}-retile`,
+          tileSize: target.sparseTileSize || target.tileSize,
+        });
+      }
+
       const entry = this.finalizeRasterEditHistoryEntry(layerId, {
         type: "custom",
         afterSnapshot,
@@ -7860,9 +7930,13 @@ void main() {
         memoryPolicy,
         source,
         undo: () => this.restoreRasterSnapshot(layerId, beforeSnapshot, {
+          preferSparse: preferSparseRestore,
+          replaceSparse: preferSparseRestore,
           source: `history-undo-${source}`,
         }),
         redo: () => this.restoreRasterSnapshot(layerId, afterSnapshot, {
+          preferSparse: afterPreferSparse,
+          replaceSparse: afterPreferSparse,
           source: `history-redo-${source}`,
         }),
         destroy: () => {
@@ -9270,8 +9344,9 @@ void main() {
       }
 
       let target = this.rasterTargetsByLayerId.get(layer.id);
+      const wasSparseTarget = this.isSparseRasterTarget(target);
 
-      if (this.isSparseRasterTarget(target)) {
+      if (wasSparseTarget) {
         target = this.materializeRasterTarget(layer.id, {
           emit: false,
           source: options.source || "puppet-rasterize",
@@ -9282,6 +9357,7 @@ void main() {
         return null;
       }
 
+      const preferSparseRestore = wasSparseTarget || target.materializedFromSparse === true;
       const sourceSnapshot = this.createRasterSnapshot(target, null, "puppet-rasterize-before");
 
       if (!sourceSnapshot?.texture) {
@@ -9294,6 +9370,15 @@ void main() {
       const destinationTarget = needsTargetSwap
         ? this.createRasterTargetForRect(outputRect)
         : target;
+
+      if (
+        destinationTarget &&
+        destinationTarget !== target &&
+        preferSparseRestore
+      ) {
+        destinationTarget.materializedFromSparse = true;
+        destinationTarget.sparseTileSize = target.sparseTileSize || target.tileSize;
+      }
 
       if (!destinationTarget?.framebuffer || !destinationTarget?.texture) {
         this.deleteRasterSnapshot(sourceSnapshot);
@@ -9327,6 +9412,7 @@ void main() {
 
         this.restoreRasterSnapshot(layer.id, sourceSnapshot, {
           emit: false,
+          preferSparse: preferSparseRestore,
           source: "puppet-rasterize-rollback",
         });
         this.deleteRasterSnapshot(sourceSnapshot);
@@ -9344,6 +9430,7 @@ void main() {
 
         this.restoreRasterSnapshot(layer.id, sourceSnapshot, {
           emit: false,
+          preferSparse: preferSparseRestore,
           source: "puppet-rasterize-rollback",
         });
         this.deleteRasterSnapshot(sourceSnapshot);
@@ -9358,6 +9445,7 @@ void main() {
         this.deleteRasterSnapshot(rasterizedSnapshot);
         this.restoreRasterSnapshot(layer.id, sourceSnapshot, {
           emit: false,
+          preferSparse: preferSparseRestore,
           source: "puppet-rasterize-rollback",
         });
         this.deleteRasterSnapshot(sourceSnapshot);
@@ -9365,7 +9453,15 @@ void main() {
       }
 
       const sourceBytes = this.estimateRasterTargetBytes(target);
-      const targetBytes = this.estimateRasterTargetBytes(destinationTarget);
+      const afterPreferSparse = Boolean(preferSparseRestore && this.isPaintRasterLayer(layer.id, destinationTarget));
+      const finalLiveTarget = afterPreferSparse
+        ? this.sparsifyRasterTarget(layer.id, destinationTarget, {
+            emit: false,
+            source: `${options.source || "puppet-rasterize"}-retile`,
+            tileSize: destinationTarget.sparseTileSize || target.sparseTileSize || target.tileSize,
+          }) || destinationTarget
+        : destinationTarget;
+      const targetBytes = this.estimateRasterTargetBytes(finalLiveTarget);
       const beforeBytes = this.estimateRasterSnapshotBytes(sourceSnapshot);
       const afterBytes = this.estimateRasterSnapshotBytes(rasterizedSnapshot);
       const scratchBytes = needsTargetSwap ? targetBytes : 0;
@@ -9400,7 +9496,9 @@ void main() {
       }
 
       return {
+        afterPreferSparse,
         afterSnapshot: rasterizedSnapshot,
+        beforePreferSparse: preferSparseRestore,
         beforeSnapshot: sourceSnapshot,
         layerId: layer.id,
         memoryPolicy,
@@ -9968,6 +10066,10 @@ void main() {
             continue;
           }
 
+          if (isRasterTransformPreviewLayer) {
+            setPreviewCut(rasterTransformPreview.sourceRect);
+          }
+
           if (layerTarget?.texture) {
             let renderTarget = layerTarget;
             let didMergeActiveStroke = false;
@@ -9995,10 +10097,6 @@ void main() {
 
             if (hasVisualEffects) {
               bindArtboardProgram();
-            }
-
-            if (isRasterTransformPreviewLayer) {
-              setPreviewCut(rasterTransformPreview.sourceRect);
             }
 
             if (eraserMaskTexture) {
@@ -10045,10 +10143,6 @@ void main() {
               drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
             }
 
-            if (isRasterTransformPreviewLayer) {
-              setPreviewCut(null);
-            }
-
             if (eraserMaskTexture) {
               gl.uniform1f(uniforms.maskMode, 0.0);
               gl.uniform1f(uniforms.maskRectMode, 0.0);
@@ -10076,6 +10170,10 @@ void main() {
 
               drawBlendTexture(layerTexture, opacity, renderResult.rect || null, clipBase, blendModeId);
             }
+          }
+
+          if (isRasterTransformPreviewLayer) {
+            setPreviewCut(null);
           }
 
           if (isRasterTransformPreviewLayer) {

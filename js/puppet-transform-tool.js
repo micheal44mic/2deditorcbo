@@ -33,6 +33,17 @@
     return value;
   }
 
+  function runAfterNextPaint(callback) {
+    if (typeof window.requestAnimationFrame !== "function") {
+      callback();
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(callback);
+    });
+  }
+
   function toFiniteNumber(value, fallback = 0) {
     const number = Number(value);
 
@@ -77,8 +88,10 @@
   function createPuppetRasterizeHistoryEntry(options = {}) {
     const {
       afterSnapshot,
+      afterPreferSparse = false,
       afterState,
       beforeSnapshot,
+      beforePreferSparse = false,
       beforeState,
       history,
       layerId,
@@ -109,6 +122,8 @@
         }
 
         const didRestorePixels = renderer.restoreRasterSnapshot?.(layerId, beforeSnapshot, {
+          preferSparse: beforePreferSparse,
+          replaceSparse: beforePreferSparse,
           source: "history-undo-puppet-rasterize",
         }) !== false;
 
@@ -125,6 +140,8 @@
         }
 
         const didRestorePixels = renderer.restoreRasterSnapshot?.(layerId, afterSnapshot, {
+          preferSparse: afterPreferSparse,
+          replaceSparse: afterPreferSparse,
           source: "history-redo-puppet-rasterize",
         }) !== false;
 
@@ -392,6 +409,10 @@
     }
 
     rasterizeActivePuppetLayer() {
+      if (this.isRasterizing) {
+        return true;
+      }
+
       const layer = this.getActiveLayer();
       const puppet = this.getLayerPuppet(layer);
 
@@ -405,15 +426,6 @@
       history?.flushLayerState?.(this.layerModel);
 
       const beforeState = history?.getLayerSnapshot?.(this.layerModel) || null;
-      const snapshots = renderer?.rasterizePuppetLayer?.({ ...layer, puppet }, {
-        emit: false,
-        source: "puppet-rasterize",
-      });
-
-      if (!snapshots) {
-        return false;
-      }
-
       const nextPuppet = {
         ...puppet,
         pins: [],
@@ -422,42 +434,76 @@
         puppet: cloneValue(nextPuppet),
       };
 
-      if (layer.type === "image") {
-        rasterizedLayerPatch.type = "paint";
-      }
-
       this.layerModel?.updateLayer?.(layer.id, rasterizedLayerPatch, {
         history: false,
-        source: "puppet-rasterize",
+        source: "puppet-rasterize-preview-clear",
       });
-
-      const afterState = history?.getLayerSnapshot?.(this.layerModel) || null;
-      const historyEntry = createPuppetRasterizeHistoryEntry({
-        afterSnapshot: snapshots.afterSnapshot,
-        afterState,
-        beforeSnapshot: snapshots.beforeSnapshot,
-        beforeState,
-        history,
-        layerId: layer.id,
-        layerModel: this.layerModel,
-        renderer,
-      });
-
-      if (historyEntry) {
-        history.push(historyEntry);
-      } else {
-        renderer?.deleteRasterSnapshot?.(snapshots.beforeSnapshot);
-        renderer?.deleteRasterSnapshot?.(snapshots.afterSnapshot);
-      }
-
+      this.isRasterizing = true;
       this.requestDraw();
-      window.dispatchEvent(new CustomEvent("cbo:puppet-rasterized", {
-        detail: {
-          layerId: layer.id,
-          rasterizedLayerType: rasterizedLayerPatch.type || layer.type,
+      this.render();
+
+      runAfterNextPaint(() => {
+        const snapshots = renderer?.rasterizePuppetLayer?.({ ...layer, puppet }, {
+          emit: false,
           source: "puppet-rasterize",
-        },
-      }));
+        });
+
+        if (!snapshots) {
+          this.layerModel?.updateLayer?.(layer.id, {
+            puppet: cloneValue(puppet),
+          }, {
+            history: false,
+            source: "puppet-rasterize-rollback",
+          });
+          this.isRasterizing = false;
+          this.requestDraw();
+          this.render();
+          return;
+        }
+
+        if (layer.type === "image") {
+          this.layerModel?.updateLayer?.(layer.id, {
+            puppet: cloneValue(nextPuppet),
+            type: "paint",
+          }, {
+            history: false,
+            source: "puppet-rasterize",
+          });
+        }
+
+        const afterState = history?.getLayerSnapshot?.(this.layerModel) || null;
+        const historyEntry = createPuppetRasterizeHistoryEntry({
+          afterSnapshot: snapshots.afterSnapshot,
+          afterPreferSparse: snapshots.afterPreferSparse,
+          afterState,
+          beforeSnapshot: snapshots.beforeSnapshot,
+          beforePreferSparse: snapshots.beforePreferSparse,
+          beforeState,
+          history,
+          layerId: layer.id,
+          layerModel: this.layerModel,
+          renderer,
+        });
+
+        if (historyEntry) {
+          history.push(historyEntry);
+        } else {
+          renderer?.deleteRasterSnapshot?.(snapshots.beforeSnapshot);
+          renderer?.deleteRasterSnapshot?.(snapshots.afterSnapshot);
+        }
+
+        this.isRasterizing = false;
+        this.requestDraw();
+        this.render();
+        window.dispatchEvent(new CustomEvent("cbo:puppet-rasterized", {
+          detail: {
+            layerId: layer.id,
+            rasterizedLayerType: layer.type === "image" ? "paint" : layer.type,
+            source: "puppet-rasterize",
+          },
+        }));
+      });
+
       return true;
     }
 

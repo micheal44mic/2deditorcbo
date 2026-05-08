@@ -45,6 +45,8 @@ test("document renderer supports raster transform preview and history commit", (
   assert.match(source, /gl\.readPixels\(coarseRect\.x, readY, coarseRect\.width, coarseRect\.height/);
   assert.match(source, /setRasterTransformPreview\(preview = null\)/);
   assert.match(source, /u_previewCutMode/);
+  assert.match(source, /if \(isRasterTransformPreviewLayer\) \{\s*setPreviewCut\(rasterTransformPreview\.sourceRect\);\s*\}\s*if \(layerTarget\?\.texture\)/);
+  assert.match(source, /else if \(this\.isSparseRasterTarget\(layerTarget\)\)[\s\S]*if \(isRasterTransformPreviewLayer\) \{\s*setPreviewCut\(null\);/);
   assert.match(source, /drawTexturedQuad\(texture, quad, options = \{\}\)/);
   assert.match(source, /computeDestToSourceUvHomography\(destQuad\)/);
   assert.match(source, /drawPerspectiveTexturedQuad\(texture, quad, options = \{\}\)/);
@@ -132,7 +134,7 @@ test("raster transform commits pad dirty rectangles for edge anti-aliasing", () 
   assert.match(source, /getClampedDocumentRect\(\s*destDirtyRect \|\| destRect,\s*CROPPED_TARGET_EDGE_PADDING,/);
 });
 
-test("raster transform tool uses SVG overlay, resize/rotate activation, and deferred commit", () => {
+test("raster transform tool uses SVG overlay, resize/rotate activation, and history-safe commit", () => {
   const source = readRepoFile("js", "raster-transform-tool.js");
   const cssSource = readRepoFile("css", "layout.css");
   const transformBoxCss = cssSource.match(/\.editor-raster-transform-box \{[\s\S]*?\n\}/)?.[0] || "";
@@ -165,7 +167,11 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and defe
   assert.match(source, /this\.documentRenderer\?\.width/);
   assert.match(source, /this\.documentRenderer\?\.height/);
   assert.match(source, /this\.documentRenderer\?\.setRasterTransformPreview\?\.\(/);
+  assert.doesNotMatch(source, /function runAfterNextPaint\(callback\)/);
+  assert.match(source, /const sourceSnapshot = this\.sourceSnapshot;/);
   assert.match(source, /this\.documentRenderer\?\.commitRasterTransform\?\.\(/);
+  assert.doesNotMatch(source, /this\.documentRenderer\?\.clearRasterTransformPreview\?\.\(layerId\);/);
+  assert.match(source, /const isVisible = !isCommitting && this\.isOverlayActive\(\) && Array\.isArray\(this\.currentQuad\);/);
   assert.match(source, /pickLayerAtClient\(clientX, clientY, options = \{\}\)/);
   assert.match(source, /this\.activeTool = SELECTION_TOOL_MODE;[\s\S]*this\.activateLayer\(this\.getActiveLayer\(\), \{ selection: true \}\);/);
   assert.match(source, /this\.transformAspectLocked = namespace\.transformAspectLocked === true;/);

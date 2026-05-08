@@ -876,6 +876,202 @@ test("restoreRasterSnapshot rebuilds sparse paint targets when requested", () =>
   assert.equal(renderer.framebuffer, null);
 });
 
+test("restoreRasterSnapshot can replace sparse paint targets to remove stale tiles", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const copyCalls = [];
+  const deletedTargets = [];
+  const staleTile = {
+    framebuffer: { id: "stale-fb" },
+    height: 256,
+    texture: { id: "stale-texture" },
+    width: 256,
+    x: 512,
+    y: 512,
+  };
+  const oldSparseTarget = {
+    clearColor: [0, 0, 0, 0],
+    framebuffer: null,
+    height: 1024,
+    id: "old-sparse",
+    layerId: "paint-1",
+    sparse: true,
+    texture: null,
+    tileSize: 256,
+    tiles: new Map([["2:2", staleTile]]),
+    width: 1024,
+    x: 0,
+    y: 0,
+  };
+  const snapshot = {
+    framebuffer: { id: "snapshot-fb" },
+    rect: { height: 256, width: 256, x: 0, y: 0 },
+    texture: { id: "snapshot-texture" },
+  };
+
+  renderer.width = 1024;
+  renderer.height = 1024;
+  renderer.paintLayerId = "paint-1";
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", oldSparseTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `tile-fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    texture: { id: `tile-tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = (sourceTarget, rect, destinationTarget) => {
+    copyCalls.push({ destinationTarget, rect: { ...rect }, sourceTarget });
+    return true;
+  };
+  renderer.deleteRasterTargetObject = (target) => deletedTargets.push(target);
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.emitContentChange = () => {};
+  renderer.invalidatePreviewCache = () => {};
+  renderer.isRasterTargetFullyTransparent = () => false;
+  renderer.requestDraw = () => {};
+
+  assert.equal(renderer.restoreRasterSnapshot("paint-1", snapshot, {
+    emit: false,
+    preferSparse: true,
+    replaceSparse: true,
+    source: "unit-replace-sparse",
+  }), true);
+
+  const nextSparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.notEqual(nextSparseTarget, oldSparseTarget);
+  assert.equal(renderer.isSparseRasterTarget(nextSparseTarget), true);
+  assert.equal(nextSparseTarget.tiles.has("0:0"), true);
+  assert.equal(nextSparseTarget.tiles.has("2:2"), false);
+  assert.equal(copyCalls.length, 1);
+  assert.equal(deletedTargets.includes(oldSparseTarget), true);
+});
+
+test("commitCroppedRasterTransform retiles materialized sparse paint targets after transform", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const materializedTarget = {
+    cropped: true,
+    framebuffer: { id: "materialized-fb" },
+    height: 256,
+    layerId: "paint-1",
+    materializedFromSparse: true,
+    sparseTileSize: 256,
+    texture: { id: "materialized-texture" },
+    width: 256,
+    x: 0,
+    y: 0,
+  };
+  const sourceSnapshot = {
+    framebuffer: { id: "source-fb" },
+    rect: { height: 80, width: 80, x: 24, y: 24 },
+    texture: { id: "source-texture" },
+  };
+  const deletedTargets = [];
+  const restoreCalls = [];
+  let pushedEntry = null;
+
+  window.CBO.documentHistory = {
+    push(entry) {
+      pushedEntry = entry;
+      return true;
+    },
+  };
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.paintLayerId = "paint-1";
+  renderer.texture = materializedTarget.texture;
+  renderer.framebuffer = materializedTarget.framebuffer;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", materializedTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.createRasterTargetForRect = (rect) => ({
+    cropped: true,
+    framebuffer: { id: `next-fb-${rect.x}-${rect.y}` },
+    height: rect.height,
+    texture: { id: `next-tex-${rect.x}-${rect.y}` },
+    width: rect.width,
+    x: rect.x,
+    y: rect.y,
+  });
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `tile-fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    ownerId: options.ownerId,
+    texture: { id: `tile-tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = () => true;
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.deleteRasterSnapshot = () => {};
+  renderer.deleteRasterTargetObject = (target) => deletedTargets.push(target);
+  renderer.drawTexturedQuad = () => true;
+  renderer.emitContentChange = () => {};
+  renderer.invalidatePreviewCache = () => {};
+  renderer.isMobileLikeDevice = () => false;
+  renderer.isRasterTargetFullyTransparent = () => false;
+  renderer.markRasterTargetDirty = () => {};
+  renderer.recordRasterOperation = (report) => report;
+  renderer.requestDraw = () => {};
+  renderer.clearRasterTransformPreview = () => {};
+  renderer.updateRasterTargetResourceMetadata = (target) => target;
+  renderer.createRasterSnapshot = (target, rect, label) => ({
+    framebuffer: { id: `${label}-fb` },
+    rect: rect || renderer.getRasterTargetDocumentRect(target),
+    texture: { id: `${label}-texture` },
+  });
+
+  const didCommit = renderer.commitCroppedRasterTransform({
+    destQuad: [
+      { x: 24, y: 24 },
+      { x: 104, y: 24 },
+      { x: 104, y: 104 },
+      { x: 24, y: 104 },
+    ],
+    destRect: { height: 80, width: 80, x: 24, y: 24 },
+    layerId: "paint-1",
+    source: "unit-transform",
+    sourceSnapshot,
+  });
+  const sparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.equal(didCommit, true);
+  assert.equal(renderer.isSparseRasterTarget(sparseTarget), true);
+  assert.ok(sparseTarget.tiles.size > 0);
+  assert.ok(deletedTargets.includes(materializedTarget));
+  assert.ok(pushedEntry);
+
+  renderer.restoreRasterSnapshot = (layerId, snapshot, options = {}) => {
+    restoreCalls.push({ layerId, options, snapshot });
+    return true;
+  };
+
+  assert.equal(pushedEntry.undo(), true);
+  assert.equal(pushedEntry.redo(), true);
+  assert.deepEqual(
+    restoreCalls.map((call) => [call.options.preferSparse, call.options.replaceSparse]),
+    [[true, true], [true, true]],
+  );
+});
+
 test("getRasterAlphaAtPoint samples the matching sparse tile", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -1250,7 +1446,10 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /getHistoryColdRasterTargetBytes\(\)/);
   assert.match(source, /snapshot\.dehydrateGpu = \(\) => this\.dehydrateRasterSnapshot\(snapshot\)/);
   assert.match(source, /snapshot\.hydrateGpu = \(\) => this\.hydrateRasterSnapshot\(snapshot\)/);
+  assert.match(source, /restoreRasterSnapshotAsSparseTarget\(layerId, snapshot, options = \{\}\)/);
   assert.match(source, /restoreRasterSnapshot\(layerId, snapshot, options = \{\}\)/);
+  assert.match(source, /options\.replaceSparse === true/);
+  assert.match(source, /const useAuthoritativeSparseHistory = Boolean\(preferSparseRestore && this\.isPaintRasterLayer\(layerId, target\)\)/);
   assert.match(source, /deleteRasterSnapshot\(snapshot\)/);
   assert.match(source, /deleteRasterSnapshot\(snapshot\) \{\s*if \(!snapshot\) \{\s*return;\s*\}/);
   assert.match(source, /const RASTER_HISTORY_TILE_SIZE = 256/);
@@ -1573,6 +1772,9 @@ test("puppet rasterize commits the deformed mesh through snapshots", () => {
   assert.match(rendererSource, /const outputRect = this\.getPuppetDeformedBounds\(layer, target\)/);
   assert.match(rendererSource, /this\.createRasterTargetForRect\(outputRect\)/);
   assert.match(rendererSource, /this\.createRasterSnapshot\(destinationTarget, null, "puppet-rasterize-after"\)/);
+  assert.match(rendererSource, /puppet-rasterize"\}\-retile/);
+  assert.match(rendererSource, /beforePreferSparse: preferSparseRestore/);
+  assert.match(rendererSource, /afterPreferSparse/);
   assert.match(rendererSource, /operationType: "puppet-rasterize"/);
   assert.match(rendererSource, /tool: "puppet"/);
   assert.match(rendererSource, /this\.replaceRasterTarget\(layer\.id, destinationTarget,/);
@@ -1581,8 +1783,15 @@ test("puppet rasterize commits the deformed mesh through snapshots", () => {
   assert.match(puppetToolSource, /this\.rasterizeActivePuppetLayer\(\)/);
   assert.match(puppetToolSource, /window\.addEventListener\("cbo:before-history-action", this\.handleBeforeHistoryAction\)/);
   assert.match(puppetToolSource, /namespace\.documentHistory\?\.flushLayerState\?\.\(this\.layerModel\)/);
+  assert.match(puppetToolSource, /source: "puppet-rasterize-preview-clear"/);
+  assert.match(puppetToolSource, /runAfterNextPaint\(\(\) => \{/);
+  assert.match(puppetToolSource, /source: "puppet-rasterize-rollback"/);
   assert.match(puppetToolSource, /source: "history-undo-puppet-rasterize"/);
   assert.match(puppetToolSource, /source: "history-redo-puppet-rasterize"/);
+  assert.match(puppetToolSource, /preferSparse: beforePreferSparse/);
+  assert.match(puppetToolSource, /replaceSparse: beforePreferSparse/);
+  assert.match(puppetToolSource, /preferSparse: afterPreferSparse/);
+  assert.match(puppetToolSource, /replaceSparse: afterPreferSparse/);
 });
 
 test("puppet pin creation is blocked outside visible alpha", () => {
