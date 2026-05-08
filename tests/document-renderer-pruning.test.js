@@ -1890,7 +1890,7 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
     "utf8",
   );
 
-  assert.match(source, /const PREVIEW_CACHE_MAX_SIZE = 2048/);
+  assert.match(source, /const PREVIEW_CACHE_MAX_SIZE = 4000/);
   assert.match(source, /createPreviewCache\(\)/);
   assert.match(source, /getPreviewCacheDimensions\(\)/);
   assert.match(source, /previewCacheMaxSize/);
@@ -1902,7 +1902,7 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.doesNotMatch(source, /^\s*this\.createPreviewCache\(\);$/m);
   assert.match(source, /const didCreate = this\.createPreviewCache\(\)/);
   assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
-  assert.match(source, /const PREVIEW_CACHE_ZOOM_THRESHOLD = 25\.0/);
+  assert.match(source, /const PREVIEW_CACHE_ZOOM_THRESHOLD = 8\.0/);
   assert.match(source, /const isWithinPreviewCacheZoom = \(camera\.zoom \|\| 1\) < PREVIEW_CACHE_ZOOM_THRESHOLD/);
   assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true/);
   assert.match(source, /allowPreviewCache &&\s*isWithinPreviewCacheZoom/);

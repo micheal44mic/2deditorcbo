@@ -821,8 +821,8 @@ void main() {
   const DEFAULT_GRAIN_SCALE = 42;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
-  const PREVIEW_CACHE_ZOOM_THRESHOLD = 25.0;
-  const PREVIEW_CACHE_MAX_SIZE = 2048;
+  const PREVIEW_CACHE_ZOOM_THRESHOLD = 8.0;
+  const PREVIEW_CACHE_MAX_SIZE = 4000;
 
   function normalizeAngle(value) {
     const number = Number(value);
