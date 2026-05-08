@@ -242,16 +242,16 @@ window.CBO.initTopToolbar = function initTopToolbar() {
           <button class="mobile-text-segment-button" type="button" aria-pressed="false" data-mobile-text-transform-mode="flag">FLAG</button>
           <button class="mobile-text-segment-button" type="button" aria-pressed="false" data-mobile-text-transform-mode="distort">DISTORT</button>
         </div>
-        <label class="mobile-text-range-field">
+        <label class="mobile-text-range-field" data-mobile-text-transform-range-field>
           <span class="mobile-text-control-header">
             <span class="mobile-text-label" data-mobile-text-transform-label>Transform</span>
             <output class="mobile-text-value-pill" data-mobile-text-transform-value>0</output>
           </span>
           <input class="mobile-text-range" type="range" min="-1200" max="1200" step="1" value="0" aria-label="Transformation amount" data-mobile-text-transform-amount />
         </label>
-        <div class="mobile-text-action-row">
+        <div class="mobile-text-action-row" data-mobile-text-transform-actions hidden>
           <button class="mobile-text-secondary-button" type="button" data-mobile-text-transform-reset>Reset</button>
-          <button class="mobile-text-primary-button" type="button" data-mobile-text-transform-confirm>Confirm</button>
+          <button class="mobile-text-primary-button" type="button" data-mobile-text-transform-modify>Modify</button>
         </div>
       </div>
       <div class="mobile-text-panel-section" data-mobile-text-panel-section="shadow" hidden>
@@ -443,11 +443,13 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const mobileTextLigaturesButton = mobileTextPanel?.querySelector("[data-mobile-text-ligatures]");
   const mobileTextAlternatesButton = mobileTextPanel?.querySelector("[data-mobile-text-alternates]");
   const mobileTextTransformModeButtons = mobileTextPanel?.querySelectorAll("[data-mobile-text-transform-mode]") || [];
+  const mobileTextTransformRangeField = mobileTextPanel?.querySelector("[data-mobile-text-transform-range-field]");
+  const mobileTextTransformActions = mobileTextPanel?.querySelector("[data-mobile-text-transform-actions]");
   const mobileTextTransformAmountInput = mobileTextPanel?.querySelector("[data-mobile-text-transform-amount]");
   const mobileTextTransformValue = mobileTextPanel?.querySelector("[data-mobile-text-transform-value]");
   const mobileTextTransformLabel = mobileTextPanel?.querySelector("[data-mobile-text-transform-label]");
   const mobileTextTransformReset = mobileTextPanel?.querySelector("[data-mobile-text-transform-reset]");
-  const mobileTextTransformConfirm = mobileTextPanel?.querySelector("[data-mobile-text-transform-confirm]");
+  const mobileTextTransformModify = mobileTextPanel?.querySelector("[data-mobile-text-transform-modify]");
   const mobileTextShadowSolidToggle = mobileTextPanel?.querySelector("[data-mobile-text-shadow-solid]");
   const mobileTextShadowColorInput = mobileTextPanel?.querySelector("[data-mobile-text-shadow-color]");
   const mobileTextShadowHex = mobileTextPanel?.querySelector("[data-mobile-text-shadow-hex]");
@@ -696,6 +698,49 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const activeLayer = getActiveLayer();
 
     return isVectorTextLayer(activeLayer) ? activeLayer : null;
+  }
+
+  function getTopmostTextLayer() {
+    const layerModel = window.CBO.documentLayerModel;
+    const layers = layerModel?.getRenderableLayers?.() || [];
+
+    return layers.slice().reverse().find((layer) =>
+      isVectorTextLayer(layer) && layer.locked !== true
+    ) || null;
+  }
+
+  function ensureActiveTextLayerForTransform(source = "mobile-text-transform-select") {
+    const activeLayer = getActiveTextLayer();
+
+    if (activeLayer) {
+      return activeLayer;
+    }
+
+    const layerModel = window.CBO.documentLayerModel;
+    const fallbackLayer = getTopmostTextLayer();
+
+    if (!layerModel || !fallbackLayer) {
+      return null;
+    }
+
+    layerModel.setActiveLayer?.(fallbackLayer.id, { source });
+
+    return layerModel.findEntryById?.(fallbackLayer.id) || fallbackLayer;
+  }
+
+  function requestTextTransformEdit(layer, source = "mobile-text-transform-mode") {
+    if (!layer?.id) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:text-transform-edit-request", {
+        detail: {
+          layerId: layer.id,
+          source,
+        },
+      }),
+    );
   }
 
   function cloneTextValue(value) {
@@ -1142,6 +1187,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
   function setMobileTextTransformMode(mode) {
     const nextMode = mode === "arch" || mode === "flag" || mode === "distort" ? mode : "none";
+    const isDistort = nextMode === "distort";
 
     mobileTextTransformModeButtons.forEach((button) => {
       const isActive = button.dataset.mobileTextTransformMode === nextMode;
@@ -1152,6 +1198,14 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
     if (mobileTextTransformLabel) {
       mobileTextTransformLabel.textContent = getMobileTextTransformLabel(nextMode);
+    }
+
+    if (mobileTextTransformRangeField) {
+      mobileTextTransformRangeField.hidden = isDistort;
+    }
+
+    if (mobileTextTransformActions) {
+      mobileTextTransformActions.hidden = !isDistort;
     }
   }
 
@@ -1431,7 +1485,11 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const engine = window.CBO.VectorTextEngine;
 
     if (!layer || !engine?.loadOpenTypeFont) {
-      return;
+      return null;
+    }
+
+    if (layer.envelopeGrid) {
+      return layer;
     }
 
     try {
@@ -1439,16 +1497,33 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       const path = engine.createTextPath(font, layer.text, layer.fontSize, getTextPathOptions(layer));
       const envelopeGrid = engine.createEnvelopeGridFromBounds(path.getBoundingBox());
 
-      void patchActiveTextLayerPreservingVisualCenter({
+      await patchActiveTextLayerPreservingVisualCenter({
         envelopeGrid,
         warp: {
           type: "none",
           amount: 0,
         },
       }, "mobile-text-envelope");
+
+      return getActiveTextLayer();
     } catch (error) {
       console.warn("Impossibile inizializzare la distorsione testo mobile.", error);
     }
+
+    return null;
+  }
+
+  async function editMobileTextDistort(layer = getActiveTextLayer()) {
+    if (!layer) {
+      return;
+    }
+
+    const nextLayer = layer.envelopeGrid
+      ? layer
+      : await initMobileEnvelopeForActiveTextLayer();
+    const editableLayer = nextLayer || getActiveTextLayer() || layer;
+
+    requestTextTransformEdit(editableLayer);
   }
 
   function openMobileTextPanel(panelKey) {
@@ -1690,11 +1765,17 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   mobileTextTransformModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const mode = button.dataset.mobileTextTransformMode;
+      const layer = ensureActiveTextLayerForTransform();
+
+      if (!layer) {
+        setMobileTextTransformMode("none");
+        return;
+      }
 
       setMobileTextTransformMode(mode);
 
       if (mode === "distort") {
-        void initMobileEnvelopeForActiveTextLayer();
+        void editMobileTextDistort(layer);
       } else {
         void patchActiveTextLayerPreservingVisualCenter({
           envelopeGrid: null,
@@ -1734,10 +1815,29 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     }, "mobile-text-transform-reset");
   });
 
-  mobileTextTransformConfirm?.addEventListener("click", () => {
-    mobileTextTransformConfirm.classList.add("active");
+  mobileTextTransformModify?.addEventListener("click", () => {
+    const layer = ensureActiveTextLayerForTransform();
+
+    if (!layer) {
+      return;
+    }
+
+    setMobileTextTransformMode("distort");
+    mobileTextTransformModify.classList.add("active");
+    void editMobileTextDistort(layer).finally(() => {
+      window.setTimeout(() => {
+        mobileTextTransformModify.classList.remove("active");
+      }, 140);
+    });
+  });
+
+  mobileTextTransformModify?.addEventListener("pointercancel", () => {
+    mobileTextTransformModify.classList.remove("active");
+  });
+
+  mobileTextTransformModify?.addEventListener("blur", () => {
     window.setTimeout(() => {
-      mobileTextTransformConfirm.classList.remove("active");
+      mobileTextTransformModify.classList.remove("active");
     }, 140);
   });
 

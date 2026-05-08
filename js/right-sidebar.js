@@ -209,16 +209,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
               <button class="text-sidebar-transform-mode" type="button" aria-pressed="false" data-text-transform-mode="flag">FLAG</button>
               <button class="text-sidebar-transform-mode" type="button" aria-pressed="false" data-text-transform-mode="distort">DISTORT</button>
             </div>
-            <label class="text-sidebar-range-field text-sidebar-transform-range-field">
+            <label class="text-sidebar-range-field text-sidebar-transform-range-field" data-text-transform-range-field>
               <span class="text-sidebar-control-header">
                 <span class="text-sidebar-label" data-text-transform-label>Transform</span>
               <output class="text-sidebar-value-pill" data-text-transform-value>0</output>
             </span>
               <input class="text-sidebar-range" type="range" min="-1200" max="1200" step="1" value="0" aria-label="Transformation amount" data-text-transform-amount />
             </label>
-            <div class="text-sidebar-transform-actions">
+            <div class="text-sidebar-transform-actions" data-text-transform-actions hidden>
               <button class="text-sidebar-secondary-button" type="button" data-text-transform-reset>Reset</button>
-              <button class="text-sidebar-primary-button" type="button" data-text-transform-confirm>Confirm</button>
+              <button class="text-sidebar-primary-button" type="button" data-text-transform-modify>Modify</button>
             </div>
           </div>
         </section>
@@ -407,11 +407,13 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const textTransformToggle = panel.querySelector("[data-text-transform-toggle]");
   const textTransformPanel = panel.querySelector("[data-text-transform-panel]");
   const textTransformModeButtons = panel.querySelectorAll("[data-text-transform-mode]");
+  const textTransformRangeField = panel.querySelector("[data-text-transform-range-field]");
+  const textTransformActions = panel.querySelector("[data-text-transform-actions]");
   const textTransformAmountInput = panel.querySelector("[data-text-transform-amount]");
   const textTransformValue = panel.querySelector("[data-text-transform-value]");
   const textTransformLabel = panel.querySelector("[data-text-transform-label]");
   const textTransformReset = panel.querySelector("[data-text-transform-reset]");
-  const textTransformConfirm = panel.querySelector("[data-text-transform-confirm]");
+  const textTransformModify = panel.querySelector("[data-text-transform-modify]");
   const textFontSelect = panel.querySelector("[data-text-font]");
   const textFontStyleSelect = panel.querySelector("[data-text-font-style]");
   const textFontSizeInput = panel.querySelector("[data-text-font-size]");
@@ -1240,6 +1242,49 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     return isVectorTextLayer(activeLayer) ? activeLayer : null;
   }
 
+  function getTopmostTextLayer() {
+    const layerModel = getLayerModel();
+    const layers = layerModel?.getRenderableLayers?.() || [];
+
+    return layers.slice().reverse().find((layer) =>
+      isVectorTextLayer(layer) && layer.locked !== true
+    ) || null;
+  }
+
+  function ensureActiveTextLayerForTransform(source = "text-transform-select") {
+    const activeLayer = getActiveTextLayer();
+
+    if (activeLayer) {
+      return activeLayer;
+    }
+
+    const layerModel = getLayerModel();
+    const fallbackLayer = getTopmostTextLayer();
+
+    if (!layerModel || !fallbackLayer) {
+      return null;
+    }
+
+    layerModel.setActiveLayer?.(fallbackLayer.id, { source });
+
+    return layerModel.findEntryById?.(fallbackLayer.id) || fallbackLayer;
+  }
+
+  function requestTextTransformEdit(layer, source = "text-transform-mode") {
+    if (!layer?.id) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:text-transform-edit-request", {
+        detail: {
+          layerId: layer.id,
+          source,
+        },
+      }),
+    );
+  }
+
   function mergeTextLayerPatch(layer, patch = {}) {
     const nextPatch = { ...patch };
 
@@ -1874,7 +1919,11 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     const engine = window.CBO.VectorTextEngine;
 
     if (!layer || !engine?.loadOpenTypeFont) {
-      return;
+      return null;
+    }
+
+    if (layer.envelopeGrid) {
+      return layer;
     }
 
     try {
@@ -1882,16 +1931,33 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       const path = engine.createTextPath(font, layer.text, layer.fontSize, getTextPathOptions(layer));
       const envelopeGrid = engine.createEnvelopeGridFromBounds(path.getBoundingBox());
 
-      void patchActiveTextLayerPreservingVisualCenter({
+      await patchActiveTextLayerPreservingVisualCenter({
         envelopeGrid,
         warp: {
           type: "none",
           amount: 0,
         },
       }, "text-sidebar-envelope");
+
+      return getActiveTextLayer();
     } catch (error) {
       console.warn("Impossibile inizializzare la distorsione envelope.", error);
     }
+
+    return null;
+  }
+
+  async function editTextDistort(layer = getActiveTextLayer()) {
+    if (!layer) {
+      return;
+    }
+
+    const nextLayer = layer.envelopeGrid
+      ? layer
+      : await initEnvelopeForActiveTextLayer();
+    const editableLayer = nextLayer || getActiveTextLayer() || layer;
+
+    requestTextTransformEdit(editableLayer);
   }
 
   function updateTextRangeProgress() {
@@ -2073,6 +2139,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
 
   function setTextTransformMode(mode) {
     const nextMode = mode === "arch" || mode === "flag" || mode === "distort" ? mode : "none";
+    const isDistort = nextMode === "distort";
 
     textTransformModeButtons.forEach((button) => {
       const isActive = button.dataset.textTransformMode === nextMode;
@@ -2083,6 +2150,14 @@ window.CBO.initRightSidebar = function initRightSidebar() {
 
     if (textTransformLabel) {
       textTransformLabel.textContent = getTextTransformLabel(nextMode);
+    }
+
+    if (textTransformRangeField) {
+      textTransformRangeField.hidden = isDistort;
+    }
+
+    if (textTransformActions) {
+      textTransformActions.hidden = !isDistort;
     }
   }
 
@@ -2503,11 +2578,17 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   textTransformModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const mode = button.dataset.textTransformMode;
+      const layer = ensureActiveTextLayerForTransform();
+
+      if (!layer) {
+        setTextTransformMode("none");
+        return;
+      }
 
       setTextTransformMode(mode);
 
       if (mode === "distort") {
-        void initEnvelopeForActiveTextLayer();
+        void editTextDistort(layer);
       } else {
         void patchActiveTextLayerPreservingVisualCenter({
           envelopeGrid: null,
@@ -2519,25 +2600,42 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     });
   });
   textTransformReset?.addEventListener("click", () => {
-    setTextTransformMode("arch");
+    setTextTransformMode("none");
 
     if (textTransformAmountInput) {
-      textTransformAmountInput.value = "170";
+      textTransformAmountInput.value = "0";
     }
 
     updateTextTransformAmount();
     void patchActiveTextLayerPreservingVisualCenter({
       envelopeGrid: null,
       warp: {
-        amount: 170,
-        type: "arch",
+        amount: 0,
+        type: "none",
       },
+    }, "text-sidebar-transform-reset");
+  });
+  textTransformModify?.addEventListener("click", () => {
+    const layer = ensureActiveTextLayerForTransform();
+
+    if (!layer) {
+      return;
+    }
+
+    setTextTransformMode("distort");
+    textTransformModify.classList.add("active");
+    void editTextDistort(layer).finally(() => {
+      window.setTimeout(() => {
+        textTransformModify.classList.remove("active");
+      }, 140);
     });
   });
-  textTransformConfirm?.addEventListener("click", () => {
-    textTransformConfirm.classList.add("active");
+  textTransformModify?.addEventListener("pointercancel", () => {
+    textTransformModify.classList.remove("active");
+  });
+  textTransformModify?.addEventListener("blur", () => {
     window.setTimeout(() => {
-      textTransformConfirm.classList.remove("active");
+      textTransformModify.classList.remove("active");
     }, 140);
   });
   textTransformToggle?.addEventListener("click", () => {

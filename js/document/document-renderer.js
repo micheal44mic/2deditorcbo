@@ -952,6 +952,7 @@ void main() {
       this.rasterTargetsByLayerId = new Map();
       this.puppetMeshResourcesByLayerId = new Map();
       this.rasterTransformPreview = null;
+      this.vectorTextTransformPreviewLayerId = "";
       this.previewTexture = null;
       this.previewFramebuffer = null;
       this.previewCacheWidth = 0;
@@ -6784,6 +6785,34 @@ void main() {
       }
     }
 
+    setVectorTextTransformPreviewLayer(layerId = "") {
+      const nextLayerId = String(layerId || "");
+
+      if (this.vectorTextTransformPreviewLayerId === nextLayerId) {
+        return;
+      }
+
+      this.vectorTextTransformPreviewLayerId = nextLayerId;
+      this.invalidatePreviewCache("vector-text-transform-preview");
+      this.requestDraw();
+    }
+
+    clearVectorTextTransformPreviewLayer(layerId = "") {
+      const currentLayerId = this.vectorTextTransformPreviewLayerId || "";
+
+      if (!currentLayerId || (layerId && currentLayerId !== layerId)) {
+        return;
+      }
+
+      this.vectorTextTransformPreviewLayerId = "";
+      this.invalidatePreviewCache("vector-text-transform-preview");
+      this.requestDraw();
+    }
+
+    isVectorTextTransformPreviewLayer(layerId = "") {
+      return Boolean(layerId && this.vectorTextTransformPreviewLayerId === layerId);
+    }
+
     getRasterTargetPixelContentBounds(target, options = {}) {
       if (!target) {
         return null;
@@ -9850,6 +9879,7 @@ void main() {
       const rasterTransformPreview = this.rasterTransformPreview?.texture
         ? this.rasterTransformPreview
         : null;
+      const vectorTextTransformPreviewLayerId = this.vectorTextTransformPreviewLayerId || "";
       const hasActiveEraserStroke = Boolean(options.activeStrokeTexture && activeStrokeMode === "eraser");
       const orderedLayers = this.getOrderedLayersBottomToTop();
       const renderableLayers = orderedLayers.filter((layer) => layer.visible !== false);
@@ -9903,6 +9933,7 @@ void main() {
         allowPreviewCache &&
         isWithinPreviewCacheZoom &&
         !rasterTransformPreview &&
+        !vectorTextTransformPreviewLayerId &&
         !hasActiveEraserStroke &&
         !activeStrokeNeedsFullStack &&
         activeStrokeCanOverlayPreview
@@ -10207,6 +10238,7 @@ void main() {
           const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
           const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
           const isRasterTransformPreviewLayer = rasterTransformPreview?.layerId === layer.id;
+          const isVectorTextTransformPreviewLayer = vectorTextTransformPreviewLayerId === layer.id;
           const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
             ? options.activeStrokeTexture
             : null;
@@ -10239,6 +10271,14 @@ void main() {
           }
 
           if (layer.visible === false) {
+            continue;
+          }
+
+          if (isVectorTextTransformPreviewLayer) {
+            if (!isClippingLayer) {
+              currentClipBase = null;
+            }
+
             continue;
           }
 

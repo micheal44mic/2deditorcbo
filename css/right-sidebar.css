@@ -1150,6 +1150,11 @@
   margin-top: 0;
 }
 
+.text-sidebar-transform-range-field[hidden],
+.text-sidebar-transform-actions[hidden] {
+  display: none;
+}
+
 .text-sidebar-transform-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

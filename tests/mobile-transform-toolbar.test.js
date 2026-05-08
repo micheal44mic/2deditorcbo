@@ -60,5 +60,5 @@ test("mobile transform sidebar exposes resize free resize rotate distortion pers
   assert.match(topToolbarCss, /\.transform-mode-toolbar \[data-transform-mode\],[\s\S]*\.transform-mode-toolbar \.transform-angle-control,[\s\S]*\.transform-mode-toolbar \.transform-mode-divider \{\s*display: none;/);
   assert.match(topToolbarCss, /bottom: 88px;/);
   assert.match(rasterTransformSource, /const isSameTransformTool = this\.activeTool === transformToolMode/);
-  assert.match(rasterTransformSource, /if \(!wasActive \|\| !isSameTransformTool \|\| !isSameLayerActive \|\| !this\.sourceSnapshot\) \{\s*this\.activateLayer\(activeLayer\);/);
+  assert.match(rasterTransformSource, /if \(!wasActive \|\| !isSameTransformTool \|\| !isSameLayerActive \|\| !\(this\.sourceSnapshot \|\| this\.startVectorTextLayer\)\) \{\s*this\.activateLayer\(activeLayer\);/);
 });

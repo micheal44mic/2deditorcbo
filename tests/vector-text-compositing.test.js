@@ -163,6 +163,8 @@ test("vector text renderer caches visual text into the matching WebGL layer targ
   assert.match(source, /drawWidth: rasterBox\.width/);
   assert.match(source, /drawHeight: rasterBox\.height/);
   assert.match(source, /getTextLayerRasterBox\(layer, pathBounds, size\)/);
+  assert.match(source, /getTextLayerContentRect\(layerOrId\)/);
+  assert.match(source, /transformLayerBounds\(layer, localBounds\)/);
   assert.match(source, /renderer\.rasterTargetsByLayerId\?\.get\?\.?\(layer\.id\)/);
   assert.match(source, /cached\?\.signature === signature && \(!rasterBox \|\| hasRasterTarget\)/);
   assert.match(source, /const placement = this\.getRasterBoxPlacement\(target, rasterBox\)/);
@@ -285,6 +287,16 @@ test("mobile text layer switches the bottom dock to icon settings panels", () =>
   assert.match(topToolbarSource, /enableMobileTextBorderEffect\(\)/);
   assert.match(topToolbarSource, /patchMobileTextFontFromControls/);
   assert.match(topToolbarSource, /initMobileEnvelopeForActiveTextLayer/);
+  assert.match(topToolbarSource, /function ensureActiveTextLayerForTransform\(source = "mobile-text-transform-select"\)/);
+  assert.match(topToolbarSource, /layerModel\.setActiveLayer\?\.\(fallbackLayer\.id, \{ source \}\)/);
+  assert.match(topToolbarSource, /const layer = ensureActiveTextLayerForTransform\(\);[\s\S]*if \(!layer\) \{[\s\S]*setMobileTextTransformMode\("none"\);[\s\S]*return;/);
+  assert.match(topToolbarSource, /new CustomEvent\("cbo:text-transform-edit-request", \{[\s\S]*layerId: layer\.id,/);
+  assert.match(topToolbarSource, /data-mobile-text-transform-actions hidden/);
+  assert.match(topToolbarSource, /data-mobile-text-transform-modify>Modify<\/button>/);
+  assert.match(topToolbarSource, /mobileTextTransformRangeField\.hidden = isDistort/);
+  assert.match(topToolbarSource, /if \(layer\.envelopeGrid\) \{[\s\S]*return layer;/);
+  assert.match(topToolbarSource, /if \(mode === "distort"\) \{[\s\S]*editMobileTextDistort\(layer\);/);
+  assert.match(topToolbarSource, /mobileTextTransformModify\?\.addEventListener\("click"/);
   assert.match(topToolbarSource, /enableMobileTextShadowEffect\(\)/);
   assert.match(topToolbarSource, /editorPage\.appendChild\(mobileTextPanel\)/);
   assert.match(topToolbarSource, /mobileTextPanel\?\.querySelector\("\[data-mobile-text-fill\]"\)/);

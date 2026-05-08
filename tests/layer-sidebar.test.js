@@ -46,6 +46,15 @@ test("right sidebar shows layer controls for the selection tool", () => {
   assert.match(source, /activeTool === "selection" && !isVectorTextLayer\(activeLayer\) && isLayerSidebarEligible\(activeLayer\)/);
   assert.match(source, /function shouldShowTextSettings\(activeTool = currentToolName\)/);
   assert.match(source, /activeTool === "text" \|\| activeTool === "type" \|\| Boolean\(getActiveTextLayer\(\)\)/);
+  assert.match(source, /function ensureActiveTextLayerForTransform\(source = "text-transform-select"\)/);
+  assert.match(source, /textTransformModeButtons\.forEach\(\(button\) => \{[\s\S]*const layer = ensureActiveTextLayerForTransform\(\);[\s\S]*setTextTransformMode\("none"\);[\s\S]*return;/);
+  assert.match(source, /new CustomEvent\("cbo:text-transform-edit-request", \{[\s\S]*layerId: layer\.id,/);
+  assert.match(source, /data-text-transform-actions hidden/);
+  assert.match(source, /data-text-transform-modify>Modify<\/button>/);
+  assert.match(source, /textTransformRangeField\.hidden = isDistort/);
+  assert.match(source, /if \(layer\.envelopeGrid\) \{[\s\S]*return layer;/);
+  assert.match(source, /if \(mode === "distort"\) \{[\s\S]*editTextDistort\(layer\);/);
+  assert.match(source, /textTransformModify\?\.addEventListener\("click"/);
   assert.match(source, /normalized === "rect select"/);
   assert.match(source, /normalized === "lasso select"/);
   assert.match(source, /syncRightSidebarPanels\(activeTool\)/);

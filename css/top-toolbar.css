@@ -67,7 +67,9 @@
 }
 
 .mobile-text-panel-section[hidden],
-.mobile-text-shadow-blur-field[hidden] {
+.mobile-text-shadow-blur-field[hidden],
+.mobile-text-range-field[hidden],
+.mobile-text-action-row[hidden] {
   display: none;
 }
 

@@ -70,6 +70,9 @@ test("raster transform supports Photoshop-style warp mesh preview and commit", (
   assert.match(toolSource, /editor-raster-transform-warp-point/);
   assert.match(toolSource, /editor-raster-transform-warp-handle-line/);
   assert.match(toolSource, /applyWarpSurfaceDelta/);
+  assert.match(toolSource, /const WARP_POINT_TOUCH_HIT_RADIUS_PX = 30;/);
+  assert.match(toolSource, /getWarpPointHitAtClient\(clientX, clientY, pointerType = ""\)/);
+  assert.match(toolSource, /this\.getWarpPointHitFromTarget\(event\.target\) \|\|[\s\S]*this\.getWarpPointHitAtClient\(event\.clientX, event\.clientY, event\.pointerType\)/);
   assert.match(toolSource, /warpControlPointsChanged/);
   assert.match(rendererSource, /const RASTER_WARP_MESH_COLS = 64;/);
   assert.match(rendererSource, /createRasterWarpMeshResource/);
@@ -90,6 +93,39 @@ test("raster transform samples snapshots linearly while resizing", () => {
   assert.match(source, /this\.setRasterTextureSampling\(texture, restoreTextureFilter\)/);
   assert.match(source, /textureFilter: this\.gl\?\.LINEAR/);
   assert.match(source, /textureFilter: gl\.LINEAR/);
+});
+
+test("resize tool transforms vector text as metadata instead of raster pixels", () => {
+  const source = readRepoFile("js", "raster-transform-tool.js");
+
+  assert.match(source, /function isVectorTextLayer\(layer\)/);
+  assert.match(source, /layer\.type === "vector-text" \|\| layer\.type === "text" \|\| layer\.kind === "text"/);
+  assert.match(source, /getVectorTextContentBounds\(layer\)/);
+  assert.match(source, /getVectorTextPreviewLayer\(layer, quad = this\.currentQuad\)/);
+  assert.match(source, /setVectorTextPreviewLayer\(previewLayer\)/);
+  assert.match(source, /commitVectorTextTransform\(layer\)/);
+  assert.match(source, /source: "vector-text-transform"/);
+  assert.match(source, /this\.isVectorTextLayer\(activeLayer\)[\s\S]*return this\.commitVectorTextTransform\(activeLayer\)/);
+  assert.match(source, /this\.getEffectiveTransformMode\(\) === "free" \? "scale" : "distort"/);
+});
+
+test("vector text resize hides the stale raster cache while SVG preview is active", () => {
+  const transformSource = readRepoFile("js", "raster-transform-tool.js");
+  const rendererSource = readRepoFile("js", "document", "document-renderer.js");
+  const textSource = readRepoFile("js", "text", "vector-text-renderer.js");
+  const previewBody = transformSource.match(/setVectorTextPreviewLayer\(layer\) \{[\s\S]*?\n    \}/)?.[0] || "";
+
+  assert.match(transformSource, /this\.documentRenderer\?\.setVectorTextTransformPreviewLayer\?\.\(layer\.id\)/);
+  assert.match(transformSource, /this\.documentRenderer\?\.clearVectorTextTransformPreviewLayer\?\.\(this\.startVectorTextLayer\.id\)/);
+  assert.doesNotMatch(previewBody, /beginInteraction/);
+  assert.match(rendererSource, /vectorTextTransformPreviewLayerId/);
+  assert.match(rendererSource, /setVectorTextTransformPreviewLayer\(layerId = ""\)/);
+  assert.match(rendererSource, /clearVectorTextTransformPreviewLayer\(layerId = ""\)/);
+  assert.match(rendererSource, /!vectorTextTransformPreviewLayerId/);
+  assert.match(rendererSource, /const isVectorTextTransformPreviewLayer = vectorTextTransformPreviewLayerId === layer\.id/);
+  assert.match(rendererSource, /if \(isVectorTextTransformPreviewLayer\) \{[\s\S]*?continue;/);
+  assert.match(textSource, /renderer\.isVectorTextTransformPreviewLayer\?\.?\(layer\.id\)/);
+  assert.match(textSource, /renderer\.clearVectorTextTransformPreviewLayer\?\.?\(layer\.id\)/);
 });
 
 test("document renderer uses analytic anti-aliased quad edge coverage for raster transforms", () => {
@@ -162,6 +198,8 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /isOverlayActive\(\) \{/);
   assert.match(source, /this\.syncActiveToolFromToolbar\(\);/);
   assert.match(source, /syncActiveToolFromToolbar\(\) \{/);
+  assert.match(source, /window\.addEventListener\("cbo:text-transform-edit-request", this\.handleTextTransformEditRequest\);/);
+  assert.match(source, /handleTextTransformEditRequest\(event\) \{[\s\S]*this\.activeTool = "text-transform";[\s\S]*this\.deactivateLayer\(\);/);
   assert.match(source, /const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object\.freeze\(\{/);
   assert.match(source, /padding: 0,/);
   assert.match(source, /pixelPerfect: true,/);
@@ -202,6 +240,7 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /this\.updatePreview\(\);[\s\S]*this\.render\(\);/);
   assert.match(source, /if \(this\.isActive\(\)\) \{\s*this\.commitTransform\(\);/);
   assert.match(source, /if \(!handle && !box\) \{\s*if \(this\.hasPendingTransform\(\)\) \{\s*return;/);
+  assert.match(source, /const box = this\.getBoxTarget\(event\.target\) \|\| \([\s\S]*this\.isPointInCurrentQuad\(point\)[\s\S]*\? this\.box/);
   assert.match(source, /setSvgElementVisible\(element, isVisible\)/);
   assert.match(source, /this\.svg\.classList\.toggle\("raster-selection-tool-active", this\.isSelectionActive\(\)\);/);
   assert.match(source, /setSvgElementVisible\(handle, isVisible && this\.isActive\(\) && !this\.isWarpMode\(\)\);/);

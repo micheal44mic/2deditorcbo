@@ -1194,6 +1194,37 @@
       return this.getRenderableTextLayers().find((layer) => layer.id === activeId) || null;
     }
 
+    getTextLayerContentRect(layerOrId) {
+      const layer = typeof layerOrId === "string"
+        ? this.layerModel?.findEntryById?.(layerOrId)
+        : layerOrId;
+
+      if (!isTextLayer(layer)) {
+        return null;
+      }
+
+      const font = this.getFont(layer.fontUrl);
+
+      if (!font) {
+        return null;
+      }
+
+      const metrics = this.getPathMetrics(layer, font);
+      const localBounds = getTextLocalRasterBounds(layer, metrics.bounds);
+      const bounds = localBounds ? transformLayerBounds(layer, localBounds) : null;
+
+      if (!bounds || !Number.isFinite(bounds.x1) || !Number.isFinite(bounds.y1) || bounds.x2 <= bounds.x1 || bounds.y2 <= bounds.y1) {
+        return null;
+      }
+
+      return {
+        height: bounds.y2 - bounds.y1,
+        width: bounds.x2 - bounds.x1,
+        x: bounds.x1,
+        y: bounds.y1,
+      };
+    }
+
     getLayerNode(layerId) {
       if (!layerId || !this.contentGroup) {
         return null;
@@ -1480,6 +1511,10 @@
           pendingSignature: "",
           signature,
         });
+        if (renderer.isVectorTextTransformPreviewLayer?.(layer.id)) {
+          renderer.clearVectorTextTransformPreviewLayer?.(layer.id);
+          this.endTextEditPreview();
+        }
         this.finishRasterPreviewIfIdle();
         namespace.brushEngine?.requestDraw?.();
         return;
@@ -1524,6 +1559,11 @@
           renderer.invalidatePreviewCache?.("vector-text-cache");
           this.debugTextRaster(layer, rasterBox, size, "vector-text-cache");
 
+          if (renderer.isVectorTextTransformPreviewLayer?.(layer.id)) {
+            renderer.clearVectorTextTransformPreviewLayer?.(layer.id);
+            this.endTextEditPreview();
+          }
+
           this.rasterLayerCache.set(layer.id, {
             generation,
             pendingSignature: "",
@@ -1543,6 +1583,10 @@
           }
 
           this.finishRasterPreviewIfIdle();
+          if (renderer.isVectorTextTransformPreviewLayer?.(layer.id)) {
+            renderer.clearVectorTextTransformPreviewLayer?.(layer.id);
+            this.endTextEditPreview();
+          }
           console.warn("Impossibile sincronizzare il testo vettoriale nel compositing WebGL.", error);
         });
     }

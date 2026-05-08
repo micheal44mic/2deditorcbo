@@ -12,6 +12,8 @@
   });
   const HANDLE_SIZE = 10;
   const WARP_POINT_SIZE = 5;
+  const WARP_POINT_HIT_RADIUS_PX = 16;
+  const WARP_POINT_TOUCH_HIT_RADIUS_PX = 30;
   const WARP_GRID_SAMPLE_STEPS = 28;
   const MIN_TRANSFORM_SIZE = 2;
   const GUIDE_PROXIMITY_PX = 3;
@@ -123,6 +125,20 @@
     return "free";
   }
 
+  function isVectorTextLayer(layer) {
+    return Boolean(layer && (layer.type === "vector-text" || layer.type === "text" || layer.kind === "text"));
+  }
+
+  function formatVectorTextLayerTransform(layer) {
+    const x = toFiniteNumber(layer?.x, 0);
+    const y = toFiniteNumber(layer?.y, 0);
+    const rotation = toFiniteNumber(layer?.rotation, 0);
+    const scaleX = toFiniteNumber(layer?.scaleX, 1);
+    const scaleY = toFiniteNumber(layer?.scaleY, 1);
+
+    return `translate(${x} ${y}) rotate(${rotation}) scale(${scaleX} ${scaleY})`;
+  }
+
   function rectToQuad(rect) {
     if (!rect) {
       return null;
@@ -147,6 +163,24 @@
       x: (first.x + second.x) / 2,
       y: (first.y + second.y) / 2,
     };
+  }
+
+  function getPointDistance(first, second) {
+    return Math.hypot(
+      toFiniteNumber(second?.x, 0) - toFiniteNumber(first?.x, 0),
+      toFiniteNumber(second?.y, 0) - toFiniteNumber(first?.y, 0),
+    );
+  }
+
+  function getQuadTopAngle(quad = []) {
+    if (!Array.isArray(quad) || quad.length < 2) {
+      return 0;
+    }
+
+    return Math.atan2(
+      toFiniteNumber(quad[1]?.y, 0) - toFiniteNumber(quad[0]?.y, 0),
+      toFiniteNumber(quad[1]?.x, 0) - toFiniteNumber(quad[0]?.x, 0),
+    );
   }
 
   function lerpPoint(first, second, amount) {
@@ -422,6 +456,7 @@
       this.activeLayerId = null;
       this.contentRect = null;
       this.sourceSnapshot = null;
+      this.startVectorTextLayer = null;
       this.startQuad = null;
       this.currentQuad = null;
       this.startWarpPoints = null;
@@ -437,6 +472,7 @@
       this.lastPublishedState = "";
       this.handleToolChange = this.handleToolChange.bind(this);
       this.handleTransformModeChange = this.handleTransformModeChange.bind(this);
+      this.handleTextTransformEditRequest = this.handleTextTransformEditRequest.bind(this);
       this.handleRasterTransformAction = this.handleRasterTransformAction.bind(this);
       this.handleRotationInput = this.handleRotationInput.bind(this);
       this.handleBeforeHistoryAction = this.handleBeforeHistoryAction.bind(this);
@@ -583,6 +619,7 @@
     bindEvents() {
       window.addEventListener("cbo:tool-change", this.handleToolChange);
       window.addEventListener("cbo:transform-mode-change", this.handleTransformModeChange);
+      window.addEventListener("cbo:text-transform-edit-request", this.handleTextTransformEditRequest);
       window.addEventListener("cbo:raster-transform-action", this.handleRasterTransformAction);
       window.addEventListener("cbo:raster-transform-rotation-input", this.handleRotationInput);
       window.addEventListener("cbo:before-history-action", this.handleBeforeHistoryAction);
@@ -619,8 +656,16 @@
       return Boolean(
         layer &&
           layer.locked !== true &&
-          (layer.type === "paint" || layer.type === "image")
+          (layer.type === "paint" || layer.type === "image" || isVectorTextLayer(layer))
       );
+    }
+
+    isVectorTextLayer(layer) {
+      return isVectorTextLayer(layer);
+    }
+
+    isRasterTransformLayer(layer) {
+      return Boolean(layer && !this.isVectorTextLayer(layer) && (layer.type === "paint" || layer.type === "image"));
     }
 
     isSelectableLayer(layer) {
@@ -647,17 +692,19 @@
 
       if (transformToolMode) {
         const wasActive = this.isActive();
-        const activeLayer = this.getActiveLayer();
         const isSameTransformTool = this.activeTool === transformToolMode;
-        const isSameLayerActive = activeLayer?.id && activeLayer.id === this.activeLayerId;
+        let activeLayer = this.getActiveLayer();
 
         if (this.isActive() && this.activeTool !== transformToolMode && this.hasPendingTransform()) {
           this.commitTransform();
+          activeLayer = this.getActiveLayer();
         }
 
         this.activeTool = transformToolMode;
 
-        if (!wasActive || !isSameTransformTool || !isSameLayerActive || !this.sourceSnapshot) {
+        const isSameLayerActive = activeLayer?.id && activeLayer.id === this.activeLayerId;
+
+        if (!wasActive || !isSameTransformTool || !isSameLayerActive || !(this.sourceSnapshot || this.startVectorTextLayer)) {
           this.activateLayer(activeLayer);
         }
       } else if (isSelectionToolDetail(detail)) {
@@ -676,6 +723,23 @@
         this.deactivateLayer();
       }
 
+      this.render();
+    }
+
+    handleTextTransformEditRequest(event) {
+      const requestedLayerId = String(event.detail?.layerId || "");
+      const activeLayer = this.getActiveLayer();
+
+      if (!this.isVectorTextLayer(activeLayer) || (requestedLayerId && activeLayer.id !== requestedLayerId)) {
+        return;
+      }
+
+      if (this.hasPendingTransform()) {
+        this.commitTransform();
+      }
+
+      this.activeTool = "text-transform";
+      this.deactivateLayer();
       this.render();
     }
 
@@ -806,7 +870,7 @@
         return;
       }
 
-      if (!this.sourceSnapshot) {
+      if (!this.sourceSnapshot && !this.isVectorTextLayer(activeLayer)) {
         this.activateLayer(activeLayer);
       }
     }
@@ -854,6 +918,15 @@
       return {
         x: (x * this.camera.zoom + this.camera.x) / this.dpr,
         y: (y * this.camera.zoom + this.camera.y) / this.dpr,
+      };
+    }
+
+    clientToViewportPoint(clientX, clientY) {
+      const stageRect = this.stage.getBoundingClientRect();
+
+      return {
+        x: clientX - stageRect.left,
+        y: clientY - stageRect.top,
       };
     }
 
@@ -954,6 +1027,45 @@
       return this.isPointInCurrentQuad(point) ? layer : null;
     }
 
+    getVectorTextNodeBounds(layerId) {
+      const node = namespace.vectorTextRenderer?.getLayerNode?.(layerId);
+      const rect = node?.getBoundingClientRect?.();
+
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+
+      const topLeft = this.clientToDocumentPoint(rect.left, rect.top);
+      const bottomRight = this.clientToDocumentPoint(rect.right, rect.bottom);
+
+      return {
+        height: Math.max(1, bottomRight.y - topLeft.y),
+        width: Math.max(1, bottomRight.x - topLeft.x),
+        x: topLeft.x,
+        y: topLeft.y,
+      };
+    }
+
+    getVectorTextContentBounds(layer) {
+      if (!this.isVectorTextLayer(layer)) {
+        return null;
+      }
+
+      const contentRect = namespace.vectorTextRenderer?.getTextLayerContentRect?.(layer);
+
+      if (contentRect?.width > 0 && contentRect?.height > 0) {
+        return contentRect;
+      }
+
+      return this.getVectorTextNodeBounds(layer.id);
+    }
+
+    getLayerContentBounds(layer) {
+      return this.isVectorTextLayer(layer)
+        ? this.getVectorTextContentBounds(layer)
+        : this.getPixelTightRasterContentBounds(layer.id);
+    }
+
     activateLayer(layer, options = {}) {
       this.cancelTransform({ keepGeometry: false });
 
@@ -965,6 +1077,7 @@
       if (!canActivateLayer) {
         this.activeLayerId = null;
         this.contentRect = null;
+        this.startVectorTextLayer = null;
         this.startQuad = null;
         this.currentQuad = null;
         this.startWarpPoints = null;
@@ -974,14 +1087,15 @@
         return false;
       }
 
-      if (!selectionOnly) {
+      if (!selectionOnly && this.isRasterTransformLayer(layer)) {
         this.rasterizePuppetIfNeeded(layer);
       }
 
-      const bounds = this.getPixelTightRasterContentBounds(layer.id);
+      const bounds = this.getLayerContentBounds(layer);
 
       this.activeLayerId = layer.id;
       this.contentRect = bounds || null;
+      this.startVectorTextLayer = this.isVectorTextLayer(layer) ? cloneValue(layer) : null;
       this.startQuad = bounds ? rectToQuad(bounds) : null;
       this.currentQuad = bounds ? cloneValue(this.startQuad) : null;
       this.startWarpPoints = this.startQuad ? createWarpControlPointsFromQuad(this.startQuad) : null;
@@ -996,12 +1110,73 @@
       this.cancelTransform({ keepGeometry: false });
       this.activeLayerId = null;
       this.contentRect = null;
+      this.startVectorTextLayer = null;
       this.startQuad = null;
       this.currentQuad = null;
       this.startWarpPoints = null;
       this.currentWarpPoints = null;
       this.currentRotationRadians = 0;
       this.render();
+    }
+
+    getVectorTextPreviewLayer(layer, quad = this.currentQuad) {
+      const startLayer = this.startVectorTextLayer || layer;
+      const startRect = this.contentRect || getRectFromQuad(this.startQuad);
+
+      if (!this.isVectorTextLayer(startLayer) || !startRect || !Array.isArray(this.startQuad) || !Array.isArray(quad)) {
+        return null;
+      }
+
+      const startWidth = Math.max(MIN_TRANSFORM_SIZE, getPointDistance(this.startQuad[0], this.startQuad[1]));
+      const startHeight = Math.max(MIN_TRANSFORM_SIZE, getPointDistance(this.startQuad[0], this.startQuad[3]));
+      const nextWidth = Math.max(MIN_TRANSFORM_SIZE, getPointDistance(quad[0], quad[1]));
+      const nextHeight = Math.max(MIN_TRANSFORM_SIZE, getPointDistance(quad[0], quad[3]));
+      const scaleX = nextWidth / startWidth;
+      const scaleY = nextHeight / startHeight;
+      const originPoint = interpolateQuadPoint(
+        quad,
+        (toFiniteNumber(startLayer.x, 0) - startRect.x) / Math.max(MIN_TRANSFORM_SIZE, startRect.width),
+        (toFiniteNumber(startLayer.y, 0) - startRect.y) / Math.max(MIN_TRANSFORM_SIZE, startRect.height),
+      );
+      const rotationDelta = getQuadTopAngle(quad) - getQuadTopAngle(this.startQuad);
+
+      return {
+        ...startLayer,
+        rotation: toFiniteNumber(startLayer.rotation, 0) + radiansToDegrees(rotationDelta),
+        scaleX: toFiniteNumber(startLayer.scaleX, 1) * scaleX,
+        scaleY: toFiniteNumber(startLayer.scaleY, 1) * scaleY,
+        x: originPoint.x,
+        y: originPoint.y,
+      };
+    }
+
+    setVectorTextPreviewLayer(layer) {
+      const node = namespace.vectorTextRenderer?.getLayerNode?.(layer?.id);
+
+      if (!node || !layer) {
+        return false;
+      }
+
+      node.setAttribute("transform", formatVectorTextLayerTransform(layer));
+      this.documentRenderer?.setVectorTextTransformPreviewLayer?.(layer.id);
+      namespace.vectorTextRenderer?.beginTextEditPreview?.();
+
+      return true;
+    }
+
+    clearVectorTextPreview() {
+      if (!this.startVectorTextLayer?.id) {
+        this.documentRenderer?.clearVectorTextTransformPreviewLayer?.();
+        namespace.vectorTextRenderer?.endTextEditPreview?.();
+        return;
+      }
+
+      const layer = this.layerModel?.findEntryById?.(this.startVectorTextLayer.id) || this.startVectorTextLayer;
+      const node = namespace.vectorTextRenderer?.getLayerNode?.(this.startVectorTextLayer.id);
+
+      node?.setAttribute("transform", formatVectorTextLayerTransform(layer));
+      this.documentRenderer?.clearVectorTextTransformPreviewLayer?.(this.startVectorTextLayer.id);
+      namespace.vectorTextRenderer?.endTextEditPreview?.();
     }
 
     createSourceSnapshot() {
@@ -1019,6 +1194,14 @@
     }
 
     updatePreview() {
+      const activeLayer = this.layerModel?.findEntryById?.(this.activeLayerId);
+
+      if (this.isVectorTextLayer(activeLayer)) {
+        const previewLayer = this.getVectorTextPreviewLayer(activeLayer);
+
+        return this.setVectorTextPreviewLayer(previewLayer);
+      }
+
       const snapshot = this.createSourceSnapshot();
       const effectiveTransformMode = this.getEffectiveTransformMode();
 
@@ -1048,6 +1231,7 @@
 
     cancelTransform(options = {}) {
       this.clearSelectionMoveHold({ releaseCapture: true });
+      this.clearVectorTextPreview();
 
       if (this.sourceSnapshot) {
         this.documentRenderer?.deleteRasterSnapshot?.(this.sourceSnapshot);
@@ -1059,6 +1243,7 @@
       }
 
       this.dragState = null;
+      this.startVectorTextLayer = null;
       this.currentRotationRadians = 0;
 
       if (options.keepGeometry !== false && this.startQuad) {
@@ -1069,6 +1254,65 @@
       this.render();
     }
 
+    commitVectorTextTransform(layer) {
+      if (!this.isVectorTextLayer(layer) || !this.activeLayerId || !this.contentRect || !this.currentQuad) {
+        return false;
+      }
+
+      if (!quadChanged(this.startQuad || [], this.currentQuad || [])) {
+        this.cancelTransform();
+        return false;
+      }
+
+      const previewLayer = this.getVectorTextPreviewLayer(layer);
+
+      if (!previewLayer) {
+        this.cancelTransform();
+        return false;
+      }
+
+      this.isCommitting = true;
+
+      const didCommit = this.layerModel?.updateLayer?.(layer.id, {
+        rotation: previewLayer.rotation,
+        scaleX: previewLayer.scaleX,
+        scaleY: previewLayer.scaleY,
+        x: previewLayer.x,
+        y: previewLayer.y,
+      }, {
+        historyGroup: `vector-text-transform-${layer.id}`,
+        source: "vector-text-transform",
+      }) === true;
+
+      this.dragState = null;
+      this.sourceSnapshot = null;
+      this.startVectorTextLayer = null;
+
+      if (!didCommit) {
+        this.documentRenderer?.clearVectorTextTransformPreviewLayer?.(layer.id);
+        namespace.vectorTextRenderer?.endTextEditPreview?.();
+      }
+
+      const nextLayer = this.layerModel?.findEntryById?.(layer.id) || previewLayer;
+      const bounds = didCommit
+        ? this.getVectorTextContentBounds(nextLayer) || getRectFromQuad(this.currentQuad)
+        : null;
+
+      if (didCommit && bounds) {
+        this.contentRect = bounds;
+        this.startQuad = rectToQuad(bounds);
+        this.currentQuad = this.startQuad ? cloneValue(this.startQuad) : null;
+        this.startWarpPoints = this.startQuad ? createWarpControlPointsFromQuad(this.startQuad) : null;
+        this.currentWarpPoints = this.startWarpPoints ? cloneValue(this.startWarpPoints) : null;
+      }
+
+      this.currentRotationRadians = 0;
+      this.isCommitting = false;
+      this.render();
+
+      return didCommit;
+    }
+
     commitTransform() {
       this.clearSelectionMoveHold({ releaseCapture: true });
 
@@ -1077,6 +1321,11 @@
       }
 
       const effectiveTransformMode = this.getEffectiveTransformMode();
+      const activeLayer = this.layerModel?.findEntryById?.(this.activeLayerId);
+
+      if (this.isVectorTextLayer(activeLayer)) {
+        return this.commitVectorTextTransform(activeLayer);
+      }
 
       if (!this.sourceSnapshot || !this.activeLayerId || !this.contentRect || !this.currentQuad) {
         return false;
@@ -1186,6 +1435,57 @@
       return target?.closest?.(".editor-raster-transform-warp-point") || null;
     }
 
+    getWarpPointHitFromTarget(target) {
+      const warpPoint = this.getWarpPointTarget(target);
+
+      if (!warpPoint) {
+        return null;
+      }
+
+      return {
+        col: Math.max(0, Math.min(3, Number(warpPoint.dataset.col) || 0)),
+        row: Math.max(0, Math.min(3, Number(warpPoint.dataset.row) || 0)),
+      };
+    }
+
+    getWarpPointHitAtClient(clientX, clientY, pointerType = "") {
+      if (!Array.isArray(this.currentWarpPoints)) {
+        return null;
+      }
+
+      const viewportPoint = this.clientToViewportPoint(clientX, clientY);
+      const hitRadius = pointerType === "touch"
+        ? WARP_POINT_TOUCH_HIT_RADIUS_PX
+        : WARP_POINT_HIT_RADIUS_PX;
+      const maxDistanceSq = hitRadius * hitRadius;
+      let closest = null;
+
+      for (let row = 0; row < 4; row += 1) {
+        for (let col = 0; col < 4; col += 1) {
+          const point = this.currentWarpPoints[row]?.[col];
+
+          if (!point) {
+            continue;
+          }
+
+          const candidate = this.documentToViewportPoint(point.x, point.y);
+          const dx = candidate.x - viewportPoint.x;
+          const dy = candidate.y - viewportPoint.y;
+          const distanceSq = dx * dx + dy * dy;
+
+          if (distanceSq <= maxDistanceSq && (!closest || distanceSq < closest.distanceSq)) {
+            closest = {
+              col,
+              distanceSq,
+              row,
+            };
+          }
+        }
+      }
+
+      return closest ? { col: closest.col, row: closest.row } : null;
+    }
+
     clearSelectionMoveHold(options = {}) {
       const holdState = this.selectionMoveHoldState;
 
@@ -1269,10 +1569,17 @@
     }
 
     isWarpMode() {
-      return this.isActive() && this.transformMode === WARP_TRANSFORM_MODE && !this.isRotateActive();
+      return this.isActive() &&
+        this.transformMode === WARP_TRANSFORM_MODE &&
+        !this.isRotateActive() &&
+        !this.isVectorTextLayer(this.getActiveLayer());
     }
 
     getEffectiveTransformMode() {
+      if (this.isVectorTextLayer(this.getActiveLayer())) {
+        return "free";
+      }
+
       if (this.isWarpMode()) {
         return WARP_TRANSFORM_MODE;
       }
@@ -1508,17 +1815,26 @@
         return;
       }
 
-      const handle = this.getHandleTarget(event.target);
-      const box = this.getBoxTarget(event.target);
-      const warpPoint = this.isWarpMode() ? this.getWarpPointTarget(event.target) : null;
       const point = this.clientToDocumentPoint(event.clientX, event.clientY);
+      const handle = this.getHandleTarget(event.target);
+      const box = this.getBoxTarget(event.target) || (
+        !this.isWarpMode() &&
+        this.activeLayerId &&
+        Array.isArray(this.currentQuad) &&
+        this.isPointInCurrentQuad(point)
+          ? this.box
+          : null
+      );
 
       if (this.isWarpMode()) {
         if (!this.activeLayerId || !this.currentQuad || !this.contentRect || !this.ensureWarpControlPoints()) {
           return;
         }
 
-        if (!warpPoint && !this.isPointInWarpInteractionArea(point)) {
+        const warpPointHit = this.getWarpPointHitFromTarget(event.target) ||
+          this.getWarpPointHitAtClient(event.clientX, event.clientY, event.pointerType);
+
+        if (!warpPointHit && !this.isPointInWarpInteractionArea(point)) {
           if (this.hasPendingTransform()) {
             return;
           }
@@ -1532,14 +1848,14 @@
           return;
         }
 
-        const row = warpPoint ? Math.max(0, Math.min(3, Number(warpPoint.dataset.row) || 0)) : -1;
-        const col = warpPoint ? Math.max(0, Math.min(3, Number(warpPoint.dataset.col) || 0)) : -1;
-        const uv = warpPoint ? null : this.getWarpUvForDocumentPoint(point);
+        const row = warpPointHit ? warpPointHit.row : -1;
+        const col = warpPointHit ? warpPointHit.col : -1;
+        const uv = warpPointHit ? null : this.getWarpUvForDocumentPoint(point);
 
         this.dragState = {
           col,
           didChange: false,
-          mode: warpPoint ? "warp-point" : "warp-surface",
+          mode: warpPointHit ? "warp-point" : "warp-surface",
           pointerId: event.pointerId,
           row,
           startPoint: point,
@@ -1576,7 +1892,7 @@
       const mode = this.isRotateActive()
         ? "rotate"
         : handle
-          ? (this.transformMode === "free" ? "scale" : "distort")
+          ? (this.getEffectiveTransformMode() === "free" ? "scale" : "distort")
           : "move";
 
       this.dragState = {
@@ -1856,9 +2172,11 @@
         Array.isArray(this.startWarpPoints) &&
         Array.isArray(this.currentWarpPoints) &&
         warpControlPointsChanged(this.startWarpPoints, this.currentWarpPoints);
+      const activeLayer = this.layerModel?.findEntryById?.(this.activeLayerId);
+      const hasTransformSource = this.sourceSnapshot || this.isVectorTextLayer(activeLayer);
 
       return Boolean(
-        this.sourceSnapshot &&
+        hasTransformSource &&
           Array.isArray(this.startQuad) &&
           Array.isArray(this.currentQuad) &&
           (quadChanged(this.startQuad, this.currentQuad) || hasWarpChange)
