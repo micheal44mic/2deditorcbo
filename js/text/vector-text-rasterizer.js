@@ -214,10 +214,7 @@
         emit: false,
         source: "vector-text-rasterize-target",
       })) {
-        return {
-          ...target,
-          layerId,
-        };
+        return target;
       }
 
       renderer.deleteRasterTargetObject?.(target);
@@ -261,6 +258,7 @@
       layerModel,
       rasterLayer,
       rasterSnapshot,
+      preferSparseRestore = false,
       requiresRasterSnapshot = false,
       renderer,
     } = options;
@@ -315,6 +313,8 @@
           renderer.clearLayer?.(rasterLayerId, { emit: false });
 
           if (!renderer.restoreRasterSnapshot?.(rasterLayerId, rasterSnapshot, {
+            preferSparse: preferSparseRestore,
+            replaceSparse: preferSparseRestore,
             source: "history-redo-vector-text-rasterize",
           })) {
             history.restoreLayerState(layerModel, before, {
@@ -374,6 +374,7 @@
     const target = requiresRasterSnapshot
       ? createTextRasterizeTarget(renderer, rasterLayer.id, rasterSource.rasterBox)
       : null;
+    let finalTarget = target;
 
     if (requiresRasterSnapshot) {
       if (!target?.framebuffer || !target?.texture) {
@@ -394,6 +395,12 @@
         x: placement.x,
         y: placement.y,
       });
+      finalTarget = renderer.sparsifyRasterTarget?.(rasterLayer.id, target, {
+        emit: false,
+        pruneTransparentTiles: true,
+        source: "vector-text-rasterize-retile",
+        tileSize: target.sparseTileSize || target.tileSize,
+      }) || target;
       namespace.vectorTextRenderer?.debugTextRaster?.(
         layer,
         rasterSource.rasterBox,
@@ -403,7 +410,7 @@
     }
 
     const rasterSnapshot = requiresRasterSnapshot
-      ? renderer.createRasterSnapshot?.(target, rasterSource.rasterBox, "vector-text-rasterize")
+      ? renderer.createRasterSnapshot?.(finalTarget, rasterSource.rasterBox, "vector-text-rasterize")
       : null;
 
     if (history && requiresRasterSnapshot && !rasterSnapshot) {
@@ -428,6 +435,7 @@
       layerModel,
       rasterLayer,
       rasterSnapshot,
+      preferSparseRestore: renderer.isSparseRasterTarget?.(finalTarget) === true,
       requiresRasterSnapshot,
       renderer,
     });

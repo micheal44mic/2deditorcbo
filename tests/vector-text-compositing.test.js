@@ -162,10 +162,15 @@ test("vector text renderer caches visual text into the matching WebGL layer targ
   assert.match(source, /layerId: layer\.id/);
   assert.match(source, /drawWidth: rasterBox\.width/);
   assert.match(source, /drawHeight: rasterBox\.height/);
+  assert.match(source, /function shouldSparsifyTextRasterTarget\(layer, rasterBox\)/);
+  assert.match(source, /hasVisibleTextShadow\(layer\) \|\| getRasterBoxBytes\(rasterBox\) >= 4 \* 1024 \* 1024/);
+  assert.match(source, /renderer\.sparsifyRasterTarget\?\.\(layer\.id, target, \{/);
+  assert.match(source, /source:\s*"vector-text-cache-retile"/);
   assert.match(source, /getTextLayerRasterBox\(layer, pathBounds, size\)/);
   assert.match(source, /getTextLayerContentRect\(layerOrId\)/);
   assert.match(source, /transformLayerBounds\(layer, localBounds\)/);
   assert.match(source, /renderer\.rasterTargetsByLayerId\?\.get\?\.?\(layer\.id\)/);
+  assert.match(source, /renderer\.isSparseRasterTarget\?\.\(existingTarget\) === true/);
   assert.match(source, /cached\?\.signature === signature && \(!rasterBox \|\| hasRasterTarget\)/);
   assert.match(source, /const placement = this\.getRasterBoxPlacement\(target, rasterBox\)/);
   assert.match(source, /x: placement\.x/);
@@ -191,7 +196,8 @@ test("active text rasterization is debounced so drag and sliders stay responsive
   const dragMoveBody = source.match(/handleDragMove\(event\) \{([\s\S]*?)\n    handleDragEnd\(event\)/)?.[1] || "";
 
   assert.match(source, /ACTIVE_TEXT_RASTER_DEBOUNCE_MS/);
-  assert.match(source, /queueTextLayerRasterSync\(layer, pathData, size, rasterBox, signature, delay\)/);
+  assert.match(source, /queueTextLayerRasterSync\(layer, pathData, pathBounds, size, rasterBox, signature, delay\)/);
+  assert.match(source, /runTextLayerRasterSync\(layer, pathData, pathBounds, size, rasterBox, signature\)/);
   assert.doesNotMatch(dragMoveBody, /scheduleContentRender\(\)/);
 });
 
@@ -383,9 +389,14 @@ test("manual vector text rasterization uses the cropped renderer asset when avai
 
   assert.match(source, /createRasterTextAsset\?\.\(layer, \{ size \}\)/);
   assert.match(source, /createTextRasterizeTarget\(renderer, rasterLayer\.id, rasterSource\.rasterBox\)/);
+  assert.match(source, /renderer\.replaceRasterTarget\?\.\(layerId, target,/);
+  assert.doesNotMatch(source, /return \{\s*\.\.\.target,\s*layerId,\s*\};/);
   assert.match(source, /drawWidth: rasterSource\.rasterBox\.width/);
   assert.match(source, /drawHeight: rasterSource\.rasterBox\.height/);
   assert.match(source, /const placement = getRasterBoxPlacement\(target, rasterSource\.rasterBox\)/);
+  assert.match(source, /renderer\.sparsifyRasterTarget\?\.\(rasterLayer\.id, target, \{/);
+  assert.match(source, /pruneTransparentTiles:\s*true/);
+  assert.match(source, /source:\s*"vector-text-rasterize-retile"/);
   assert.match(source, /x: placement\.x/);
   assert.match(source, /y: placement\.y/);
   assert.doesNotMatch(source, /rasterizer\.placeRasterImage\(canvas,[\s\S]{0,120}x:\s*0,[\s\S]{0,80}y:\s*0/);
@@ -411,7 +422,7 @@ test("text rasterization supersamples small text before downscaling into the lay
   assert.match(rasterizerSource, /canvas\.height = outputHeight/);
 });
 
-test("text rasterization uses a document-scale drop shadow filter region", () => {
+test("text rasterization bounds drop shadow filters to the raster crop", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
     "utf8",
@@ -419,9 +430,16 @@ test("text rasterization uses a document-scale drop shadow filter region", () =>
   const filterBody = source.match(/createDropShadowFilter\(layer, options = \{\}\) \{([\s\S]*?)\n    createTextLayerNode/)?.[1] || "";
 
   assert.match(filterBody, /options\.ignoreInteraction === true/);
+  assert.match(source, /const filterBounds = options\.pathBounds[\s\S]*getTextLocalRasterBounds\(layer, options\.pathBounds\)/);
+  assert.match(source, /this\.createDropShadowFilter\(layer, \{[\s\S]*filterBounds,[\s\S]*ignoreInteraction: true,/);
+  assert.match(source, /pathBounds: metrics\.bounds/);
+  assert.match(source, /pathBounds,/);
   assert.match(filterBody, /filterUnits: "userSpaceOnUse"/);
-  assert.match(filterBody, /size\.width \* 3 \+ pad \* 2/);
-  assert.match(filterBody, /size\.height \* 3 \+ pad \* 2/);
+  assert.match(filterBody, /const filterBounds = hasFiniteBounds\(options\.filterBounds\) \? options\.filterBounds : null/);
+  assert.match(filterBody, /const filterX = filterBounds \? filterBounds\.x1 - pad : -pad/);
+  assert.match(filterBody, /Math\.ceil\(filterBounds\.x2 - filterBounds\.x1\) \+ pad \* 2/);
+  assert.doesNotMatch(filterBody, /size\.width \* 3 \+ pad \* 2/);
+  assert.doesNotMatch(filterBody, /size\.height \* 3 \+ pad \* 2/);
 });
 
 test("manual vector text rasterization records one custom entry for layer and pixel state", () => {
@@ -434,8 +452,12 @@ test("manual vector text rasterization records one custom entry for layer and pi
   assert.match(source, /type:\s*"custom"/);
   assert.match(source, /beforeEntries:\s*before\.entries/);
   assert.match(source, /afterEntries:\s*after\.entries/);
-  assert.match(source, /renderer\.createRasterSnapshot\?\.\(target, rasterSource\.rasterBox, "vector-text-rasterize"\)/);
+  assert.match(source, /renderer\.createRasterSnapshot\?\.\(finalTarget, rasterSource\.rasterBox, "vector-text-rasterize"\)/);
   assert.match(source, /renderer\.restoreRasterSnapshot\?\.\(rasterLayerId, rasterSnapshot,/);
+  assert.match(source, /preferSparseRestore = false/);
+  assert.match(source, /preferSparse:\s*preferSparseRestore/);
+  assert.match(source, /replaceSparse:\s*preferSparseRestore/);
+  assert.match(source, /preferSparseRestore:\s*renderer\.isSparseRasterTarget\?\.\(finalTarget\) === true/);
   assert.match(source, /renderer\.deleteRasterSnapshot\?\.\(rasterSnapshot\)/);
   assert.match(source, /layerModel\.setEntries\(entries, \{ history: false, source: "vector-text-rasterize" \}\)/);
   assert.match(source, /layerModel\.setActiveLayer\(rasterLayer\.id, \{ history: false, source: "vector-text-rasterize" \}\)/);
@@ -519,6 +541,67 @@ test("vector text rasterize history entry restores pixels and releases GPU snaps
     "restorePixels:raster-1:true:history-redo-vector-text-rasterize",
     "draw",
     "deleteSnapshot:true",
+  ]);
+});
+
+test("vector text rasterize redo restores sparse snapshots as sparse targets", () => {
+  const namespace = loadVectorTextRasterizerNamespace();
+  const calls = [];
+  const layerModel = {};
+  const beforeState = {
+    activeLayerId: "text-sparse",
+    entries: [{ id: "text-sparse", type: "vector-text" }],
+  };
+  const afterState = {
+    activeLayerId: "raster-sparse",
+    entries: [{ id: "raster-sparse", type: "paint" }],
+  };
+  const rasterSnapshot = { framebuffer: {}, texture: {} };
+  const history = {
+    restoreLayerState(_layerModel, state, options = {}) {
+      calls.push(`restore:${state.activeLayerId}:${options.source}`);
+      return true;
+    },
+  };
+  const renderer = {
+    clearLayer(layerId, options = {}) {
+      calls.push(`clear:${layerId}:${options.emit}`);
+      return true;
+    },
+    deleteRasterSnapshot() {},
+    deleteRasterTarget() {},
+    restoreRasterSnapshot(layerId, snapshot, options = {}) {
+      calls.push(
+        `restorePixels:${layerId}:${snapshot === rasterSnapshot}:${options.preferSparse}:${options.replaceSparse}:${options.source}`,
+      );
+      return true;
+    },
+  };
+
+  namespace.brushEngine = {
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  const entry = namespace.createVectorTextRasterizeHistoryEntry({
+    afterState,
+    beforeState,
+    history,
+    layerModel,
+    preferSparseRestore: true,
+    rasterLayer: { id: "raster-sparse" },
+    rasterSnapshot,
+    requiresRasterSnapshot: true,
+    renderer,
+  });
+
+  assert.equal(entry.redo(), true);
+  assert.deepEqual(calls, [
+    "restore:raster-sparse:history-redo-vector-text-rasterize",
+    "clear:raster-sparse:false",
+    "restorePixels:raster-sparse:true:true:true:history-redo-vector-text-rasterize",
+    "draw",
   ]);
 });
 

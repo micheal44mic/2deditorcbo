@@ -488,6 +488,24 @@
     });
   }
 
+  function hasVisibleTextShadow(layer) {
+    const shadow = layer?.style?.shadow || {};
+    const opacity = Number.isFinite(shadow.opacity) ? shadow.opacity : 0;
+
+    return opacity > 0 && (layer?.shadowType === "drop" || layer?.shadowType === "solid");
+  }
+
+  function getRasterBoxBytes(rasterBox) {
+    const width = Math.max(1, Math.round(Number(rasterBox?.width) || 1));
+    const height = Math.max(1, Math.round(Number(rasterBox?.height) || 1));
+
+    return width * height * 4;
+  }
+
+  function shouldSparsifyTextRasterTarget(layer, rasterBox) {
+    return hasVisibleTextShadow(layer) || getRasterBoxBytes(rasterBox) >= 4 * 1024 * 1024;
+  }
+
   function serializeTextLayerSvg(layerNode, defs, size, rasterBox = null, options = {}) {
     const box = rasterBox || {
       height: size.height,
@@ -1245,7 +1263,13 @@
 
     createRasterTextLayerMarkup(layer, pathData, size, rasterBox, options = {}) {
       const defs = [];
-      const filter = this.createDropShadowFilter(layer, { ignoreInteraction: true });
+      const filterBounds = options.pathBounds
+        ? getTextLocalRasterBounds(layer, options.pathBounds)
+        : null;
+      const filter = this.createDropShadowFilter(layer, {
+        filterBounds,
+        ignoreInteraction: true,
+      });
       const rasterScale = Math.max(1, Number(options.rasterScale) || getTextRasterSupersampleScale(rasterBox));
       const rasterLayer = {
         ...layer,
@@ -1293,7 +1317,10 @@
         pathData: metrics.pathData,
         rasterScale,
         rasterBox,
-        svgMarkup: this.createRasterTextLayerMarkup(layer, metrics.pathData, size, rasterBox, { rasterScale }),
+        svgMarkup: this.createRasterTextLayerMarkup(layer, metrics.pathData, size, rasterBox, {
+          pathBounds: metrics.bounds,
+          rasterScale,
+        }),
       };
     }
 
@@ -1386,10 +1413,7 @@
         existingRect.width === rasterBox.width &&
         existingRect.height === rasterBox.height
       ) {
-        return {
-          ...existingTarget,
-          layerId,
-        };
+        return existingTarget;
       }
 
       const target = renderer?.createRasterTargetForDocumentRect?.(layerId, rasterBox, { source });
@@ -1406,10 +1430,7 @@
         return renderer?.getRasterTarget?.(layerId) || null;
       }
 
-      return {
-        ...target,
-        layerId,
-      };
+      return target;
     }
 
     getRasterBoxPlacement(target, rasterBox) {
@@ -1435,7 +1456,13 @@
       const signature = getTextRasterSignature(layer, pathData, size, rasterBox);
       const cached = this.rasterLayerCache.get(layer.id);
       const existingTarget = renderer.rasterTargetsByLayerId?.get?.(layer.id);
-      const hasRasterTarget = Boolean(existingTarget?.texture && existingTarget?.framebuffer);
+      const hasRasterTarget = Boolean(
+        (existingTarget?.texture && existingTarget?.framebuffer) ||
+        (
+          renderer.isSparseRasterTarget?.(existingTarget) === true &&
+          existingTarget.tiles?.size > 0
+        )
+      );
 
       if (
         (cached?.signature === signature && (!rasterBox || hasRasterTarget)) ||
@@ -1448,15 +1475,15 @@
       const delay = layer.id === this.layerModel?.activeLayerId ? ACTIVE_TEXT_RASTER_DEBOUNCE_MS : 0;
 
       if (delay > 0) {
-        this.queueTextLayerRasterSync(layer, pathData, size, rasterBox, signature, delay);
+        this.queueTextLayerRasterSync(layer, pathData, pathBounds, size, rasterBox, signature, delay);
         this.beginRasterPreview(delay + TEXT_RASTER_PREVIEW_MS);
         return;
       }
 
-      this.runTextLayerRasterSync(layer, pathData, size, rasterBox, signature);
+      this.runTextLayerRasterSync(layer, pathData, pathBounds, size, rasterBox, signature);
     }
 
-    queueTextLayerRasterSync(layer, pathData, size, rasterBox, signature, delay) {
+    queueTextLayerRasterSync(layer, pathData, pathBounds, size, rasterBox, signature, delay) {
       const cached = this.rasterLayerCache.get(layer.id) || {};
 
       if (cached.timerId) {
@@ -1475,7 +1502,7 @@
           queuedSignature: "",
           timerId: 0,
         });
-        this.runTextLayerRasterSync(layer, pathData, size, rasterBox, signature);
+        this.runTextLayerRasterSync(layer, pathData, pathBounds, size, rasterBox, signature);
       }, delay);
 
       this.rasterLayerCache.set(layer.id, {
@@ -1485,7 +1512,7 @@
       });
     }
 
-    runTextLayerRasterSync(layer, pathData, size, rasterBox, signature) {
+    runTextLayerRasterSync(layer, pathData, pathBounds, size, rasterBox, signature) {
       const renderer = namespace.documentRenderer;
       const rasterizer = namespace.imageRasterizer;
 
@@ -1521,7 +1548,10 @@
       }
 
       const rasterScale = getTextRasterSupersampleScale(rasterBox);
-      const svgMarkup = this.createRasterTextLayerMarkup(layer, pathData, size, rasterBox, { rasterScale });
+      const svgMarkup = this.createRasterTextLayerMarkup(layer, pathData, size, rasterBox, {
+        pathBounds,
+        rasterScale,
+      });
 
       loadSvgImage(svgMarkup)
         .then((image) => {
@@ -1556,6 +1586,14 @@
             x: placement.x,
             y: placement.y,
           });
+          if (shouldSparsifyTextRasterTarget(layer, rasterBox)) {
+            renderer.sparsifyRasterTarget?.(layer.id, target, {
+              emit: false,
+              pruneTransparentTiles: true,
+              source: "vector-text-cache-retile",
+              tileSize: target.sparseTileSize || target.tileSize,
+            });
+          }
           renderer.invalidatePreviewCache?.("vector-text-cache");
           this.debugTextRaster(layer, rasterBox, size, "vector-text-cache");
 
@@ -1726,15 +1764,23 @@
       };
 
       if (options.ignoreInteraction === true) {
-        const size = this.getDocumentTextureSize();
+        const filterBounds = hasFiniteBounds(options.filterBounds) ? options.filterBounds : null;
         const pad = Math.ceil(distance + blur * 3 + TEXT_RASTER_BOUNDS_PADDING + 16);
+        const filterX = filterBounds ? filterBounds.x1 - pad : -pad;
+        const filterY = filterBounds ? filterBounds.y1 - pad : -pad;
+        const filterWidth = filterBounds
+          ? Math.max(1, Math.ceil(filterBounds.x2 - filterBounds.x1) + pad * 2)
+          : pad * 2 + 1;
+        const filterHeight = filterBounds
+          ? Math.max(1, Math.ceil(filterBounds.y2 - filterBounds.y1) + pad * 2)
+          : pad * 2 + 1;
 
         Object.assign(filterAttributes, {
           filterUnits: "userSpaceOnUse",
-          height: size.height * 3 + pad * 2,
-          width: size.width * 3 + pad * 2,
-          x: -size.width - pad,
-          y: -size.height - pad,
+          height: filterHeight,
+          width: filterWidth,
+          x: filterX,
+          y: filterY,
         });
       }
 
