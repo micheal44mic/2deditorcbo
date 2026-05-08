@@ -5,6 +5,7 @@
   const MIB = 1024 * 1024;
   const MAX_MATERIALIZATION_EVENTS = 200;
   const MAX_RASTER_OPERATION_EVENTS = 200;
+  const MAX_RESOURCE_TRACE_EVENTS = 300;
   const MAX_STROKE_MEMORY_EVENTS = 200;
   const MAX_SUSPECT_EVENTS = 200;
   const VALID_OWNER_TYPES = new Set([
@@ -26,8 +27,14 @@
   const renderbuffers = new Map();
   const fullCanvasMaterializations = [];
   const rasterOperationEvents = [];
+  const resourceTraceEvents = [];
   const strokeMemoryEvents = [];
   const suspectEvents = [];
+  const resourceTraceState = {
+    enabled: false,
+    log: true,
+    minBytes: MIB,
+  };
 
   let nextTextureId = 1;
   let nextFramebufferId = 1;

@@ -366,9 +366,155 @@ const BENCHMARK_EXPRESSION = `
     blurError,
   });
 
+  if (window.CBO?.initEditorCanvas) {
+    window.CBO.initEditorCanvas({ presetId: "square-2048" });
+    await delay(300);
+  }
+
+  const strokeRenderer = window.CBO.documentRenderer;
+  const strokeLayerModel = window.CBO.documentLayerModel || strokeRenderer?.layerModel;
+  const strokeHistory = window.CBO.documentHistory;
+  const strokeEngine = window.CBO.brushEngine;
+
+  if (strokeRenderer && strokeLayerModel && strokeHistory && strokeEngine) {
+    strokeHistory.clear?.();
+    strokeEngine.options.historyBatchIdleMs = 250;
+    strokeEngine.activeStrokeTool = "brush";
+    strokeEngine.currentStrokeTool = "brush";
+    strokeEngine.isBrushToolActive = true;
+    strokeEngine.camera = { x: 0, y: 0, zoom: 1 };
+    strokeEngine.dpr = 1;
+    strokeEngine.canvas.getBoundingClientRect = () => ({
+      bottom: 2048,
+      height: 2048,
+      left: 0,
+      right: 2048,
+      top: 0,
+      width: 2048,
+      x: 0,
+      y: 0,
+    });
+    strokeEngine.canvas.setPointerCapture = () => {};
+    strokeEngine.canvas.hasPointerCapture = () => false;
+    strokeEngine.canvas.releasePointerCapture = () => {};
+
+    const brushSettings = window.CBO.BrushDefaults?.createSettings
+      ? window.CBO.BrushDefaults.createSettings({
+          alphaThresholdEnabled: false,
+          flow: 1,
+          grainEnabled: false,
+          opacity: 1,
+          radius: 96,
+          renderingMode: "uniform-glaze",
+          shapeAlphaSrc: "",
+          spacing: 0.16,
+          spacingJitter: 0,
+          stabilizationAmount: 0,
+          taperEnd: 0,
+          taperStart: 0,
+          velocityPressureEnabled: false,
+        })
+      : {
+          flow: 1,
+          grainEnabled: false,
+          opacity: 1,
+          radius: 96,
+          renderingMode: "uniform-glaze",
+          shapeAlphaSrc: "",
+          spacing: 0.16,
+          taperEnd: 0,
+          taperStart: 0,
+        };
+
+    window.CBO.brushSettings = brushSettings;
+    strokeEngine.setBrushState?.(brushSettings);
+    window.dispatchEvent(new CustomEvent("cbo:brush-settings-change", {
+      detail: { settings: brushSettings },
+    }));
+
+    const makePointerEvent = (point, pointerId) => ({
+      button: 0,
+      clientX: point.x,
+      clientY: point.y,
+      pointerId,
+      pointerType: "mouse",
+      pressure: 1,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+      stopPropagation() {},
+      tiltX: 0,
+      tiltY: 0,
+    });
+    const drawStroke = (points, pointerId) => {
+      strokeEngine.camera = { x: 0, y: 0, zoom: 1 };
+      strokeEngine.dpr = 1;
+      strokeEngine.handlePointerDown(makePointerEvent(points[0], pointerId));
+      for (let index = 1; index < points.length - 1; index += 1) {
+        strokeEngine.handlePointerMove(makePointerEvent(points[index], pointerId));
+      }
+      strokeEngine.handlePointerUp(makePointerEvent(points[points.length - 1], pointerId));
+    };
+    const makeStroke = (startX, startY, dx, dy, count = 18) => {
+      const points = [];
+
+      for (let index = 0; index < count; index += 1) {
+        const t = index / (count - 1);
+
+        points.push({
+          x: startX + dx * t,
+          y: startY + dy * t + Math.sin(t * Math.PI * 2) * 18,
+        });
+      }
+
+      return points;
+    };
+    const strokeSets = [
+      makeStroke(220, 250, 1320, 120),
+      makeStroke(260, 520, 1240, 300),
+      makeStroke(310, 820, 1180, -180),
+      makeStroke(520, 1150, 960, 260),
+      makeStroke(420, 1480, 1120, -260),
+      makeStroke(700, 380, 820, 1180),
+    ];
+
+    await delay(100);
+    results.push(take("stroke-fresh-2048-history-cleared"));
+
+    strokeSets.forEach((points, index) => {
+      drawStroke(points, 5000 + index);
+    });
+    await delay(100);
+    results.push(take("stroke-after-6-strokes-before-idle-commit"));
+
+    await delay(500);
+    results.push({
+      ...take("stroke-after-idle-batch-cooldown"),
+      lastRasterGpuHotPrune: strokeHistory.lastRasterGpuHotPrune,
+    });
+
+    const didUndo = strokeHistory.undo?.() === true;
+    await delay(150);
+    results.push({
+      ...take("stroke-after-undo-lazy-after-captured"),
+      didUndo,
+      lastRasterGpuHotPrune: strokeHistory.lastRasterGpuHotPrune,
+    });
+
+    const didRedo = strokeHistory.redo?.() === true;
+    await delay(150);
+    results.push({
+      ...take("stroke-after-redo-rehydrated"),
+      didRedo,
+      lastRasterGpuHotPrune: strokeHistory.lastRasterGpuHotPrune,
+    });
+  }
+
   return {
-    activeLayerId: layerId,
-    rendererSize: { width: renderer.width, height: renderer.height },
+    activeLayerId: window.CBO.documentLayerModel?.activeLayerId || layerId,
+    rendererSize: {
+      height: window.CBO.documentRenderer?.height || renderer.height,
+      width: window.CBO.documentRenderer?.width || renderer.width,
+    },
     results,
   };
 })()

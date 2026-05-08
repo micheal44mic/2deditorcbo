@@ -7,6 +7,8 @@ window.CBO.initToolbar = function initToolbar() {
   const historyButtons = document.querySelectorAll("[data-history-action]");
   const mobileTransformToggleButtons = document.querySelectorAll("[data-mobile-transform-toggle]");
   const mobileTransformToolContainers = document.querySelectorAll("[data-mobile-transform-tools]");
+  let historyActionInFlight = false;
+  let historyBusyOverlay = null;
 
   function setMobileTransformToolsOpen(isOpen) {
     const nextOpen = Boolean(isOpen) && mobileTransformToolContainers.length > 0;
@@ -135,25 +137,99 @@ window.CBO.initToolbar = function initToolbar() {
     }, 140);
   }
 
+  function ensureHistoryBusyOverlay() {
+    if (historyBusyOverlay?.isConnected) {
+      return historyBusyOverlay;
+    }
+
+    const overlay = document.createElement("div");
+    const spinner = document.createElement("span");
+    const label = document.createElement("span");
+
+    overlay.className = "cbo-history-busy-overlay";
+    overlay.hidden = true;
+    overlay.setAttribute("aria-live", "polite");
+    overlay.setAttribute("role", "status");
+    spinner.className = "cbo-history-busy-spinner";
+    spinner.setAttribute("aria-hidden", "true");
+    label.className = "cbo-history-busy-label";
+    overlay.append(spinner, label);
+    document.body.append(overlay);
+    historyBusyOverlay = overlay;
+
+    return overlay;
+  }
+
+  function setHistoryBusy(action, isBusy) {
+    const overlay = ensureHistoryBusyOverlay();
+    const label = overlay.querySelector(".cbo-history-busy-label");
+    const normalizedAction = String(action || "").trim().toLowerCase();
+
+    if (label) {
+      label.textContent = normalizedAction === "redo" ? "REDO" : "UNDO";
+    }
+
+    overlay.hidden = !isBusy;
+    document.body?.classList.toggle("cbo-history-busy-active", Boolean(isBusy));
+  }
+
+  function afterHistoryBusyPaint(callback) {
+    const raf = typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame.bind(window)
+      : (handler) => window.setTimeout(handler, 16);
+
+    raf(() => {
+      raf(callback);
+    });
+  }
+
+  function finishHistoryBusy(action) {
+    window.setTimeout(() => {
+      afterHistoryBusyPaint(() => {
+        historyActionInFlight = false;
+        setHistoryBusy(action, false);
+      });
+    }, 120);
+  }
+
   function triggerHistoryAction(action) {
-    window.dispatchEvent(
-      new CustomEvent("cbo:before-history-action", {
-        detail: { action },
-      }),
-    );
+    const normalizedAction = String(action || "").trim().toLowerCase();
 
-    const button = document.querySelector(`[data-history-action="${action}"]`);
-
-    if (!button || button.disabled) {
+    if (historyActionInFlight || (normalizedAction !== "undo" && normalizedAction !== "redo")) {
       return;
     }
 
-    flashHistoryButton(button);
-    window.dispatchEvent(
-      new CustomEvent("cbo:history-action", {
-        detail: { action },
-      }),
-    );
+    historyActionInFlight = true;
+    setHistoryBusy(normalizedAction, true);
+    afterHistoryBusyPaint(() => {
+      window.dispatchEvent(
+        new CustomEvent("cbo:before-history-action", {
+          detail: {
+            action: normalizedAction,
+            source: "toolbar",
+          },
+        }),
+      );
+
+      const button = document.querySelector(`[data-history-action="${normalizedAction}"]`);
+
+      if (!button || button.disabled) {
+        finishHistoryBusy(normalizedAction);
+        return;
+      }
+
+      flashHistoryButton(button);
+      window.dispatchEvent(
+        new CustomEvent("cbo:history-action", {
+          detail: {
+            action: normalizedAction,
+            beforeDispatched: true,
+            source: "toolbar",
+          },
+        }),
+      );
+      finishHistoryBusy(normalizedAction);
+    });
   }
 
   function setHistoryButtonState(button, isEnabled) {

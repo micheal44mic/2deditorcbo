@@ -35,7 +35,11 @@
 body.cbo-memory-recovery-active .editor-stage > .editor-webgl-canvas,
 body.cbo-memory-recovery-active .editor-stage > .editor-vector-overlay,
 body.cbo-memory-recovery-active .editor-stage > .editor-raster-transform-overlay,
-body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay {
+body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay,
+body.cbo-history-busy-active .editor-stage > .editor-webgl-canvas,
+body.cbo-history-busy-active .editor-stage > .editor-vector-overlay,
+body.cbo-history-busy-active .editor-stage > .editor-raster-transform-overlay,
+body.cbo-history-busy-active .editor-stage > .editor-puppet-overlay {
   filter: blur(7px) saturate(0.82);
   transform: scale(1.012);
   transform-origin: center center;
@@ -58,6 +62,46 @@ body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay {
 
 .cbo-memory-autosave-overlay[hidden] {
   display: none;
+}
+
+.cbo-history-busy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483595;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px;
+  background: rgba(16, 18, 23, 0.22);
+  backdrop-filter: blur(2px);
+  pointer-events: all;
+}
+
+.cbo-history-busy-overlay[hidden] {
+  display: none;
+}
+
+.cbo-history-busy-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid rgba(245, 247, 251, 0.22);
+  border-top-color: #f5f7fb;
+  border-radius: 50%;
+  animation: cbo-history-busy-spin 720ms linear infinite;
+}
+
+.cbo-history-busy-label {
+  padding: 7px 10px;
+  border: 1px solid rgba(245, 247, 251, 0.2);
+  border-radius: 8px;
+  background: rgba(18, 21, 28, 0.72);
+  color: #f5f7fb;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
 }
 
 .cbo-layer-limit-toast {
@@ -130,6 +174,12 @@ body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay {
 }
 
 @keyframes cbo-memory-autosave-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes cbo-history-busy-spin {
   to {
     transform: rotate(360deg);
   }

@@ -23,7 +23,7 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(editorCanvasSource, /id: "story-1080"[\s\S]*width: 1080, height: 1920/);
   assert.match(editorCanvasSource, /function isMobileLikeDevice\(\)/);
   assert.match(editorCanvasSource, /function getDefaultDocumentPresetId\(\)/);
-  assert.match(editorCanvasSource, /maxRasterHistoryGpuHotMiB: 96/);
+  assert.match(editorCanvasSource, /maxRasterHistoryGpuHotMiB: 0/);
   assert.match(editorCanvasSource, /maxRasterHistoryMiB: 150/);
   assert.match(editorCanvasSource, /minRasterHistoryGpuHotEntries: 0/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorDocumentStart = function initEditorDocumentStart\(\)/);

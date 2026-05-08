@@ -1239,6 +1239,19 @@ void main() {
       return history.pruneRasterHistoryBudget();
     }
 
+    coolRasterHistoryGpuHotForBrush() {
+      const history = namespace.documentHistory;
+
+      if (!history?.pruneRasterHistoryGpuHotBudget) {
+        return null;
+      }
+
+      return history.pruneRasterHistoryGpuHotBudget({
+        minProtectedEntries: 0,
+        targetGpuHotBytes: 0,
+      });
+    }
+
     canBatchBrushHistory() {
       return Boolean(
         this.options.enableHistory &&
@@ -1424,6 +1437,7 @@ void main() {
             source: options.source || "brush-history-batch",
           });
           this.pruneRasterHistoryForStroke(pending.memoryPolicy);
+          this.coolRasterHistoryGpuHotForBrush();
           return true;
         }
 

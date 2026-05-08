@@ -76,22 +76,24 @@
   }
 
   function normalizeRasterHistoryGpuHotBudgetBytes(options = {}) {
-    const explicitBytes = toFinitePositiveNumber(
-      options.maxRasterHistoryGpuHotBytes ?? options.rasterHistoryGpuHotBudgetBytes,
-      0,
-    );
+    const rawBytes = options.maxRasterHistoryGpuHotBytes ?? options.rasterHistoryGpuHotBudgetBytes;
 
-    if (explicitBytes > 0) {
-      return Math.floor(explicitBytes);
+    if (rawBytes != null) {
+      const explicitBytes = Number(rawBytes);
+
+      if (Number.isFinite(explicitBytes) && explicitBytes >= 0) {
+        return Math.floor(explicitBytes);
+      }
     }
 
-    const explicitMiB = toFinitePositiveNumber(
-      options.maxRasterHistoryGpuHotMiB ?? options.rasterHistoryGpuHotBudgetMiB,
-      0,
-    );
+    const rawMiB = options.maxRasterHistoryGpuHotMiB ?? options.rasterHistoryGpuHotBudgetMiB;
 
-    if (explicitMiB > 0) {
-      return Math.floor(explicitMiB * MIB);
+    if (rawMiB != null) {
+      const explicitMiB = Number(rawMiB);
+
+      if (Number.isFinite(explicitMiB) && explicitMiB >= 0) {
+        return Math.floor(explicitMiB * MIB);
+      }
     }
 
     return DEFAULT_MAX_RASTER_HISTORY_GPU_HOT_BYTES;
@@ -128,10 +130,13 @@
 
     handleHistoryAction(event) {
       const action = String(event.detail?.action || "").toLowerCase();
+      const beforeDispatched = event.detail?.beforeDispatched === true;
 
-      window.dispatchEvent(new CustomEvent("cbo:before-history-action", {
-        detail: { action },
-      }));
+      if (!beforeDispatched) {
+        window.dispatchEvent(new CustomEvent("cbo:before-history-action", {
+          detail: { action },
+        }));
+      }
 
       if (action === "undo") {
         this.undo();
@@ -567,7 +572,10 @@
         };
       }
 
-      let candidates = this.collectGpuHotSnapshotCandidates({ minProtectedEntries });
+      const skippedSnapshots = new Set();
+      const getCandidates = () => this.collectGpuHotSnapshotCandidates({ minProtectedEntries })
+        .filter((candidate) => !skippedSnapshots.has(candidate.snapshot));
+      let candidates = getCandidates();
 
       while (this.getRasterHistoryGpuHotBytes() > budgetBytes && candidates.length > 0) {
         const candidate = candidates.shift();
@@ -581,9 +589,11 @@
             stack: candidate.stackName,
             type: candidate.entry?.type || "",
           });
+        } else {
+          skippedSnapshots.add(candidate.snapshot);
         }
 
-        candidates = this.collectGpuHotSnapshotCandidates({ minProtectedEntries });
+        candidates = getCandidates();
       }
 
       const afterBytes = this.getRasterHistoryGpuHotBytes();

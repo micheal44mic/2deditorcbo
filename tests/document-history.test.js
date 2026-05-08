@@ -151,6 +151,13 @@ test("raster history default budget is 320 MiB", () => {
   assert.equal(history.getRasterHistoryBudgetMiB(), 320);
 });
 
+test("raster history accepts a zero GPU hot budget", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const history = new DocumentHistory({ maxRasterHistoryGpuHotMiB: 0 });
+
+  assert.equal(history.getRasterHistoryGpuHotBudgetMiB(), 0);
+});
+
 test("raster history cools old GPU snapshots without dropping logical undo budget", () => {
   const DocumentHistory = loadDocumentHistory();
   const mib = 1024 * 1024;
@@ -489,4 +496,6 @@ test("history action dispatches a before hook before undo or redo", () => {
 
   assert.match(source, /new CustomEvent\("cbo:before-history-action"/);
   assert.match(source, /detail: \{ action \}/);
+  assert.match(source, /const beforeDispatched = event\.detail\?\.beforeDispatched === true/);
+  assert.match(source, /if \(!beforeDispatched\)/);
 });

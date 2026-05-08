@@ -110,8 +110,13 @@ test("brush stroke history batches tile captures until the idle commit", () => {
   };
   const rectA = { x: 0, y: 0, width: 10, height: 10 };
   const rectB = { x: 8, y: 8, width: 10, height: 10 };
+  let cooled = false;
 
   window.CBO.documentHistory = {
+    pruneRasterHistoryGpuHotBudget(options) {
+      cooled = options.targetGpuHotBytes === 0 && options.minProtectedEntries === 0;
+      return {};
+    },
     push(entry) {
       calls.push(["push", entry.source, entry.memoryPolicy?.strokeCount]);
       return true;
@@ -172,6 +177,7 @@ test("brush stroke history batches tile captures until the idle commit", () => {
   assert.deepEqual(calls.map((call) => call[0]), ["begin", "extend", "commit", "finalize", "push", "draw"]);
   assert.deepEqual(calls.find((call) => call[0] === "commit"), ["commit", true, "brush", true]);
   assert.deepEqual(calls.find((call) => call[0] === "push"), ["push", "brush", 2]);
+  assert.equal(cooled, true);
 });
 
 test("brush batch history flushes before other raster history captures", () => {

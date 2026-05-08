@@ -15,6 +15,17 @@ test("toolbar derives undo and redo enabled state from document history events",
   assert.match(source, /button\.disabled = !isEnabled/);
   assert.match(source, /new CustomEvent\("cbo:before-history-action"/);
   assert.match(source, /if \(!button \|\| button\.disabled\)/);
+  assert.match(source, /function ensureHistoryBusyOverlay\(\)/);
+  assert.match(source, /cbo-history-busy-overlay/);
+  assert.match(source, /requestAnimationFrame/);
+  assert.match(source, /beforeDispatched: true/);
+  assert.match(source, /setHistoryBusy\(normalizedAction, true\)/);
+
+  const triggerStart = source.indexOf("function triggerHistoryAction(action)");
+  const triggerEnd = source.indexOf("function setHistoryButtonState", triggerStart);
+  const triggerSource = source.slice(triggerStart, triggerEnd);
+
+  assert.ok(triggerSource.indexOf('new CustomEvent("cbo:before-history-action"') < triggerSource.indexOf("if (!button || button.disabled)"));
 });
 
 test("toolbar menu arrows open popovers without activating their paired tool", () => {
@@ -30,4 +41,13 @@ test("toolbar menu arrows open popovers without activating their paired tool", (
   assert.match(menuHandlerSource, /closeMenus\(button\)/);
   assert.match(menuHandlerSource, /classList\.toggle\("open"\)/);
   assert.doesNotMatch(menuHandlerSource, /activateTool\(/);
+});
+
+test("history busy overlay styles blur the stage while undo or redo restores", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "css", "layout.css"), "utf8");
+
+  assert.match(source, /body\.cbo-history-busy-active \.editor-stage > \.editor-webgl-canvas/);
+  assert.match(source, /\.cbo-history-busy-overlay/);
+  assert.match(source, /\.cbo-history-busy-spinner/);
+  assert.match(source, /@keyframes cbo-history-busy-spin/);
 });
