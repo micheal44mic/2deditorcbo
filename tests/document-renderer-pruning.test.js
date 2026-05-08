@@ -322,6 +322,80 @@ test("duplicateRasterTarget clones a source raster target into a new layer targe
   });
 });
 
+test("ensureRasterTargetForPaintRect creates and grows cropped live targets", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const createdRects = [];
+  const copiedRects = [];
+  const replaced = [];
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.rasterTargetsByLayerId = new Map();
+  renderer.createRasterTargetForDocumentRect = (layerId, rect, options = {}) => {
+    createdRects.push({ layerId, options, rect: { ...rect } });
+    return {
+      clearColor: options.clearColor || [0, 0, 0, 0],
+      cropped: renderer.isCroppedRect(rect),
+      framebuffer: { id: `fb-${createdRects.length}` },
+      height: rect.height,
+      texture: { id: `tex-${createdRects.length}` },
+      width: rect.width,
+      x: rect.x,
+      y: rect.y,
+    };
+  };
+  renderer.replaceRasterTarget = (layerId, target, options = {}) => {
+    replaced.push({ layerId, options, target });
+    renderer.rasterTargetsByLayerId.set(layerId, target);
+    return true;
+  };
+  renderer.copyRasterTargetRectIntoTarget = (sourceTarget, rect, destinationTarget) => {
+    copiedRects.push({ destinationTarget, rect: { ...rect }, sourceTarget });
+    return true;
+  };
+  renderer.deleteRasterTargetObject = () => {
+    throw new Error("cropped target should not be deleted in this happy path");
+  };
+
+  const firstTarget = renderer.ensureRasterTargetForPaintRect("paint-1", {
+    height: 80,
+    width: 100,
+    x: 200,
+    y: 300,
+  }, {
+    source: "unit-first-stroke",
+  });
+
+  assert.equal(firstTarget.width, 100);
+  assert.equal(firstTarget.height, 80);
+  assert.equal(firstTarget.x, 200);
+  assert.equal(firstTarget.y, 300);
+  assert.equal(createdRects[0].options.source, "unit-first-stroke");
+  assert.equal(replaced[0].options.emit, false);
+
+  const grownTarget = renderer.ensureRasterTargetForPaintRect("paint-1", {
+    height: 40,
+    width: 50,
+    x: 360,
+    y: 420,
+  }, {
+    source: "unit-grow-stroke",
+  });
+
+  assert.equal(grownTarget.x, 200);
+  assert.equal(grownTarget.y, 300);
+  assert.equal(grownTarget.width, 210);
+  assert.equal(grownTarget.height, 160);
+  assert.deepEqual(copiedRects[0].rect, {
+    height: 80,
+    width: 100,
+    x: 200,
+    y: 300,
+  });
+  assert.equal(replaced[1].options.source, "unit-grow-stroke");
+});
+
 test("puppet Rigid MLS writes translated and rotated mesh vertices", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);

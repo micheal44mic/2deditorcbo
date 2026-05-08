@@ -199,26 +199,27 @@ window.CBO.initToolbar = function initToolbar() {
       return;
     }
 
+    window.dispatchEvent(
+      new CustomEvent("cbo:before-history-action", {
+        detail: {
+          action: normalizedAction,
+          source: "toolbar",
+        },
+      }),
+    );
+
+    const button = document.querySelector(`[data-history-action="${normalizedAction}"]`);
+
+    if (!button || button.disabled) {
+      historyActionInFlight = false;
+      setHistoryBusy(normalizedAction, false);
+      return;
+    }
+
+    flashHistoryButton(button);
     historyActionInFlight = true;
     setHistoryBusy(normalizedAction, true);
     afterHistoryBusyPaint(() => {
-      window.dispatchEvent(
-        new CustomEvent("cbo:before-history-action", {
-          detail: {
-            action: normalizedAction,
-            source: "toolbar",
-          },
-        }),
-      );
-
-      const button = document.querySelector(`[data-history-action="${normalizedAction}"]`);
-
-      if (!button || button.disabled) {
-        finishHistoryBusy(normalizedAction);
-        return;
-      }
-
-      flashHistoryButton(button);
       window.dispatchEvent(
         new CustomEvent("cbo:history-action", {
           detail: {

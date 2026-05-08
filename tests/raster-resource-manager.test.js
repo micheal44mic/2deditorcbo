@@ -203,3 +203,38 @@ test("global raster memory report forwards paint target analysis options", () =>
   assert.equal(report.paintTargetPotentialSavingsBytes, 8 * 1024 * 1024);
   assert.equal(report.paintTargetCropPotential.mode, "precise");
 });
+
+test("raster resource manager can trace large texture allocations", () => {
+  const manager = loadManager();
+
+  manager.setResourceTraceEnabled(true, { clear: true, log: false, minMiB: 1 });
+
+  manager.registerTexture({}, {
+    height: 4000,
+    kind: "paintTarget",
+    layerId: "paint-debug",
+    ownerId: "paint-debug",
+    ownerType: "live",
+    reason: "debug-test",
+    width: 4000,
+  });
+  manager.registerTexture({}, {
+    height: 16,
+    kind: "tinyScratch",
+    ownerType: "scratch",
+    width: 16,
+  });
+
+  const trace = manager.getResourceTraceEvents();
+
+  assert.equal(trace.length, 1);
+  assert.equal(trace[0].action, "register-texture");
+  assert.equal(trace[0].category, "live/paintTarget");
+  assert.equal(trace[0].layerId, "paint-debug");
+  assert.equal(trace[0].MiB, "61.04");
+
+  const report = manager.reportRasterMemory({ log: false });
+
+  assert.equal(report.resourceTraceEventCount, 1);
+  assert.equal(report.resourceTraceEvents[0].reason, "debug-test");
+});

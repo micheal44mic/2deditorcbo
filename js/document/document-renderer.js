@@ -6109,6 +6109,152 @@ void main() {
       return true;
     }
 
+    copyRasterTargetRectIntoTarget(sourceTarget, docRect, destinationTarget) {
+      const sourceMappedRect = this.getRasterTargetLocalRect(sourceTarget, docRect);
+      const destinationMappedRect = this.getRasterTargetLocalRect(destinationTarget, sourceMappedRect?.docRect);
+      const sourceRect = sourceMappedRect?.localRect;
+      const destinationRect = destinationMappedRect?.localRect;
+
+      if (!sourceTarget?.framebuffer || !destinationTarget?.framebuffer || !sourceRect || !destinationRect) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const sourceX0 = sourceRect.x;
+      const sourceX1 = sourceRect.x + sourceRect.width;
+      const sourceY0 = sourceTarget.height - (sourceRect.y + sourceRect.height);
+      const sourceY1 = sourceTarget.height - sourceRect.y;
+      const destinationX0 = destinationRect.x;
+      const destinationX1 = destinationRect.x + destinationRect.width;
+      const destinationY0 = destinationTarget.height - (destinationRect.y + destinationRect.height);
+      const destinationY1 = destinationTarget.height - destinationRect.y;
+
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, sourceTarget.framebuffer);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, destinationTarget.framebuffer);
+      gl.blitFramebuffer(
+        sourceX0,
+        sourceY0,
+        sourceX1,
+        sourceY1,
+        destinationX0,
+        destinationY0,
+        destinationX1,
+        destinationY1,
+        gl.COLOR_BUFFER_BIT,
+        gl.NEAREST,
+      );
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      this.markRasterTargetDirty(destinationTarget);
+
+      return true;
+    }
+
+    createRasterTargetForDocumentRect(layerId, targetRect, options = {}) {
+      const rect = this.getClampedDocumentRect(targetRect);
+
+      if (!rect) {
+        return null;
+      }
+
+      const clearColor = Array.isArray(options.clearColor)
+        ? options.clearColor
+        : [0, 0, 0, 0];
+
+      return this.createRasterTarget(clearColor, {
+        cropped: this.isCroppedRect(rect),
+        height: rect.height,
+        layerId,
+        reason: options.source || "create-raster-target-for-rect",
+        width: rect.width,
+        x: rect.x,
+        y: rect.y,
+      });
+    }
+
+    ensureRasterTargetForPaintRect(layerId, rect, options = {}) {
+      const requiredRect = this.getClampedDocumentRect(rect, options.padding || 0);
+
+      if (!layerId || !requiredRect) {
+        return null;
+      }
+
+      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      const existingRect = this.getRasterTargetDocumentRect(existingTarget);
+      const source = options.source || "ensure-raster-target-for-paint-rect";
+
+      if (!existingTarget?.framebuffer || !existingTarget?.texture) {
+        const nextTarget = this.createRasterTargetForDocumentRect(layerId, requiredRect, { source });
+
+        if (!nextTarget) {
+          return null;
+        }
+
+        if (!this.replaceRasterTarget(layerId, nextTarget, {
+          emit: false,
+          source,
+        })) {
+          this.deleteRasterTargetObject(nextTarget);
+          return null;
+        }
+
+        return {
+          ...nextTarget,
+          layerId,
+        };
+      }
+
+      if (
+        !this.isCroppedRasterTarget(existingTarget) ||
+        this.containsRasterHistoryRect(existingRect, requiredRect)
+      ) {
+        return {
+          ...existingTarget,
+          layerId,
+        };
+      }
+
+      const nextRect = this.getClampedDocumentRect(this.unionRasterHistoryRects(existingRect, requiredRect));
+      const clearColor = Array.isArray(existingTarget.clearColor)
+        ? [...existingTarget.clearColor]
+        : [0, 0, 0, 0];
+      const nextTarget = this.createRasterTargetForDocumentRect(layerId, nextRect, {
+        clearColor,
+        source,
+      });
+
+      if (!nextTarget) {
+        return {
+          ...existingTarget,
+          layerId,
+        };
+      }
+
+      if (!this.copyRasterTargetRectIntoTarget(existingTarget, existingRect, nextTarget)) {
+        this.deleteRasterTargetObject(nextTarget);
+        return {
+          ...existingTarget,
+          layerId,
+        };
+      }
+
+      if (!this.replaceRasterTarget(layerId, nextTarget, {
+        emit: false,
+        source,
+      })) {
+        this.deleteRasterTargetObject(nextTarget);
+        return {
+          ...existingTarget,
+          layerId,
+        };
+      }
+
+      return {
+        ...nextTarget,
+        layerId,
+      };
+    }
+
     duplicateRasterTarget(sourceLayerId, destinationLayerId, options = {}) {
       if (!sourceLayerId || !destinationLayerId || sourceLayerId === destinationLayerId) {
         return false;
@@ -7082,10 +7228,15 @@ void main() {
       };
     }
 
-    ensurePaintLayerForBrush() {
+    ensurePaintLayerForBrush(options = {}) {
       const paintLayer = this.layerModel?.ensureActivePaintLayer?.({ source: "brush-stroke" });
 
       if (paintLayer?.id) {
+        if (options.materialize === false) {
+          this.paintLayerId = paintLayer.id;
+          return this.getDocumentDrawTarget(paintLayer.id);
+        }
+
         const target = this.getPaintTarget();
 
         if (this.isCroppedRasterTarget(target)) {
@@ -7095,6 +7246,13 @@ void main() {
         }
 
         return target;
+      }
+
+      if (options.materialize === false) {
+        const layerId = this.resolvePaintLayerId();
+
+        this.paintLayerId = layerId;
+        return this.getDocumentDrawTarget(layerId);
       }
 
       return this.getPaintTarget();

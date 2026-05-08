@@ -758,8 +758,8 @@ void main() {
       return target;
     }
 
-    getDocumentDrawTarget() {
-      const target = this.documentRenderer?.getDocumentDrawTarget?.() || this.documentRenderer?.getPaintTarget?.();
+    getDocumentDrawTarget(layerId = "") {
+      const target = this.documentRenderer?.getDocumentDrawTarget?.(layerId) || this.documentRenderer?.getPaintTarget?.();
 
       if (
         !target ||
@@ -974,7 +974,7 @@ void main() {
 
     createTransparentRenderTarget(label, width, height, resourceMetadata = {}) {
       const gl = this.gl;
-      const documentTarget = this.getPaintTarget();
+      const documentTarget = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
       const targetWidth = Math.max(1, Math.round(width || documentTarget.width));
       const targetHeight = Math.max(1, Math.round(height || documentTarget.height));
       const texture = gl.createTexture();
@@ -1073,7 +1073,7 @@ void main() {
     createStrokeLayerTarget(rect = null) {
       const gl = this.gl;
       const targets = [];
-      const documentTarget = this.getPaintTarget();
+      const documentTarget = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
       const nextRect = rect || {
         x: 0,
         y: 0,
@@ -1107,7 +1107,7 @@ void main() {
       this.strokeBufferRect = { ...nextRect };
     }
 
-    getFullDocumentRect(target = this.getPaintTarget()) {
+    getFullDocumentRect(target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
       return {
         x: 0,
         y: 0,
@@ -1127,7 +1127,7 @@ void main() {
       return width * height * RASTER_BYTES_PER_PIXEL;
     }
 
-    getRasterRectCoverage(rect, target = this.getPaintTarget()) {
+    getRasterRectCoverage(rect, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
       const canvasPixels = Math.max(1, Math.round(target?.width || 1)) *
         Math.max(1, Math.round(target?.height || 1));
       const rectPixels = Math.max(0, Math.round(rect?.width || 0)) *
@@ -1163,7 +1163,7 @@ void main() {
       phase = "brush-stroke",
       strokeBufferRect = null,
       strokeRect = null,
-      target = this.getPaintTarget(),
+      target = this.getDocumentDrawTarget(layerId),
       tool = this.currentStrokeTool || "brush",
     } = {}) {
       const beforeBytes = this.getRasterRectBytes(strokeRect);
@@ -1685,7 +1685,7 @@ void main() {
       gl.bindTexture(gl.TEXTURE_2D, null);
     }
 
-    ensureStrokeLayerTargetForRect(rect, target = this.getPaintTarget()) {
+    ensureStrokeLayerTargetForRect(rect, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
       const requiredRect = this.isBrushStrokeCropped() ? rect : this.getFullDocumentRect(target);
 
       if (!requiredRect) {
@@ -1706,7 +1706,7 @@ void main() {
       return true;
     }
 
-    compactStrokeLayerTargetForRect(rect, target = this.getPaintTarget()) {
+    compactStrokeLayerTargetForRect(rect, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
       if (!rect || !this.strokeBufferRect || !this.strokeTexture) {
         return false;
       }
@@ -2399,7 +2399,7 @@ void main() {
     }
 
     clampStrokeSamplePoint(x, y) {
-      const target = this.getPaintTarget();
+      const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
       const margin = Math.max(STROKE_SAMPLE_CLAMP_MIN_PADDING, Math.ceil(this.getBrushSize() * 2));
       const safeX = Number.isFinite(x) ? x : 0;
       const safeY = Number.isFinite(y) ? y : 0;
@@ -2427,7 +2427,7 @@ void main() {
     }
 
     isDocumentPointInside(point) {
-      const target = this.getPaintTarget();
+      const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
 
       return (
         point.docX >= 0 &&
@@ -3344,7 +3344,7 @@ void main() {
     }
 
     includeStrokeStampBounds(stamp) {
-      const target = this.getPaintTarget();
+      const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
       const bounds = this.getStampBounds(stamp);
       const clampedBounds = {
         minX: Math.max(0, bounds.minX),
@@ -3439,7 +3439,7 @@ void main() {
     }
 
     isStampCompletelyOutsideDocument(stamp) {
-      const target = this.getPaintTarget();
+      const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
       const bounds = this.getStampBounds(stamp);
 
       return (
@@ -3881,7 +3881,7 @@ void main() {
       }
 
       const gl = this.gl;
-      const target = this.getPaintTarget();
+      const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
       const strokeRect = this.getActiveStrokeRect();
 
       if (!strokeRect || !this.ensureStrokeLayerTargetForRect(strokeRect, target)) {
@@ -4039,24 +4039,37 @@ void main() {
 
     bakeStroke() {
       const gl = this.gl;
-      const layerId = this.strokeTargetLayerId || this.getPaintTarget().layerId;
-      const target = this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget();
+      const layerId = this.strokeTargetLayerId ||
+        this.documentRenderer?.resolvePaintLayerId?.() ||
+        this.getDocumentDrawTarget().layerId;
       const isEraserStroke = this.currentStrokeTool === "eraser";
       const { program, uniforms } = this.compositeProgramInfo;
       const strokeRect = this.getActiveStrokeRect();
 
-      if (!target?.framebuffer || !target?.texture || !this.strokeTexture || !strokeRect) {
+      if (!this.strokeTexture || !strokeRect) {
         this.releaseStrokeLayerTarget();
         return;
       }
 
-      const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, target);
+      const documentTarget = this.getDocumentDrawTarget(layerId);
+      const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, documentTarget);
+      const target = isEraserStroke
+        ? this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget()
+        : this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, finalStrokeBufferRect, {
+            source: "brush-stroke-target",
+          }) || this.documentRenderer?.getRasterTarget?.(layerId);
+
+      if (!target?.framebuffer || !target?.texture || !finalStrokeBufferRect) {
+        this.releaseStrokeLayerTarget();
+        return;
+      }
+
       const memoryReport = this.createStrokeMemoryReport({
         layerId,
         phase: "brush-bake",
         strokeBufferRect: finalStrokeBufferRect,
         strokeRect,
-        target,
+        target: documentTarget,
         tool: this.currentStrokeTool,
       });
       const batchedTileHistory = this.prepareBatchedBrushHistory(layerId, strokeRect, memoryReport);
@@ -4072,11 +4085,14 @@ void main() {
         : null;
 
       this.recordStrokeMemory(memoryReport);
-      this.compactStrokeLayerTargetForRect(strokeRect, target);
+      this.compactStrokeLayerTargetForRect(strokeRect, documentTarget);
       const bakeRect = this.strokeBufferRect || { ...strokeRect };
+      const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(target) || { x: 0, y: 0 };
+      const localBakeX = Math.max(0, Math.round(bakeRect.x - targetRect.x));
+      const localBakeY = Math.max(0, Math.round(bakeRect.y - targetRect.y));
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-      gl.viewport(bakeRect.x, target.height - (bakeRect.y + bakeRect.height), bakeRect.width, bakeRect.height);
+      gl.viewport(localBakeX, target.height - (localBakeY + bakeRect.height), bakeRect.width, bakeRect.height);
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       if (isEraserStroke) {
@@ -4097,6 +4113,7 @@ void main() {
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      this.documentRenderer?.markRasterTargetDirty?.(target);
 
       if (batchedTileHistory) {
         this.schedulePendingBrushHistoryCommit();
@@ -4716,7 +4733,8 @@ void main() {
           return;
         }
       } else {
-        strokeTarget = this.documentRenderer?.ensurePaintLayerForBrush?.() || this.getPaintTarget();
+        strokeTarget = this.documentRenderer?.ensurePaintLayerForBrush?.({ materialize: false }) ||
+          this.getDocumentDrawTarget();
       }
 
       // Modalità preview: ogni nuovo tratto resetta la canvas (utile nella drawing pad).

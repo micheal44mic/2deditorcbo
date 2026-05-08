@@ -101,6 +101,18 @@ test("brush stroke history records memory policy and disables redo for huge stro
   assert.match(source, /source: "brush-bake-compact-inactive"/);
 });
 
+test("brush first paint stroke can defer full live target materialization", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+
+  assert.match(source, /ensurePaintLayerForBrush\?\.\(\{ materialize: false \}\)/);
+  assert.match(source, /ensureRasterTargetForPaintRect\?\.\(layerId, finalStrokeBufferRect/);
+  assert.match(source, /source: "brush-stroke-target"/);
+  assert.match(source, /const documentTarget = this\.getDocumentDrawTarget\(layerId\)/);
+  assert.match(source, /const target = this\.getDocumentDrawTarget\(this\.strokeTargetLayerId \|\| ""\)/);
+  assert.match(source, /const localBakeX = Math\.max\(0, Math\.round\(bakeRect\.x - targetRect\.x\)\)/);
+  assert.match(source, /gl\.viewport\(localBakeX, target\.height - \(localBakeY \+ bakeRect\.height\), bakeRect\.width, bakeRect\.height\)/);
+});
+
 test("brush stroke history batches tile captures until the idle commit", () => {
   const { BrushEngine, window } = loadBrushEngine();
   const engine = Object.create(BrushEngine.prototype);

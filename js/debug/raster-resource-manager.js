@@ -83,6 +83,142 @@
     return (Number(bytes || 0) / MIB).toFixed(2);
   }
 
+  function getResourceTraceMinBytes() {
+    const namespaceMinMiB = Number(namespace.debugRasterResourceTraceMinMiB);
+
+    if (Number.isFinite(namespaceMinMiB) && namespaceMinMiB >= 0) {
+      return Math.floor(namespaceMinMiB * MIB);
+    }
+
+    return Math.max(0, Math.floor(Number(resourceTraceState.minBytes) || 0));
+  }
+
+  function isResourceTraceEnabled() {
+    return Boolean(
+      resourceTraceState.enabled ||
+      namespace.debugRasterResourceTrace === true ||
+      namespace.debugRasterAllocations === true
+    );
+  }
+
+  function shouldLogResourceTrace() {
+    return resourceTraceState.log !== false && namespace.debugRasterResourceTraceLog !== false;
+  }
+
+  function getTextureTotalBytes() {
+    let total = 0;
+
+    for (const record of textures.values()) {
+      total += Number(record?.bytes) || 0;
+    }
+
+    return total;
+  }
+
+  function summarizeTextureRecord(record) {
+    if (!record) {
+      return {};
+    }
+
+    return {
+      bbox: record.bbox ? { ...record.bbox } : null,
+      bytes: record.bytes,
+      category: `${record.ownerType}/${record.kind}`,
+      format: record.format,
+      height: record.height,
+      id: record.id,
+      isFullCanvas: Boolean(record.isFullCanvas),
+      kind: record.kind,
+      label: record.label,
+      layerId: record.layerId,
+      MiB: formatMiB(record.bytes),
+      mipLevels: record.mipLevels,
+      ownerId: record.ownerId,
+      ownerType: record.ownerType,
+      purgeable: Boolean(record.purgeable),
+      reason: record.reason,
+      stackTag: record.stackTag,
+      state: record.state,
+      width: record.width,
+    };
+  }
+
+  function pushResourceTraceEvent(action, record, previous = null, extra = {}) {
+    if (!isResourceTraceEnabled()) {
+      return null;
+    }
+
+    const nextBytes = Number(record?.bytes) || 0;
+    const previousBytes = Number(previous?.bytes) || 0;
+    const deltaBytes = nextBytes - previousBytes;
+    const minBytes = getResourceTraceMinBytes();
+
+    if (minBytes > 0 && Math.max(nextBytes, previousBytes, Math.abs(deltaBytes)) < minBytes) {
+      return null;
+    }
+
+    const totalBytes = getTextureTotalBytes();
+    const event = {
+      action,
+      createdAt: nowIso(),
+      deltaBytes,
+      deltaMiB: formatMiB(deltaBytes),
+      previousBytes,
+      previousMiB: formatMiB(previousBytes),
+      totalBytes,
+      totalMiB: formatMiB(totalBytes),
+      ...summarizeTextureRecord(record || previous),
+      ...extra,
+    };
+
+    resourceTraceEvents.push(event);
+
+    while (resourceTraceEvents.length > MAX_RESOURCE_TRACE_EVENTS) {
+      resourceTraceEvents.shift();
+    }
+
+    if (shouldLogResourceTrace()) {
+      console.info?.("[CBO raster trace]", action, event);
+    }
+
+    return event;
+  }
+
+  function setResourceTraceEnabled(enabled = true, options = {}) {
+    resourceTraceState.enabled = enabled !== false;
+
+    if (Number.isFinite(Number(options.minBytes)) && Number(options.minBytes) >= 0) {
+      resourceTraceState.minBytes = Math.floor(Number(options.minBytes));
+    } else if (Number.isFinite(Number(options.minMiB)) && Number(options.minMiB) >= 0) {
+      resourceTraceState.minBytes = Math.floor(Number(options.minMiB) * MIB);
+    }
+
+    if (typeof options.log === "boolean") {
+      resourceTraceState.log = options.log;
+    }
+
+    if (options.clear === true) {
+      resourceTraceEvents.length = 0;
+    }
+
+    return {
+      enabled: resourceTraceState.enabled,
+      log: resourceTraceState.log,
+      minBytes: resourceTraceState.minBytes,
+      minMiB: formatMiB(resourceTraceState.minBytes),
+    };
+  }
+
+  function clearResourceTraceEvents() {
+    resourceTraceEvents.length = 0;
+
+    return [];
+  }
+
+  function getResourceTraceEvents() {
+    return resourceTraceEvents.slice().reverse();
+  }
+
   function estimateTextureBytes(width, height, mipLevels = 1, bytesPerPixel = BYTES_PER_PIXEL) {
     let levelWidth = toPositiveInt(width, 0);
     let levelHeight = toPositiveInt(height, 0);
@@ -344,6 +480,7 @@
 
     const record = normalizeTextureRecord(id, texture, metadata, existing);
     textures.set(id, record);
+    pushResourceTraceEvent(existing ? "update-texture" : "register-texture", record, existing);
 
     return toPublicTextureRow(record);
   }
@@ -366,6 +503,7 @@
     const record = normalizeTextureRecord(id, texture, metadataPatch, existing);
 
     textures.set(id, record);
+    pushResourceTraceEvent("update-texture", record, existing);
     return toPublicTextureRow(record);
   }
 
@@ -390,6 +528,7 @@
 
     textures.delete(id);
     stats.deletedTextureCount += 1;
+    pushResourceTraceEvent("delete-texture", null, record, { id });
     return true;
   }
 
@@ -811,6 +950,8 @@
       scratchBytes: sumRows(rows, (row) => row.ownerType === "scratch"),
       source: "raster-resource-manager",
       strokeScratchBytes: sumRows(rows, (row) => row.kind === "strokeScratch"),
+      resourceTraceEventCount: resourceTraceEvents.length,
+      resourceTraceEvents: getResourceTraceEvents(),
       strokeMemoryEventCount: stats.strokeMemoryEventCount,
       strokeMemoryEvents: strokeMemoryEvents.slice().reverse(),
       summary: createSummary(rows),
@@ -900,17 +1041,21 @@
         fullCanvasMaterializations,
         rasterOperationEvents,
         renderbuffers,
+        resourceTraceEvents,
+        resourceTraceState,
         stats,
         strokeMemoryEvents,
         suspectEvents,
         textures,
       };
     },
+    clearResourceTraceEvents,
     deleteFramebuffer,
     deleteRenderbuffer,
     deleteTexture,
     estimateTextureBytes,
     formatMiB,
+    getResourceTraceEvents,
     getTopResourcesByBytes,
     logRasterMemoryReport,
     markUsed,
@@ -921,11 +1066,15 @@
     registerRenderbuffer,
     registerTexture,
     reportRasterMemory,
+    setResourceTraceEnabled,
     updateFramebuffer,
     updateTexture,
   };
 
   namespace.rasterResourceManager = manager;
+  namespace.clearRasterResourceTraceEvents = clearResourceTraceEvents;
+  namespace.getRasterResourceTraceEvents = getResourceTraceEvents;
+  namespace.setRasterResourceTraceEnabled = setResourceTraceEnabled;
 
   if (typeof namespace.collectRasterMemory !== "function") {
     namespace.collectRasterMemory = function collectRasterMemoryFromManager(options = {}) {
