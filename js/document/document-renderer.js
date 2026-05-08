@@ -1354,7 +1354,9 @@ void main() {
 
     getSparseRasterTileRects(rect, options = {}) {
       return this.getRasterHistoryTileRects(rect, {
+        patchRects: options.patchRects,
         tileSize: options.tileSize || options.liveTileSize,
+        tilePatchRects: options.tilePatchRects,
       });
     }
 
@@ -1425,7 +1427,11 @@ void main() {
 
       const tileTargets = [];
 
-      for (const tile of this.getSparseRasterTileRects(requiredRect, { tileSize: sparseTarget.tileSize })) {
+      for (const tile of this.getSparseRasterTileRects(requiredRect, {
+        patchRects: options.patchRects,
+        tileSize: sparseTarget.tileSize,
+        tilePatchRects: options.tilePatchRects,
+      })) {
         const tileTarget = this.ensureSparseRasterTileTarget(layerId, sparseTarget, tile, options);
 
         if (tileTarget) {
@@ -5932,6 +5938,79 @@ void main() {
       );
     }
 
+    isTransparentPixelBuffer(pixels) {
+      if (!(pixels instanceof Uint8Array)) {
+        return false;
+      }
+
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] !== 0) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    isRasterTargetFullyTransparent(target) {
+      if (!target) {
+        return true;
+      }
+
+      if (target.cpuPixels instanceof Uint8Array) {
+        return this.isTransparentPixelBuffer(target.cpuPixels);
+      }
+
+      if (!target.framebuffer || !target.texture) {
+        return false;
+      }
+
+      const width = Math.max(1, Math.round(target.width || 1));
+      const height = Math.max(1, Math.round(target.height || 1));
+      const pixels = new Uint8Array(width * height * RASTER_BYTES_PER_PIXEL);
+      const gl = this.gl;
+      const framebufferTarget = gl.READ_FRAMEBUFFER || gl.FRAMEBUFFER;
+
+      try {
+        gl.bindFramebuffer(framebufferTarget, target.framebuffer);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        gl.bindFramebuffer(framebufferTarget, null);
+      } catch (error) {
+        gl.bindFramebuffer?.(framebufferTarget, null);
+        console.warn?.("[CBO renderer] Impossibile verificare tile raster vuoto.", error);
+        return false;
+      }
+
+      return this.isTransparentPixelBuffer(pixels);
+    }
+
+    pruneTransparentSparseRasterTiles(layerId, sparseTarget, tileKeys = []) {
+      if (!layerId || !this.isSparseRasterTarget(sparseTarget)) {
+        return 0;
+      }
+
+      let prunedCount = 0;
+      const keys = new Set(tileKeys.filter(Boolean));
+
+      keys.forEach((key) => {
+        const tileTarget = sparseTarget.tiles.get(key);
+
+        if (!tileTarget || !this.isRasterTargetFullyTransparent(tileTarget)) {
+          return;
+        }
+
+        this.deleteRasterTargetObject(tileTarget);
+        sparseTarget.tiles.delete(key);
+        prunedCount += 1;
+      });
+
+      if (prunedCount > 0) {
+        sparseTarget.version = (sparseTarget.version || 0) + 1;
+      }
+
+      return prunedCount;
+    }
+
     restoreRasterSnapshotToSparseTarget(layerId, sparseTarget, snapshot, options = {}) {
       if (!layerId || !this.isSparseRasterTarget(sparseTarget) || !snapshot?.rect) {
         return false;
@@ -5949,6 +6028,7 @@ void main() {
         y: snapshot.rect.y,
       };
       let didRestore = false;
+      const restoredTileKeys = [];
 
       for (const tile of this.getSparseRasterTileRects(snapshot.rect, { tileSize: sparseTarget.tileSize })) {
         const tileTarget = this.ensureSparseRasterTileTarget(layerId, sparseTarget, tile, {
@@ -5960,13 +6040,21 @@ void main() {
           continue;
         }
 
-        didRestore = this.copyRasterTargetRectIntoTarget(sourceTarget, patchRect, tileTarget) || didRestore;
+        const didCopy = this.copyRasterTargetRectIntoTarget(sourceTarget, patchRect, tileTarget);
+
+        if (didCopy) {
+          didRestore = true;
+          restoredTileKeys.push(tileTarget.tileKey || this.getSparseTileKey(tile.tx, tile.ty));
+        }
       }
 
       if (!didRestore) {
         return false;
       }
 
+      const prunedCount = options.pruneTransparentTiles === false
+        ? 0
+        : this.pruneTransparentSparseRasterTiles(layerId, sparseTarget, restoredTileKeys);
       sparseTarget.version = (sparseTarget.version || 0) + 1;
 
       if (options.emit !== false) {
@@ -6718,7 +6806,11 @@ void main() {
       }
 
       if (this.isSparseRasterTarget(existingTarget)) {
-        return this.getSparseRasterTileRects(requiredRect, { tileSize: existingTarget.tileSize })
+        return this.getSparseRasterTileRects(requiredRect, {
+          patchRects: options.patchRects,
+          tileSize: existingTarget.tileSize,
+          tilePatchRects: options.tilePatchRects,
+        })
           .map((tile) => {
             const tileTarget = this.getSparseRasterTile(existingTarget, tile.tx, tile.ty);
 

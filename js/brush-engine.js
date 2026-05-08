@@ -4053,14 +4053,17 @@ void main() {
 
       const documentTarget = this.getDocumentDrawTarget(layerId);
       const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, documentTarget);
+      const activeStrokeTilePatchRects = this.getActiveStrokeTilePatchRects();
       const paintTargets = isEraserStroke
         ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, finalStrokeBufferRect, {
             source: "brush-eraser-target",
+            tilePatchRects: activeStrokeTilePatchRects,
           }) || [{
             target: this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget(),
           }]
         : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, finalStrokeBufferRect, {
             source: "brush-stroke-target",
+            tilePatchRects: activeStrokeTilePatchRects,
           }) || [{
             target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, finalStrokeBufferRect, {
               source: "brush-stroke-target",
@@ -4086,7 +4089,7 @@ void main() {
         ? this.documentRenderer?.beginRasterTileHistory?.(layerId, strokeRect, {
             label: "brush-stroke",
             source: this.currentStrokeTool,
-            tilePatchRects: this.getActiveStrokeTilePatchRects(),
+            tilePatchRects: activeStrokeTilePatchRects,
           })
         : null;
       const beforeSnapshot = this.options.enableHistory && strokeRect && !batchedTileHistory && !tileHistory

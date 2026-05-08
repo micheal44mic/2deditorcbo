@@ -614,6 +614,52 @@ test("ensureRasterTargetsForPaintRect keeps distant first strokes as sparse tile
   assert.equal(renderer.estimateRasterTargetBytes(sparseTarget), 2 * 256 * 256 * 4);
 });
 
+test("ensureRasterTargetsForPaintRect uses stamp patch tiles instead of stroke bounds", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map();
+  renderer.isMobileLikeDevice = () => false;
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    texture: { id: `tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+
+  const targets = renderer.ensureRasterTargetsForPaintRect("paint-1", {
+    height: 4000,
+    width: 4000,
+    x: 0,
+    y: 0,
+  }, {
+    source: "unit-diagonal-sparse-stroke",
+    tilePatchRects: [
+      { patchRect: { height: 20, width: 20, x: 16, y: 16 }, tx: 0, ty: 0 },
+      { patchRect: { height: 20, width: 20, x: 2000, y: 2000 }, tx: 7, ty: 7 },
+      { patchRect: { height: 20, width: 20, x: 3800, y: 3800 }, tx: 14, ty: 14 },
+    ],
+  });
+  const sparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.equal(targets.length, 3);
+  assert.equal(sparseTarget.tiles.size, 3);
+  assert.deepEqual(
+    Array.from(sparseTarget.tiles.values()).map((target) => `${target.x},${target.y}`),
+    ["0,0", "1792,1792", "3584,3584"],
+  );
+  assert.equal(renderer.estimateRasterTargetBytes(sparseTarget), 3 * 256 * 256 * 4);
+});
+
 test("getRasterAlphaAtPoint samples the matching sparse tile", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -652,6 +698,122 @@ test("getRasterAlphaAtPoint samples the matching sparse tile", () => {
   assert.ok(readCalls.some((call) => call[0] === "bindFramebuffer" && call[2] === tileFramebuffer));
   assert.ok(readCalls.some((call) => call[0] === "readPixels" && call[1] === 4 && call[2] === 247));
   assert.equal(renderer.getRasterAlphaAtPoint(sparseTarget, 20, 20), 0);
+});
+
+test("sparse restore prunes tiles that become fully transparent", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const deletedTargets = [];
+  const sparseTarget = {
+    layerId: "paint-1",
+    sparse: true,
+    tileSize: 256,
+    tiles: new Map(),
+    version: 0,
+  };
+  const tileTarget = {
+    framebuffer: { id: "tile-fb" },
+    height: 256,
+    texture: { id: "tile-texture" },
+    tileKey: "0:0",
+    tx: 0,
+    ty: 0,
+    width: 256,
+    x: 0,
+    y: 0,
+  };
+  const readCalls = [];
+
+  sparseTarget.tiles.set("0:0", tileTarget);
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.gl = {
+    bindFramebuffer: (...args) => readCalls.push(["bindFramebuffer", ...args]),
+    FRAMEBUFFER: "FRAMEBUFFER",
+    readPixels: (x, y, width, height, format, type, pixels) => {
+      readCalls.push(["readPixels", width, height, format, type]);
+      pixels.fill(0);
+    },
+    READ_FRAMEBUFFER: "READ_FRAMEBUFFER",
+    RGBA: "RGBA",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+  };
+  renderer.copyRasterTargetRectIntoTarget = () => true;
+  renderer.deleteRasterTargetObject = (target) => {
+    deletedTargets.push(target);
+  };
+  renderer.emitContentChange = () => {};
+  renderer.requestDraw = () => {};
+
+  assert.equal(renderer.restoreRasterSnapshotToSparseTarget("paint-1", sparseTarget, {
+    framebuffer: { id: "snapshot-fb" },
+    rect: { height: 20, width: 20, x: 8, y: 8 },
+    texture: { id: "snapshot-texture" },
+  }, {
+    emit: false,
+    source: "unit-restore-transparent",
+  }), true);
+
+  assert.equal(sparseTarget.tiles.size, 0);
+  assert.equal(deletedTargets[0], tileTarget);
+  assert.ok(readCalls.some((call) => call[0] === "readPixels" && call[1] === 256 && call[2] === 256));
+});
+
+test("sparse restore keeps tiles that still contain alpha", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const sparseTarget = {
+    layerId: "paint-1",
+    sparse: true,
+    tileSize: 256,
+    tiles: new Map(),
+  };
+  const tileTarget = {
+    framebuffer: { id: "tile-fb" },
+    height: 256,
+    texture: { id: "tile-texture" },
+    tileKey: "0:0",
+    tx: 0,
+    ty: 0,
+    width: 256,
+    x: 0,
+    y: 0,
+  };
+  let deleteCount = 0;
+
+  sparseTarget.tiles.set("0:0", tileTarget);
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.gl = {
+    bindFramebuffer() {},
+    FRAMEBUFFER: "FRAMEBUFFER",
+    readPixels: (x, y, width, height, format, type, pixels) => {
+      pixels.fill(0);
+      pixels[3] = 255;
+    },
+    READ_FRAMEBUFFER: "READ_FRAMEBUFFER",
+    RGBA: "RGBA",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+  };
+  renderer.copyRasterTargetRectIntoTarget = () => true;
+  renderer.deleteRasterTargetObject = () => {
+    deleteCount += 1;
+  };
+  renderer.emitContentChange = () => {};
+  renderer.requestDraw = () => {};
+
+  assert.equal(renderer.restoreRasterSnapshotToSparseTarget("paint-1", sparseTarget, {
+    framebuffer: { id: "snapshot-fb" },
+    rect: { height: 20, width: 20, x: 8, y: 8 },
+    texture: { id: "snapshot-texture" },
+  }, {
+    emit: false,
+    source: "unit-restore-nonempty",
+  }), true);
+
+  assert.equal(sparseTarget.tiles.size, 1);
+  assert.equal(sparseTarget.tiles.get("0:0"), tileTarget);
+  assert.equal(deleteCount, 0);
 });
 
 test("puppet Rigid MLS writes translated and rotated mesh vertices", () => {
