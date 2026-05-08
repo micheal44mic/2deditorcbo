@@ -273,6 +273,9 @@
 
   function collectCpuHistoryMemory() {
     const history = namespace.documentHistory;
+    const layerTargetBytes = Math.max(0, Math.round(
+      Number(namespace.documentRenderer?.getHistoryColdRasterTargetBytes?.()) || 0,
+    ));
     const seenObjects = new WeakSet();
     const seenBuffers = new WeakSet();
     const seenBlobs = new WeakSet();
@@ -365,8 +368,9 @@
       blobBytes,
       canvasBytes,
       imageBitmapBytes,
+      layerTargetBytes,
       rawBytes,
-      totalBytes: rawBytes + blobBytes + canvasBytes + imageBitmapBytes,
+      totalBytes: rawBytes + blobBytes + canvasBytes + imageBitmapBytes + layerTargetBytes,
     };
   }
 

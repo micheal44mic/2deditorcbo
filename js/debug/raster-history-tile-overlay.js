@@ -6,7 +6,9 @@
 
   const state = {
     canvas: null,
+    camera: null,
     ctx: null,
+    dpr: 1,
     enabled: false,
     items: [],
     labels: false,
@@ -23,11 +25,16 @@
   }
 
   function getCamera() {
-    const camera = namespace.brushEngine?.camera;
+    const camera = namespace.brushEngine?.camera || state.camera;
+    const dpr = Math.max(
+      0.0001,
+      Number(state.dpr || namespace.brushEngine?.dpr || window.devicePixelRatio) || 1,
+    );
 
     return {
       x: Number(camera?.x) || 0,
       y: Number(camera?.y) || 0,
+      dpr,
       zoom: Number(camera?.zoom) || 1,
     };
   }
@@ -96,13 +103,14 @@
       return null;
     }
 
+    const dpr = Math.max(0.0001, Number(camera.dpr) || 1);
     const zoom = Math.max(0.0001, Math.abs(Number(camera.zoom) || 1));
 
     return {
-      height: Math.max(0, Number(rect.height) || 0) * zoom,
-      width: Math.max(0, Number(rect.width) || 0) * zoom,
-      x: (Number(camera.x) || 0) + (Number(rect.x) || 0) * zoom,
-      y: (Number(camera.y) || 0) + (Number(rect.y) || 0) * zoom,
+      height: (Math.max(0, Number(rect.height) || 0) * zoom) / dpr,
+      width: (Math.max(0, Number(rect.width) || 0) * zoom) / dpr,
+      x: ((Number(camera.x) || 0) + (Number(rect.x) || 0) * zoom) / dpr,
+      y: ((Number(camera.y) || 0) + (Number(rect.y) || 0) * zoom) / dpr,
     };
   }
 
@@ -291,10 +299,23 @@
     queueRender();
   }
 
+  function handleCameraChange(event) {
+    const detail = event.detail || {};
+
+    state.camera = detail.camera ? { ...detail.camera } : state.camera;
+    state.dpr = Math.max(
+      0.0001,
+      Number(detail.dpr || namespace.brushEngine?.dpr || window.devicePixelRatio) || 1,
+    );
+    queueRender();
+  }
+
   function start(options = {}) {
     state.enabled = true;
     state.labels = options.labels === true;
     state.ttlMs = Math.max(200, Math.min(8000, Math.round(Number(options.ttlMs) || DEFAULT_TTL_MS)));
+    state.camera = namespace.brushEngine?.camera ? { ...namespace.brushEngine.camera } : state.camera;
+    state.dpr = Math.max(0.0001, Number(namespace.brushEngine?.dpr || window.devicePixelRatio) || 1);
     namespace.debugRasterHistoryTiles = true;
 
     const canvas = ensureCanvas();
@@ -306,7 +327,7 @@
     window.removeEventListener(EVENT_NAME, handleTileDebug);
     window.addEventListener(EVENT_NAME, handleTileDebug);
     window.addEventListener("resize", queueRender);
-    window.addEventListener("cbo:camera-change", queueRender);
+    window.addEventListener("cbo:camera-change", handleCameraChange);
     window.addEventListener("cbo:editor-canvas-ready", handleEditorCanvasReady);
     queueRender();
 
@@ -319,7 +340,7 @@
     state.items = [];
     window.removeEventListener(EVENT_NAME, handleTileDebug);
     window.removeEventListener("resize", queueRender);
-    window.removeEventListener("cbo:camera-change", queueRender);
+    window.removeEventListener("cbo:camera-change", handleCameraChange);
     window.removeEventListener("cbo:editor-canvas-ready", handleEditorCanvasReady);
 
     if (state.rafId) {

@@ -48,4 +48,9 @@ test("raster history tile overlay exposes console controls", () => {
   assert.match(source, /stop,/);
   assert.match(source, /toggle,/);
   assert.match(source, /toViewportRect\(rect, camera = getCamera\(\)\)/);
+  assert.match(source, /const dpr = Math\.max\(0\.0001, Number\(camera\.dpr\) \|\| 1\)/);
+  assert.match(source, /\+ \(Number\(rect\.x\) \|\| 0\) \* zoom\) \/ dpr/);
+  assert.match(source, /function handleCameraChange\(event\)/);
+  assert.match(source, /state\.camera = detail\.camera \? \{ \.\.\.detail\.camera \} : state\.camera/);
+  assert.match(source, /window\.addEventListener\("cbo:camera-change", handleCameraChange\)/);
 });

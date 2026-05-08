@@ -32,6 +32,7 @@ function loadManager() {
               savingsMiB: "57.23",
             }],
           }),
+          getHistoryColdRasterTargetBytes: () => 2 * 1024 * 1024,
           height: 4000,
           width: 4000,
         },
@@ -59,6 +60,7 @@ function loadDebugMemoryScripts() {
             potentialSavingsMiB: "8.00",
             rows: [],
           }),
+          getHistoryColdRasterTargetBytes: () => 2 * 1024 * 1024,
           height: 4000,
           width: 4000,
         },
@@ -166,6 +168,8 @@ test("raster resource manager reports owner buckets and full-canvas events", () 
   assert.equal(report.paintLayerBytes, 4000 * 4000 * 4);
   assert.equal(report.paintTargetCropPotential, null);
   assert.equal(report.paintTargetPotentialSavingsBytes, 0);
+  assert.equal(report.historyLayerTargetCpuColdBytes, 2 * 1024 * 1024);
+  assert.equal(report.historyCpuRawBytes, 2 * 1024 * 1024);
   assert.equal(report.previewCacheBytes, manager.estimateTextureBytes(4000, 4000, 3));
   assert.equal(report.purgeableResourceCount, 1);
   assert.equal(report.topResourcesByBytes[0].ownerType, "cache");

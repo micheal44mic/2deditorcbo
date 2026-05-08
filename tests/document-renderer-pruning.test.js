@@ -111,13 +111,15 @@ test("pruneOrphanRasterTargets keeps current and history-referenced raster targe
   assert.equal(renderer.rasterTargetsByLayerId.has("nested-history"), true);
 });
 
-test("pruneOrphanRasterTargets reports deleted undoable layer targets as history GPU", () => {
+test("pruneOrphanRasterTargets cools deleted undoable layer targets to CPU", () => {
   const { DocumentRenderer, window } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
   const activeTexture = {};
+  const historyFramebuffer = {};
   const historyTexture = {};
   const metadataUpdates = [];
   const deleted = [];
+  const glCalls = [];
 
   window.CBO.documentHistory = {
     redoStack: [],
@@ -143,11 +145,25 @@ test("pruneOrphanRasterTargets reports deleted undoable layer targets as history
   renderer.paintLayerId = "deleted-layer";
   renderer.texture = historyTexture;
   renderer.framebuffer = {};
+  renderer.gl = {
+    bindFramebuffer: (...args) => glCalls.push(["bindFramebuffer", ...args]),
+    deleteFramebuffer: (framebuffer) => glCalls.push(["deleteFramebuffer", framebuffer]),
+    deleteTexture: (texture) => glCalls.push(["deleteTexture", texture]),
+    FRAMEBUFFER: "FRAMEBUFFER",
+    readPixels: (x, y, width, height, format, type, pixels) => {
+      glCalls.push(["readPixels", width, height, format, type]);
+      pixels.fill(17);
+    },
+    RGBA: "RGBA",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+  };
   renderer.rasterTargetsByLayerId = new Map([
-    ["active-layer", { framebuffer: {}, texture: activeTexture }],
-    ["deleted-layer", { framebuffer: {}, texture: historyTexture }],
+    ["active-layer", { framebuffer: {}, height: 4, texture: activeTexture, width: 4 }],
+    ["deleted-layer", { framebuffer: historyFramebuffer, height: 8, texture: historyTexture, width: 8 }],
     ["orphan", { framebuffer: {}, texture: {} }],
   ]);
+  renderer.deleteRasterFramebuffer = (framebuffer) => glCalls.push(["unregisterFramebuffer", framebuffer]);
+  renderer.deleteRasterTexture = (texture) => glCalls.push(["unregisterTexture", texture]);
   renderer.updateRasterTargetResourceMetadata = (target, metadata = {}) => {
     metadataUpdates.push({ layerId: metadata.layerId, metadata, target });
     return target;
@@ -166,12 +182,70 @@ test("pruneOrphanRasterTargets reports deleted undoable layer targets as history
 
   const activeUpdate = metadataUpdates.find((update) => update.layerId === "active-layer");
   const historyUpdate = metadataUpdates.find((update) => update.layerId === "deleted-layer");
+  const historyTarget = renderer.rasterTargetsByLayerId.get("deleted-layer");
 
   assert.equal(activeUpdate.metadata.ownerType, "live");
-  assert.equal(historyUpdate.metadata.ownerType, "historyGpu");
-  assert.equal(historyUpdate.metadata.kind, "historyLayerTarget");
-  assert.equal(historyUpdate.metadata.purgeable, true);
-  assert.equal(historyUpdate.metadata.reason, "history-retained-layer-target");
+  assert.equal(historyUpdate, undefined);
+  assert.equal(historyTarget.texture, null);
+  assert.equal(historyTarget.framebuffer, null);
+  assert.equal(historyTarget.state, "CPU_COLD");
+  assert.equal(historyTarget.cpuPixels.byteLength, 8 * 8 * 4);
+  assert.equal(historyTarget.cpuBytes, 8 * 8 * 4);
+  assert.equal(renderer.getHistoryColdRasterTargetBytes(), 8 * 8 * 4);
+  assert.ok(glCalls.some((call) => call[0] === "readPixels" && call[1] === 8 && call[2] === 8));
+  assert.ok(glCalls.some((call) => call[0] === "deleteTexture" && call[1] === historyTexture));
+  assert.ok(glCalls.some((call) => call[0] === "deleteFramebuffer" && call[1] === historyFramebuffer));
+});
+
+test("reconcileRasterTargetResourceOwnership hydrates restored cold history targets", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const restoredTarget = {
+    cpuBytes: 16,
+    cpuPixels: new Uint8Array(16),
+    height: 2,
+    state: "CPU_COLD",
+    width: 2,
+  };
+  const metadataUpdates = [];
+  const hydrateCalls = [];
+
+  window.CBO.documentHistory = {
+    redoStack: [],
+    undoStack: [],
+  };
+  renderer.isDisposed = false;
+  renderer.layerModel = {
+    activeLayerId: "restored-layer",
+    findEntryById: () => ({ id: "restored-layer", type: "paint" }),
+    flattenTopToBottom: () => [{ id: "restored-layer", type: "paint" }],
+    getEntries: () => [{ id: "restored-layer", type: "paint" }],
+  };
+  renderer.paintLayerId = "restored-layer";
+  renderer.texture = null;
+  renderer.rasterTargetsByLayerId = new Map([
+    ["restored-layer", restoredTarget],
+  ]);
+  renderer.hydrateRasterTarget = (target, options = {}) => {
+    hydrateCalls.push({ options, target });
+    target.framebuffer = {};
+    target.texture = {};
+    target.state = "GPU_HOT";
+    target.cpuBytes = 0;
+    target.cpuPixels = null;
+    return true;
+  };
+  renderer.updateRasterTargetResourceMetadata = (target, metadata = {}) => {
+    metadataUpdates.push({ metadata, target });
+    return target;
+  };
+
+  assert.equal(renderer.reconcileRasterTargetResourceOwnership(), 1);
+  assert.equal(hydrateCalls.length, 1);
+  assert.equal(hydrateCalls[0].options.ownerType, "live");
+  assert.equal(hydrateCalls[0].options.reason, "history-retained-layer-target-hydrate");
+  assert.equal(restoredTarget.state, "GPU_HOT");
+  assert.equal(metadataUpdates[0].metadata.ownerType, "live");
 });
 
 test("pruneOrphanRasterTargets releases stale paint targets after history is cleared", () => {
@@ -609,6 +683,9 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /createRasterSnapshot\(targetOrLayerId, rect = null, label = "raster snapshot"\)/);
   assert.match(source, /dehydrateRasterSnapshot\(snapshot\)/);
   assert.match(source, /hydrateRasterSnapshot\(snapshot\)/);
+  assert.match(source, /dehydrateRasterTarget\(target, options = \{\}\)/);
+  assert.match(source, /hydrateRasterTarget\(target, options = \{\}\)/);
+  assert.match(source, /getHistoryColdRasterTargetBytes\(\)/);
   assert.match(source, /snapshot\.dehydrateGpu = \(\) => this\.dehydrateRasterSnapshot\(snapshot\)/);
   assert.match(source, /snapshot\.hydrateGpu = \(\) => this\.hydrateRasterSnapshot\(snapshot\)/);
   assert.match(source, /restoreRasterSnapshot\(layerId, snapshot, options = \{\}\)/);

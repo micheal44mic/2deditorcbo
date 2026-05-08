@@ -893,6 +893,8 @@
     const historyRasterGpuHotBudgetBytes = Number(history?.getRasterHistoryGpuHotBudgetBytes?.()) || 0;
     const historyRasterGpuHotBytes = Number(history?.getRasterHistoryGpuHotBytes?.()) || 0;
     const historyRasterCpuColdBytes = Number(history?.getRasterHistoryCpuColdBytes?.()) || 0;
+    const historyLayerTargetCpuColdBytes =
+      Number(namespace.documentRenderer?.getHistoryColdRasterTargetBytes?.()) || 0;
     const paintTargetCropPotential = options.analyzePaintTargets === true ||
       options.includePaintTargetCropPotential === true
       ? namespace.documentRenderer?.estimatePaintTargetCropPotential?.(options.paintTargetAnalysis || {}) || null
@@ -914,7 +916,12 @@
       fullCanvasResourceCount: rows.filter((row) => row.isFullCanvas).length,
       generatedAt: nowIso(),
       historyCompressedBytes: sumRows(rows, (row) => row.ownerType === "historyCompressed"),
-      historyCpuRawBytes: sumRows(rows, (row) => row.ownerType === "historyCpuRaw") + historyRasterCpuColdBytes,
+      historyCpuRawBytes:
+        sumRows(rows, (row) => row.ownerType === "historyCpuRaw") +
+        historyRasterCpuColdBytes +
+        historyLayerTargetCpuColdBytes,
+      historyLayerTargetCpuColdBytes,
+      historyLayerTargetCpuColdMiB: formatMiB(historyLayerTargetCpuColdBytes),
       historyGpuBytes: sumRows(rows, (row) => row.ownerType === "historyGpu"),
       historyRasterBudgetBytes,
       historyRasterBudgetMiB: formatMiB(historyRasterBudgetBytes),

@@ -1311,6 +1311,104 @@ void main() {
       return width * height * RASTER_BYTES_PER_PIXEL;
     }
 
+    dehydrateRasterTarget(target, options = {}) {
+      if (!target) {
+        return false;
+      }
+
+      if (target.state === "CPU_COLD") {
+        return true;
+      }
+
+      if (!target.framebuffer || !target.texture) {
+        return false;
+      }
+
+      const width = Math.max(1, Math.round(target.width || 1));
+      const height = Math.max(1, Math.round(target.height || 1));
+      const pixels = new Uint8Array(width * height * RASTER_BYTES_PER_PIXEL);
+      const gl = this.gl;
+
+      try {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      } catch (error) {
+        gl.bindFramebuffer?.(gl.FRAMEBUFFER, null);
+        console.warn?.("[CBO renderer] Impossibile raffreddare target raster.", error);
+        return false;
+      }
+
+      this.deleteRasterFramebuffer?.(target.framebuffer || target.framebufferResourceId);
+      gl.deleteFramebuffer?.(target.framebuffer);
+      target.framebuffer = null;
+      target.framebufferResourceId = "";
+
+      this.deleteRasterTexture?.(target.texture || target.textureResourceId);
+      gl.deleteTexture?.(target.texture);
+      target.texture = null;
+      target.textureResourceId = "";
+
+      target.cpuBytes = pixels.byteLength;
+      target.cpuPixels = pixels;
+      target.state = "CPU_COLD";
+      target.reason = options.reason || target.reason || "raster-target-cpu-cold";
+
+      return true;
+    }
+
+    hydrateRasterTarget(target, options = {}) {
+      if (!target) {
+        return false;
+      }
+
+      if (target.texture && target.framebuffer) {
+        return true;
+      }
+
+      if (!(target.cpuPixels instanceof Uint8Array)) {
+        return false;
+      }
+
+      const width = Math.max(1, Math.round(target.width || 1));
+      const height = Math.max(1, Math.round(target.height || 1));
+      const nextTarget = this.createRasterTarget(target.clearColor || [0, 0, 0, 0], {
+        cropped: target.cropped === true,
+        height,
+        kind: options.kind || "layer",
+        label: options.label || target.layerId || target.id || "raster target",
+        layerId: options.layerId || target.layerId || "",
+        ownerId: options.ownerId || options.layerId || target.layerId || target.id || "",
+        ownerType: options.ownerType || "live",
+        purgeable: options.purgeable === true,
+        reason: options.reason || "raster-target-hydrate",
+        width,
+        x: Number.isFinite(target.x) ? Math.round(target.x) : 0,
+        y: Number.isFinite(target.y) ? Math.round(target.y) : 0,
+      });
+      const gl = this.gl;
+
+      try {
+        gl.bindTexture(gl.TEXTURE_2D, nextTarget.texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, target.cpuPixels);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      } catch (error) {
+        gl.bindTexture?.(gl.TEXTURE_2D, null);
+        this.deleteRasterTargetObject(nextTarget);
+        console.warn?.("[CBO renderer] Impossibile riattivare target raster.", error);
+        return false;
+      }
+
+      this.markRasterTargetDirty(nextTarget);
+      Object.assign(target, nextTarget, {
+        cpuBytes: 0,
+        cpuPixels: null,
+        state: "GPU_HOT",
+      });
+
+      return true;
+    }
+
     estimateRasterSnapshotBytes(snapshot) {
       return this.getRasterRectBytes(snapshot?.rect || snapshot?.targetRect);
     }
@@ -5691,6 +5789,9 @@ void main() {
 
       target.framebufferResourceId = "";
       target.textureResourceId = "";
+      target.cpuBytes = 0;
+      target.cpuPixels = null;
+      target.state = "DELETED";
     }
 
     replaceRasterTarget(layerId, nextTarget, options = {}) {
@@ -7125,9 +7226,22 @@ void main() {
 
         if (isLiveTarget) {
           const isPaintTarget = layerId !== "background" && this.isPaintRasterLayer(layerId, target);
+          const kind = layerId === "background" ? "background" : isPaintTarget ? "paintTarget" : "layer";
+
+          if ((!target.texture || !target.framebuffer) && target.state === "CPU_COLD") {
+            this.hydrateRasterTarget(target, {
+              kind,
+              label: layerId,
+              layerId,
+              ownerId: layerId,
+              ownerType: "live",
+              purgeable: false,
+              reason: "history-retained-layer-target-hydrate",
+            });
+          }
 
           this.updateRasterTargetResourceMetadata?.(target, {
-            kind: layerId === "background" ? "background" : isPaintTarget ? "paintTarget" : "layer",
+            kind,
             label: layerId,
             layerId,
             ownerId: layerId,
@@ -7135,6 +7249,19 @@ void main() {
             purgeable: false,
             reason: "raster-target-live",
           });
+          updatedCount += 1;
+          continue;
+        }
+
+        if (target.state === "CPU_COLD") {
+          updatedCount += 1;
+          continue;
+        }
+
+        if (this.dehydrateRasterTarget(target, {
+          layerId,
+          reason: "history-retained-layer-target",
+        })) {
           updatedCount += 1;
           continue;
         }
@@ -7153,6 +7280,33 @@ void main() {
       }
 
       return updatedCount;
+    }
+
+    getHistoryColdRasterTargetBytes() {
+      if (!this.rasterTargetsByLayerId?.size) {
+        return 0;
+      }
+
+      const currentLayerIds = this.getCurrentRasterTargetLayerIds();
+      const historyLayerIds = this.collectHistoryLayerIds(new Set());
+      let total = 0;
+
+      for (const [layerId, target] of this.rasterTargetsByLayerId.entries()) {
+        if (
+          currentLayerIds.has(layerId) ||
+          !historyLayerIds.has(layerId) ||
+          target?.state !== "CPU_COLD"
+        ) {
+          continue;
+        }
+
+        total += Math.max(
+          0,
+          Math.round(Number(target.cpuBytes) || Number(target.cpuPixels?.byteLength) || this.estimateRasterTargetBytes(target)),
+        );
+      }
+
+      return total;
     }
 
     getRetainedRasterTargetLayerIds() {
