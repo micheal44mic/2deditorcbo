@@ -160,6 +160,31 @@ test("eraser refuses empty raster layers without allocating a target", () => {
   assert.equal(toastCount, 2);
 });
 
+test("round brush stamp bounds stay tight while shape textures stay conservative", () => {
+  const { BrushEngine } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  engine.getBrushSize = () => 100;
+  engine.getMinSizeRatio = () => 0.15;
+
+  const stamp = { pressure: 1, sizeScale: 1, x: 200, y: 200 };
+
+  engine.shapeTextureReady = false;
+  engine.shapeTexture = null;
+  assert.deepEqual(JSON.parse(JSON.stringify(engine.getStampBounds(stamp))), {
+    minX: 148,
+    minY: 148,
+    maxX: 252,
+    maxY: 252,
+  });
+
+  engine.shapeTextureReady = true;
+  engine.shapeTexture = {};
+  const shapedBounds = engine.getStampBounds(stamp);
+
+  assert.equal(Math.round((stamp.x - shapedBounds.minX) * 1000), Math.round((100 * Math.SQRT1_2 + 2) * 1000));
+});
+
 test("brush stroke history batches tile captures until the idle commit", () => {
   const { BrushEngine, window } = loadBrushEngine();
   const engine = Object.create(BrushEngine.prototype);

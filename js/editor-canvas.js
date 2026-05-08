@@ -14,13 +14,13 @@ const MOBILE_DOCUMENT_PRESET_ID = "square-2048";
 const DESKTOP_RASTER_HISTORY_PROFILE = Object.freeze({
   maxEntries: 40,
   maxRasterHistoryGpuHotMiB: 0,
-  maxRasterHistoryMiB: 256,
+  maxRasterHistoryMiB: 600,
   minRasterHistoryGpuHotEntries: 0,
 });
 const MOBILE_RASTER_HISTORY_PROFILE = Object.freeze({
   maxEntries: 32,
   maxRasterHistoryGpuHotMiB: 0,
-  maxRasterHistoryMiB: 150,
+  maxRasterHistoryMiB: 400,
   minRasterHistoryGpuHotEntries: 0,
 });
 

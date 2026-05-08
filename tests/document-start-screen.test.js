@@ -24,7 +24,8 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(editorCanvasSource, /function isMobileLikeDevice\(\)/);
   assert.match(editorCanvasSource, /function getDefaultDocumentPresetId\(\)/);
   assert.match(editorCanvasSource, /maxRasterHistoryGpuHotMiB: 0/);
-  assert.match(editorCanvasSource, /maxRasterHistoryMiB: 150/);
+  assert.match(editorCanvasSource, /maxRasterHistoryMiB: 400/);
+  assert.match(editorCanvasSource, /maxRasterHistoryMiB: 600/);
   assert.match(editorCanvasSource, /minRasterHistoryGpuHotEntries: 0/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorDocumentStart = function initEditorDocumentStart\(\)/);
   assert.match(editorCanvasSource, /button\.dataset\.documentPreset = preset\.id/);

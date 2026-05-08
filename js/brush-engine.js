@@ -3394,7 +3394,9 @@ void main() {
       const pressure = this.clamp(stamp.pressure ?? 1, 0, 1);
       const sizeFactor = this.lerp(this.getMinSizeRatio(), 1, pressure);
       const scale = Math.max(stamp.sizeScale ?? 1, 0);
-      const halfExtent = this.getBrushSize() * sizeFactor * scale * Math.SQRT1_2 + 2;
+      const stampPixelSize = this.getBrushSize() * sizeFactor * scale;
+      const usesShapeTexture = this.shapeTextureReady && this.shapeTexture;
+      const halfExtent = stampPixelSize * (usesShapeTexture ? Math.SQRT1_2 : 0.5) + 2;
 
       return {
         minX: stamp.x - halfExtent,
