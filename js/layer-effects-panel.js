@@ -936,8 +936,10 @@ window.CBO = window.CBO || {};
   function createLayerEffectsRasterizeHistoryEntry(options = {}) {
     const {
       afterSnapshot,
+      afterPreferSparse = false,
       afterState,
       beforeSnapshot,
+      beforePreferSparse = false,
       beforeState,
       history,
       layerId,
@@ -972,6 +974,7 @@ window.CBO = window.CBO || {};
         }
 
         const didRestorePixels = renderer.restoreRasterSnapshot?.(layerId, beforeSnapshot, {
+          preferSparse: beforePreferSparse,
           source: "history-undo-layer-effects-rasterize",
         }) !== false;
 
@@ -988,6 +991,7 @@ window.CBO = window.CBO || {};
         }
 
         const didRestorePixels = renderer.restoreRasterSnapshot?.(layerId, afterSnapshot, {
+          preferSparse: afterPreferSparse,
           source: "history-redo-layer-effects-rasterize",
         }) !== false;
 
@@ -1050,6 +1054,7 @@ window.CBO = window.CBO || {};
     if (!didUpdateLayer) {
       renderer.restoreRasterSnapshot?.(layer.id, snapshots.beforeSnapshot, {
         emit: false,
+        preferSparse: snapshots.beforePreferSparse,
         source: "layer-effects-rasterize-rollback",
       });
       renderer.deleteRasterSnapshot?.(snapshots.beforeSnapshot);
@@ -1060,8 +1065,10 @@ window.CBO = window.CBO || {};
     const afterState = history?.getLayerSnapshot?.(layerModel) || null;
     const historyEntry = createLayerEffectsRasterizeHistoryEntry({
       afterSnapshot: snapshots.afterSnapshot,
+      afterPreferSparse: snapshots.afterPreferSparse,
       afterState,
       beforeSnapshot: snapshots.beforeSnapshot,
+      beforePreferSparse: snapshots.beforePreferSparse,
       beforeState,
       history,
       layerId: layer.id,

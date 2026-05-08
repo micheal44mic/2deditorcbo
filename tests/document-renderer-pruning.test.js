@@ -660,6 +660,222 @@ test("ensureRasterTargetsForPaintRect uses stamp patch tiles instead of stroke b
   assert.equal(renderer.estimateRasterTargetBytes(sparseTarget), 3 * 256 * 256 * 4);
 });
 
+test("ensureRasterTargetsForPaintRect retiles materialized sparse paint targets before painting", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const materializedTarget = {
+    cropped: false,
+    framebuffer: { id: "materialized-fb" },
+    height: 512,
+    layerId: "paint-1",
+    materializedFromSparse: true,
+    sparseTileSize: 256,
+    texture: { id: "materialized-texture" },
+    width: 512,
+    x: 0,
+    y: 0,
+  };
+  const copyCalls = [];
+  const deletedTargets = [];
+
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.paintLayerId = "paint-1";
+  renderer.texture = materializedTarget.texture;
+  renderer.framebuffer = materializedTarget.framebuffer;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", materializedTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.isMobileLikeDevice = () => false;
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    ownerId: options.ownerId,
+    texture: { id: `tex-${options.x}-${options.y}` },
+    tileKey: options.ownerId?.split(":").slice(1).join(":"),
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = (sourceTarget, rect, destinationTarget) => {
+    copyCalls.push({ destinationTarget, rect: { ...rect }, sourceTarget });
+    return true;
+  };
+  renderer.deleteRasterTargetObject = (target) => deletedTargets.push(target);
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.emitContentChange = () => {};
+  renderer.invalidatePreviewCache = () => {};
+  renderer.isRasterTargetFullyTransparent = () => false;
+  renderer.requestDraw = () => {};
+
+  const targets = renderer.ensureRasterTargetsForPaintRect("paint-1", {
+    height: 20,
+    width: 20,
+    x: 16,
+    y: 16,
+  }, {
+    source: "unit-retile-paint",
+  });
+  const sparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.equal(renderer.isSparseRasterTarget(sparseTarget), true);
+  assert.equal(sparseTarget.tiles.size, 4);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].target, sparseTarget.tiles.get("0:0"));
+  assert.equal(copyCalls.length, 4);
+  assert.ok(copyCalls.every((call) => call.sourceTarget === materializedTarget));
+  assert.equal(deletedTargets.includes(materializedTarget), true);
+  assert.equal(renderer.texture, null);
+  assert.equal(renderer.framebuffer, null);
+});
+
+test("getRasterTargetsForPaintRect retiles materialized sparse paint targets for eraser", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const materializedTarget = {
+    cropped: false,
+    framebuffer: { id: "materialized-fb" },
+    height: 512,
+    layerId: "paint-1",
+    materializedFromSparse: true,
+    sparseTileSize: 256,
+    texture: { id: "materialized-texture" },
+    width: 512,
+    x: 0,
+    y: 0,
+  };
+  const copyCalls = [];
+  const deletedTargets = [];
+
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.paintLayerId = "paint-1";
+  renderer.texture = materializedTarget.texture;
+  renderer.framebuffer = materializedTarget.framebuffer;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", materializedTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.isMobileLikeDevice = () => false;
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    ownerId: options.ownerId,
+    texture: { id: `tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = (sourceTarget, rect, destinationTarget) => {
+    copyCalls.push({ destinationTarget, rect: { ...rect }, sourceTarget });
+    return true;
+  };
+  renderer.deleteRasterTargetObject = (target) => deletedTargets.push(target);
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.emitContentChange = () => {};
+  renderer.invalidatePreviewCache = () => {};
+  renderer.isRasterTargetFullyTransparent = () => false;
+  renderer.requestDraw = () => {};
+
+  const targets = renderer.getRasterTargetsForPaintRect("paint-1", {
+    height: 20,
+    width: 20,
+    x: 16,
+    y: 16,
+  }, {
+    source: "unit-retile-eraser",
+  });
+  const sparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.equal(renderer.isSparseRasterTarget(sparseTarget), true);
+  assert.equal(sparseTarget.tiles.size, 4);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].target, sparseTarget.tiles.get("0:0"));
+  assert.equal(copyCalls.length, 4);
+  assert.equal(deletedTargets.includes(materializedTarget), true);
+});
+
+test("restoreRasterSnapshot rebuilds sparse paint targets when requested", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const denseTarget = {
+    framebuffer: { id: "dense-fb" },
+    height: 512,
+    layerId: "paint-1",
+    texture: { id: "dense-texture" },
+    width: 512,
+    x: 0,
+    y: 0,
+  };
+  const snapshot = {
+    framebuffer: { id: "snapshot-fb" },
+    rect: { height: 512, width: 512, x: 0, y: 0 },
+    texture: { id: "snapshot-texture" },
+  };
+  const copyCalls = [];
+  const deletedTargets = [];
+
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.paintLayerId = "paint-1";
+  renderer.texture = denseTarget.texture;
+  renderer.framebuffer = denseTarget.framebuffer;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", denseTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.isMobileLikeDevice = () => false;
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    texture: { id: `tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = (sourceTarget, rect, destinationTarget) => {
+    copyCalls.push({ destinationTarget, rect: { ...rect }, sourceTarget });
+    return true;
+  };
+  renderer.deleteRasterTargetObject = (target) => deletedTargets.push(target);
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.emitContentChange = () => {};
+  renderer.invalidatePreviewCache = () => {};
+  renderer.isRasterTargetFullyTransparent = () => false;
+  renderer.requestDraw = () => {};
+
+  assert.equal(renderer.restoreRasterSnapshot("paint-1", snapshot, {
+    emit: false,
+    preferSparse: true,
+    source: "unit-restore-prefer-sparse",
+  }), true);
+
+  const sparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.equal(renderer.isSparseRasterTarget(sparseTarget), true);
+  assert.equal(sparseTarget.tiles.size, 4);
+  assert.equal(copyCalls.length, 4);
+  assert.equal(deletedTargets.includes(denseTarget), true);
+  assert.equal(renderer.texture, null);
+  assert.equal(renderer.framebuffer, null);
+});
+
 test("getRasterAlphaAtPoint samples the matching sparse tile", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);

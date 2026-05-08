@@ -6083,6 +6083,52 @@ void main() {
         return this.restoreRasterSnapshotToSparseTarget(layerId, existingTarget, snapshot, options);
       }
 
+      if (
+        options.preferSparse === true &&
+        options.sparse !== false &&
+        this.isPaintRasterLayer(layerId, existingTarget)
+      ) {
+        const sparseTarget = this.createSparseRasterTarget(layerId, {
+          clearColor: existingTarget?.clearColor,
+          tileSize: options.tileSize || existingTarget?.sparseTileSize || existingTarget?.tileSize,
+        });
+        const didRestoreSparse = this.restoreRasterSnapshotToSparseTarget(layerId, sparseTarget, snapshot, {
+          ...options,
+          emit: false,
+          source: options.source || "raster-snapshot-sparse-restore",
+        });
+
+        if (didRestoreSparse) {
+          const previousTarget = this.rasterTargetsByLayerId.get(layerId);
+
+          this.rasterTargetsByLayerId.set(layerId, sparseTarget);
+
+          if (layerId === this.paintLayerId || previousTarget?.texture === this.texture) {
+            this.texture = null;
+            this.framebuffer = null;
+          }
+
+          if (previousTarget && previousTarget !== sparseTarget) {
+            this.deleteRasterTargetObject(previousTarget);
+          }
+
+          this.deletePuppetMeshResource(layerId);
+          this.invalidatePreviewCache(options.source || "raster-snapshot-sparse-restore");
+
+          if (options.emit !== false) {
+            this.emitContentChange({
+              layerId,
+              source: options.source || "raster-snapshot-sparse-restore",
+            });
+          }
+
+          this.requestDraw();
+          return true;
+        }
+
+        this.deleteRasterTargetObject(sparseTarget);
+      }
+
       let target = this.getRasterTarget(layerId);
       const snapshotTargetRect = snapshot.targetRect;
       const targetRect = this.getRasterTargetDocumentRect(target);
@@ -6297,6 +6343,9 @@ void main() {
         return null;
       }
 
+      fullTarget.materializedFromSparse = true;
+      fullTarget.sparseTileSize = sparseTarget.tileSize;
+
       let didCopyAnyTile = false;
 
       for (const tile of sparseTarget.tiles.values()) {
@@ -6337,6 +6386,116 @@ void main() {
       };
     }
 
+    shouldRetileRasterTargetForPaint(layerId, target, options = {}) {
+      return Boolean(
+        options.sparse !== false &&
+        options.retileExistingTarget !== false &&
+        target?.framebuffer &&
+        target?.texture &&
+        !this.isSparseRasterTarget(target) &&
+        this.isPaintRasterLayer(layerId, target) &&
+        (
+          target.materializedFromSparse === true ||
+          options.retileMaterializedTarget === true
+        )
+      );
+    }
+
+    sparsifyRasterTarget(layerId, target = null, options = {}) {
+      const sourceTarget = target || this.rasterTargetsByLayerId.get(layerId);
+
+      if (!layerId || !sourceTarget) {
+        return null;
+      }
+
+      if (this.isSparseRasterTarget(sourceTarget)) {
+        return sourceTarget;
+      }
+
+      if (!sourceTarget.framebuffer || !sourceTarget.texture) {
+        return null;
+      }
+
+      const currentTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      if (currentTarget && currentTarget !== sourceTarget) {
+        return null;
+      }
+
+      const sourceRect = this.getClampedDocumentRect(
+        options.rect || this.getRasterTargetDocumentRect(sourceTarget),
+      );
+
+      if (!sourceRect) {
+        return null;
+      }
+
+      const source = options.source || "sparsify-raster-target";
+      const sparseTarget = this.createSparseRasterTarget(layerId, {
+        clearColor: sourceTarget.clearColor,
+        tileSize: options.tileSize || sourceTarget.sparseTileSize || sourceTarget.tileSize,
+      });
+      let didCopyAnyTile = false;
+
+      for (const tile of this.getSparseRasterTileRects(sourceRect, {
+        tileSize: sparseTarget.tileSize,
+      })) {
+        const tileTarget = this.ensureSparseRasterTileTarget(layerId, sparseTarget, tile, {
+          ownerType: options.ownerType || "live",
+          source,
+        });
+        const patchRect = tile.rect || tile.patchRect;
+
+        if (!tileTarget || !patchRect) {
+          this.deleteRasterTargetObject(sparseTarget);
+          return null;
+        }
+
+        if (!this.copyRasterTargetRectIntoTarget(sourceTarget, patchRect, tileTarget)) {
+          this.deleteRasterTargetObject(sparseTarget);
+          return null;
+        }
+
+        didCopyAnyTile = true;
+
+        if (
+          options.pruneTransparentTiles !== false &&
+          this.isRasterTargetFullyTransparent(tileTarget)
+        ) {
+          this.deleteRasterTargetObject(tileTarget);
+          sparseTarget.tiles.delete(tileTarget.tileKey || this.getSparseTileKey(tile.tx, tile.ty));
+        }
+      }
+
+      if (!didCopyAnyTile) {
+        this.deleteRasterTargetObject(sparseTarget);
+        return null;
+      }
+
+      sparseTarget.layerId = layerId;
+      sparseTarget.version = (sparseTarget.version || 0) + 1;
+      this.rasterTargetsByLayerId.set(layerId, sparseTarget);
+
+      if (layerId === this.paintLayerId || sourceTarget.texture === this.texture) {
+        this.texture = null;
+        this.framebuffer = null;
+      }
+
+      this.deleteRasterTargetObject(sourceTarget);
+      this.deletePuppetMeshResource(layerId);
+      this.invalidatePreviewCache(source);
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId,
+          source,
+        });
+      }
+
+      this.requestDraw();
+      return sparseTarget;
+    }
+
     materializeRasterTarget(layerId, options = {}) {
       const target = this.rasterTargetsByLayerId.get(layerId);
 
@@ -6370,6 +6529,12 @@ void main() {
         x: 0,
         y: 0,
       });
+
+      if (target.materializedFromSparse === true) {
+        fullTarget.materializedFromSparse = true;
+        fullTarget.sparseTileSize = target.sparseTileSize || target.tileSize;
+      }
+
       const destQuad = [
         { x: targetRect.x, y: targetRect.y },
         { x: targetRect.x + targetRect.width, y: targetRect.y },
@@ -6780,7 +6945,15 @@ void main() {
     }
 
     ensureRasterTargetsForPaintRect(layerId, rect, options = {}) {
-      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      let existingTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      if (this.shouldRetileRasterTargetForPaint(layerId, existingTarget, options)) {
+        existingTarget = this.sparsifyRasterTarget(layerId, existingTarget, {
+          emit: false,
+          source: options.source || "paint-retile-existing-target",
+        }) || existingTarget;
+      }
+
       const useSparse = options.sparse !== false &&
         (!existingTarget || this.isSparseRasterTarget(existingTarget));
 
@@ -6798,11 +6971,18 @@ void main() {
     }
 
     getRasterTargetsForPaintRect(layerId, rect, options = {}) {
-      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      let existingTarget = this.rasterTargetsByLayerId.get(layerId);
       const requiredRect = this.getClampedDocumentRect(rect, options.padding || 0);
 
       if (!layerId || !requiredRect || !existingTarget) {
         return [];
+      }
+
+      if (this.shouldRetileRasterTargetForPaint(layerId, existingTarget, options)) {
+        existingTarget = this.sparsifyRasterTarget(layerId, existingTarget, {
+          emit: false,
+          source: options.source || "paint-retile-existing-target",
+        }) || existingTarget;
       }
 
       if (this.isSparseRasterTarget(existingTarget)) {
@@ -9233,8 +9413,9 @@ void main() {
       }
 
       let target = this.rasterTargetsByLayerId.get(layer.id);
+      const wasSparseTarget = this.isSparseRasterTarget(target);
 
-      if (this.isSparseRasterTarget(target)) {
+      if (wasSparseTarget) {
         target = this.materializeRasterTarget(layer.id, {
           emit: false,
           source: options.source || "layer-effects-rasterize",
@@ -9259,6 +9440,16 @@ void main() {
       const destinationTarget = needsTargetSwap
         ? this.createRasterTargetForRect(renderRect)
         : target;
+
+      if (
+        destinationTarget &&
+        destinationTarget !== target &&
+        (wasSparseTarget || target.materializedFromSparse === true)
+      ) {
+        destinationTarget.materializedFromSparse = true;
+        destinationTarget.sparseTileSize = target.sparseTileSize || target.tileSize;
+      }
+
       const didCopy = renderTexture &&
         renderTexture !== target.texture &&
         destinationTarget?.framebuffer &&
@@ -9274,6 +9465,7 @@ void main() {
 
         this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
           emit: false,
+          preferSparse: wasSparseTarget,
           source: "layer-effects-rasterize-rollback",
         });
         this.deleteRasterSnapshot(beforeSnapshot);
@@ -9293,17 +9485,29 @@ void main() {
       if (!afterSnapshot?.texture) {
         this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
           emit: false,
+          preferSparse: wasSparseTarget,
           source: "layer-effects-rasterize-rollback",
         });
         this.deleteRasterSnapshot(beforeSnapshot);
         return null;
       }
 
-      const finalTargetRect = this.getRasterTargetDocumentRect(finalTarget);
+      const shouldRetileFinalTarget = Boolean(
+        (wasSparseTarget || finalTarget.materializedFromSparse === true) &&
+        this.isPaintRasterLayer(layer.id, finalTarget)
+      );
+      const finalLiveTarget = shouldRetileFinalTarget
+        ? this.sparsifyRasterTarget(layer.id, finalTarget, {
+            emit: false,
+            source: `${options.source || "layer-effects-rasterize"}-retile`,
+            tileSize: finalTarget.sparseTileSize || target.sparseTileSize || target.tileSize,
+          }) || finalTarget
+        : finalTarget;
+      const finalTargetRect = this.getRasterTargetDocumentRect(finalLiveTarget);
       const beforeBytes = this.getRasterRectBytes(beforeSnapshot.rect);
       const afterBytes = this.getRasterRectBytes(afterSnapshot.rect);
       const sourceBytes = this.estimateRasterTargetBytes(target);
-      const targetBytes = this.estimateRasterTargetBytes(finalTarget);
+      const targetBytes = this.estimateRasterTargetBytes(finalLiveTarget);
       const scratchBytes =
         this.estimateRasterTargetBytes(this.layerEffectScratchA) +
         this.estimateRasterTargetBytes(this.layerEffectScratchB);
@@ -9343,7 +9547,9 @@ void main() {
       }
 
       return {
+        afterPreferSparse: shouldRetileFinalTarget,
         afterSnapshot,
+        beforePreferSparse: wasSparseTarget || target.materializedFromSparse === true,
         beforeSnapshot,
         layerId: layer.id,
         memoryPolicy,
