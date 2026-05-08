@@ -128,6 +128,21 @@ test("vector text resize hides the stale raster cache while SVG preview is activ
   assert.match(textSource, /renderer\.clearVectorTextTransformPreviewLayer\?\.?\(layer\.id\)/);
 });
 
+test("raster transform preview coalesces pointermove updates with requestAnimationFrame", () => {
+  const source = readRepoFile("js", "raster-transform-tool.js");
+  const moveBody = source.match(/handlePointerMove\(event\) \{([\s\S]*?)\n    handlePointerUp\(event\)/)?.[1] || "";
+
+  assert.match(source, /dragFrameRequest/);
+  assert.match(source, /pendingDragEvent/);
+  assert.match(source, /createDragEventSnapshot\(event\) \{/);
+  assert.match(source, /scheduleDragUpdate\(event\) \{/);
+  assert.match(source, /flushPendingDragUpdate\(\) \{/);
+  assert.match(source, /cancelPendingDragUpdate\(\) \{/);
+  assert.match(moveBody, /this\.scheduleDragUpdate\(event\);/);
+  assert.doesNotMatch(moveBody, /this\.updateDrag\(event\);/);
+  assert.match(source, /this\.pendingDragEvent = this\.createDragEventSnapshot\(event\);[\s\S]*this\.flushPendingDragUpdate\(\);/);
+});
+
 test("document renderer uses analytic anti-aliased quad edge coverage for raster transforms", () => {
   const source = readRepoFile("js", "document", "document-renderer.js");
 

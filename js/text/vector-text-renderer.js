@@ -918,6 +918,7 @@
       this.rasterGeneration = 0;
       this.previewTimer = 0;
       this.frameRequest = 0;
+      this.dragFrameRequest = 0;
       this.interactionTimer = 0;
       this.isInteracting = false;
       this.activeTool = "";
@@ -1049,11 +1050,26 @@
       }
     }
 
-    beginInteraction() {
+    startContinuousInteraction() {
+      if (!this.svg) {
+        return;
+      }
+
+      if (this.interactionTimer) {
+        window.clearTimeout(this.interactionTimer);
+        this.interactionTimer = 0;
+      }
+
       if (!this.isInteracting) {
         this.isInteracting = true;
         this.svg.classList.add("is-interacting");
         this.scheduleContentRender();
+      }
+    }
+
+    endContinuousInteraction(delay = 140) {
+      if (!this.svg) {
+        return;
       }
 
       if (this.interactionTimer) {
@@ -1065,7 +1081,12 @@
         this.svg.classList.remove("is-interacting");
         this.interactionTimer = 0;
         this.scheduleContentRender();
-      }, 140);
+      }, delay);
+    }
+
+    beginInteraction() {
+      this.startContinuousInteraction();
+      this.endContinuousInteraction();
     }
 
     beginRasterPreview(duration = TEXT_RASTER_PREVIEW_MS) {
@@ -1131,6 +1152,45 @@
         this.frameRequest = 0;
         this.renderContent();
       });
+    }
+
+    scheduleDragPreview() {
+      if (this.dragFrameRequest) {
+        return;
+      }
+
+      this.dragFrameRequest = requestAnimationFrame(() => {
+        this.dragFrameRequest = 0;
+        this.applyPendingDragPreview();
+      });
+    }
+
+    flushPendingDragPreview() {
+      if (this.dragFrameRequest) {
+        cancelAnimationFrame(this.dragFrameRequest);
+        this.dragFrameRequest = 0;
+      }
+
+      this.applyPendingDragPreview();
+    }
+
+    applyPendingDragPreview() {
+      const dragState = this.dragState;
+
+      if (!dragState || !Number.isFinite(dragState.pendingClientX) || !Number.isFinite(dragState.pendingClientY)) {
+        return;
+      }
+
+      const point = this.clientToDocumentPoint(dragState.pendingClientX, dragState.pendingClientY);
+      const nextLayer = {
+        ...dragState.layer,
+        x: toFiniteNumber(dragState.layer.x, 0) + point.x - dragState.startDocX,
+        y: toFiniteNumber(dragState.layer.y, 0) + point.y - dragState.startDocY,
+      };
+      const currentGroup = this.getLayerNode(dragState.layerId) || dragState.group;
+
+      dragState.nextLayer = nextLayer;
+      currentGroup?.setAttribute("transform", formatLayerTransform(nextLayer));
     }
 
     getFont(url) {
@@ -2174,8 +2234,9 @@
       window.addEventListener("pointermove", this.handleDragMove);
       window.addEventListener("pointerup", this.handleDragEnd);
       window.addEventListener("pointercancel", this.handleDragEnd);
+      namespace.documentRenderer?.setVectorTextTransformPreviewLayer?.(layerId);
       this.beginTextEditPreview();
-      this.beginInteraction();
+      this.startContinuousInteraction();
     }
 
     handleEnvelopePointerDown(event, layerId, nodeId) {
@@ -2205,7 +2266,7 @@
       window.addEventListener("pointerup", this.handleEnvelopeDragEnd);
       window.addEventListener("pointercancel", this.handleEnvelopeDragEnd);
       this.beginTextEditPreview();
-      this.beginInteraction();
+      this.startContinuousInteraction();
     }
 
     handleEnvelopeDragMove(event) {
@@ -2236,7 +2297,6 @@
         historyGroup: this.envelopeDragState.historyGroup,
         source: "vector-text-envelope-drag",
       });
-      this.beginInteraction();
       event.preventDefault();
     }
 
@@ -2251,6 +2311,7 @@
       namespace.documentHistory?.endGroup?.(this.envelopeDragState.historyGroup);
       this.envelopeDragState = null;
       this.endTextEditPreview();
+      this.endContinuousInteraction();
       event.preventDefault();
     }
 
@@ -2259,17 +2320,10 @@
         return;
       }
 
-      const point = this.clientToDocumentPoint(event.clientX, event.clientY);
-      const nextLayer = {
-        ...this.dragState.layer,
-        x: toFiniteNumber(this.dragState.layer.x, 0) + point.x - this.dragState.startDocX,
-        y: toFiniteNumber(this.dragState.layer.y, 0) + point.y - this.dragState.startDocY,
-      };
-      const currentGroup = this.getLayerNode(this.dragState.layerId) || this.dragState.group;
-
-      this.dragState.nextLayer = nextLayer;
-      currentGroup?.setAttribute("transform", formatLayerTransform(nextLayer));
-      this.beginInteraction();
+      this.dragState.didReceiveMove = true;
+      this.dragState.pendingClientX = event.clientX;
+      this.dragState.pendingClientY = event.clientY;
+      this.scheduleDragPreview();
       event.preventDefault();
     }
 
@@ -2278,7 +2332,25 @@
         return;
       }
 
+      if (
+        (this.dragState.didReceiveMove || this.dragState.nextLayer) &&
+        Number.isFinite(event.clientX) &&
+        Number.isFinite(event.clientY)
+      ) {
+        this.dragState.pendingClientX = event.clientX;
+        this.dragState.pendingClientY = event.clientY;
+      }
+
+      this.flushPendingDragPreview();
+
       const { group, historyGroup, layerId, nextLayer } = this.dragState;
+      const renderer = namespace.documentRenderer;
+      const keepPreviewUntilRaster = Boolean(
+        nextLayer &&
+        renderer?.isVectorTextTransformPreviewLayer?.(layerId) &&
+        renderer?.createRasterTargetForDocumentRect &&
+        namespace.imageRasterizer?.placeRasterImage
+      );
 
       group.releasePointerCapture?.(event.pointerId);
       window.removeEventListener("pointermove", this.handleDragMove);
@@ -2294,10 +2366,18 @@
           source: "vector-text-drag",
         });
         this.beginRasterPreview(ACTIVE_TEXT_RASTER_DEBOUNCE_MS + TEXT_RASTER_PREVIEW_MS);
+      } else {
+        renderer?.clearVectorTextTransformPreviewLayer?.(layerId);
       }
 
       this.dragState = null;
-      this.endTextEditPreview();
+      this.endContinuousInteraction();
+
+      if (!keepPreviewUntilRaster) {
+        renderer?.clearVectorTextTransformPreviewLayer?.(layerId);
+        this.endTextEditPreview();
+      }
+
       event.preventDefault();
     }
 

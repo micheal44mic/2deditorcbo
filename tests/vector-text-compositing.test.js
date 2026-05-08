@@ -201,6 +201,36 @@ test("active text rasterization is debounced so drag and sliders stay responsive
   assert.doesNotMatch(dragMoveBody, /scheduleContentRender\(\)/);
 });
 
+test("vector text drag coalesces live SVG transforms with requestAnimationFrame", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+  const dragMoveBody = source.match(/handleDragMove\(event\) \{([\s\S]*?)\n    handleDragEnd\(event\)/)?.[1] || "";
+
+  assert.match(source, /dragFrameRequest/);
+  assert.match(source, /scheduleDragPreview\(\) \{/);
+  assert.match(source, /applyPendingDragPreview\(\) \{/);
+  assert.match(source, /flushPendingDragPreview\(\);/);
+  assert.match(dragMoveBody, /this\.dragState\.pendingClientX = event\.clientX;/);
+  assert.match(dragMoveBody, /this\.dragState\.pendingClientY = event\.clientY;/);
+  assert.match(dragMoveBody, /this\.scheduleDragPreview\(\);/);
+  assert.doesNotMatch(dragMoveBody, /setAttribute\("transform"/);
+  assert.doesNotMatch(dragMoveBody, /beginInteraction\(\)/);
+});
+
+test("vector text drag hides the stale raster cache while SVG preview is active", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /namespace\.documentRenderer\?\.setVectorTextTransformPreviewLayer\?\.\(layerId\)/);
+  assert.match(source, /const keepPreviewUntilRaster = Boolean\([\s\S]*nextLayer &&[\s\S]*renderer\?\.isVectorTextTransformPreviewLayer\?\.\(layerId\)[\s\S]*namespace\.imageRasterizer\?\.placeRasterImage/);
+  assert.match(source, /renderer\?\.clearVectorTextTransformPreviewLayer\?\.\(layerId\)/);
+  assert.match(source, /if \(!keepPreviewUntilRaster\) \{[\s\S]*this\.endTextEditPreview\(\);/);
+});
+
 test("continuous text sidebar controls pass stable history groups", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "right-sidebar.js"), "utf8");
 

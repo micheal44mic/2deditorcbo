@@ -1,0 +1,215 @@
+BRIEF PER DEBUG: testo vettoriale si muove a scatti durante il drag live
+========================================================================
+
+Root progetto:
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush
+
+
+PROMPT DA DARE AL CAPO
+----------------------
+
+Stiamo lavorando su un editor 2D WebGL con layer testo vettoriali renderizzati come SVG overlay.
+Il problema non e' il commit finale e non e' la rasterizzazione: il testo e' ancora vettoriale
+e mentre lo sposto live si muove a scatti, come un problema di performance/frame pacing.
+
+Sintomo:
+- Seleziono un layer testo vettoriale.
+- Lo trascino mentre e' ancora vector/SVG.
+- Il movimento non e' fluido: sembra saltare a frame, soprattutto con testo pesante, ombra,
+  distort/envelope, zoom o layer grandi.
+- Al rilascio puo' anche finire nel posto giusto; il problema principale e' il drag live.
+
+Percorso codice principale:
+- Drag normale testo: js/text/vector-text-renderer.js
+  handleTextLayerPointerDown()
+  handleDragMove()
+  handleDragEnd()
+
+- Durante handleDragMove() NON viene aggiornato il layer model a ogni movimento.
+  Viene solo calcolato nextLayer e applicato direttamente al nodo SVG:
+
+  currentGroup?.setAttribute("transform", formatLayerTransform(nextLayer));
+
+- Il layer model viene aggiornato solo alla fine, in handleDragEnd():
+
+  layerModel.updateLayer(layerId, { x: nextLayer.x, y: nextLayer.y }, ...)
+
+Quindi il jank live non sembra causato da undo/history o updateLayer continuo, almeno nel drag
+normale del testo. Bisogna guardare costo di pointermove + SVG repaint.
+
+Ipotesi principali:
+1. Troppi pointermove non coalescati:
+   handleDragMove() applica setAttribute direttamente per ogni evento pointermove. Su touch/stylus
+   o monitor ad alto refresh possono arrivare molti eventi per frame. Serve valutare un throttle
+   con requestAnimationFrame e usare solo l'ultimo pointer event.
+
+2. SVG repaint troppo pesante:
+   durante preview il CSS rende visibili i path SVG reali:
+   .editor-vector-overlay.is-text-edit-previewing .editor-vector-text-layer.active
+   .editor-vector-text-paint { opacity: 1; }
+
+   Se il testo ha path complessi, shadow, solid shadow, envelope/distort, ogni transform puo'
+   forzare repaint costoso.
+
+3. beginInteraction() viene chiamato a ogni pointermove:
+   handleDragMove() chiama beginInteraction().
+   beginInteraction() resetta un timeout ogni volta e, quando entra/esce da is-interacting,
+   programma renderContent(). Controllare se questo crea style/layout churn o render extra.
+
+4. Doppio rendering durante drag:
+   La cache raster del testo dovrebbe essere nascosta mentre si muove l'SVG.
+   Se canvas/cache raster e SVG overlay sono entrambi visibili o si alternano, puo' sembrare scattoso.
+
+5. Resize/selection tool su testo vettoriale:
+   Se il problema avviene non col text tool ma con resize/selection, guardare anche
+   js/raster-transform-tool.js:
+   updatePreview()
+   setVectorTextPreviewLayer()
+   handlePointerMove()
+
+   Anche li il testo resta vector e viene aggiornato il transform SVG live.
+
+6. Effetti testo:
+   Ombra drop/solid, envelope/distort, arch/flag possono generare path piu' pesanti.
+   Capire se il jank succede anche con testo semplice nero senza ombra. Se no, il costo e'
+   nel render SVG/effects.
+
+Debug consigliato:
+1. Misurare handleDragMove:
+
+   performance.now() all'inizio/fine.
+   Loggare media/max ms ogni 60 eventi, non ogni evento.
+
+2. Contare pointermove per frame:
+   usare requestAnimationFrame e contatore eventi.
+   Se arrivano 3-10 pointermove per frame, serve coalescing.
+
+3. Loggare se durante drag parte renderContent():
+   vector-text-renderer.js -> scheduleContentRender(), renderContent().
+   Non dovrebbe rifare tutto a ogni move normale.
+
+4. Loggare requestDraw canvas:
+   document-renderer.js / brush-engine.js.
+   Durante drag del testo vector puro idealmente non dovrebbe ridisegnare tutto il canvas ogni
+   pointermove.
+
+5. Provare A/B:
+   - testo semplice senza ombra
+   - testo con ombra
+   - testo con distort/envelope
+   - zoom lontano/vicino
+   - desktop vs mobile
+
+Fix probabili da valutare:
+1. Coalescing con requestAnimationFrame:
+   handleDragMove salva solo l'ultimo punto e una rAF applica una sola transform per frame.
+   Questo e' probabilmente il primo intervento da provare.
+
+2. Non chiamare beginInteraction() su ogni pointermove:
+   chiamarla all'inizio drag, poi eventualmente tenere vivo lo stato con un flag/timer piu' leggero.
+
+3. Preview piu' leggera:
+   durante drag usare un clone/preview del gruppo con transform semplice, nascondendo il path
+   pesante originale, oppure ridurre temporaneamente shadow/effect pesanti finche' si trascina.
+
+4. CSS transform / layer promotion:
+   valutare se usare una preview HTML/SVG separata con transform GPU-friendly, invece di aggiornare
+   attributi SVG complessi ogni event.
+
+5. Per resize tool:
+   applicare lo stesso coalescing a raster-transform-tool.js handlePointerMove/updatePreview().
+
+Definition of done:
+- Drag live del testo vector fluido a 60 fps o vicino.
+- Nessuna perdita di precisione: al rilascio x/y finale resta corretto.
+- Nessun updateLayer/history per ogni pointermove nel drag normale.
+- Cache raster vecchia non visibile durante drag.
+- Testo con ombra/distort non peggiora in modo drammatico.
+- Test:
+  node --test tests/vector-text-compositing.test.js tests/raster-transform-tool.test.js
+  node --test tests/*.test.js
+
+
+10 FILE DA DARE / APRIRE
+------------------------
+
+1. js/text/vector-text-renderer.js
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\text\vector-text-renderer.js
+   Perche':
+   File principale per il drag live del testo vector. Contiene handleDragMove(),
+   handleTextLayerPointerDown(), beginInteraction(), scheduleContentRender(), renderContent().
+
+2. js/raster-transform-tool.js
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\raster-transform-tool.js
+   Perche':
+   Serve se lo scatto avviene usando selection/resize/rotate sul testo vettoriale.
+   Contiene handlePointerMove(), updatePreview(), setVectorTextPreviewLayer().
+
+3. js/document/document-renderer.js
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\document\document-renderer.js
+   Perche':
+   Gestisce canvas draw e nasconde la cache raster del testo mentre la preview vector e' attiva.
+   Controllare requestDraw e vectorTextTransformPreviewLayerId.
+
+4. js/brush-engine.js
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\brush-engine.js
+   Perche':
+   E' spesso il proprietario del draw loop/requestDraw. Se durante il drag testo parte un redraw
+   pesante del canvas, si vede qui.
+
+5. css/layout.css
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\css\layout.css
+   Perche':
+   Contiene le classi che rendono visibile/nascosto SVG live, cache raster e overlay:
+   is-text-edit-previewing, is-raster-previewing, editor-vector-overlay.
+
+6. css/base.css
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\css\base.css
+   Perche':
+   Contiene regole base per overlay/canvas. Utile per capire stacking, pointer-events e possibili
+   costi compositing.
+
+7. js/text/vector-text-engine.js
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\text\vector-text-engine.js
+   Perche':
+   Genera path, envelope/distort, warp/arch/flag. Se il jank aumenta con effetti, il costo path
+   potrebbe partire da qui.
+
+8. js/document/document-layer-model.js
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\document\document-layer-model.js
+   Perche':
+   Serve per confermare che updateLayer non venga chiamato a ogni drag move normale, ma solo al
+   rilascio. Utile anche per eventi change imprevisti.
+
+9. tests/vector-text-compositing.test.js
+   Percorso completo:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\tests\vector-text-compositing.test.js
+   Perche':
+   Ha gia' test su drag vector, overlay SVG e cache raster. Qui aggiungere regressione per
+   rAF coalescing / niente renderContent per ogni pointermove.
+
+10. tests/raster-transform-tool.test.js
+    Percorso completo:
+    C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\tests\raster-transform-tool.test.js
+    Perche':
+    Test del resize/selection transform. Serve se si modifica anche il movimento vector tramite
+    resize tool.
+
+
+NOTA IMPORTANTE
+---------------
+
+Non cercare come prima cosa in history/undo/commit: nel drag normale del testo vector, lo stato
+ufficiale viene aggiornato solo a fine drag. Il problema live e' quasi sicuramente frame pacing:
+troppi eventi pointer, repaint SVG pesante, o redraw canvas/cache durante il movimento.
+
+La patch piu' promettente da provare e':
+coalescing con requestAnimationFrame in handleDragMove(), applicando una sola transform SVG per frame.

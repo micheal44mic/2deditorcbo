@@ -463,6 +463,8 @@
       this.currentWarpPoints = null;
       this.currentRotationRadians = 0;
       this.dragState = null;
+      this.dragFrameRequest = 0;
+      this.pendingDragEvent = null;
       this.selectionMoveHoldState = null;
       this.isCommitting = false;
       this.camera = { x: 0, y: 0, zoom: 1 };
@@ -1193,6 +1195,57 @@
       return this.sourceSnapshot;
     }
 
+    createDragEventSnapshot(event) {
+      return {
+        altKey: event.altKey === true,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        ctrlKey: event.ctrlKey === true,
+        metaKey: event.metaKey === true,
+        pointerId: event.pointerId,
+        shiftKey: event.shiftKey === true,
+      };
+    }
+
+    scheduleDragUpdate(event) {
+      this.pendingDragEvent = this.createDragEventSnapshot(event);
+
+      if (this.dragFrameRequest) {
+        return;
+      }
+
+      this.dragFrameRequest = requestAnimationFrame(() => {
+        this.dragFrameRequest = 0;
+        this.flushPendingDragUpdate();
+      });
+    }
+
+    flushPendingDragUpdate() {
+      if (this.dragFrameRequest) {
+        cancelAnimationFrame(this.dragFrameRequest);
+        this.dragFrameRequest = 0;
+      }
+
+      const event = this.pendingDragEvent;
+
+      this.pendingDragEvent = null;
+
+      if (!event || !this.dragState || event.pointerId !== this.dragState.pointerId) {
+        return;
+      }
+
+      this.updateDrag(event);
+    }
+
+    cancelPendingDragUpdate() {
+      if (this.dragFrameRequest) {
+        cancelAnimationFrame(this.dragFrameRequest);
+        this.dragFrameRequest = 0;
+      }
+
+      this.pendingDragEvent = null;
+    }
+
     updatePreview() {
       const activeLayer = this.layerModel?.findEntryById?.(this.activeLayerId);
 
@@ -1230,6 +1283,7 @@
     }
 
     cancelTransform(options = {}) {
+      this.cancelPendingDragUpdate();
       this.clearSelectionMoveHold({ releaseCapture: true });
       this.clearVectorTextPreview();
 
@@ -1315,6 +1369,7 @@
 
     commitTransform() {
       this.clearSelectionMoveHold({ releaseCapture: true });
+      this.flushPendingDragUpdate();
 
       if (this.isCommitting) {
         return false;
@@ -1927,7 +1982,7 @@
 
       event.preventDefault();
       event.stopPropagation();
-      this.updateDrag(event);
+      this.scheduleDragUpdate(event);
     }
 
     handlePointerUp(event) {
@@ -1944,6 +1999,9 @@
 
       event.preventDefault();
       event.stopPropagation();
+
+      this.pendingDragEvent = this.createDragEventSnapshot(event);
+      this.flushPendingDragUpdate();
 
       if (this.svg.hasPointerCapture?.(event.pointerId)) {
         this.svg.releasePointerCapture(event.pointerId);
@@ -1966,6 +2024,7 @@
       }
 
       if (this.dragState?.pointerId === event.pointerId) {
+        this.cancelPendingDragUpdate();
         this.cancelTransform();
       }
     }
