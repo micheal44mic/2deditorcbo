@@ -434,7 +434,13 @@
   async function captureLayerTiles(sessionId, layerId, renderer) {
     const target = renderer.rasterTargetsByLayerId?.get?.(layerId);
 
-    if (!target?.framebuffer || !target?.texture) {
+    if (
+      !target ||
+      (
+        renderer.isSparseRasterTarget?.(target) !== true &&
+        (!target.framebuffer || !target.texture)
+      )
+    ) {
       return null;
     }
 

@@ -1305,15 +1305,170 @@ void main() {
     }
 
     estimateRasterTargetBytes(target) {
+      if (this.isSparseRasterTarget(target)) {
+        let total = 0;
+
+        target.tiles?.forEach?.((tile) => {
+          total += this.estimateRasterTargetBytes(tile);
+        });
+
+        return total;
+      }
+
       const width = Math.max(0, Math.round(target?.width || 0));
       const height = Math.max(0, Math.round(target?.height || 0));
 
       return width * height * RASTER_BYTES_PER_PIXEL;
     }
 
+    isSparseRasterTarget(target) {
+      return Boolean(target?.sparse === true && target.tiles instanceof Map);
+    }
+
+    createSparseRasterTarget(layerId, options = {}) {
+      const tileSize = this.getRasterHistoryTileSize({
+        tileSize: options.tileSize || options.liveTileSize,
+      });
+
+      return {
+        clearColor: Array.isArray(options.clearColor) ? [...options.clearColor] : [0, 0, 0, 0],
+        cropped: false,
+        framebuffer: null,
+        height: Math.max(1, Math.round(this.height || 1)),
+        id: `sparse-raster-target-${this.rasterTargetIdSequence++}`,
+        layerId,
+        sparse: true,
+        texture: null,
+        tileSize,
+        tiles: new Map(),
+        version: 0,
+        width: Math.max(1, Math.round(this.width || 1)),
+        x: 0,
+        y: 0,
+      };
+    }
+
+    getSparseTileKey(tx, ty) {
+      return `${Math.round(Number(tx) || 0)}:${Math.round(Number(ty) || 0)}`;
+    }
+
+    getSparseRasterTileRects(rect, options = {}) {
+      return this.getRasterHistoryTileRects(rect, {
+        tileSize: options.tileSize || options.liveTileSize,
+      });
+    }
+
+    getSparseRasterTile(target, tx, ty) {
+      return this.isSparseRasterTarget(target)
+        ? target.tiles.get(this.getSparseTileKey(tx, ty)) || null
+        : null;
+    }
+
+    ensureSparseRasterTileTarget(layerId, sparseTarget, tile, options = {}) {
+      if (!layerId || !this.isSparseRasterTarget(sparseTarget) || !tile?.tileRect) {
+        return null;
+      }
+
+      const key = this.getSparseTileKey(tile.tx, tile.ty);
+      const existingTile = sparseTarget.tiles.get(key);
+
+      if (existingTile?.framebuffer && existingTile?.texture) {
+        return existingTile;
+      }
+
+      const clearColor = Array.isArray(sparseTarget.clearColor)
+        ? [...sparseTarget.clearColor]
+        : [0, 0, 0, 0];
+      const tileRect = tile.tileRect || tile.rect;
+      const tileTarget = this.createRasterTarget(clearColor, {
+        cropped: true,
+        height: tileRect.height,
+        kind: "paintTile",
+        label: `${layerId} tile ${tile.tx},${tile.ty}`,
+        layerId,
+        ownerId: `${layerId}:${tile.tx}:${tile.ty}`,
+        ownerType: options.ownerType || "live",
+        purgeable: options.purgeable === true,
+        reason: options.source || "create-sparse-raster-tile",
+        width: tileRect.width,
+        x: tileRect.x,
+        y: tileRect.y,
+      });
+
+      tileTarget.layerId = layerId;
+      tileTarget.parentTargetId = sparseTarget.id;
+      tileTarget.tileKey = key;
+      tileTarget.tx = tile.tx;
+      tileTarget.ty = tile.ty;
+      sparseTarget.tiles.set(key, tileTarget);
+
+      return tileTarget;
+    }
+
+    ensureSparseRasterTargetForPaintRect(layerId, rect, options = {}) {
+      const requiredRect = this.getClampedDocumentRect(rect, options.padding || 0);
+
+      if (!layerId || !requiredRect) {
+        return null;
+      }
+
+      let sparseTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!this.isSparseRasterTarget(sparseTarget)) {
+        if (sparseTarget?.framebuffer || sparseTarget?.texture) {
+          return null;
+        }
+
+        sparseTarget = this.createSparseRasterTarget(layerId, options);
+        this.rasterTargetsByLayerId.set(layerId, sparseTarget);
+      }
+
+      const tileTargets = [];
+
+      for (const tile of this.getSparseRasterTileRects(requiredRect, { tileSize: sparseTarget.tileSize })) {
+        const tileTarget = this.ensureSparseRasterTileTarget(layerId, sparseTarget, tile, options);
+
+        if (tileTarget) {
+          tileTargets.push({
+            patchRect: tile.patchRect ? { ...tile.patchRect } : { ...tile.rect },
+            rect: tile.rect ? { ...tile.rect } : { ...tile.patchRect },
+            target: tileTarget,
+            tileRect: tile.tileRect ? { ...tile.tileRect } : { ...tile.rect },
+            tx: tile.tx,
+            ty: tile.ty,
+          });
+        }
+      }
+
+      if (tileTargets.length === 0) {
+        return null;
+      }
+
+      sparseTarget.layerId = layerId;
+      sparseTarget.version = (sparseTarget.version || 0) + 1;
+
+      return {
+        layerId,
+        sparseTarget,
+        targets: tileTargets,
+      };
+    }
+
     dehydrateRasterTarget(target, options = {}) {
       if (!target) {
         return false;
+      }
+
+      if (this.isSparseRasterTarget(target)) {
+        let didCool = false;
+
+        target.tiles.forEach((tile) => {
+          didCool = this.dehydrateRasterTarget(tile, options) || didCool;
+        });
+        target.state = "CPU_COLD";
+        target.cpuBytes = this.estimateRasterTargetBytes(target);
+
+        return didCool || target.tiles.size === 0;
       }
 
       if (target.state === "CPU_COLD") {
@@ -1360,6 +1515,29 @@ void main() {
     hydrateRasterTarget(target, options = {}) {
       if (!target) {
         return false;
+      }
+
+      if (this.isSparseRasterTarget(target)) {
+        let didHydrate = target.tiles.size === 0;
+        const layerId = options.layerId || target.layerId || "";
+
+        target.tiles.forEach((tile) => {
+          const tileOwnerId = layerId
+            ? `${layerId}:${tile.tx}:${tile.ty}`
+            : options.ownerId || tile.ownerId || tile.id || "";
+
+          didHydrate = this.hydrateRasterTarget(tile, {
+            ...options,
+            kind: options.kind || tile.kind || "paintTile",
+            label: options.label || `${layerId} tile ${tile.tx},${tile.ty}`,
+            layerId,
+            ownerId: tileOwnerId,
+          }) || didHydrate;
+        });
+        target.state = "GPU_HOT";
+        target.cpuBytes = 0;
+
+        return didHydrate;
       }
 
       if (target.texture && target.framebuffer) {
@@ -1832,7 +2010,7 @@ void main() {
       const target = this.rasterTargetsByLayerId.get(layerId) || this.getRasterTarget(layerId);
       const captureRect = this.getClampedDocumentRect(dirtyRect);
 
-      if (!target?.framebuffer || !target?.texture || !captureRect) {
+      if ((!this.isSparseRasterTarget(target) && (!target?.framebuffer || !target?.texture)) || !captureRect) {
         return null;
       }
 
@@ -4855,6 +5033,49 @@ void main() {
       };
     }
 
+    getLayerRenderResults(layer, layerTarget) {
+      if (this.isSparseRasterTarget(layerTarget)) {
+        return Array.from(layerTarget.tiles.values())
+          .filter((tileTarget) => tileTarget?.texture)
+          .sort((first, second) => (first.ty - second.ty) || (first.tx - second.tx))
+          .map((tileTarget) => this.getLayerRenderResult(layer, tileTarget))
+          .filter(Boolean);
+      }
+
+      const result = this.getLayerRenderResult(layer, layerTarget);
+
+      return result ? [result] : [];
+    }
+
+    hasRenderableRasterTarget(layerTarget) {
+      return Boolean(
+        layerTarget?.texture ||
+        (this.isSparseRasterTarget(layerTarget) && layerTarget.tiles.size > 0)
+      );
+    }
+
+    needsSingleTextureLayerTarget(layer, layerTarget, options = {}) {
+      return Boolean(
+        this.isSparseRasterTarget(layerTarget) &&
+        (
+          options.forceSingleTexture === true ||
+          this.hasPuppetLayerTransform(layer) ||
+          this.hasEnabledLayerEffects(layer)
+        )
+      );
+    }
+
+    getRenderableLayerTarget(layer, layerTarget, options = {}) {
+      if (!this.needsSingleTextureLayerTarget(layer, layerTarget, options)) {
+        return layerTarget;
+      }
+
+      return this.materializeRasterTarget(layer.id, {
+        emit: false,
+        source: options.source || "sparse-layer-render-materialize",
+      }) || layerTarget;
+    }
+
     getLayerRenderTexture(layer, layerTarget) {
       return this.getLayerRenderResult(layer, layerTarget)?.texture || null;
     }
@@ -5197,6 +5418,23 @@ void main() {
         return null;
       }
 
+      if (this.isSparseRasterTarget(target)) {
+        let rect = null;
+
+        target.tiles.forEach((tile) => {
+          const tileRect = this.getRasterTargetDocumentRect(tile);
+
+          rect = rect ? this.unionRasterHistoryRects(rect, tileRect) : tileRect;
+        });
+
+        return rect || {
+          x: 0,
+          y: 0,
+          width: Math.max(1, Math.round(this.width || 1)),
+          height: Math.max(1, Math.round(this.height || 1)),
+        };
+      }
+
       return {
         x: Number.isFinite(target.x) ? Math.round(target.x) : 0,
         y: Number.isFinite(target.y) ? Math.round(target.y) : 0,
@@ -5352,10 +5590,56 @@ void main() {
       return { x, y, width, height };
     }
 
+    createRasterSnapshotFromSparseTarget(sparseTarget, rect = null, label = "raster snapshot") {
+      const docRect = this.getClampedDocumentRect(rect || this.getRasterTargetDocumentRect(sparseTarget));
+
+      if (!this.isSparseRasterTarget(sparseTarget) || !docRect) {
+        return null;
+      }
+
+      const tempTarget = this.createRasterTargetForDocumentRect(sparseTarget.layerId || "", docRect, {
+        source: `${label}-sparse-temp`,
+      });
+
+      if (!tempTarget) {
+        return null;
+      }
+
+      for (const tile of sparseTarget.tiles.values()) {
+        const tileRect = this.getRasterTargetDocumentRect(tile);
+        const patchRect = this.intersectRasterHistoryRects(tileRect, docRect);
+
+        if (!patchRect) {
+          continue;
+        }
+
+        if ((!tile.texture || !tile.framebuffer) && !this.hydrateRasterTarget(tile, {
+          layerId: sparseTarget.layerId,
+          ownerType: "live",
+          reason: `${label}-sparse-hydrate`,
+        })) {
+          continue;
+        }
+
+        this.copyRasterTargetRectIntoTarget(tile, patchRect, tempTarget);
+      }
+
+      const snapshot = this.createRasterSnapshot(tempTarget, docRect, label);
+
+      this.deleteRasterTargetObject(tempTarget);
+
+      return snapshot;
+    }
+
     createRasterSnapshot(targetOrLayerId, rect = null, label = "raster snapshot") {
       const target = typeof targetOrLayerId === "string"
         ? this.rasterTargetsByLayerId.get(targetOrLayerId) || this.getRasterTarget(targetOrLayerId)
         : targetOrLayerId;
+
+      if (this.isSparseRasterTarget(target)) {
+        return this.createRasterSnapshotFromSparseTarget(target, rect, label);
+      }
+
       const mappedRect = this.getRasterTargetLocalRect(target, rect);
       const snapshotRect = mappedRect?.localRect;
       const docRect = mappedRect?.docRect;
@@ -5648,6 +5932,54 @@ void main() {
       );
     }
 
+    restoreRasterSnapshotToSparseTarget(layerId, sparseTarget, snapshot, options = {}) {
+      if (!layerId || !this.isSparseRasterTarget(sparseTarget) || !snapshot?.rect) {
+        return false;
+      }
+
+      if ((!snapshot.texture || !snapshot.framebuffer) && !this.hydrateRasterSnapshot(snapshot)) {
+        return false;
+      }
+
+      const sourceTarget = {
+        framebuffer: snapshot.framebuffer,
+        height: snapshot.rect.height,
+        width: snapshot.rect.width,
+        x: snapshot.rect.x,
+        y: snapshot.rect.y,
+      };
+      let didRestore = false;
+
+      for (const tile of this.getSparseRasterTileRects(snapshot.rect, { tileSize: sparseTarget.tileSize })) {
+        const tileTarget = this.ensureSparseRasterTileTarget(layerId, sparseTarget, tile, {
+          source: options.source || "raster-snapshot-sparse-restore",
+        });
+        const patchRect = this.intersectRasterHistoryRects(tile.tileRect || tile.rect, snapshot.rect);
+
+        if (!tileTarget || !patchRect) {
+          continue;
+        }
+
+        didRestore = this.copyRasterTargetRectIntoTarget(sourceTarget, patchRect, tileTarget) || didRestore;
+      }
+
+      if (!didRestore) {
+        return false;
+      }
+
+      sparseTarget.version = (sparseTarget.version || 0) + 1;
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId,
+          source: options.source || "raster-snapshot-sparse-restore",
+        });
+      }
+
+      this.requestDraw();
+      return true;
+    }
+
     restoreRasterSnapshot(layerId, snapshot, options = {}) {
       if (!layerId || !snapshot) {
         return false;
@@ -5655,6 +5987,12 @@ void main() {
 
       if ((!snapshot.texture || !snapshot.framebuffer) && !this.hydrateRasterSnapshot(snapshot)) {
         return false;
+      }
+
+      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      if (this.isSparseRasterTarget(existingTarget)) {
+        return this.restoreRasterSnapshotToSparseTarget(layerId, existingTarget, snapshot, options);
       }
 
       let target = this.getRasterTarget(layerId);
@@ -5773,6 +6111,15 @@ void main() {
         return;
       }
 
+      if (this.isSparseRasterTarget(target)) {
+        target.tiles.forEach((tile) => this.deleteRasterTargetObject(tile));
+        target.tiles.clear();
+        target.cpuBytes = 0;
+        target.cpuPixels = null;
+        target.state = "DELETED";
+        return;
+      }
+
       const gl = this.gl;
 
       if (target.framebuffer) {
@@ -5842,10 +6189,77 @@ void main() {
       return true;
     }
 
+    materializeSparseRasterTarget(layerId, sparseTarget, options = {}) {
+      if (!layerId || !this.isSparseRasterTarget(sparseTarget)) {
+        return null;
+      }
+
+      const targetRect = this.getRasterTargetDocumentRect(sparseTarget);
+
+      if (!targetRect) {
+        return null;
+      }
+
+      const fullTarget = this.createRasterTargetForDocumentRect(layerId, targetRect, {
+        clearColor: sparseTarget.clearColor,
+        source: options.source || "materialize-sparse-raster-target",
+      });
+
+      if (!fullTarget) {
+        return null;
+      }
+
+      let didCopyAnyTile = false;
+
+      for (const tile of sparseTarget.tiles.values()) {
+        if ((!tile.texture || !tile.framebuffer) && !this.hydrateRasterTarget(tile, {
+          kind: "paintTile",
+          label: `${layerId} tile ${tile.tx},${tile.ty}`,
+          layerId,
+          ownerId: `${layerId}:${tile.tx}:${tile.ty}`,
+          ownerType: "live",
+          reason: options.source || "materialize-sparse-raster-target",
+        })) {
+          continue;
+        }
+
+        const tileRect = this.getRasterTargetDocumentRect(tile);
+
+        if (tileRect && this.copyRasterTargetRectIntoTarget(tile, tileRect, fullTarget)) {
+          didCopyAnyTile = true;
+        }
+      }
+
+      if (!didCopyAnyTile && sparseTarget.tiles.size > 0) {
+        this.deleteRasterTargetObject(fullTarget);
+        return null;
+      }
+
+      if (!this.replaceRasterTarget(layerId, fullTarget, {
+        emit: options.emit,
+        source: options.source || "materialize-sparse-raster-target",
+      })) {
+        this.deleteRasterTargetObject(fullTarget);
+        return null;
+      }
+
+      return {
+        ...fullTarget,
+        layerId,
+      };
+    }
+
     materializeRasterTarget(layerId, options = {}) {
       const target = this.rasterTargetsByLayerId.get(layerId);
 
       if (!target?.texture || !target?.framebuffer) {
+        if (this.isSparseRasterTarget(target)) {
+          return this.materializeSparseRasterTarget(layerId, target, options) || {
+            ...target,
+            layerId,
+          };
+        }
+
         return this.getRasterTarget(layerId);
       }
 
@@ -5975,6 +6389,10 @@ void main() {
 
     getRasterContentBounds(layerId, options = {}) {
       const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (this.isSparseRasterTarget(target)) {
+        return this.getRasterTargetDocumentRect(target);
+      }
 
       if (!layerId || !target?.framebuffer || !target?.texture) {
         return null;
@@ -6273,6 +6691,56 @@ void main() {
       });
     }
 
+    ensureRasterTargetsForPaintRect(layerId, rect, options = {}) {
+      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      const useSparse = options.sparse !== false &&
+        (!existingTarget || this.isSparseRasterTarget(existingTarget));
+
+      if (useSparse) {
+        const sparseResult = this.ensureSparseRasterTargetForPaintRect(layerId, rect, options);
+
+        if (sparseResult?.targets?.length) {
+          return sparseResult.targets;
+        }
+      }
+
+      const target = this.ensureRasterTargetForPaintRect(layerId, rect, options);
+
+      return target ? [{ target }] : [];
+    }
+
+    getRasterTargetsForPaintRect(layerId, rect, options = {}) {
+      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      const requiredRect = this.getClampedDocumentRect(rect, options.padding || 0);
+
+      if (!layerId || !requiredRect || !existingTarget) {
+        return [];
+      }
+
+      if (this.isSparseRasterTarget(existingTarget)) {
+        return this.getSparseRasterTileRects(requiredRect, { tileSize: existingTarget.tileSize })
+          .map((tile) => {
+            const tileTarget = this.getSparseRasterTile(existingTarget, tile.tx, tile.ty);
+
+            return tileTarget?.framebuffer && tileTarget?.texture
+              ? {
+                  patchRect: tile.patchRect ? { ...tile.patchRect } : { ...tile.rect },
+                  rect: tile.rect ? { ...tile.rect } : { ...tile.patchRect },
+                  target: tileTarget,
+                  tileRect: tile.tileRect ? { ...tile.tileRect } : { ...tile.rect },
+                  tx: tile.tx,
+                  ty: tile.ty,
+                }
+              : null;
+          })
+          .filter(Boolean);
+      }
+
+      return existingTarget?.framebuffer && existingTarget?.texture
+        ? [{ target: existingTarget }]
+        : [];
+    }
+
     ensureRasterTargetForPaintRect(layerId, rect, options = {}) {
       const requiredRect = this.getClampedDocumentRect(rect, options.padding || 0);
 
@@ -6283,6 +6751,13 @@ void main() {
       const existingTarget = this.rasterTargetsByLayerId.get(layerId);
       const existingRect = this.getRasterTargetDocumentRect(existingTarget);
       const source = options.source || "ensure-raster-target-for-paint-rect";
+
+      if (this.isSparseRasterTarget(existingTarget)) {
+        return this.materializeRasterTarget(layerId, {
+          emit: false,
+          source,
+        });
+      }
 
       if (!existingTarget?.framebuffer || !existingTarget?.texture) {
         const nextTarget = this.createRasterTargetForDocumentRect(layerId, requiredRect, { source });
@@ -6356,6 +6831,82 @@ void main() {
       };
     }
 
+    duplicateSparseRasterTarget(sourceLayerId, destinationLayerId, options = {}) {
+      const sourceTarget = this.rasterTargetsByLayerId.get(sourceLayerId);
+
+      if (!sourceLayerId || !destinationLayerId || !this.isSparseRasterTarget(sourceTarget)) {
+        return false;
+      }
+
+      const destinationTarget = this.createSparseRasterTarget(destinationLayerId, {
+        clearColor: sourceTarget.clearColor,
+        tileSize: sourceTarget.tileSize,
+      });
+      let copiedCount = 0;
+
+      for (const sourceTile of sourceTarget.tiles.values()) {
+        if ((!sourceTile.texture || !sourceTile.framebuffer) && !this.hydrateRasterTarget(sourceTile, {
+          kind: "paintTile",
+          label: `${sourceLayerId} tile ${sourceTile.tx},${sourceTile.ty}`,
+          layerId: sourceLayerId,
+          ownerId: `${sourceLayerId}:${sourceTile.tx}:${sourceTile.ty}`,
+          ownerType: "live",
+          reason: options.source || "duplicate-sparse-raster-target",
+        })) {
+          this.deleteRasterTargetObject(destinationTarget);
+          return false;
+        }
+
+        const tileRect = this.getRasterTargetDocumentRect(sourceTile);
+        const destinationTile = this.ensureSparseRasterTileTarget(destinationLayerId, destinationTarget, {
+          tileRect,
+          tx: sourceTile.tx,
+          ty: sourceTile.ty,
+        }, {
+          source: options.source || "duplicate-sparse-raster-target",
+        });
+
+        if (!destinationTile || !this.copyRasterTargetRectToTarget(sourceTile, tileRect, destinationTile)) {
+          this.deleteRasterTargetObject(destinationTarget);
+          return false;
+        }
+
+        copiedCount += 1;
+      }
+
+      if (copiedCount === 0 && sourceTarget.tiles.size > 0) {
+        this.deleteRasterTargetObject(destinationTarget);
+        return false;
+      }
+
+      const previousTarget = this.rasterTargetsByLayerId.get(destinationLayerId);
+
+      destinationTarget.layerId = destinationLayerId;
+      this.rasterTargetsByLayerId.set(destinationLayerId, destinationTarget);
+
+      if (destinationLayerId === this.resolvePaintLayerId()) {
+        this.paintLayerId = destinationLayerId;
+        this.texture = null;
+        this.framebuffer = null;
+      }
+
+      if (previousTarget && previousTarget !== destinationTarget) {
+        this.deleteRasterTargetObject(previousTarget);
+      }
+
+      this.deletePuppetMeshResource(destinationLayerId);
+      this.invalidatePreviewCache(options.source || "duplicate-sparse-raster-target");
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId: destinationLayerId,
+          source: options.source || "duplicate-sparse-raster-target",
+        });
+      }
+
+      return true;
+    }
+
     duplicateRasterTarget(sourceLayerId, destinationLayerId, options = {}) {
       if (!sourceLayerId || !destinationLayerId || sourceLayerId === destinationLayerId) {
         return false;
@@ -6363,6 +6914,10 @@ void main() {
 
       const sourceTarget = this.rasterTargetsByLayerId.get(sourceLayerId);
       const sourceRect = this.getRasterTargetDocumentRect(sourceTarget);
+
+      if (this.isSparseRasterTarget(sourceTarget)) {
+        return this.duplicateSparseRasterTarget(sourceLayerId, destinationLayerId, options);
+      }
 
       if (!sourceTarget?.framebuffer || !sourceTarget?.texture || !sourceRect) {
         return false;
@@ -6712,12 +7267,19 @@ void main() {
         transformMode = "free",
         warpControlPoints,
       } = options;
-      const target = this.rasterTargetsByLayerId.get(layerId);
+      let target = this.rasterTargetsByLayerId.get(layerId);
       const destDirtyRect = this.padRasterRect(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING);
       const nextRect = this.getClampedDocumentRect(
         destDirtyRect || destRect,
         CROPPED_TARGET_EDGE_PADDING,
       );
+
+      if (this.isSparseRasterTarget(target)) {
+        target = this.materializeRasterTarget(layerId, {
+          emit: false,
+          source,
+        }) || target;
+      }
 
       if (!target?.framebuffer || !sourceSnapshot?.texture || !nextRect) {
         return false;
@@ -6853,12 +7415,19 @@ void main() {
         transformMode = "free",
         warpControlPoints,
       } = options;
-      const target = this.rasterTargetsByLayerId.get(layerId);
+      let target = this.rasterTargetsByLayerId.get(layerId);
       const bounds = namespace.documentBounds;
       const normalizedTransformMode = String(transformMode).trim().toLowerCase();
 
       if (!bounds) {
         return false;
+      }
+
+      if (this.isSparseRasterTarget(target)) {
+        target = this.materializeRasterTarget(layerId, {
+          emit: false,
+          source,
+        }) || target;
       }
 
       const destBounds = normalizedTransformMode === "warp"
@@ -7054,7 +7623,7 @@ void main() {
         return false;
       }
 
-      if (target.texture === this.texture || layerId === this.paintLayerId || layerId === "background") {
+      if ((target.texture && target.texture === this.texture) || layerId === this.paintLayerId || layerId === "background") {
         return false;
       }
 
@@ -7180,6 +7749,12 @@ void main() {
 
       this.paintLayerId = activePaintLayerId;
 
+      if (this.isSparseRasterTarget(nextTarget)) {
+        this.texture = null;
+        this.framebuffer = null;
+        return activePaintLayerId;
+      }
+
       if (nextTarget?.texture && nextTarget?.framebuffer) {
         nextTarget.layerId = activePaintLayerId;
         this.texture = nextTarget.texture;
@@ -7193,7 +7768,7 @@ void main() {
           purgeable: false,
           reason: "sync-active-paint-layer",
         });
-      } else if (previousTarget?.texture === this.texture) {
+      } else if (previousTarget?.texture && previousTarget.texture === this.texture) {
         this.texture = null;
         this.framebuffer = null;
       }
@@ -7215,7 +7790,7 @@ void main() {
           continue;
         }
 
-        const isLiveTarget = currentLayerIds.has(layerId) || target.texture === this.texture;
+        const isLiveTarget = currentLayerIds.has(layerId) || (target.texture && target.texture === this.texture);
         const isHistoryTarget = historyLayerIds.has(layerId);
 
         if (!isLiveTarget && !isHistoryTarget) {
@@ -7330,7 +7905,7 @@ void main() {
       for (const layerId of Array.from(this.rasterTargetsByLayerId.keys())) {
         const target = this.rasterTargetsByLayerId.get(layerId);
 
-        if (retainedLayerIds.has(layerId) || target?.texture === this.texture) {
+        if (retainedLayerIds.has(layerId) || (target?.texture && target.texture === this.texture)) {
           continue;
         }
 
@@ -7346,7 +7921,14 @@ void main() {
 
     getPaintTarget() {
       const layerId = this.resolvePaintLayerId();
-      const target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
+      let target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
+
+      if (this.isSparseRasterTarget(target)) {
+        target = this.materializeRasterTarget(layerId, {
+          emit: false,
+          source: "get-paint-target-materialize-sparse",
+        }) || this.createPaintTarget();
+      }
 
       this.paintLayerId = layerId;
       target.layerId = layerId;
@@ -7423,7 +8005,15 @@ void main() {
         throw new TypeError("DocumentRenderer richiede un layerId per il target raster.");
       }
 
-      const target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
+      let target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
+
+      if (this.isSparseRasterTarget(target)) {
+        target = this.materializeRasterTarget(layerId, {
+          emit: false,
+          source: "get-raster-target-materialize-sparse",
+        }) || this.createPaintTarget();
+      }
+
       const activePaintLayerId = this.resolvePaintLayerId();
       const isPaintTarget = this.isPaintRasterLayer(layerId, target);
 
@@ -7674,24 +8264,53 @@ void main() {
       bindArtboardProgram();
 
       let currentClipBase = null;
+      const orderedPreviewLayers = this.getOrderedLayersBottomToTop();
       const isValidClipBaseLayer = (layer) => Boolean(
         layer &&
         layer.type !== "group" &&
         layer.type !== "background" &&
         layer.id !== "background"
       );
+      const clipBaseLayerIds = new Set();
+      let pendingClipBaseLayerId = "";
 
-      for (const layer of this.getOrderedLayersBottomToTop()) {
-        const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+      orderedPreviewLayers.forEach((layer) => {
+        if (layer?.clippingMask === true) {
+          if (pendingClipBaseLayerId) {
+            clipBaseLayerIds.add(pendingClipBaseLayerId);
+          }
+        } else {
+          pendingClipBaseLayerId = isValidClipBaseLayer(layer) ? layer.id : "";
+        }
+      });
+
+      for (const layer of orderedPreviewLayers) {
+        const rawLayerTarget = this.rasterTargetsByLayerId.get(layer.id);
         const isClippingLayer = layer.clippingMask === true;
         const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
         const clipBase = isClippingLayer ? currentClipBase : null;
+        let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
+          forceSingleTexture: false,
+          source: "preview-cache-sparse-layer",
+        });
 
         if (!isClippingLayer) {
+          const shouldMaterializeClipBase = clipBaseLayerIds.has(layer.id);
+          const baseTarget = shouldMaterializeClipBase
+            ? this.getRenderableLayerTarget(layer, layerTarget, {
+                forceSingleTexture: true,
+                source: "preview-cache-clip-base",
+              })
+            : layerTarget;
+
+          if (shouldMaterializeClipBase) {
+            layerTarget = baseTarget;
+          }
+
           currentClipBase = isValidClipBaseLayer(layer)
             ? {
                 layer,
-                target: layerTarget,
+                target: baseTarget,
                 visible: layer.visible !== false,
               }
             : null;
@@ -7705,41 +8324,42 @@ void main() {
           continue;
         }
 
-        if (!layerTarget?.texture) {
+        if (!this.hasRenderableRasterTarget(layerTarget)) {
           continue;
         }
 
-        const renderResult = this.getLayerRenderResult(layer, layerTarget);
-        const layerTexture = renderResult?.texture;
+        for (const renderResult of this.getLayerRenderResults(layer, layerTarget)) {
+          const layerTexture = renderResult?.texture;
 
-        if (!layerTexture) {
-          continue;
-        }
-
-        if (layerTexture !== layerTarget.texture) {
-          bindArtboardProgram();
-        }
-
-        if (this.hasPuppetLayerTransform(layer)) {
-          if (isClippingLayer) {
-            drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
-          } else {
-            const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
-            const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
-              camera: flatCamera,
-              sourceTexture: layerTexture,
-              viewportHeight: height,
-              viewportWidth: width,
-            });
-
-            bindArtboardProgram();
-
-            if (!didDrawPuppet) {
-              drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, null);
-            }
+          if (!layerTexture) {
+            continue;
           }
-        } else {
-          drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+
+          if (layerTexture !== layerTarget.texture) {
+            bindArtboardProgram();
+          }
+
+          if (this.hasPuppetLayerTransform(layer)) {
+            if (isClippingLayer) {
+              drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+            } else {
+              const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
+              const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
+                camera: flatCamera,
+                sourceTexture: layerTexture,
+                viewportHeight: height,
+                viewportWidth: width,
+              });
+
+              bindArtboardProgram();
+
+              if (!didDrawPuppet) {
+                drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, null);
+              }
+            }
+          } else {
+            drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+          }
         }
       }
 
@@ -8061,6 +8681,19 @@ void main() {
         ? this.rasterTargetsByLayerId.get(targetOrLayerId)
         : targetOrLayerId;
 
+      if (this.isSparseRasterTarget(target)) {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          return 0;
+        }
+
+        const tileSize = this.getRasterHistoryTileSize({ tileSize: target.tileSize });
+        const tx = Math.floor(x / tileSize);
+        const ty = Math.floor(y / tileSize);
+        const tileTarget = this.getSparseRasterTile(target, tx, ty);
+
+        return tileTarget ? this.getRasterAlphaAtPoint(tileTarget, x, y) : 0;
+      }
+
       if (!target?.framebuffer || !Number.isFinite(x) || !Number.isFinite(y)) {
         return 0;
       }
@@ -8364,7 +8997,14 @@ void main() {
         return null;
       }
 
-      const target = this.rasterTargetsByLayerId.get(layer.id);
+      let target = this.rasterTargetsByLayerId.get(layer.id);
+
+      if (this.isSparseRasterTarget(target)) {
+        target = this.materializeRasterTarget(layer.id, {
+          emit: false,
+          source: options.source || "puppet-rasterize",
+        }) || target;
+      }
 
       if (!target?.texture || !target?.framebuffer) {
         return null;
@@ -8500,7 +9140,14 @@ void main() {
         return null;
       }
 
-      const target = this.rasterTargetsByLayerId.get(layer.id);
+      let target = this.rasterTargetsByLayerId.get(layer.id);
+
+      if (this.isSparseRasterTarget(target)) {
+        target = this.materializeRasterTarget(layer.id, {
+          emit: false,
+          source: options.source || "layer-effects-rasterize",
+        }) || target;
+      }
 
       if (!target?.texture || !target?.framebuffer) {
         return null;
@@ -8632,6 +9279,24 @@ void main() {
       const orderedLayers = this.getOrderedLayersBottomToTop();
       const renderableLayers = orderedLayers.filter((layer) => layer.visible !== false);
       const hasClippingMasks = orderedLayers.some((layer) => layer?.clippingMask === true);
+      const isValidClipBaseLayer = (layer) => Boolean(
+        layer &&
+        layer.type !== "group" &&
+        layer.type !== "background" &&
+        layer.id !== "background"
+      );
+      const clipBaseLayerIds = new Set();
+      let pendingClipBaseLayerId = "";
+
+      orderedLayers.forEach((layer) => {
+        if (layer?.clippingMask === true) {
+          if (pendingClipBaseLayerId) {
+            clipBaseLayerIds.add(pendingClipBaseLayerId);
+          }
+        } else {
+          pendingClipBaseLayerId = isValidClipBaseLayer(layer) ? layer.id : "";
+        }
+      });
       const activeStrokeLayerIndex = renderableLayers.findIndex((layer) => layer?.id === activeStrokeLayerId);
       const activeStrokeLayer = activeStrokeLayerIndex >= 0 ? renderableLayers[activeStrokeLayerIndex] : null;
       const activeStrokeUsesClippingMask = Boolean(
@@ -8655,7 +9320,7 @@ void main() {
           !activeStrokeNeedsFullStack &&
           !renderableLayers
             .slice(activeStrokeLayerIndex + 1)
-            .some((layer) => this.rasterTargetsByLayerId.get(layer.id)?.texture)
+            .some((layer) => this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id)))
         );
       const allowPreviewCache = options.allowPreviewCache === true;
       const isWithinPreviewCacheZoom = (camera.zoom || 1) < PREVIEW_CACHE_ZOOM_THRESHOLD;
@@ -8959,15 +9624,9 @@ void main() {
         }
       } else {
         let currentClipBase = null;
-        const isValidClipBaseLayer = (layer) => Boolean(
-          layer &&
-          layer.type !== "group" &&
-          layer.type !== "background" &&
-          layer.id !== "background"
-        );
 
         for (const layer of orderedLayers) {
-          const layerTarget = this.rasterTargetsByLayerId.get(layer.id);
+          const rawLayerTarget = this.rasterTargetsByLayerId.get(layer.id);
           const isClippingLayer = layer.clippingMask === true;
           const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
           const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
@@ -8976,12 +9635,28 @@ void main() {
             ? options.activeStrokeTexture
             : null;
           const clipBase = isClippingLayer ? currentClipBase : null;
+          let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
+            forceSingleTexture: Boolean(eraserMaskTexture),
+            source: "canvas-sparse-layer",
+          });
 
           if (!isClippingLayer) {
+            const shouldMaterializeClipBase = hasClippingMasks && clipBaseLayerIds.has(layer.id);
+            const baseTarget = shouldMaterializeClipBase
+              ? this.getRenderableLayerTarget(layer, layerTarget, {
+                  forceSingleTexture: true,
+                  source: "canvas-clip-base",
+                })
+              : layerTarget;
+
+            if (shouldMaterializeClipBase) {
+              layerTarget = baseTarget;
+            }
+
             currentClipBase = isValidClipBaseLayer(layer)
               ? {
                   layer,
-                  target: layerTarget,
+                  target: baseTarget,
                   visible: layer.visible !== false,
                 }
               : null;
@@ -9090,6 +9765,18 @@ void main() {
             if (didMergeActiveStroke) {
               currentMaskTexture = null;
               currentMaskRect = null;
+            }
+          } else if (this.isSparseRasterTarget(layerTarget)) {
+            const blendModeId = this.getLayerBlendModeId(layer);
+
+            for (const renderResult of this.getLayerRenderResults(layer, layerTarget)) {
+              const layerTexture = renderResult?.texture;
+
+              if (!layerTexture) {
+                continue;
+              }
+
+              drawBlendTexture(layerTexture, opacity, renderResult.rect || null, clipBase, blendModeId);
             }
           }
 

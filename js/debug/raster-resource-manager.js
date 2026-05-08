@@ -944,7 +944,7 @@
         stats.unknownDeletedTextureCount +
         stats.unknownDeletedFramebufferCount +
         stats.unknownDeletedRenderbufferCount,
-      paintLayerBytes: sumRows(rows, (row) => row.kind === "paintTarget"),
+      paintLayerBytes: sumRows(rows, (row) => row.kind === "paintTarget" || row.kind === "paintTile"),
       paintTargetCropPotential,
       paintTargetPotentialSavingsBytes: Number(paintTargetCropPotential?.potentialSavingsBytes) || 0,
       paintTargetPotentialSavingsMiB: formatMiB(paintTargetCropPotential?.potentialSavingsBytes || 0),

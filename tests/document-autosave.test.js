@@ -55,6 +55,7 @@ test("document autosave captures layer structure and sparse raster content only"
   assert.match(source, /project: \{[\s\S]*name: projectName,[\s\S]*\}/);
   assert.match(source, /referenceLayerId: history\?\.getReferenceLayerId\?\.\(\) \|\| null/);
   assert.match(source, /countEntries\(entries\)/);
+  assert.match(source, /renderer\.isSparseRasterTarget\?\.\(target\) !== true/);
   assert.match(source, /renderer\.getRasterTargetDocumentRect\?\.\(target\)/);
   assert.match(source, /renderer\.getRasterHistoryTileRects\?\.\(targetRect, \{ tileSize: TILE_SIZE \}\)/);
   assert.match(source, /renderer\.createRasterSnapshot\?\.\(layerId, tile\.rect, "autosave-tile"\)/);

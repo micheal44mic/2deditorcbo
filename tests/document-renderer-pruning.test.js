@@ -396,6 +396,78 @@ test("duplicateRasterTarget clones a source raster target into a new layer targe
   });
 });
 
+test("duplicateRasterTarget preserves sparse paint tiles without full materialization", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const copyCalls = [];
+  const createdTargets = [];
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map();
+  renderer.createRasterTarget = (clearColor, options = {}) => {
+    const target = {
+      clearColor,
+      cropped: options.cropped === true,
+      framebuffer: { id: `fb-${createdTargets.length}` },
+      height: options.height,
+      kind: options.kind,
+      layerId: options.layerId,
+      texture: { id: `tex-${createdTargets.length}` },
+      width: options.width,
+      x: options.x,
+      y: options.y,
+    };
+
+    createdTargets.push(target);
+
+    return target;
+  };
+  renderer.copyRasterTargetRectToTarget = (source, rect, destination) => {
+    copyCalls.push({ destination, rect: { ...rect }, source });
+    return true;
+  };
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.emitContentChange = () => {};
+  renderer.invalidatePreviewCache = () => {};
+  renderer.resolvePaintLayerId = () => "paint-main";
+
+  const sourceTarget = renderer.createSparseRasterTarget("source-layer", { tileSize: 256 });
+  const sourceTile = {
+    cropped: true,
+    framebuffer: { id: "source-fb" },
+    height: 256,
+    layerId: "source-layer",
+    texture: { id: "source-texture" },
+    tx: 0,
+    ty: 0,
+    width: 256,
+    x: 0,
+    y: 0,
+  };
+
+  sourceTarget.tiles.set("0:0", sourceTile);
+  renderer.rasterTargetsByLayerId.set("source-layer", sourceTarget);
+
+  assert.equal(renderer.duplicateRasterTarget("source-layer", "copy-layer", {
+    emit: false,
+    source: "unit-duplicate-sparse",
+  }), true);
+
+  const destinationTarget = renderer.rasterTargetsByLayerId.get("copy-layer");
+
+  assert.equal(renderer.isSparseRasterTarget(destinationTarget), true);
+  assert.equal(destinationTarget.texture, null);
+  assert.equal(destinationTarget.framebuffer, null);
+  assert.equal(destinationTarget.tiles.size, 1);
+  assert.equal(copyCalls.length, 1);
+  assert.equal(copyCalls[0].source, sourceTile);
+  assert.deepEqual(copyCalls[0].rect, { height: 256, width: 256, x: 0, y: 0 });
+  assert.equal(copyCalls[0].destination.kind, "paintTile");
+  assert.equal(renderer.estimateRasterTargetBytes(destinationTarget), 256 * 256 * 4);
+});
+
 test("ensureRasterTargetForPaintRect creates and grows cropped live targets", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -468,6 +540,118 @@ test("ensureRasterTargetForPaintRect creates and grows cropped live targets", ()
     y: 300,
   });
   assert.equal(replaced[1].options.source, "unit-grow-stroke");
+});
+
+test("ensureRasterTargetsForPaintRect keeps distant first strokes as sparse tiles", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const createdTargets = [];
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map();
+  renderer.isMobileLikeDevice = () => false;
+  renderer.createRasterTarget = (clearColor, options = {}) => {
+    const target = {
+      clearColor,
+      cropped: options.cropped === true,
+      framebuffer: { id: `fb-${createdTargets.length}` },
+      height: options.height,
+      kind: options.kind,
+      layerId: options.layerId,
+      ownerId: options.ownerId,
+      texture: { id: `tex-${createdTargets.length}` },
+      width: options.width,
+      x: options.x,
+      y: options.y,
+    };
+
+    createdTargets.push(target);
+
+    return target;
+  };
+
+  const firstTargets = renderer.ensureRasterTargetsForPaintRect("paint-1", {
+    height: 20,
+    width: 20,
+    x: 16,
+    y: 16,
+  }, {
+    source: "unit-first-sparse-stroke",
+  });
+
+  const secondTargets = renderer.ensureRasterTargetsForPaintRect("paint-1", {
+    height: 20,
+    width: 20,
+    x: 3800,
+    y: 3800,
+  }, {
+    source: "unit-distant-sparse-stroke",
+  });
+
+  const sparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.equal(firstTargets.length, 1);
+  assert.equal(secondTargets.length, 1);
+  assert.equal(renderer.isSparseRasterTarget(sparseTarget), true);
+  assert.equal(sparseTarget.texture, null);
+  assert.equal(sparseTarget.framebuffer, null);
+  assert.equal(sparseTarget.tiles.size, 2);
+  assert.deepEqual(
+    Array.from(sparseTarget.tiles.values()).map((target) => ({
+      height: target.height,
+      kind: target.kind,
+      width: target.width,
+      x: target.x,
+      y: target.y,
+    })),
+    [
+      { height: 256, kind: "paintTile", width: 256, x: 0, y: 0 },
+      { height: 256, kind: "paintTile", width: 256, x: 3584, y: 3584 },
+    ],
+  );
+  assert.equal(renderer.estimateRasterTargetBytes(sparseTarget), 2 * 256 * 256 * 4);
+});
+
+test("getRasterAlphaAtPoint samples the matching sparse tile", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const readCalls = [];
+  const tileFramebuffer = { id: "tile-fb" };
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.gl = {
+    bindFramebuffer: (...args) => readCalls.push(["bindFramebuffer", ...args]),
+    readPixels: (x, y, width, height, format, type, pixel) => {
+      readCalls.push(["readPixels", x, y, width, height, format, type]);
+      pixel[3] = 123;
+    },
+    READ_FRAMEBUFFER: "READ_FRAMEBUFFER",
+    RGBA: "RGBA",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+  };
+
+  const sparseTarget = {
+    sparse: true,
+    tileSize: 256,
+    tiles: new Map([
+      ["1:2", {
+        framebuffer: tileFramebuffer,
+        height: 256,
+        texture: { id: "tile-texture" },
+        width: 256,
+        x: 256,
+        y: 512,
+      }],
+    ]),
+  };
+
+  assert.equal(renderer.getRasterAlphaAtPoint(sparseTarget, 260, 520), 123);
+  assert.ok(readCalls.some((call) => call[0] === "bindFramebuffer" && call[2] === tileFramebuffer));
+  assert.ok(readCalls.some((call) => call[0] === "readPixels" && call[1] === 4 && call[2] === 247));
+  assert.equal(renderer.getRasterAlphaAtPoint(sparseTarget, 20, 20), 0);
 });
 
 test("puppet Rigid MLS writes translated and rotated mesh vertices", () => {
@@ -990,7 +1174,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /this\.deleteRadialBlurResources\(\)/);
   assert.match(source, /this\.deleteGrainResources\(\)/);
   assert.match(source, /this\.deleteThresholdResources\(\)/);
-  assert.match(previewCacheBody, /const renderResult = this\.getLayerRenderResult\(layer, layerTarget\)/);
+  assert.match(previewCacheBody, /for \(const renderResult of this\.getLayerRenderResults\(layer, layerTarget\)\)/);
   assert.match(previewCacheBody, /sourceTexture: layerTexture/);
   assert.doesNotMatch(previewCacheBody, /!hasLayerEffects/);
   assert.doesNotMatch(source, /rasterTargetsByLayerId\.set\([^)]*layerEffectScratch/);

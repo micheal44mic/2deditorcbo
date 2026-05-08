@@ -105,12 +105,16 @@ test("brush first paint stroke can defer full live target materialization", () =
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 
   assert.match(source, /ensurePaintLayerForBrush\?\.\(\{ materialize: false \}\)/);
-  assert.match(source, /ensureRasterTargetForPaintRect\?\.\(layerId, finalStrokeBufferRect/);
+  assert.match(source, /const paintTargets = isEraserStroke/);
+  assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, finalStrokeBufferRect/);
+  assert.match(source, /source: "brush-eraser-target"/);
+  assert.match(source, /ensureRasterTargetsForPaintRect\?\.\(layerId, finalStrokeBufferRect/);
   assert.match(source, /source: "brush-stroke-target"/);
   assert.match(source, /const documentTarget = this\.getDocumentDrawTarget\(layerId\)/);
   assert.match(source, /const target = this\.getDocumentDrawTarget\(this\.strokeTargetLayerId \|\| ""\)/);
-  assert.match(source, /const localBakeX = Math\.max\(0, Math\.round\(bakeRect\.x - targetRect\.x\)\)/);
-  assert.match(source, /gl\.viewport\(localBakeX, target\.height - \(localBakeY \+ bakeRect\.height\), bakeRect\.width, bakeRect\.height\)/);
+  assert.match(source, /paintTargets\.forEach\(\(item\) =>/);
+  assert.match(source, /const localBakeX = Math\.round\(bakeRect\.x - targetRect\.x\)/);
+  assert.match(source, /gl\.viewport\(localBakeX, paintTarget\.height - \(localBakeY \+ bakeRect\.height\), bakeRect\.width, bakeRect\.height\)/);
 });
 
 test("brush stroke history batches tile captures until the idle commit", () => {

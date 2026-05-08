@@ -4053,11 +4053,20 @@ void main() {
 
       const documentTarget = this.getDocumentDrawTarget(layerId);
       const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, documentTarget);
-      const target = isEraserStroke
-        ? this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget()
-        : this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, finalStrokeBufferRect, {
+      const paintTargets = isEraserStroke
+        ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, finalStrokeBufferRect, {
+            source: "brush-eraser-target",
+          }) || [{
+            target: this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget(),
+          }]
+        : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, finalStrokeBufferRect, {
             source: "brush-stroke-target",
-          }) || this.documentRenderer?.getRasterTarget?.(layerId);
+          }) || [{
+            target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, finalStrokeBufferRect, {
+              source: "brush-stroke-target",
+            }) || this.documentRenderer?.getRasterTarget?.(layerId),
+          }];
+      const target = paintTargets.find((item) => item?.target?.framebuffer && item?.target?.texture)?.target || null;
 
       if (!target?.framebuffer || !target?.texture || !finalStrokeBufferRect) {
         this.releaseStrokeLayerTarget();
@@ -4087,12 +4096,6 @@ void main() {
       this.recordStrokeMemory(memoryReport);
       this.compactStrokeLayerTargetForRect(strokeRect, documentTarget);
       const bakeRect = this.strokeBufferRect || { ...strokeRect };
-      const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(target) || { x: 0, y: 0 };
-      const localBakeX = Math.max(0, Math.round(bakeRect.x - targetRect.x));
-      const localBakeY = Math.max(0, Math.round(bakeRect.y - targetRect.y));
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-      gl.viewport(localBakeX, target.height - (localBakeY + bakeRect.height), bakeRect.width, bakeRect.height);
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       if (isEraserStroke) {
@@ -4108,12 +4111,25 @@ void main() {
       gl.uniform1f(uniforms.opacity, 1.0);
 
       gl.bindVertexArray(this.fullscreenQuad.vao);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      paintTargets.forEach((item) => {
+        const paintTarget = item?.target;
+        const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(paintTarget) || { x: 0, y: 0 };
+        const localBakeX = Math.round(bakeRect.x - targetRect.x);
+        const localBakeY = Math.round(bakeRect.y - targetRect.y);
+
+        if (!paintTarget?.framebuffer || !paintTarget?.texture) {
+          return;
+        }
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, paintTarget.framebuffer);
+        gl.viewport(localBakeX, paintTarget.height - (localBakeY + bakeRect.height), bakeRect.width, bakeRect.height);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        this.documentRenderer?.markRasterTargetDirty?.(paintTarget);
+      });
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      this.documentRenderer?.markRasterTargetDirty?.(target);
 
       if (batchedTileHistory) {
         this.schedulePendingBrushHistoryCommit();
