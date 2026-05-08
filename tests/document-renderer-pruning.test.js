@@ -1952,6 +1952,22 @@ test("document renderer uses a procedural background texture", () => {
   assert.doesNotMatch(source, /const backgroundTarget = this\.createRasterTarget\(\[1, 1, 1, 1\]\)/);
 });
 
+test("createPaintTarget forwards layer metadata before resource tracing", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /createPaintTarget\(layerId = "", options = \{\}\) \{/);
+  assert.match(source, /const targetLayerId = layerId \|\| options\.layerId/);
+  assert.match(source, /layerId: targetLayerId/);
+  assert.match(source, /ownerId: options\.ownerId \|\| targetLayerId/);
+  assert.match(source, /reason: options\.reason \|\| options\.source \|\| "create-paint-target"/);
+  assert.match(source, /this\.createPaintTarget\(layerId, \{\s*source: "get-paint-target"/);
+  assert.match(source, /this\.createPaintTarget\(layerId, \{\s*source: "get-raster-target"/);
+  assert.doesNotMatch(source, /this\.createPaintTarget\(\)/);
+});
+
 test("live eraser mask samples document coordinates for cropped layer renders", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),

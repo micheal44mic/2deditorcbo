@@ -77,11 +77,10 @@
 
   function getDocumentSize() {
     const renderer = namespace.documentRenderer;
-    const paintTarget = renderer?.getPaintTarget?.();
 
     return {
-      height: Math.max(1, Math.round(renderer?.height || paintTarget?.height || 4000)),
-      width: Math.max(1, Math.round(renderer?.width || paintTarget?.width || 4000)),
+      height: Math.max(1, Math.round(renderer?.height || 4000)),
+      width: Math.max(1, Math.round(renderer?.width || 4000)),
     };
   }
 
@@ -191,6 +190,10 @@
       };
     }
 
+    if (vectorRenderer?.createRasterTextAsset) {
+      return { rasterBox: null, source: null };
+    }
+
     const rasterBox = {
       height: size.height,
       width: size.width,
@@ -220,7 +223,7 @@
       renderer.deleteRasterTargetObject?.(target);
     }
 
-    return renderer?.getRasterTarget?.(layerId) || null;
+    return null;
   }
 
   function getRasterBoxPlacement(target, rasterBox) {
@@ -335,6 +338,232 @@
     };
   }
 
+  function formatMiB(bytes) {
+    return Math.round(((Number(bytes) || 0) / (1024 * 1024)) * 100) / 100;
+  }
+
+  function collectLayerMap(layerModel) {
+    const map = new Map();
+
+    function visit(entries = []) {
+      entries.forEach((entry) => {
+        if (!entry) {
+          return;
+        }
+
+        if (entry.id) {
+          map.set(entry.id, entry);
+        }
+
+        if (entry.children) {
+          visit(entry.children);
+        }
+      });
+    }
+
+    visit(layerModel?.getEntries?.() || []);
+
+    return map;
+  }
+
+  function getTargetKind(renderer, target, rect) {
+    if (renderer?.isSparseRasterTarget?.(target)) {
+      return "sparse";
+    }
+
+    if (!rect) {
+      return "none";
+    }
+
+    const documentWidth = Math.max(1, Math.round(renderer?.width || rect.width || 1));
+    const documentHeight = Math.max(1, Math.round(renderer?.height || rect.height || 1));
+    const isFullCanvas =
+      rect.x === 0 &&
+      rect.y === 0 &&
+      rect.width === documentWidth &&
+      rect.height === documentHeight;
+
+    return isFullCanvas ? "full" : "cropped";
+  }
+
+  function summarizeRasterTarget(renderer, layerMap, layerId, target, options = {}) {
+    const layer = layerMap.get(layerId) || {};
+    const rect = renderer?.getRasterTargetDocumentRect?.(target) || null;
+    const bytes = renderer?.estimateRasterTargetBytes?.(target) || 0;
+    const kind = getTargetKind(renderer, target, rect);
+    const tileCount = renderer?.isSparseRasterTarget?.(target)
+      ? target.tiles?.size || 0
+      : 0;
+
+    return {
+      bytes,
+      height: rect?.height || 0,
+      kind,
+      layerId,
+      MiB: formatMiB(bytes),
+      name: layer.name || layerId,
+      tileCount,
+      transparent: options.precise === true && target?.framebuffer
+        ? renderer?.isRasterTargetFullyTransparent?.(target) === true
+        : null,
+      type: layer.type || "",
+      width: rect?.width || 0,
+      x: rect?.x || 0,
+      y: rect?.y || 0,
+    };
+  }
+
+  function snapshotRasterTargets(renderer, layerModel, options = {}) {
+    const layerMap = collectLayerMap(layerModel);
+    const targets = new Map();
+
+    renderer?.rasterTargetsByLayerId?.forEach?.((target, layerId) => {
+      targets.set(layerId, summarizeRasterTarget(renderer, layerMap, layerId, target, options));
+    });
+
+    return {
+      activeLayerId: layerModel?.activeLayerId || "",
+      layerMap,
+      targets,
+    };
+  }
+
+  function diffRasterTargetSnapshots(before, after) {
+    const layerIds = new Set([
+      ...Array.from(before.targets.keys()),
+      ...Array.from(after.targets.keys()),
+    ]);
+
+    return Array.from(layerIds).map((layerId) => {
+      const beforeTarget = before.targets.get(layerId) || null;
+      const afterTarget = after.targets.get(layerId) || null;
+      const layer = after.layerMap.get(layerId) || before.layerMap.get(layerId) || {};
+      const beforeBytes = beforeTarget?.bytes || 0;
+      const afterBytes = afterTarget?.bytes || 0;
+
+      return {
+        after: afterTarget,
+        afterKind: afterTarget?.kind || "none",
+        afterMiB: afterTarget?.MiB || 0,
+        before: beforeTarget,
+        beforeKind: beforeTarget?.kind || "none",
+        beforeMiB: beforeTarget?.MiB || 0,
+        deltaBytes: afterBytes - beforeBytes,
+        deltaMiB: formatMiB(afterBytes - beforeBytes),
+        layerId,
+        name: layer.name || layerId,
+        type: layer.type || "",
+      };
+    }).filter((row) =>
+      row.deltaBytes !== 0 ||
+      row.beforeKind !== row.afterKind ||
+      row.before?.tileCount !== row.after?.tileCount ||
+      row.before?.width !== row.after?.width ||
+      row.before?.height !== row.after?.height,
+    );
+  }
+
+  function annotateRasterTraceEvents(events = [], layerModel) {
+    const layerMap = collectLayerMap(layerModel);
+
+    return events.map((event) => {
+      const layer = layerMap.get(event.layerId) || {};
+
+      return {
+        ...event,
+        layerName: layer.name || event.layerId || "",
+        layerType: layer.type || "",
+      };
+    });
+  }
+
+  async function debugRasterizeVectorTextLayer(layerId, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const renderer = namespace.documentRenderer;
+    const activeLayerId = layerId || layerModel?.activeLayerId || "";
+    const minMiB = Number.isFinite(Number(options.minMiB)) ? Number(options.minMiB) : 0.05;
+    const shouldTrace = options.trace !== false;
+
+    if (shouldTrace) {
+      namespace.setRasterResourceTraceEnabled?.(true, {
+        clear: true,
+        log: options.traceLog === true,
+        minMiB,
+      });
+    }
+
+    const before = snapshotRasterTargets(renderer, layerModel, {
+      precise: options.precise === true,
+    });
+    let rasterizedLayer = null;
+    let error = null;
+
+    try {
+      rasterizedLayer = await rasterizeVectorTextLayer(activeLayerId);
+    } catch (caughtError) {
+      error = caughtError;
+    }
+
+    const after = snapshotRasterTargets(renderer, layerModel, {
+      precise: options.precise === true,
+    });
+    const targetDeltas = diffRasterTargetSnapshots(before, after);
+    const traceEvents = annotateRasterTraceEvents(
+      namespace.getRasterResourceTraceEvents?.() || [],
+      layerModel,
+    );
+    const largeTraceEvents = traceEvents.filter((event) =>
+      event.action === "register-texture" ||
+      Math.abs(Number(event.deltaBytes) || 0) >= minMiB * 1024 * 1024,
+    );
+    const fullCanvasTargetDeltas = targetDeltas.filter((row) =>
+      row.afterKind === "full" && row.deltaBytes > 0,
+    );
+    const result = {
+      activeLayerId,
+      afterActiveLayerId: after.activeLayerId,
+      beforeActiveLayerId: before.activeLayerId,
+      error,
+      fullCanvasTargetDeltas,
+      largeTraceEvents,
+      rasterizedLayer,
+      targetDeltas,
+      traceEvents,
+    };
+
+    if (options.log !== false) {
+      console.groupCollapsed?.("[CBO text rasterize debug]");
+      console.table?.(targetDeltas.map((row) => ({
+        afterKind: row.afterKind,
+        afterMiB: row.afterMiB,
+        beforeKind: row.beforeKind,
+        beforeMiB: row.beforeMiB,
+        deltaMiB: row.deltaMiB,
+        layerId: row.layerId,
+        name: row.name,
+        tiles: row.after?.tileCount || 0,
+        type: row.type,
+      })));
+      console.table?.(largeTraceEvents.map((event) => ({
+        action: event.action,
+        category: event.category,
+        deltaMiB: event.deltaMiB,
+        layerId: event.layerId,
+        layerName: event.layerName,
+        layerType: event.layerType,
+        MiB: event.MiB,
+        reason: event.reason,
+        size: `${event.width || 0}x${event.height || 0}`,
+      })));
+      if (error) {
+        console.error?.(error);
+      }
+      console.groupEnd?.();
+    }
+
+    return result;
+  }
+
   async function rasterizeVectorTextLayer(layerId) {
     const layerModel = namespace.documentLayerModel;
     const renderer = namespace.documentRenderer;
@@ -343,7 +572,7 @@
     const activeLayerId = layerId || layerModel?.activeLayerId;
     const layer = layerModel?.findEntryById?.(activeLayerId);
 
-    if (!isVectorTextLayer(layer) || !renderer?.getRasterTarget || !rasterizer?.placeRasterImage) {
+    if (!isVectorTextLayer(layer) || !renderer?.createRasterTargetForDocumentRect || !rasterizer?.placeRasterImage) {
       return null;
     }
 
@@ -359,6 +588,12 @@
       throw new Error("Layer testo non renderizzato: impossibile rasterizzare.");
     }
 
+    const size = getDocumentSize();
+    const rasterSource = await createRasterSource(layer, layerNode, size);
+    if (!rasterSource.source || !rasterSource.rasterBox) {
+      return null;
+    }
+
     const beforeState = history?.getLayerSnapshot?.(layerModel) || null;
     const rasterLayer = layerModel.createLayer({
       blendMode: layer.blendMode,
@@ -368,8 +603,6 @@
       type: "paint",
       visible: layer.visible !== false,
     });
-    const size = getDocumentSize();
-    const rasterSource = await createRasterSource(layer, layerNode, size);
     const requiresRasterSnapshot = Boolean(rasterSource.source && rasterSource.rasterBox);
     const target = requiresRasterSnapshot
       ? createTextRasterizeTarget(renderer, rasterLayer.id, rasterSource.rasterBox)
@@ -425,8 +658,11 @@
       entries.unshift(rasterLayer);
     }
 
-    layerModel.setEntries(entries, { history: false, source: "vector-text-rasterize" });
-    layerModel.setActiveLayer(rasterLayer.id, { history: false, source: "vector-text-rasterize" });
+    layerModel.setEntries(entries, {
+      activeLayerId: rasterLayer.id,
+      history: false,
+      source: "vector-text-rasterize",
+    });
     const afterState = history?.getLayerSnapshot?.(layerModel) || null;
     const historyEntry = createRasterizeHistoryEntry({
       afterState,
@@ -459,6 +695,8 @@
   }
 
   namespace.createVectorTextRasterizeHistoryEntry = createRasterizeHistoryEntry;
+  namespace.debugRasterizeVectorTextLayer = debugRasterizeVectorTextLayer;
+  namespace.debugRasterizeActiveVectorTextLayer = (options = {}) => debugRasterizeVectorTextLayer(null, options);
   namespace.rasterizeVectorTextLayer = rasterizeVectorTextLayer;
   namespace.rasterizeActiveVectorTextLayer = () => rasterizeVectorTextLayer();
 })(window.CBO = window.CBO || {});

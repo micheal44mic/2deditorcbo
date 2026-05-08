@@ -542,10 +542,15 @@
 
     setEntries(entries, options = {}) {
       const beforeState = this.captureHistoryState(options);
+      const hasRequestedActiveLayer = Object.prototype.hasOwnProperty.call(options, "activeLayerId");
 
       this.entries = this.ensureSystemLayers(this.normalizeEntries(entries));
 
-      if (!this.canActivateEntry(this.findEntryById(this.activeLayerId))) {
+      if (hasRequestedActiveLayer) {
+        const requestedEntry = this.findEntryById(options.activeLayerId);
+
+        this.activeLayerId = this.canActivateEntry(requestedEntry) ? requestedEntry.id : null;
+      } else if (!this.canActivateEntry(this.findEntryById(this.activeLayerId))) {
         this.activeLayerId = this.findFirstLayer(this.entries)?.id || null;
       }
 

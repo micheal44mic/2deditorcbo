@@ -1419,7 +1419,7 @@
       const target = renderer?.createRasterTargetForDocumentRect?.(layerId, rasterBox, { source });
 
       if (!target?.framebuffer || !target?.texture) {
-        return renderer?.getRasterTarget?.(layerId) || null;
+        return null;
       }
 
       if (!renderer.replaceRasterTarget?.(layerId, target, {
@@ -1427,7 +1427,7 @@
         source,
       })) {
         renderer.deleteRasterTargetObject?.(target);
-        return renderer?.getRasterTarget?.(layerId) || null;
+        return null;
       }
 
       return target;
@@ -1447,7 +1447,7 @@
       const renderer = namespace.documentRenderer;
       const rasterizer = namespace.imageRasterizer;
 
-      if (!renderer?.getRasterTarget || !rasterizer?.placeRasterImage) {
+      if (!renderer?.createRasterTargetForDocumentRect || !rasterizer?.placeRasterImage) {
         return;
       }
 
@@ -1516,7 +1516,7 @@
       const renderer = namespace.documentRenderer;
       const rasterizer = namespace.imageRasterizer;
 
-      if (!renderer?.getRasterTarget || !rasterizer?.placeRasterImage) {
+      if (!renderer?.createRasterTargetForDocumentRect || !rasterizer?.placeRasterImage) {
         return;
       }
 

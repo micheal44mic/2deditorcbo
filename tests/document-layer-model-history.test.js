@@ -114,6 +114,44 @@ test("setEntries and setActiveLayer are batched into one layer-state entry", asy
   assert.equal(model.activeLayerId, textLayer.id);
 });
 
+test("setEntries can replace a layer and activate the replacement in one change", () => {
+  const { DocumentLayerModel } = loadDocumentModules();
+  const model = new DocumentLayerModel();
+  const emptyPaintLayer = model.createLayer({
+    id: "paint-empty",
+    name: "Empty Paint",
+    type: "paint",
+  });
+  const textLayer = model.createLayer({
+    id: "text-source",
+    text: "Rasterize me",
+    type: "vector-text",
+  });
+  const rasterLayer = model.createLayer({
+    id: "text-raster",
+    name: "Text",
+    type: "paint",
+  });
+  const seenActiveLayerIds = [];
+
+  model.setEntries([emptyPaintLayer, textLayer, ...model.getEntries()], { history: false, source: "seed" });
+  model.setActiveLayer(textLayer.id, { history: false, source: "seed" });
+  model.addEventListener("change", (event) => {
+    seenActiveLayerIds.push(event.detail.activeLayerId);
+  });
+
+  model.setEntries([emptyPaintLayer, rasterLayer, ...model.getEntries().filter((entry) =>
+    entry.id !== emptyPaintLayer.id && entry.id !== textLayer.id,
+  )], {
+    activeLayerId: rasterLayer.id,
+    history: false,
+    source: "vector-text-rasterize",
+  });
+
+  assert.deepEqual(seenActiveLayerIds, [rasterLayer.id]);
+  assert.equal(model.activeLayerId, rasterLayer.id);
+});
+
 test("image layers can be rasterized into paint layers with undo history", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory({ maxEntries: 40 });

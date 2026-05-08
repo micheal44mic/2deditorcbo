@@ -386,10 +386,17 @@ test("manual vector text rasterization uses the cropped renderer asset when avai
     path.join(repoRoot, "js", "text", "vector-text-rasterizer.js"),
     "utf8",
   );
+  const createTargetBody = source.match(
+    /function createTextRasterizeTarget\(renderer, layerId, rasterBox\) \{([\s\S]*?)\n  \}/,
+  )?.[1] || "";
 
   assert.match(source, /createRasterTextAsset\?\.\(layer, \{ size \}\)/);
+  assert.match(source, /if \(vectorRenderer\?\.createRasterTextAsset\) \{\s*return \{ rasterBox: null, source: null \};\s*\}/);
+  assert.match(source, /if \(!rasterSource\.source \|\| !rasterSource\.rasterBox\) \{\s*return null;\s*\}/);
   assert.match(source, /createTextRasterizeTarget\(renderer, rasterLayer\.id, rasterSource\.rasterBox\)/);
   assert.match(source, /renderer\.replaceRasterTarget\?\.\(layerId, target,/);
+  assert.doesNotMatch(createTargetBody, /getRasterTarget(?:\?\.)?\(/);
+  assert.match(createTargetBody, /return null;/);
   assert.doesNotMatch(source, /return \{\s*\.\.\.target,\s*layerId,\s*\};/);
   assert.match(source, /drawWidth: rasterSource\.rasterBox\.width/);
   assert.match(source, /drawHeight: rasterSource\.rasterBox\.height/);
@@ -400,6 +407,32 @@ test("manual vector text rasterization uses the cropped renderer asset when avai
   assert.match(source, /x: placement\.x/);
   assert.match(source, /y: placement\.y/);
   assert.doesNotMatch(source, /rasterizer\.placeRasterImage\(canvas,[\s\S]{0,120}x:\s*0,[\s\S]{0,80}y:\s*0/);
+});
+
+test("manual vector text rasterization reads document size without materializing paint target", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-rasterizer.js"),
+    "utf8",
+  );
+  const getDocumentSizeBody = source.match(/function getDocumentSize\(\) \{([\s\S]*?)\n  \}/)?.[1] || "";
+
+  assert.match(getDocumentSizeBody, /renderer\?\.height \|\| 4000/);
+  assert.match(getDocumentSizeBody, /renderer\?\.width \|\| 4000/);
+  assert.doesNotMatch(getDocumentSizeBody, /getPaintTarget/);
+  assert.doesNotMatch(getDocumentSizeBody, /paintTarget/);
+});
+
+test("vector text cache target creation does not fall back to full raster targets", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+  const createTargetBody = source.match(
+    /createTextRasterTarget\(layerId, rasterBox, source = "vector-text-cache-target"\) \{([\s\S]*?)\n    \}/,
+  )?.[1] || "";
+
+  assert.doesNotMatch(createTargetBody, /getRasterTarget(?:\?\.)?\(/);
+  assert.match(createTargetBody, /return null;/);
 });
 
 test("text rasterization supersamples small text before downscaling into the layer", () => {
@@ -459,8 +492,21 @@ test("manual vector text rasterization records one custom entry for layer and pi
   assert.match(source, /replaceSparse:\s*preferSparseRestore/);
   assert.match(source, /preferSparseRestore:\s*renderer\.isSparseRasterTarget\?\.\(finalTarget\) === true/);
   assert.match(source, /renderer\.deleteRasterSnapshot\?\.\(rasterSnapshot\)/);
-  assert.match(source, /layerModel\.setEntries\(entries, \{ history: false, source: "vector-text-rasterize" \}\)/);
-  assert.match(source, /layerModel\.setActiveLayer\(rasterLayer\.id, \{ history: false, source: "vector-text-rasterize" \}\)/);
+  assert.match(source, /layerModel\.setEntries\(entries, \{\s*activeLayerId:\s*rasterLayer\.id,\s*history:\s*false,\s*source:\s*"vector-text-rasterize",\s*\}\)/);
+  assert.doesNotMatch(source, /layerModel\.setActiveLayer\(rasterLayer\.id, \{ history: false, source: "vector-text-rasterize" \}\)/);
+});
+
+test("manual vector text rasterization exposes a targeted memory debug helper", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-rasterizer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /async function debugRasterizeVectorTextLayer\(layerId, options = \{\}\)/);
+  assert.match(source, /snapshotRasterTargets\(renderer, layerModel/);
+  assert.match(source, /diffRasterTargetSnapshots\(before, after\)/);
+  assert.match(source, /namespace\.setRasterResourceTraceEnabled\?\.\(true,/);
+  assert.match(source, /namespace\.debugRasterizeActiveVectorTextLayer = \(options = \{\}\) => debugRasterizeVectorTextLayer\(null, options\)/);
 });
 
 test("manual vector text rasterization preserves layer opacity on the paint replacement", () => {

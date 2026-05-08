@@ -5462,8 +5462,15 @@ void main() {
       return target;
     }
 
-    createPaintTarget() {
-      return this.createRasterTarget([0, 0, 0, 0]);
+    createPaintTarget(layerId = "", options = {}) {
+      const targetLayerId = layerId || options.layerId || options.resourceMetadata?.layerId || "";
+
+      return this.createRasterTarget([0, 0, 0, 0], {
+        ...options,
+        layerId: targetLayerId,
+        ownerId: options.ownerId || targetLayerId || options.resourceMetadata?.ownerId,
+        reason: options.reason || options.source || "create-paint-target",
+      });
     }
 
     createRasterTargetForRect(rect, clearColor = [0, 0, 0, 0], padding = 0) {
@@ -8469,13 +8476,17 @@ void main() {
 
     getPaintTarget() {
       const layerId = this.resolvePaintLayerId();
-      let target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
+      let target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget(layerId, {
+        source: "get-paint-target",
+      });
 
       if (this.isSparseRasterTarget(target)) {
         target = this.materializeRasterTarget(layerId, {
           emit: false,
           source: "get-paint-target-materialize-sparse",
-        }) || this.createPaintTarget();
+        }) || this.createPaintTarget(layerId, {
+          source: "get-paint-target-materialize-sparse",
+        });
       }
 
       this.paintLayerId = layerId;
@@ -8553,13 +8564,17 @@ void main() {
         throw new TypeError("DocumentRenderer richiede un layerId per il target raster.");
       }
 
-      let target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget();
+      let target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget(layerId, {
+        source: "get-raster-target",
+      });
 
       if (this.isSparseRasterTarget(target)) {
         target = this.materializeRasterTarget(layerId, {
           emit: false,
           source: "get-raster-target-materialize-sparse",
-        }) || this.createPaintTarget();
+        }) || this.createPaintTarget(layerId, {
+          source: "get-raster-target-materialize-sparse",
+        });
       }
 
       const activePaintLayerId = this.resolvePaintLayerId();
