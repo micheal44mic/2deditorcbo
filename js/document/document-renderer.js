@@ -6518,6 +6518,25 @@ void main() {
       return sparseTarget;
     }
 
+    sparsifyRasterizedImageLayer(layerId, options = {}) {
+      const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!layerId || !target || this.isSparseRasterTarget(target)) {
+        return target || null;
+      }
+
+      if (!target.framebuffer || !target.texture || !this.isPaintRasterLayer(layerId, target)) {
+        return target;
+      }
+
+      return this.sparsifyRasterTarget(layerId, target, {
+        emit: options.emit === true,
+        pruneTransparentTiles: options.pruneTransparentTiles,
+        source: options.source || "image-rasterize-retile",
+        tileSize: options.tileSize || target.sparseTileSize || target.tileSize,
+      }) || target;
+    }
+
     materializeRasterTarget(layerId, options = {}) {
       const target = this.rasterTargetsByLayerId.get(layerId);
 
@@ -7491,21 +7510,24 @@ void main() {
           });
         },
         redo: () => {
-          const didRestorePixels = baseEntry.redo?.() !== false;
-
-          if (!didRestorePixels) {
-            return false;
-          }
-
           const didRestoreState = history.restoreLayerState(this.layerModel, after, {
             source: `history-redo-${source}-layer-state`,
           });
 
           if (!didRestoreState) {
-            baseEntry.undo?.();
+            return false;
           }
 
-          return didRestoreState;
+          const didRestorePixels = baseEntry.redo?.() !== false;
+
+          if (!didRestorePixels) {
+            baseEntry.undo?.();
+            history.restoreLayerState(this.layerModel, before, {
+              source: `history-redo-${source}-rollback`,
+            });
+          }
+
+          return didRestorePixels;
         },
         destroy: () => {
           baseEntry.destroy?.();
@@ -7568,6 +7590,7 @@ void main() {
         CROPPED_TARGET_EDGE_PADDING,
       );
       const wasSparseTarget = this.isSparseRasterTarget(target);
+      const willRasterizeImageLayer = this.layerModel?.findEntryById?.(layerId)?.type === "image";
 
       if (wasSparseTarget) {
         target = this.materializeRasterTarget(layerId, {
@@ -7580,7 +7603,9 @@ void main() {
         return false;
       }
 
-      const preferSparseRestore = wasSparseTarget || target.materializedFromSparse === true;
+      const preferSparseRestore = wasSparseTarget ||
+        target.materializedFromSparse === true ||
+        willRasterizeImageLayer;
       const beforeSnapshot = this.createRasterSnapshot(target, null, `${source}-before-target`);
 
       if (!beforeSnapshot?.texture) {
@@ -7646,7 +7671,10 @@ void main() {
         source,
       });
 
-      const afterPreferSparse = Boolean(preferSparseRestore && this.isPaintRasterLayer(layerId, nextTarget));
+      const afterPreferSparse = Boolean(
+        preferSparseRestore &&
+        (willRasterizeImageLayer || this.isPaintRasterLayer(layerId, nextTarget))
+      );
       const finalLiveTarget = afterPreferSparse
         ? this.sparsifyRasterTarget(layerId, nextTarget, {
             emit: false,

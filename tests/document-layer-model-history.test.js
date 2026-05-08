@@ -123,10 +123,21 @@ test("image layers can be rasterized into paint layers with undo history", async
     name: "Imported",
     type: "image",
   });
+  const retileCalls = [];
 
   window.CBO.documentHistory = history;
   window.CBO.documentLayerModel = model;
-  window.CBO.documentRenderer = { requestDraw() {} };
+  window.CBO.documentRenderer = {
+    requestDraw() {},
+    sparsifyRasterizedImageLayer(layerId, options = {}) {
+      retileCalls.push({
+        emit: options.emit,
+        layerId,
+        source: options.source,
+      });
+      return { sparse: true };
+    },
+  };
 
   model.setEntries([imageLayer, ...model.getEntries()], {
     history: false,
@@ -142,6 +153,11 @@ test("image layers can be rasterized into paint layers with undo history", async
 
   assert.equal(model.findEntryById(imageLayer.id).type, "paint");
   assert.equal(history.undoStack.length, 1);
+  assert.deepEqual(retileCalls, [{
+    emit: false,
+    layerId: "image-1",
+    source: "image-rasterize-retile",
+  }]);
 
   assert.equal(history.undo(), true);
   assert.equal(model.findEntryById(imageLayer.id).type, "image");

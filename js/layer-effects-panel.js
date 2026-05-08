@@ -1040,11 +1040,12 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const rasterizedImageLayer = layer.type === "image";
     const rasterizedLayerPatch = {
       effects: getEffectsAfterRasterize(layer),
     };
 
-    if (layer.type === "image") {
+    if (rasterizedImageLayer) {
       rasterizedLayerPatch.type = "paint";
     }
 
@@ -1062,6 +1063,17 @@ window.CBO = window.CBO || {};
       renderer.deleteRasterSnapshot?.(snapshots.beforeSnapshot);
       renderer.deleteRasterSnapshot?.(snapshots.afterSnapshot);
       return false;
+    }
+
+    if (rasterizedImageLayer) {
+      const sparseTarget = renderer.sparsifyRasterizedImageLayer?.(layer.id, {
+        emit: false,
+        source: "layer-effects-rasterize-retile",
+      });
+
+      if (renderer.isSparseRasterTarget?.(sparseTarget)) {
+        snapshots.afterPreferSparse = true;
+      }
     }
 
     const afterState = history?.getLayerSnapshot?.(layerModel) || null;

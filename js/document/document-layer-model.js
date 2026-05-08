@@ -596,13 +596,23 @@
         return false;
       }
 
-      return this.updateLayer(entry.id, {
+      const source = options.source || "image-rasterize";
+      const didRasterize = this.updateLayer(entry.id, {
         type: "paint",
       }, {
         history: options.history,
         historyGroup: options.historyGroup || `image-rasterize-${entry.id}`,
-        source: options.source || "image-rasterize",
+        source,
       });
+
+      if (didRasterize) {
+        namespace.documentRenderer?.sparsifyRasterizedImageLayer?.(entry.id, {
+          emit: false,
+          source: `${source}-retile`,
+        });
+      }
+
+      return didRasterize;
     }
 
     canActivateEntry(entry) {

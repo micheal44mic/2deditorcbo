@@ -105,6 +105,9 @@ test("brush first paint stroke can defer full live target materialization", () =
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 
   assert.match(source, /ensurePaintLayerForBrush\?\.\(\{ materialize: false \}\)/);
+  assert.match(source, /showEmptyEraserLayerToast\(message = "Nothing to erase on this layer"\)/);
+  assert.match(source, /const existingTarget = this\.documentRenderer\?\.rasterTargetsByLayerId\?\.get\?\.\(activeId\)/);
+  assert.match(source, /if \(!existingTarget \|\| isEmptySparseTarget\) \{\s*this\.showEmptyEraserLayerToast\(\);\s*return null;\s*\}/);
   assert.match(source, /const paintTargets = isEraserStroke/);
   assert.match(source, /const activeStrokeTilePatchRects = this\.getActiveStrokeTilePatchRects\(\)/);
   assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, finalStrokeBufferRect/);
@@ -117,6 +120,42 @@ test("brush first paint stroke can defer full live target materialization", () =
   assert.match(source, /paintTargets\.forEach\(\(item\) =>/);
   assert.match(source, /const localBakeX = Math\.round\(bakeRect\.x - targetRect\.x\)/);
   assert.match(source, /gl\.viewport\(localBakeX, paintTarget\.height - \(localBakeY \+ bakeRect\.height\), bakeRect\.width, bakeRect\.height\)/);
+});
+
+test("eraser refuses empty raster layers without allocating a target", () => {
+  const { BrushEngine } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+  let toastCount = 0;
+  let createdTarget = false;
+
+  engine.documentRenderer = {
+    getRasterTarget() {
+      createdTarget = true;
+      return null;
+    },
+    isSparseRasterTarget: (target) => target?.sparse === true,
+    layerModel: {
+      activeLayerId: "paint-empty",
+      findEntryById: () => ({ id: "paint-empty", type: "paint" }),
+    },
+    rasterTargetsByLayerId: new Map(),
+  };
+  engine.showEmptyEraserLayerToast = () => {
+    toastCount += 1;
+  };
+
+  assert.equal(engine.getActiveRasterTargetForEraser(), null);
+  assert.equal(createdTarget, false);
+  assert.equal(toastCount, 1);
+
+  engine.documentRenderer.rasterTargetsByLayerId.set("paint-empty", {
+    sparse: true,
+    tiles: new Map(),
+  });
+
+  assert.equal(engine.getActiveRasterTargetForEraser(), null);
+  assert.equal(createdTarget, false);
+  assert.equal(toastCount, 2);
 });
 
 test("brush stroke history batches tile captures until the idle commit", () => {

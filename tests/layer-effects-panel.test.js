@@ -640,6 +640,7 @@ test("layer effects rasterizer turns image layers into paint layers", () => {
   const namespace = loadLayerEffectsNamespace();
   const beforeSnapshot = { framebuffer: {}, texture: {} };
   const afterSnapshot = { framebuffer: {}, texture: {} };
+  const snapshots = { afterSnapshot, beforeSnapshot, layerId: "image-1" };
   const beforeState = {
     activeLayerId: "image-1",
     entries: [{ id: "image-1", type: "image" }],
@@ -673,13 +674,25 @@ test("layer effects rasterizer turns image layers into paint layers", () => {
       return true;
     },
   };
+  const retileCalls = [];
 
   namespace.documentHistory = history;
   namespace.documentLayerModel = layerModel;
   namespace.documentRenderer = {
     emitContentChange() {},
+    isSparseRasterTarget(target) {
+      return target?.sparse === true;
+    },
     rasterizeLayerEffects() {
-      return { afterSnapshot, beforeSnapshot, layerId: layer.id };
+      return snapshots;
+    },
+    sparsifyRasterizedImageLayer(layerId, options = {}) {
+      retileCalls.push({
+        emit: options.emit,
+        layerId,
+        source: options.source,
+      });
+      return { sparse: true };
     },
     requestDraw() {},
   };
@@ -688,4 +701,10 @@ test("layer effects rasterizer turns image layers into paint layers", () => {
   assert.equal(layer.type, "paint");
   assert.equal(history.entry.beforeEntries[0].type, "image");
   assert.equal(history.entry.afterEntries[0].type, "paint");
+  assert.equal(snapshots.afterPreferSparse, true);
+  assert.deepEqual(retileCalls, [{
+    emit: false,
+    layerId: "image-1",
+    source: "layer-effects-rasterize-retile",
+  }]);
 });

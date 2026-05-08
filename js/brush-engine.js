@@ -9,6 +9,8 @@ window.CBO = window.CBO || {};
   const STROKE_ALLOCATION_QUANTUM = 128;
   const STROKE_FINAL_PADDING = 6;
   const STROKE_SAMPLE_CLAMP_MIN_PADDING = 64;
+  const ERASER_EMPTY_LAYER_TOAST_MS = 800;
+  const ERASER_EMPTY_LAYER_TOAST_THROTTLE_MS = 1600;
   const MAX_STAMPS_PER_FLUSH = 4096;
   const BRUSH_HISTORY_BATCH_IDLE_MS = 1000;
   const RASTER_BYTES_PER_PIXEL = 4;
@@ -592,6 +594,8 @@ void main() {
       this.pendingBrushHistory = null;
       this.pendingBrushHistoryTimer = 0;
       this.isFlushingBrushHistory = false;
+      this.emptyEraserLayerToastTimer = 0;
+      this.lastEmptyEraserLayerToastAt = 0;
       this.brushProgramInfo = null;
       this.compositeProgramInfo = null;
       this.strokeBuildupProgramInfo = null;
@@ -2437,6 +2441,54 @@ void main() {
       );
     }
 
+    ensureEmptyEraserLayerToast() {
+      if (typeof document === "undefined" || !document.body) {
+        return null;
+      }
+
+      let toast = document.getElementById?.("cbo-eraser-empty-layer-toast") || null;
+
+      if (!toast && typeof document.createElement === "function") {
+        toast = document.createElement("div");
+        toast.id = "cbo-eraser-empty-layer-toast";
+        toast.className = "cbo-layer-limit-toast";
+        toast.hidden = true;
+        toast.setAttribute("role", "status");
+        toast.setAttribute("aria-live", "polite");
+        document.body.appendChild(toast);
+      }
+
+      return toast;
+    }
+
+    showEmptyEraserLayerToast(message = "Nothing to erase on this layer") {
+      const now = Date.now();
+
+      if (now - (this.lastEmptyEraserLayerToastAt || 0) < ERASER_EMPTY_LAYER_TOAST_THROTTLE_MS) {
+        return;
+      }
+
+      const toast = this.ensureEmptyEraserLayerToast();
+
+      if (!toast) {
+        return;
+      }
+
+      this.lastEmptyEraserLayerToastAt = now;
+
+      if (this.emptyEraserLayerToastTimer) {
+        window.clearTimeout?.(this.emptyEraserLayerToastTimer);
+        this.emptyEraserLayerToastTimer = 0;
+      }
+
+      toast.textContent = message;
+      toast.hidden = false;
+      this.emptyEraserLayerToastTimer = window.setTimeout?.(() => {
+        toast.hidden = true;
+        this.emptyEraserLayerToastTimer = 0;
+      }, ERASER_EMPTY_LAYER_TOAST_MS) || 0;
+    }
+
     getActiveRasterTargetForEraser() {
       const layerModel = this.documentRenderer?.layerModel;
       const activeId = layerModel?.activeLayerId;
@@ -2452,6 +2504,15 @@ void main() {
       }
 
       const existingTarget = this.documentRenderer?.rasterTargetsByLayerId?.get?.(activeId);
+      const isEmptySparseTarget =
+        this.documentRenderer?.isSparseRasterTarget?.(existingTarget) &&
+        existingTarget.tiles.size === 0;
+
+      if (!existingTarget || isEmptySparseTarget) {
+        this.showEmptyEraserLayerToast();
+        return null;
+      }
+
       const target = this.documentRenderer?.isCroppedRasterTarget?.(existingTarget)
         ? this.documentRenderer?.materializeRasterTarget?.(activeId, {
             source: "eraser-materialize",
@@ -4977,6 +5038,10 @@ void main() {
       this.canvas.style.cursor = "";
       document.body?.classList.remove("cbo-canvas-pan-active", "cbo-canvas-pan-ready");
       this.discardPendingBrushHistory();
+      if (this.emptyEraserLayerToastTimer) {
+        window.clearTimeout?.(this.emptyEraserLayerToastTimer);
+        this.emptyEraserLayerToastTimer = 0;
+      }
 
       if (this.fullscreenQuad) {
         gl.deleteBuffer(this.fullscreenQuad.buffer);

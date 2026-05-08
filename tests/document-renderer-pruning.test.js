@@ -806,6 +806,68 @@ test("getRasterTargetsForPaintRect retiles materialized sparse paint targets for
   assert.equal(deletedTargets.includes(materializedTarget), true);
 });
 
+test("sparsifyRasterizedImageLayer converts imported paint targets into sparse tiles", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const importedTarget = {
+    clearColor: [0, 0, 0, 0],
+    cropped: true,
+    framebuffer: { id: "imported-fb" },
+    height: 512,
+    layerId: "image-1",
+    texture: { id: "imported-texture" },
+    width: 512,
+    x: 0,
+    y: 0,
+  };
+  const copyCalls = [];
+  const deletedTargets = [];
+
+  renderer.width = 1024;
+  renderer.height = 1024;
+  renderer.paintLayerId = "paint-main";
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map([["image-1", importedTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "image-1", type: "paint" }),
+  };
+  renderer.isMobileLikeDevice = () => false;
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    ownerId: options.ownerId,
+    texture: { id: `tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = (sourceTarget, rect, destinationTarget) => {
+    copyCalls.push({ destinationTarget, rect: { ...rect }, sourceTarget });
+    return true;
+  };
+  renderer.deleteRasterTargetObject = (target) => deletedTargets.push(target);
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.emitContentChange = () => {};
+  renderer.invalidatePreviewCache = () => {};
+  renderer.isRasterTargetFullyTransparent = () => false;
+  renderer.requestDraw = () => {};
+
+  const sparseTarget = renderer.sparsifyRasterizedImageLayer("image-1", {
+    source: "unit-image-rasterize-retile",
+  });
+
+  assert.equal(renderer.isSparseRasterTarget(sparseTarget), true);
+  assert.equal(sparseTarget.tiles.size, 4);
+  assert.equal(renderer.rasterTargetsByLayerId.get("image-1"), sparseTarget);
+  assert.equal(copyCalls.length, 4);
+  assert.ok(copyCalls.every((call) => call.sourceTarget === importedTarget));
+  assert.equal(deletedTargets.includes(importedTarget), true);
+});
+
 test("restoreRasterSnapshot rebuilds sparse paint targets when requested", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -1069,6 +1131,137 @@ test("commitCroppedRasterTransform retiles materialized sparse paint targets aft
   assert.deepEqual(
     restoreCalls.map((call) => [call.options.preferSparse, call.options.replaceSparse]),
     [[true, true], [true, true]],
+  );
+});
+
+test("commitCroppedRasterTransform restores rasterized image layers as authoritative sparse targets", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const layer = { id: "image-1", type: "image" };
+  const imageTarget = {
+    cropped: true,
+    framebuffer: { id: "image-fb" },
+    height: 256,
+    layerId: layer.id,
+    texture: { id: "image-texture" },
+    width: 256,
+    x: 0,
+    y: 0,
+  };
+  const sourceSnapshot = {
+    framebuffer: { id: "source-fb" },
+    rect: { height: 128, width: 128, x: 32, y: 32 },
+    texture: { id: "source-texture" },
+  };
+  const restoreCalls = [];
+  let pushedEntry = null;
+
+  window.CBO.documentHistory = {
+    flushLayerState() {},
+    getLayerSnapshot() {
+      return {
+        activeLayerId: layer.id,
+        entries: [{ ...layer }],
+      };
+    },
+    push(entry) {
+      pushedEntry = entry;
+      return true;
+    },
+    restoreLayerState(layerModel, snapshot) {
+      layer.type = snapshot.entries[0].type;
+      return true;
+    },
+  };
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map([[layer.id, imageTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => layer,
+    rasterizeImageLayerToPaint() {
+      layer.type = "paint";
+      return true;
+    },
+  };
+  renderer.createRasterTargetForRect = (rect) => ({
+    cropped: true,
+    framebuffer: { id: `next-fb-${rect.x}-${rect.y}` },
+    height: rect.height,
+    layerId: layer.id,
+    texture: { id: `next-tex-${rect.x}-${rect.y}` },
+    width: rect.width,
+    x: rect.x,
+    y: rect.y,
+  });
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `tile-fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    ownerId: options.ownerId,
+    texture: { id: `tile-tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = () => true;
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.deleteRasterSnapshot = () => {};
+  renderer.deleteRasterTargetObject = () => {};
+  renderer.drawTexturedQuad = () => true;
+  renderer.emitContentChange = () => {};
+  renderer.invalidatePreviewCache = () => {};
+  renderer.isMobileLikeDevice = () => false;
+  renderer.isRasterTargetFullyTransparent = () => false;
+  renderer.markRasterTargetDirty = () => {};
+  renderer.recordRasterOperation = (report) => report;
+  renderer.requestDraw = () => {};
+  renderer.clearRasterTransformPreview = () => {};
+  renderer.updateRasterTargetResourceMetadata = (target) => target;
+  renderer.createRasterSnapshot = (target, rect, label) => ({
+    framebuffer: { id: `${label}-fb` },
+    rect: rect || renderer.getRasterTargetDocumentRect(target),
+    texture: { id: `${label}-texture` },
+  });
+
+  const didCommit = renderer.commitCroppedRasterTransform({
+    destQuad: [
+      { x: 256, y: 0 },
+      { x: 384, y: 0 },
+      { x: 384, y: 128 },
+      { x: 256, y: 128 },
+    ],
+    destRect: { height: 128, width: 128, x: 256, y: 0 },
+    layerId: layer.id,
+    source: "unit-image-transform",
+    sourceSnapshot,
+  });
+
+  assert.equal(didCommit, true);
+  assert.equal(layer.type, "paint");
+  assert.equal(renderer.isSparseRasterTarget(renderer.rasterTargetsByLayerId.get(layer.id)), true);
+  assert.ok(pushedEntry);
+
+  renderer.restoreRasterSnapshot = (layerId, snapshot, options = {}) => {
+    restoreCalls.push({
+      layerId,
+      layerType: layer.type,
+      options,
+      snapshot,
+    });
+    return true;
+  };
+
+  assert.equal(pushedEntry.undo(), true);
+  assert.equal(layer.type, "image");
+  assert.equal(pushedEntry.redo(), true);
+  assert.equal(layer.type, "paint");
+  assert.deepEqual(
+    restoreCalls.map((call) => [call.layerType, call.options.preferSparse, call.options.replaceSparse]),
+    [["paint", true, true], ["paint", true, true]],
   );
 });
 

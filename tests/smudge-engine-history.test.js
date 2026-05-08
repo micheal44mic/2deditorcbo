@@ -49,3 +49,31 @@ test("smudge invalidates the zoom-out preview cache while painting live", () => 
   assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.\("smudge-live"\)/);
   assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.\("smudge-stroke"\)/);
 });
+
+test("smudge refuses empty raster layers without allocating a full target", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
+
+  assert.match(source, /showEmptySmudgeLayerToast\(message = "Nothing to smudge on this layer"\)/);
+  assert.match(source, /if \(!existingTarget \|\| isEmptySparseTarget\) \{\s*this\.showEmptySmudgeLayerToast\(\);\s*return null;\s*\}/);
+  assert.doesNotMatch(source, /return getRasterTarget\.call\(this\.documentRenderer, activeId\)/);
+});
+
+test("smudge samples and blits cropped targets in document-local coordinates", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
+
+  assert.match(source, /uniform vec2 u_sourceOrigin;/);
+  assert.match(source, /vec2 sourceLocal = documentPosition - u_sourceOrigin;/);
+  assert.match(source, /gl\.uniform2f\(uniforms\.sourceOrigin, sourceRect\.x, sourceRect\.y\)/);
+  assert.match(source, /const localX = bounds\.x - targetRect\.x/);
+  assert.match(source, /const y0 = target\.height - \(localY \+ bounds\.height\)/);
+});
+
+test("smudge keeps sparse layers tiled while dabbing", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
+
+  assert.match(source, /renderSparseDab\(/);
+  assert.match(source, /createRasterSnapshot\?\.\(layerId, sourceBounds, "smudge source"\)/);
+  assert.match(source, /ensureRasterTargetsForPaintRect\(layerId, bounds,/);
+  assert.match(source, /source: "smudge-sparse-target"/);
+  assert.match(source, /if \(this\.documentRenderer\?\.isSparseRasterTarget\?\.\(target\)\) \{\s*this\.includeSmudgeBounds\(bounds\);\s*this\.renderSparseDab/);
+});
