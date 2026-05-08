@@ -114,7 +114,7 @@ void main() {
       float eraseAlpha = 0.0;
 
       if (u_maskRectMode > 0.5) {
-        vec2 local = (v_documentPixel - u_maskRect.xy) / max(u_maskRect.zw, vec2(1.0));
+        vec2 local = (globalDocPixel - u_maskRect.xy) / max(u_maskRect.zw, vec2(1.0));
 
         if (!any(lessThan(local, vec2(0.0))) && !any(greaterThan(local, vec2(1.0)))) {
           eraseAlpha = clamp(texture(u_maskTexture, vec2(local.x, 1.0 - local.y)).a, 0.0, 1.0);
@@ -758,7 +758,7 @@ void main() {
     float eraseAlpha = 0.0;
 
     if (u_maskRectMode > 0.5) {
-      vec2 local = (v_documentPixel - u_maskRect.xy) / max(u_maskRect.zw, vec2(1.0));
+      vec2 local = (globalDocPixel - u_maskRect.xy) / max(u_maskRect.zw, vec2(1.0));
 
       if (!any(lessThan(local, vec2(0.0))) && !any(greaterThan(local, vec2(1.0)))) {
         eraseAlpha = clamp(texture(u_maskTexture, vec2(local.x, 1.0 - local.y)).a, 0.0, 1.0);

@@ -1636,6 +1636,19 @@ test("document renderer uses a procedural background texture", () => {
   assert.doesNotMatch(source, /const backgroundTarget = this\.createRasterTarget\(\[1, 1, 1, 1\]\)/);
 });
 
+test("live eraser mask samples document coordinates for cropped layer renders", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+  const documentMaskMatches = source.match(
+    /vec2 local = \(globalDocPixel - u_maskRect\.xy\) \/ max\(u_maskRect\.zw, vec2\(1\.0\)\);/g,
+  ) || [];
+
+  assert.equal(documentMaskMatches.length, 2);
+  assert.doesNotMatch(source, /vec2 local = \(v_documentPixel - u_maskRect\.xy\)/);
+});
+
 test("document renderer composites supported layer blend modes in shader", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),
