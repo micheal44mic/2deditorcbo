@@ -16,10 +16,16 @@ test("editor starts from a preset-only document chooser", () => {
   const indexSource = readRepoFile("index.html");
 
   assert.match(editorCanvasSource, /const EDITOR_DOCUMENT_PRESETS = Object\.freeze\(\[/);
+  assert.match(editorCanvasSource, /const MOBILE_DOCUMENT_PRESET_ID = "square-2048"/);
   assert.match(editorCanvasSource, /id: "square-1024"[\s\S]*width: 1024, height: 1024/);
   assert.match(editorCanvasSource, /id: "square-4000"[\s\S]*width: 4000, height: 4000/);
   assert.match(editorCanvasSource, /id: "landscape-1920"[\s\S]*width: 1920, height: 1080/);
   assert.match(editorCanvasSource, /id: "story-1080"[\s\S]*width: 1080, height: 1920/);
+  assert.match(editorCanvasSource, /function isMobileLikeDevice\(\)/);
+  assert.match(editorCanvasSource, /function getDefaultDocumentPresetId\(\)/);
+  assert.match(editorCanvasSource, /maxRasterHistoryGpuHotMiB: 96/);
+  assert.match(editorCanvasSource, /maxRasterHistoryMiB: 150/);
+  assert.match(editorCanvasSource, /minRasterHistoryGpuHotEntries: 0/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorDocumentStart = function initEditorDocumentStart\(\)/);
   assert.match(editorCanvasSource, /button\.dataset\.documentPreset = preset\.id/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorCanvas\(\{[\s\S]*documentHeight: preset\.height,[\s\S]*documentWidth: preset\.width/);

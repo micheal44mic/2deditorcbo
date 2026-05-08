@@ -217,6 +217,32 @@ const BENCHMARK_EXPRESSION = `
   await new Promise((resolve) => {
     const start = performance.now();
     const tick = () => {
+      if (
+        window.CBO?.documentRenderer ||
+        (
+          window.CBO?.initEditorCanvas &&
+          window.CBO?.rasterResourceManager &&
+          window.CBO?.reportRasterMemory
+        )
+      ) {
+        resolve(true);
+      } else if (performance.now() - start > 10000) {
+        resolve(false);
+      } else {
+        setTimeout(tick, 100);
+      }
+    };
+
+    tick();
+  });
+
+  if (!window.CBO?.documentRenderer && window.CBO?.initEditorCanvas) {
+    window.CBO.initEditorCanvas({ presetId: "square-4000" });
+  }
+
+  await new Promise((resolve) => {
+    const start = performance.now();
+    const tick = () => {
       if (window.CBO?.documentRenderer && window.CBO?.reportRasterMemory && window.CBO?.placeUploadedImageOnCanvas) {
         resolve(true);
       } else if (performance.now() - start > 10000) {
@@ -390,7 +416,8 @@ function printHumanSummary(result) {
       console.log(`  ! blur allocation error: ${item.blurError}`);
     }
     item.summary.forEach((summary) => {
-      console.log(`  - ${summary.category}: ${summary.estimatedMiB} MiB (${summary.textures} texture)`);
+      const textureCount = summary.textures ?? summary.count ?? 0;
+      console.log(`  - ${summary.category}: ${summary.estimatedMiB} MiB (${textureCount} texture)`);
     });
   });
 }

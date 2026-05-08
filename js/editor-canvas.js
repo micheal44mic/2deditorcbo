@@ -10,9 +10,71 @@ const EDITOR_DOCUMENT_PRESETS = Object.freeze([
   { id: "social-1080", label: "1080 x 1080", tag: "SOCIAL", width: 1080, height: 1080 },
 ]);
 const DEFAULT_DOCUMENT_PRESET_ID = "square-4000";
+const MOBILE_DOCUMENT_PRESET_ID = "square-2048";
+const DESKTOP_RASTER_HISTORY_PROFILE = Object.freeze({
+  maxEntries: 40,
+  maxRasterHistoryGpuHotMiB: 192,
+  maxRasterHistoryMiB: 256,
+  minRasterHistoryGpuHotEntries: 6,
+});
+const MOBILE_RASTER_HISTORY_PROFILE = Object.freeze({
+  maxEntries: 32,
+  maxRasterHistoryGpuHotMiB: 96,
+  maxRasterHistoryMiB: 150,
+  minRasterHistoryGpuHotEntries: 0,
+});
+
+function isMobileLikeDevice() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const memory = Number(navigator.deviceMemory) || 0;
+  const touch = Number(navigator.maxTouchPoints) > 1;
+  const coarsePointer = typeof window !== "undefined" &&
+    window.matchMedia?.("(pointer: coarse)")?.matches === true;
+  const userAgent = navigator.userAgent || "";
+  const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+
+  return Boolean(
+    mobileUserAgent ||
+    (coarsePointer && (memory === 0 || memory <= 8)) ||
+    (touch && memory > 0 && memory <= 6)
+  );
+}
+
+function getDefaultDocumentPresetId() {
+  const override = typeof window !== "undefined"
+    ? String(window.CBO?.defaultDocumentPresetId || "").trim()
+    : "";
+
+  if (override) {
+    return override;
+  }
+
+  return isMobileLikeDevice() ? MOBILE_DOCUMENT_PRESET_ID : DEFAULT_DOCUMENT_PRESET_ID;
+}
+
+function getRasterHistoryProfile() {
+  const baseProfile = isMobileLikeDevice()
+    ? MOBILE_RASTER_HISTORY_PROFILE
+    : DESKTOP_RASTER_HISTORY_PROFILE;
+  const override = typeof window !== "undefined" && window.CBO?.rasterHistoryProfile &&
+    typeof window.CBO.rasterHistoryProfile === "object"
+    ? window.CBO.rasterHistoryProfile
+    : null;
+
+  return {
+    ...baseProfile,
+    ...(override || {}),
+  };
+}
 
 function getDocumentPreset(id) {
+  const defaultPresetId = getDefaultDocumentPresetId();
+
   return EDITOR_DOCUMENT_PRESETS.find((preset) => preset.id === id) ||
+    EDITOR_DOCUMENT_PRESETS.find((preset) => preset.id === defaultPresetId) ||
     EDITOR_DOCUMENT_PRESETS.find((preset) => preset.id === DEFAULT_DOCUMENT_PRESET_ID) ||
     EDITOR_DOCUMENT_PRESETS[0];
 }
@@ -183,7 +245,7 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
   }
 
   requestAnimationFrame(() => {
-    screen.querySelector(`[data-document-preset="${DEFAULT_DOCUMENT_PRESET_ID}"]`)?.focus();
+    screen.querySelector(`[data-document-preset="${getDefaultDocumentPresetId()}"]`)?.focus();
   });
 
   return screen;
@@ -292,10 +354,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
   });
-  window.CBO.documentHistory = new window.CBO.DocumentHistory({
-    maxEntries: 40,
-    maxRasterHistoryMiB: 256,
-  });
+  window.CBO.documentHistory = new window.CBO.DocumentHistory(getRasterHistoryProfile());
   let brushEngine;
   let smudgeEngine;
 

@@ -3,6 +3,7 @@
   const CROPPED_TARGET_EFFECT_PADDING = 320;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_HISTORY_TILE_SIZE = 256;
+  const RASTER_HISTORY_MOBILE_TILE_SIZE = 128;
   const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
   const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
   const RASTER_WARP_MESH_COLS = 64;
@@ -1195,20 +1196,28 @@ void main() {
     }
 
     getRasterTargetResourceMetadata(target, metadata = {}) {
-      const width = Math.max(1, Math.round(target?.width || 1));
-      const height = Math.max(1, Math.round(target?.height || 1));
+      const targetWidth = Math.max(1, Math.round(target?.width || 1));
+      const targetHeight = Math.max(1, Math.round(target?.height || 1));
+      const width = Math.max(1, Math.round(
+        metadata.width ?? target?.resourceWidth ?? target?.textureWidth ?? targetWidth,
+      ));
+      const height = Math.max(1, Math.round(
+        metadata.height ?? target?.resourceHeight ?? target?.textureHeight ?? targetHeight,
+      ));
       const x = Number.isFinite(target?.x) ? Math.round(target.x) : 0;
       const y = Number.isFinite(target?.y) ? Math.round(target.y) : 0;
       const ownerId = metadata.ownerId || metadata.layerId || target?.layerId || target?.id || "";
+      const bboxSource = metadata.bbox || metadata.rect || null;
+      const bbox = {
+        x: Number.isFinite(bboxSource?.x) ? Math.round(bboxSource.x) : x,
+        y: Number.isFinite(bboxSource?.y) ? Math.round(bboxSource.y) : y,
+        width: Math.max(1, Math.round(bboxSource?.width || targetWidth)),
+        height: Math.max(1, Math.round(bboxSource?.height || targetHeight)),
+      };
 
       return this.withRasterResourceDocumentMetadata({
         ...metadata,
-        bbox: {
-          x,
-          y,
-          width,
-          height,
-        },
+        bbox,
         height,
         kind: metadata.kind || "layer",
         label: metadata.label || ownerId || target?.id || "raster target",
@@ -1307,10 +1316,11 @@ void main() {
     }
 
     getRasterHistoryTileSize(options = {}) {
-      const requested = Number(options.tileSize ?? options.historyTileSize ?? RASTER_HISTORY_TILE_SIZE);
+      const fallback = this.isMobileLikeDevice?.() ? RASTER_HISTORY_MOBILE_TILE_SIZE : RASTER_HISTORY_TILE_SIZE;
+      const requested = Number(options.tileSize ?? options.historyTileSize ?? fallback);
 
       if (!Number.isFinite(requested) || requested <= 0) {
-        return RASTER_HISTORY_TILE_SIZE;
+        return fallback;
       }
 
       return Math.max(16, Math.min(1024, Math.round(requested)));
@@ -1392,6 +1402,9 @@ void main() {
 
           const lookupPatchRect = patchLookup?.get(`${tx}:${ty}`) || null;
           const capturePatchRect = this.intersectRasterHistoryRects(tileRect, captureRect);
+          if (patchLookup && !lookupPatchRect) {
+            continue;
+          }
           const patchRect = lookupPatchRect
             ? this.intersectRasterHistoryRects(lookupPatchRect, capturePatchRect)
             : capturePatchRect;
@@ -1708,6 +1721,16 @@ void main() {
         return null;
       }
 
+      if (options.silentBeforeRasterHistoryCapture !== true) {
+        window.dispatchEvent(new CustomEvent("cbo:before-raster-history-capture", {
+          detail: {
+            layerId,
+            label: options.label || "",
+            source: options.source || options.label || "raster-tile-history",
+          },
+        }));
+      }
+
       const target = this.rasterTargetsByLayerId.get(layerId) || this.getRasterTarget(layerId);
       const captureRect = this.getClampedDocumentRect(dirtyRect);
 
@@ -1744,49 +1767,70 @@ void main() {
       return capture;
     }
 
+    hasRasterTileHistorySnapshot(snapshot) {
+      return Boolean(snapshot && (snapshot.texture || snapshot.framebuffer || snapshot.cpuPixels));
+    }
+
+    captureRasterTileHistoryAfterSnapshots(entry, options = {}) {
+      if (!entry || !Array.isArray(entry.tileDeltas) || entry.tileDeltas.length === 0) {
+        return false;
+      }
+
+      const label = options.label || entry.label || options.source || "raster-tile-history";
+      const createdDeltas = [];
+
+      for (const delta of entry.tileDeltas) {
+        if (this.hasRasterTileHistorySnapshot(delta.after)) {
+          continue;
+        }
+
+        const after = this.createRasterSnapshot(
+          delta.layerId || entry.layerId,
+          delta.rect,
+          `${label}-after-tile-${delta.tx}-${delta.ty}`,
+        );
+
+        if (!after?.texture && !after?.cpuPixels) {
+          for (const createdDelta of createdDeltas) {
+            this.deleteRasterSnapshot(createdDelta.after);
+            createdDelta.after = null;
+          }
+
+          entry.afterCaptureFailed = true;
+          return false;
+        }
+
+        delta.after = after;
+        createdDeltas.push(delta);
+        this.emitRasterHistoryTileDebug({
+          bytes: after.bytes,
+          layerId: delta.layerId || entry.layerId,
+          patchRect: after.rect ? { ...after.rect } : { ...delta.rect },
+          phase: "after",
+          source: label,
+          tileRect: delta.tileRect,
+          tileSize: entry.tileSize,
+          tx: delta.tx,
+          ty: delta.ty,
+        });
+      }
+
+      return true;
+    }
+
     commitRasterTileHistory(capture, options = {}) {
       if (!capture || capture.destroyed === true || !Array.isArray(capture.tileDeltas)) {
         return null;
       }
 
       const label = options.label || capture.label || options.source || "raster-tile-history";
-
-      for (const delta of capture.tileDeltas) {
-        const after = this.createRasterSnapshot(
-          delta.layerId || capture.layerId,
-          delta.rect,
-          `${label}-after-tile-${delta.tx}-${delta.ty}`,
-        );
-
-        if (!after?.texture && !after?.cpuPixels) {
-          for (const existingDelta of capture.tileDeltas) {
-            this.deleteRasterSnapshot(existingDelta.after);
-            existingDelta.after = null;
-          }
-
-          capture.commitFailed = true;
-          return null;
-        }
-
-        delta.after = after;
-        this.emitRasterHistoryTileDebug({
-          bytes: after.bytes,
-          layerId: delta.layerId || capture.layerId,
-          patchRect: after.rect ? { ...after.rect } : { ...delta.rect },
-          phase: "after",
-          source: label,
-          tileRect: delta.tileRect,
-          tileSize: capture.tileSize,
-          tx: delta.tx,
-          ty: delta.ty,
-        });
-      }
-
+      const lazyAfter = options.lazyAfter === true;
       const renderer = this;
       const entry = {
         affectedNodes: [...capture.affectedNodes],
         id: capture.id,
         label,
+        lazyAfter,
         layerId: capture.layerId,
         memoryPolicy: options.memoryPolicy || capture.memoryPolicy || null,
         projectionInvalidation: capture.projectionInvalidation.map((rect) => ({ ...rect })),
@@ -1796,6 +1840,13 @@ void main() {
         tileSize: capture.tileSize,
         type: options.type || "tile-delta",
         undo() {
+          if (this.lazyAfter && !renderer.captureRasterTileHistoryAfterSnapshots(this, {
+            label,
+            source: options.source || capture.source || label,
+          })) {
+            return false;
+          }
+
           return renderer.restoreRasterTileHistoryEntry(this, "before", {
             source: options.undoSource || `history-undo-${this.source}`,
           });
@@ -1810,6 +1861,14 @@ void main() {
         },
       };
 
+      if (!lazyAfter && !this.captureRasterTileHistoryAfterSnapshots(entry, {
+        label,
+        source: options.source || capture.source || label,
+      })) {
+        capture.commitFailed = true;
+        return null;
+      }
+
       capture.destroyed = true;
       return entry;
     }
@@ -1822,7 +1881,7 @@ void main() {
       }
 
       for (const delta of deltas) {
-        if (!delta?.[snapshotKey]) {
+        if (!this.hasRasterTileHistorySnapshot(delta?.[snapshotKey])) {
           return false;
         }
       }
@@ -4841,6 +4900,8 @@ void main() {
         x: 0,
         y: 0,
         cropped: false,
+        resourceHeight: 1,
+        resourceWidth: 1,
         version: 0,
         clearColor: [1, 1, 1, 1],
         layerId: "background",

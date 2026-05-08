@@ -6,16 +6,17 @@ const vm = require("node:vm");
 
 const repoRoot = path.resolve(__dirname, "..");
 
-function loadDocumentRenderer() {
+function loadDocumentRenderer(options = {}) {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),
     "utf8",
   );
+  const matchCoarsePointer = options.coarsePointer === true;
   const window = {
     CBO: {},
     addEventListener() {},
     dispatchEvent() {},
-    matchMedia: () => ({ matches: false }),
+    matchMedia: () => ({ matches: matchCoarsePointer }),
     removeEventListener() {},
   };
   const context = vm.createContext({
@@ -34,7 +35,10 @@ function loadDocumentRenderer() {
     Object,
     Set,
     String,
-    navigator: { maxTouchPoints: 0, userAgent: "" },
+    navigator: {
+      maxTouchPoints: Number.isFinite(options.maxTouchPoints) ? options.maxTouchPoints : 0,
+      userAgent: options.userAgent || "",
+    },
     window,
   });
 
@@ -537,9 +541,11 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /deleteRasterSnapshot\(snapshot\)/);
   assert.match(source, /deleteRasterSnapshot\(snapshot\) \{\s*if \(!snapshot\) \{\s*return;\s*\}/);
   assert.match(source, /const RASTER_HISTORY_TILE_SIZE = 256/);
+  assert.match(source, /const RASTER_HISTORY_MOBILE_TILE_SIZE = 128/);
   assert.match(source, /beginRasterTileHistory\(layerId, dirtyRect, options = \{\}\)/);
   assert.match(source, /extendRasterTileHistory\(capture, dirtyRect, options = \{\}\)/);
   assert.match(source, /commitRasterTileHistory\(capture, options = \{\}\)/);
+  assert.match(source, /captureRasterTileHistoryAfterSnapshots\(entry, options = \{\}\)/);
   assert.match(source, /restoreRasterTileHistoryEntry\(entry, snapshotKey = "before", options = \{\}\)/);
   assert.match(source, /tileDeltas/);
   assert.match(source, /createRasterOperationMemoryReport\(options = \{\}\)/);
@@ -564,6 +570,121 @@ test("document renderer exposes GPU snapshot lifecycle helpers for raster histor
   assert.match(source, /gl\.blitFramebuffer\(/);
   assert.match(source, /gl\.deleteFramebuffer\(snapshot\.framebuffer\)/);
   assert.match(source, /gl\.deleteTexture\(snapshot\.texture\)/);
+});
+
+test("raster history tiles skip untouched cells when brush patch rects are provided", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 512;
+  renderer.height = 512;
+
+  const rects = renderer.getRasterHistoryTileRects(
+    { x: 0, y: 0, width: 512, height: 512 },
+    {
+      tilePatchRects: [
+        { x: 12, y: 12, width: 20, height: 20 },
+        { x: 300, y: 300, width: 20, height: 20 },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    Array.from(rects, (rect) => `${rect.tx}:${rect.ty}`),
+    ["0:0", "1:1"],
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(rects[0].patchRect)), { x: 12, y: 12, width: 20, height: 20 });
+  assert.deepEqual(JSON.parse(JSON.stringify(rects[1].patchRect)), { x: 300, y: 300, width: 20, height: 20 });
+});
+
+test("lazy raster tile history captures after snapshots on first undo", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const rect = { x: 8, y: 12, width: 16, height: 18 };
+  const snapshots = [];
+  const restores = [];
+
+  renderer.createRasterSnapshot = (layerId, snapshotRect, label) => {
+    snapshots.push({ label, layerId, rect: snapshotRect });
+    return {
+      bytes: 32,
+      framebuffer: {},
+      label,
+      rect: { ...snapshotRect },
+      texture: {},
+    };
+  };
+  renderer.deleteRasterSnapshot = () => {};
+  renderer.emitContentChange = () => {};
+  renderer.emitRasterHistoryTileDebug = () => {};
+  renderer.requestDraw = () => {};
+  renderer.restoreRasterSnapshot = (layerId, snapshot, options = {}) => {
+    restores.push({ layerId, label: snapshot.label, source: options.source });
+    return true;
+  };
+
+  const capture = {
+    affectedNodes: ["paint-main"],
+    id: "capture-1",
+    label: "brush-stroke",
+    layerId: "paint-main",
+    projectionInvalidation: [{ ...rect }],
+    rect: { ...rect },
+    source: "brush",
+    tileDeltas: [{
+      after: null,
+      before: {
+        bytes: 32,
+        framebuffer: {},
+        label: "brush-stroke-before-tile-0-0",
+        rect: { ...rect },
+        texture: {},
+      },
+      layerId: "paint-main",
+      rect: { ...rect },
+      tileRect: { ...rect },
+      tx: 0,
+      ty: 0,
+    }],
+    tileSize: 128,
+  };
+
+  const entry = renderer.commitRasterTileHistory(capture, {
+    label: "brush-stroke",
+    lazyAfter: true,
+    redoSource: "history-redo-brush",
+    source: "brush",
+    undoSource: "history-undo-brush",
+  });
+
+  assert.equal(entry.lazyAfter, true);
+  assert.equal(entry.tileDeltas[0].after, null);
+  assert.equal(snapshots.length, 0);
+
+  assert.equal(entry.undo(), true);
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0].label, "brush-stroke-after-tile-0-0");
+  assert.equal(entry.tileDeltas[0].after.label, "brush-stroke-after-tile-0-0");
+
+  assert.equal(entry.redo(), true);
+  assert.equal(snapshots.length, 1);
+  assert.deepEqual(
+    restores.map((restore) => restore.source),
+    ["history-undo-brush", "history-redo-brush"],
+  );
+});
+
+test("raster history uses smaller default tiles on mobile-like devices", () => {
+  const desktop = Object.create(loadDocumentRenderer().DocumentRenderer.prototype);
+  const mobile = Object.create(loadDocumentRenderer({
+    coarsePointer: true,
+    maxTouchPoints: 5,
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile",
+  }).DocumentRenderer.prototype);
+
+  assert.equal(desktop.getRasterHistoryTileSize(), 256);
+  assert.equal(mobile.getRasterHistoryTileSize(), 128);
+  assert.equal(mobile.getRasterHistoryTileSize({ tileSize: 256 }), 256);
 });
 
 test("document renderer exposes mipmapped preview cache helpers", () => {
@@ -595,6 +716,8 @@ test("document renderer uses a procedural background texture", () => {
   assert.match(source, /createProceduralBackgroundTarget\(\)/);
   assert.match(source, /new Uint8Array\(\[255, 255, 255, 255\]\)/);
   assert.match(source, /label: "procedural background texture"/);
+  assert.match(source, /resourceHeight: 1/);
+  assert.match(source, /resourceWidth: 1/);
   assert.match(source, /bbox: \{\s*x: 0,\s*y: 0,\s*width: this\.width,\s*height: this\.height,\s*\}/);
   assert.match(source, /createBaseLayerTarget\(\) \{\s*const backgroundTarget = this\.createProceduralBackgroundTarget\(\)/);
   assert.doesNotMatch(source, /createBaseLayerTarget\(\) \{[\s\S]*?const target = this\.createRasterTarget\(\[0, 0, 0, 0\]\)/);

@@ -2,8 +2,63 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const repoRoot = path.resolve(__dirname, "..");
+
+function loadBrushEngine() {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const window = {
+    CBO: {},
+    addEventListener() {},
+    clearTimeout() {},
+    dispatchEvent() {},
+    removeEventListener() {},
+    setTimeout() {
+      return 1;
+    },
+  };
+  const context = vm.createContext({
+    CustomEvent: class CustomEvent extends Event {
+      constructor(type, init = {}) {
+        super(type);
+        this.detail = init.detail;
+      }
+    },
+    Date,
+    Event,
+    EventTarget,
+    Float32Array,
+    HTMLCanvasElement: class HTMLCanvasElement {},
+    Image: class Image {},
+    Map,
+    Math,
+    Number,
+    Object,
+    ResizeObserver: class ResizeObserver {},
+    Set,
+    String,
+    Uint8Array,
+    console,
+    document: {
+      body: {
+        classList: {
+          remove() {},
+        },
+      },
+      querySelector: () => null,
+    },
+    navigator: {},
+    window,
+  });
+
+  vm.runInContext(source, context);
+
+  return {
+    BrushEngine: context.window.CBO.BrushEngine,
+    window: context.window,
+  };
+}
 
 test("brush stroke history prefers tile-memento before and after snapshots", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
@@ -44,4 +99,89 @@ test("brush stroke history records memory policy and disables redo for huge stro
   assert.match(source, /this\.documentRenderer\?\.deleteActiveStrokeScratchTarget\?\.\(\)/);
   assert.match(source, /this\.documentRenderer\?\.compactInactivePaintTargets\?\.\(/);
   assert.match(source, /source: "brush-bake-compact-inactive"/);
+});
+
+test("brush stroke history batches tile captures until the idle commit", () => {
+  const { BrushEngine, window } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+  const calls = [];
+  const capture = {
+    tileDeltas: [],
+  };
+  const rectA = { x: 0, y: 0, width: 10, height: 10 };
+  const rectB = { x: 8, y: 8, width: 10, height: 10 };
+
+  window.CBO.documentHistory = {
+    push(entry) {
+      calls.push(["push", entry.source, entry.memoryPolicy?.strokeCount]);
+      return true;
+    },
+  };
+  engine.options = {
+    enableHistory: true,
+    historyBatchIdleMs: 1000,
+  };
+  engine.currentStrokeTool = "brush";
+  engine.documentRenderer = {
+    beginRasterTileHistory(layerId, rect, options) {
+      calls.push(["begin", layerId, rect, options.source]);
+      return capture;
+    },
+    commitRasterTileHistory(nextCapture, options) {
+      calls.push(["commit", nextCapture === capture, options.source, options.lazyAfter]);
+      return {
+        memoryPolicy: options.memoryPolicy,
+        source: options.source,
+        type: "pixel",
+        destroy() {},
+        redo() {
+          return true;
+        },
+        undo() {
+          return true;
+        },
+      };
+    },
+    extendRasterTileHistory(nextCapture, rect, options) {
+      calls.push(["extend", nextCapture === capture, rect, options.source]);
+      return true;
+    },
+    finalizeRasterEditHistoryEntry(layerId, entry) {
+      calls.push(["finalize", layerId, entry.source]);
+      return entry;
+    },
+  };
+  engine.getActiveStrokeTilePatchRects = () => [];
+  engine.pendingBrushHistory = null;
+  engine.pendingBrushHistoryTimer = 0;
+  engine.isDisposed = false;
+  engine.isFlushingBrushHistory = false;
+  engine.requestDraw = () => calls.push(["draw"]);
+
+  assert.equal(engine.prepareBatchedBrushHistory("paint-main", rectA, {
+    policy: "normal",
+    strokeRect: rectA,
+  }), capture);
+  assert.equal(engine.prepareBatchedBrushHistory("paint-main", rectB, {
+    policy: "medium",
+    strokeRect: rectB,
+  }), capture);
+  assert.equal(calls.some((call) => call[0] === "commit"), false);
+
+  assert.equal(engine.flushPendingBrushHistory({ source: "test" }), true);
+  assert.deepEqual(calls.map((call) => call[0]), ["begin", "extend", "commit", "finalize", "push", "draw"]);
+  assert.deepEqual(calls.find((call) => call[0] === "commit"), ["commit", true, "brush", true]);
+  assert.deepEqual(calls.find((call) => call[0] === "push"), ["push", "brush", 2]);
+});
+
+test("brush batch history flushes before other raster history captures", () => {
+  const brushSource = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const rendererSource = fs.readFileSync(path.join(repoRoot, "js", "document", "document-renderer.js"), "utf8");
+
+  assert.match(brushSource, /const BRUSH_HISTORY_BATCH_IDLE_MS = 1000/);
+  assert.match(brushSource, /window\.addEventListener\("cbo:before-raster-history-capture", this\.handleBeforeRasterHistoryCapture\)/);
+  assert.match(brushSource, /handleBeforeRasterHistoryCapture\(event\)/);
+  assert.match(brushSource, /this\.flushPendingBrushHistory\(\{\s*source: source \? `brush-before-\$\{source\}` : "brush-before-raster-history",\s*\}\)/);
+  assert.match(rendererSource, /new CustomEvent\("cbo:before-raster-history-capture"/);
+  assert.match(rendererSource, /source: options\.source \|\| options\.label \|\| "raster-tile-history"/);
 });

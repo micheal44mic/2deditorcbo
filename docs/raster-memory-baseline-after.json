@@ -1,5 +1,5 @@
 {
-  "activeLayerId": "image-mopt4cby-1",
+  "activeLayerId": "image-mowid6kw-1",
   "rendererSize": {
     "width": 4000,
     "height": 4000
@@ -7,178 +7,254 @@
   "results": [
     {
       "name": "fresh-load",
-      "countedTextures": 3,
-      "summary": [
-        {
-          "category": "persistent layer targets",
-          "duplicateRows": 0,
-          "estimatedMiB": "122.1",
-          "textures": 2
-        },
-        {
-          "category": "renderer caches",
-          "duplicateRows": 1,
-          "estimatedMiB": "81.4",
-          "textures": 1
-        }
-      ],
-      "topRows": [
-        {
-          "category": "renderer caches",
-          "duplicate": false,
-          "height": 4000,
-          "label": "preview mip cache",
-          "MiB": "81.4",
-          "width": 4000
-        },
-        {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 4000,
-          "label": "Background (background)",
-          "MiB": "61.0",
-          "width": 4000
-        },
-        {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 4000,
-          "label": "Paint (paint)",
-          "MiB": "61.0",
-          "width": 4000
-        },
-        {
-          "category": "renderer caches",
-          "duplicate": true,
-          "height": 4000,
-          "label": "main document texture",
-          "MiB": "0.00",
-          "width": 4000
-        }
-      ],
-      "totalMiB": "203.5"
-    },
-    {
-      "name": "after-import-800x600-history-cleared",
       "countedTextures": 4,
       "summary": [
         {
-          "category": "persistent layer targets",
-          "duplicateRows": 0,
-          "estimatedMiB": "123.9",
-          "textures": 3
+          "bytes": 85332856,
+          "category": "cache/previewMip",
+          "count": 1,
+          "kind": "previewMip",
+          "ownerType": "cache",
+          "MiB": "81.38",
+          "estimatedMiB": "81.38"
         },
         {
-          "category": "renderer caches",
-          "duplicateRows": 1,
-          "estimatedMiB": "81.4",
-          "textures": 1
+          "bytes": 22369620,
+          "category": "cache/brushGrainTexture",
+          "count": 1,
+          "kind": "brushGrainTexture",
+          "ownerType": "cache",
+          "MiB": "21.33",
+          "estimatedMiB": "21.33"
+        },
+        {
+          "bytes": 1048576,
+          "category": "cache/brushShapeTexture",
+          "count": 1,
+          "kind": "brushShapeTexture",
+          "ownerType": "cache",
+          "MiB": "1.00",
+          "estimatedMiB": "1.00"
+        },
+        {
+          "bytes": 4,
+          "category": "live/background",
+          "count": 1,
+          "kind": "background",
+          "ownerType": "live",
+          "MiB": "0.00",
+          "estimatedMiB": "0.00"
         }
       ],
       "topRows": [
         {
-          "category": "renderer caches",
-          "duplicate": false,
+          "category": "cache/previewMip",
           "height": 4000,
           "label": "preview mip cache",
-          "MiB": "81.4",
+          "MiB": "81.38",
           "width": 4000
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
+          "category": "cache/brushGrainTexture",
+          "height": 2048,
+          "label": "brush grain texture",
+          "MiB": "21.33",
+          "width": 2048
+        },
+        {
+          "category": "cache/brushShapeTexture",
+          "height": 512,
+          "label": "brush shape texture",
+          "MiB": "1.00",
+          "width": 512
+        },
+        {
+          "category": "live/background",
+          "height": 1,
+          "label": "background",
+          "MiB": "0.00",
+          "width": 1
+        }
+      ],
+      "totalMiB": "103.71"
+    },
+    {
+      "name": "after-import-800x600-history-cleared",
+      "countedTextures": 5,
+      "summary": [
+        {
+          "bytes": 85332856,
+          "category": "cache/previewMip",
+          "count": 1,
+          "kind": "previewMip",
+          "ownerType": "cache",
+          "MiB": "81.38",
+          "estimatedMiB": "81.38"
+        },
+        {
+          "bytes": 22369620,
+          "category": "cache/brushGrainTexture",
+          "count": 1,
+          "kind": "brushGrainTexture",
+          "ownerType": "cache",
+          "MiB": "21.33",
+          "estimatedMiB": "21.33"
+        },
+        {
+          "bytes": 1942464,
+          "category": "live/layer",
+          "count": 1,
+          "kind": "layer",
+          "ownerType": "live",
+          "MiB": "1.85",
+          "estimatedMiB": "1.85"
+        },
+        {
+          "bytes": 1048576,
+          "category": "cache/brushShapeTexture",
+          "count": 1,
+          "kind": "brushShapeTexture",
+          "ownerType": "cache",
+          "MiB": "1.00",
+          "estimatedMiB": "1.00"
+        },
+        {
+          "bytes": 4,
+          "category": "live/background",
+          "count": 1,
+          "kind": "background",
+          "ownerType": "live",
+          "MiB": "0.00",
+          "estimatedMiB": "0.00"
+        }
+      ],
+      "topRows": [
+        {
+          "category": "cache/previewMip",
           "height": 4000,
-          "label": "Background (background)",
-          "MiB": "61.0",
+          "label": "preview mip cache",
+          "MiB": "81.38",
           "width": 4000
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 4000,
-          "label": "Paint (paint)",
-          "MiB": "61.0",
-          "width": 4000
+          "category": "cache/brushGrainTexture",
+          "height": 2048,
+          "label": "brush grain texture",
+          "MiB": "21.33",
+          "width": 2048
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
+          "category": "live/layer",
           "height": 604,
-          "label": "benchmark-800x600.png (image)",
+          "label": "image-mowid6kw-1",
           "MiB": "1.85",
           "width": 804
         },
         {
-          "category": "renderer caches",
-          "duplicate": true,
-          "height": 4000,
-          "label": "main document texture",
+          "category": "cache/brushShapeTexture",
+          "height": 512,
+          "label": "brush shape texture",
+          "MiB": "1.00",
+          "width": 512
+        },
+        {
+          "category": "live/background",
+          "height": 1,
+          "label": "background",
           "MiB": "0.00",
-          "width": 4000
+          "width": 1
         }
       ],
-      "totalMiB": "205.3"
+      "totalMiB": "105.57"
     },
     {
       "name": "after-resize-to-400x300-history-cleared",
-      "countedTextures": 4,
+      "countedTextures": 5,
       "summary": [
         {
-          "category": "persistent layer targets",
-          "duplicateRows": 0,
-          "estimatedMiB": "122.5",
-          "textures": 3
+          "bytes": 85332856,
+          "category": "cache/previewMip",
+          "count": 1,
+          "kind": "previewMip",
+          "ownerType": "cache",
+          "MiB": "81.38",
+          "estimatedMiB": "81.38"
         },
         {
-          "category": "renderer caches",
-          "duplicateRows": 1,
-          "estimatedMiB": "81.4",
-          "textures": 1
+          "bytes": 22369620,
+          "category": "cache/brushGrainTexture",
+          "count": 1,
+          "kind": "brushGrainTexture",
+          "ownerType": "cache",
+          "MiB": "21.33",
+          "estimatedMiB": "21.33"
+        },
+        {
+          "bytes": 1048576,
+          "category": "cache/brushShapeTexture",
+          "count": 1,
+          "kind": "brushShapeTexture",
+          "ownerType": "cache",
+          "MiB": "1.00",
+          "estimatedMiB": "1.00"
+        },
+        {
+          "bytes": 502656,
+          "category": "live/paintTarget",
+          "count": 1,
+          "kind": "paintTarget",
+          "ownerType": "live",
+          "MiB": "0.48",
+          "estimatedMiB": "0.48"
+        },
+        {
+          "bytes": 4,
+          "category": "live/background",
+          "count": 1,
+          "kind": "background",
+          "ownerType": "live",
+          "MiB": "0.00",
+          "estimatedMiB": "0.00"
         }
       ],
       "topRows": [
         {
-          "category": "renderer caches",
-          "duplicate": false,
+          "category": "cache/previewMip",
           "height": 4000,
           "label": "preview mip cache",
-          "MiB": "81.4",
+          "MiB": "81.38",
           "width": 4000
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 4000,
-          "label": "Background (background)",
-          "MiB": "61.0",
-          "width": 4000
+          "category": "cache/brushGrainTexture",
+          "height": 2048,
+          "label": "brush grain texture",
+          "MiB": "21.33",
+          "width": 2048
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 4000,
-          "label": "Paint (paint)",
-          "MiB": "61.0",
-          "width": 4000
+          "category": "cache/brushShapeTexture",
+          "height": 512,
+          "label": "brush shape texture",
+          "MiB": "1.00",
+          "width": 512
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 304,
-          "label": "benchmark-800x600.png (image)",
-          "MiB": "0.47",
-          "width": 404
+          "category": "live/paintTarget",
+          "height": 308,
+          "label": "image-mowid6kw-1",
+          "MiB": "0.48",
+          "width": 408
         },
         {
-          "category": "renderer caches",
-          "duplicate": true,
-          "height": 4000,
-          "label": "main document texture",
+          "category": "live/background",
+          "height": 1,
+          "label": "background",
           "MiB": "0.00",
-          "width": 4000
+          "width": 1
         }
       ],
-      "totalMiB": "203.9",
+      "totalMiB": "104.19",
       "didTransform": true,
       "sourceRect": {
         "x": 1598,
@@ -189,86 +265,115 @@
     },
     {
       "name": "after-gaussian-blur-radius-50-scratch",
-      "countedTextures": 6,
+      "countedTextures": 7,
       "summary": [
         {
-          "category": "persistent layer targets",
-          "duplicateRows": 0,
-          "estimatedMiB": "122.5",
-          "textures": 3
+          "bytes": 85332856,
+          "category": "cache/previewMip",
+          "count": 1,
+          "kind": "previewMip",
+          "ownerType": "cache",
+          "MiB": "81.38",
+          "estimatedMiB": "81.38"
         },
         {
-          "category": "renderer caches",
-          "duplicateRows": 1,
-          "estimatedMiB": "81.4",
-          "textures": 1
+          "bytes": 22369620,
+          "category": "cache/brushGrainTexture",
+          "count": 1,
+          "kind": "brushGrainTexture",
+          "ownerType": "cache",
+          "MiB": "21.33",
+          "estimatedMiB": "21.33"
         },
         {
-          "category": "renderer scratch targets",
-          "duplicateRows": 0,
-          "estimatedMiB": "1.58",
-          "textures": 2
+          "bytes": 1687552,
+          "category": "scratch/effectScratch",
+          "count": 2,
+          "kind": "effectScratch",
+          "ownerType": "scratch",
+          "MiB": "1.61",
+          "estimatedMiB": "1.61"
+        },
+        {
+          "bytes": 1048576,
+          "category": "cache/brushShapeTexture",
+          "count": 1,
+          "kind": "brushShapeTexture",
+          "ownerType": "cache",
+          "MiB": "1.00",
+          "estimatedMiB": "1.00"
+        },
+        {
+          "bytes": 502656,
+          "category": "live/paintTarget",
+          "count": 1,
+          "kind": "paintTarget",
+          "ownerType": "live",
+          "MiB": "0.48",
+          "estimatedMiB": "0.48"
+        },
+        {
+          "bytes": 4,
+          "category": "live/background",
+          "count": 1,
+          "kind": "background",
+          "ownerType": "live",
+          "MiB": "0.00",
+          "estimatedMiB": "0.00"
         }
       ],
       "topRows": [
         {
-          "category": "renderer caches",
-          "duplicate": false,
+          "category": "cache/previewMip",
           "height": 4000,
           "label": "preview mip cache",
-          "MiB": "81.4",
+          "MiB": "81.38",
           "width": 4000
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 4000,
-          "label": "Background (background)",
-          "MiB": "61.0",
-          "width": 4000
+          "category": "cache/brushGrainTexture",
+          "height": 2048,
+          "label": "brush grain texture",
+          "MiB": "21.33",
+          "width": 2048
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 4000,
-          "label": "Paint (paint)",
-          "MiB": "61.0",
-          "width": 4000
+          "category": "cache/brushShapeTexture",
+          "height": 512,
+          "label": "brush shape texture",
+          "MiB": "1.00",
+          "width": 512
         },
         {
-          "category": "renderer scratch targets",
-          "duplicate": false,
-          "height": 408,
+          "category": "scratch/effectScratch",
+          "height": 412,
           "label": "layerEffectScratchA",
-          "MiB": "0.79",
-          "width": 508
+          "MiB": "0.80",
+          "width": 512
         },
         {
-          "category": "renderer scratch targets",
-          "duplicate": false,
-          "height": 408,
+          "category": "scratch/effectScratch",
+          "height": 412,
           "label": "layerEffectScratchB",
-          "MiB": "0.79",
-          "width": 508
+          "MiB": "0.80",
+          "width": 512
         },
         {
-          "category": "persistent layer targets",
-          "duplicate": false,
-          "height": 304,
-          "label": "benchmark-800x600.png (image)",
-          "MiB": "0.47",
-          "width": 404
+          "category": "live/paintTarget",
+          "height": 308,
+          "label": "image-mowid6kw-1",
+          "MiB": "0.48",
+          "width": 408
         },
         {
-          "category": "renderer caches",
-          "duplicate": true,
-          "height": 4000,
-          "label": "main document texture",
+          "category": "live/background",
+          "height": 1,
+          "label": "background",
           "MiB": "0.00",
-          "width": 4000
+          "width": 1
         }
       ],
-      "totalMiB": "205.5",
+      "totalMiB": "105.80",
       "blurError": null
     }
   ]

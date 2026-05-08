@@ -10,6 +10,7 @@ window.CBO = window.CBO || {};
   const STROKE_FINAL_PADDING = 6;
   const STROKE_SAMPLE_CLAMP_MIN_PADDING = 64;
   const MAX_STAMPS_PER_FLUSH = 4096;
+  const BRUSH_HISTORY_BATCH_IDLE_MS = 1000;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_MIB = 1024 * 1024;
   const STROKE_MEMORY_POLICY = Object.freeze({
@@ -507,6 +508,9 @@ void main() {
           : options.enableHistory === false
             ? false
             : !options.getSettings && options.disableInput !== true,
+        historyBatchIdleMs: Number.isFinite(options.historyBatchIdleMs) && options.historyBatchIdleMs >= 0
+          ? Math.floor(options.historyBatchIdleMs)
+          : BRUSH_HISTORY_BATCH_IDLE_MS,
         respectActiveTool: options.respectActiveTool === true
           ? true
           : options.respectActiveTool === false
@@ -585,6 +589,9 @@ void main() {
       this.strokeAccumFBO = null;
       this.strokeBufferRect = null;
       this.lastStrokeMemoryReport = null;
+      this.pendingBrushHistory = null;
+      this.pendingBrushHistoryTimer = 0;
+      this.isFlushingBrushHistory = false;
       this.brushProgramInfo = null;
       this.compositeProgramInfo = null;
       this.strokeBuildupProgramInfo = null;
@@ -605,6 +612,8 @@ void main() {
       this.handleBrushSettingsChange = this.handleBrushSettingsChange.bind(this);
       this.handleToolChange = this.handleToolChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
+      this.handleBeforeHistoryAction = this.handleBeforeHistoryAction.bind(this);
+      this.handleBeforeRasterHistoryCapture = this.handleBeforeRasterHistoryCapture.bind(this);
       this.handlePointerDown = this.handlePointerDown.bind(this);
       this.handlePointerMove = this.handlePointerMove.bind(this);
       this.handlePointerUp = this.handlePointerUp.bind(this);
@@ -1230,6 +1239,217 @@ void main() {
       return history.pruneRasterHistoryBudget();
     }
 
+    canBatchBrushHistory() {
+      return Boolean(
+        this.options.enableHistory &&
+        this.options.historyBatchIdleMs > 0 &&
+        this.documentRenderer?.beginRasterTileHistory &&
+        this.documentRenderer?.extendRasterTileHistory &&
+        this.documentRenderer?.commitRasterTileHistory,
+      );
+    }
+
+    clearPendingBrushHistoryTimer() {
+      if (!this.pendingBrushHistoryTimer) {
+        return;
+      }
+
+      window.clearTimeout(this.pendingBrushHistoryTimer);
+      this.pendingBrushHistoryTimer = 0;
+    }
+
+    schedulePendingBrushHistoryCommit() {
+      if (!this.pendingBrushHistory || this.isDisposed) {
+        return;
+      }
+
+      this.clearPendingBrushHistoryTimer();
+      this.pendingBrushHistoryTimer = window.setTimeout(() => {
+        this.pendingBrushHistoryTimer = 0;
+
+        if (this.isDrawing || this.isPanning) {
+          this.schedulePendingBrushHistoryCommit();
+          return;
+        }
+
+        this.flushPendingBrushHistory({
+          source: "brush-history-idle",
+        });
+      }, this.options.historyBatchIdleMs);
+    }
+
+    isPendingBrushHistoryCompatible(layerId, source) {
+      const pending = this.pendingBrushHistory;
+
+      return Boolean(
+        pending &&
+        pending.layerId === layerId &&
+        pending.source === source,
+      );
+    }
+
+    getMergedBrushHistoryMemoryReport(previous, next) {
+      if (!previous) {
+        return next ? {
+          ...next,
+          phase: "brush-history-batch",
+          strokeCount: 1,
+        } : null;
+      }
+
+      if (!next) {
+        return previous;
+      }
+
+      const policyRank = {
+        normal: 0,
+        medium: 1,
+        large: 2,
+        huge: 3,
+      };
+      const previousPolicy = String(previous.policy || "normal");
+      const nextPolicy = String(next.policy || "normal");
+      const policy = (policyRank[nextPolicy] || 0) > (policyRank[previousPolicy] || 0)
+        ? nextPolicy
+        : previousPolicy;
+
+      return {
+        ...previous,
+        canvasSize: next.canvasSize || previous.canvasSize,
+        coverage: Math.max(Number(previous.coverage) || 0, Number(next.coverage) || 0),
+        estimatedPeakBytes: Math.max(
+          Number(previous.estimatedPeakBytes) || 0,
+          Number(next.estimatedPeakBytes) || 0,
+        ),
+        phase: "brush-history-batch",
+        policy,
+        scratchBytes: Math.max(Number(previous.scratchBytes) || 0, Number(next.scratchBytes) || 0),
+        strokeCount: (Number(previous.strokeCount) || 1) + 1,
+        strokeRect: this.unionRects(previous.strokeRect, next.strokeRect),
+      };
+    }
+
+    prepareBatchedBrushHistory(layerId, strokeRect, memoryReport) {
+      if (!this.canBatchBrushHistory() || !layerId || !strokeRect) {
+        return null;
+      }
+
+      const source = this.currentStrokeTool || "brush";
+      const tilePatchRects = this.getActiveStrokeTilePatchRects();
+
+      if (this.pendingBrushHistory && !this.isPendingBrushHistoryCompatible(layerId, source)) {
+        this.flushPendingBrushHistory({
+          source: "brush-history-switch",
+        });
+      }
+
+      if (!this.pendingBrushHistory) {
+        const capture = this.documentRenderer.beginRasterTileHistory(layerId, strokeRect, {
+          label: "brush-stroke",
+          source,
+          tilePatchRects,
+        });
+
+        if (!capture) {
+          return null;
+        }
+
+        this.pendingBrushHistory = {
+          capture,
+          createdAt: Date.now(),
+          layerId,
+          memoryPolicy: this.getMergedBrushHistoryMemoryReport(null, memoryReport),
+          source,
+          strokeCount: 1,
+          updatedAt: Date.now(),
+        };
+
+        return capture;
+      }
+
+      const didExtend = this.documentRenderer.extendRasterTileHistory(this.pendingBrushHistory.capture, strokeRect, {
+        label: "brush-stroke",
+        layerId,
+        source,
+        tilePatchRects,
+      });
+
+      if (!didExtend) {
+        this.flushPendingBrushHistory({
+          source: "brush-history-extend-failed",
+        });
+        return null;
+      }
+
+      this.pendingBrushHistory.memoryPolicy = this.getMergedBrushHistoryMemoryReport(
+        this.pendingBrushHistory.memoryPolicy,
+        memoryReport,
+      );
+      this.pendingBrushHistory.strokeCount += 1;
+      this.pendingBrushHistory.updatedAt = Date.now();
+
+      return this.pendingBrushHistory.capture;
+    }
+
+    flushPendingBrushHistory(options = {}) {
+      const pending = this.pendingBrushHistory;
+
+      if (!pending || this.isFlushingBrushHistory) {
+        return false;
+      }
+
+      this.clearPendingBrushHistoryTimer();
+      this.pendingBrushHistory = null;
+      this.isFlushingBrushHistory = true;
+
+      try {
+        const history = namespace.documentHistory;
+        const tileEntry = this.documentRenderer?.commitRasterTileHistory?.(pending.capture, {
+          label: "brush-stroke",
+          lazyAfter: true,
+          memoryPolicy: pending.memoryPolicy,
+          redoSource: `history-redo-${pending.source}`,
+          source: pending.source,
+          type: "pixel",
+          undoSource: `history-undo-${pending.source}`,
+        });
+        const entry = tileEntry
+          ? this.documentRenderer?.finalizeRasterEditHistoryEntry?.(pending.layerId, tileEntry, {
+              source: pending.source,
+            }) || tileEntry
+          : null;
+
+        if (history?.push && entry) {
+          history.push(entry, {
+            source: options.source || "brush-history-batch",
+          });
+          this.pruneRasterHistoryForStroke(pending.memoryPolicy);
+          return true;
+        }
+
+        this.documentRenderer?.finalizeRasterEditHistoryEntry?.(pending.layerId, null, {
+          source: pending.source,
+        });
+        this.documentRenderer?.deleteRasterTileHistoryCapture?.(pending.capture);
+        return false;
+      } finally {
+        this.isFlushingBrushHistory = false;
+        this.requestDraw();
+      }
+    }
+
+    discardPendingBrushHistory() {
+      if (!this.pendingBrushHistory) {
+        return;
+      }
+
+      const pending = this.pendingBrushHistory;
+
+      this.clearPendingBrushHistoryTimer();
+      this.pendingBrushHistory = null;
+      this.documentRenderer?.deleteRasterTileHistoryCapture?.(pending.capture);
+    }
+
     isBrushStrokeCropped() {
       return CROPPED_BRUSH_STROKES;
     }
@@ -1608,6 +1828,8 @@ void main() {
     bindDocumentEvents() {
       window.addEventListener("cbo:document-content-change", this.handleDocumentChange);
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
+      window.addEventListener("cbo:before-history-action", this.handleBeforeHistoryAction);
+      window.addEventListener("cbo:before-raster-history-capture", this.handleBeforeRasterHistoryCapture);
     }
 
     handleBrushSettingsChange() {
@@ -1663,12 +1885,46 @@ void main() {
     handleToolChange(event) {
       const tool = this.resolveStrokeToolFromDetail(event.detail);
 
+      if (tool !== this.activeStrokeTool) {
+        this.flushPendingBrushHistory({
+          source: "brush-tool-change",
+        });
+      }
+
       this.activeStrokeTool = tool;
       this.isBrushToolActive = Boolean(tool);
     }
 
-    handleDocumentChange() {
+    handleDocumentChange(event) {
+      if (event?.type === "cbo:document-layers-change") {
+        this.flushPendingBrushHistory({
+          source: "brush-layer-change",
+        });
+      }
+
       this.requestDraw();
+    }
+
+    handleBeforeHistoryAction(event) {
+      const action = String(event.detail?.action || "").trim().toLowerCase();
+
+      if (action === "undo" || action === "redo") {
+        this.flushPendingBrushHistory({
+          source: `brush-before-${action}`,
+        });
+      }
+    }
+
+    handleBeforeRasterHistoryCapture(event) {
+      const source = String(event.detail?.source || "").trim().toLowerCase();
+
+      if (source === "brush" || source === "eraser" || source === "brush-stroke") {
+        return;
+      }
+
+      this.flushPendingBrushHistory({
+        source: source ? `brush-before-${source}` : "brush-before-raster-history",
+      });
     }
 
     canStartBrushStroke() {
@@ -3789,14 +4045,15 @@ void main() {
         target,
         tool: this.currentStrokeTool,
       });
-      const tileHistory = this.options.enableHistory && strokeRect
+      const batchedTileHistory = this.prepareBatchedBrushHistory(layerId, strokeRect, memoryReport);
+      const tileHistory = !batchedTileHistory && this.options.enableHistory && strokeRect
         ? this.documentRenderer?.beginRasterTileHistory?.(layerId, strokeRect, {
             label: "brush-stroke",
             source: this.currentStrokeTool,
             tilePatchRects: this.getActiveStrokeTilePatchRects(),
           })
         : null;
-      const beforeSnapshot = this.options.enableHistory && strokeRect && !tileHistory
+      const beforeSnapshot = this.options.enableHistory && strokeRect && !batchedTileHistory && !tileHistory
         ? this.createHistorySnapshot(target, strokeRect, "before-stroke")
         : null;
 
@@ -3827,10 +4084,13 @@ void main() {
       gl.useProgram(null);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-      if (tileHistory) {
+      if (batchedTileHistory) {
+        this.schedulePendingBrushHistoryCommit();
+      } else if (tileHistory) {
         const history = namespace.documentHistory;
         const tileEntry = this.documentRenderer?.commitRasterTileHistory?.(tileHistory, {
           label: "brush-stroke",
+          lazyAfter: true,
           memoryPolicy: memoryReport,
           redoSource: `history-redo-${this.currentStrokeTool}`,
           source: this.currentStrokeTool,
@@ -4431,6 +4691,7 @@ void main() {
       }
 
       event.preventDefault();
+      this.clearPendingBrushHistoryTimer();
       const strokeTool = this.activeStrokeTool || "brush";
       let strokeTarget = null;
 
@@ -4641,6 +4902,8 @@ void main() {
       window.removeEventListener("cbo:tool-change", this.handleToolChange);
       window.removeEventListener("cbo:document-content-change", this.handleDocumentChange);
       window.removeEventListener("cbo:document-layers-change", this.handleDocumentChange);
+      window.removeEventListener("cbo:before-history-action", this.handleBeforeHistoryAction);
+      window.removeEventListener("cbo:before-raster-history-capture", this.handleBeforeRasterHistoryCapture);
       this.resizeObserver?.disconnect();
       this.resizeObserver = null;
       if (!this.options.disableInput) {
@@ -4662,6 +4925,7 @@ void main() {
       window.removeEventListener("blur", this.handleWindowBlur);
       this.canvas.style.cursor = "";
       document.body?.classList.remove("cbo-canvas-pan-active", "cbo-canvas-pan-ready");
+      this.discardPendingBrushHistory();
 
       if (this.fullscreenQuad) {
         gl.deleteBuffer(this.fullscreenQuad.buffer);
