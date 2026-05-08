@@ -51,6 +51,25 @@
   background: rgb(44, 48, 58);
 }
 
+.tool-button:disabled,
+.tool-button.disabled,
+.tool-button[aria-disabled="true"] {
+  color: #69707d;
+  background: transparent;
+  opacity: 0.42;
+  cursor: default;
+}
+
+.tool-button:disabled:hover,
+.tool-button:disabled:focus-visible,
+.tool-button.disabled:hover,
+.tool-button.disabled:focus-visible,
+.tool-button[aria-disabled="true"]:hover,
+.tool-button[aria-disabled="true"]:focus-visible {
+  color: #69707d;
+  background: transparent;
+}
+
 .tool-button svg {
   width: 25px;
   height: 25px;

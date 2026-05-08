@@ -16,6 +16,7 @@ test("toolbar derives undo and redo enabled state from document history events",
   assert.match(source, /new CustomEvent\("cbo:before-history-action"/);
   assert.match(source, /if \(!button \|\| button\.disabled\)/);
   assert.match(source, /function ensureHistoryBusyOverlay\(\)/);
+  assert.match(source, /function clearHistoryBusy\(action\)/);
   assert.match(source, /cbo-history-busy-overlay/);
   assert.match(source, /requestAnimationFrame/);
   assert.match(source, /beforeDispatched: true/);
@@ -26,6 +27,9 @@ test("toolbar derives undo and redo enabled state from document history events",
   const triggerSource = source.slice(triggerStart, triggerEnd);
 
   assert.ok(triggerSource.indexOf('new CustomEvent("cbo:before-history-action"') < triggerSource.indexOf("if (!button || button.disabled)"));
+  assert.ok(triggerSource.indexOf("if (!button || button.disabled)") < triggerSource.indexOf("flashHistoryButton(button)"));
+  assert.ok(triggerSource.indexOf("if (!button || button.disabled)") < triggerSource.indexOf("setHistoryBusy(normalizedAction, true)"));
+  assert.match(triggerSource, /clearHistoryBusy\(normalizedAction\)/);
 });
 
 test("toolbar menu arrows open popovers without activating their paired tool", () => {
@@ -45,9 +49,13 @@ test("toolbar menu arrows open popovers without activating their paired tool", (
 
 test("history busy overlay styles blur the stage while undo or redo restores", () => {
   const source = fs.readFileSync(path.join(repoRoot, "css", "layout.css"), "utf8");
+  const toolbarSource = fs.readFileSync(path.join(repoRoot, "css", "toolbar.css"), "utf8");
 
   assert.match(source, /body\.cbo-history-busy-active \.editor-stage > \.editor-webgl-canvas/);
   assert.match(source, /\.cbo-history-busy-overlay/);
   assert.match(source, /\.cbo-history-busy-spinner/);
   assert.match(source, /@keyframes cbo-history-busy-spin/);
+  assert.match(toolbarSource, /\.tool-button:disabled/);
+  assert.match(toolbarSource, /\.tool-button\.disabled/);
+  assert.match(toolbarSource, /background: transparent/);
 });

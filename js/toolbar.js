@@ -173,6 +173,15 @@ window.CBO.initToolbar = function initToolbar() {
     document.body?.classList.toggle("cbo-history-busy-active", Boolean(isBusy));
   }
 
+  function clearHistoryBusy(action) {
+    if (historyBusyOverlay?.isConnected) {
+      setHistoryBusy(action, false);
+      return;
+    }
+
+    document.body?.classList.remove("cbo-history-busy-active");
+  }
+
   function afterHistoryBusyPaint(callback) {
     const raf = typeof window.requestAnimationFrame === "function"
       ? window.requestAnimationFrame.bind(window)
@@ -212,7 +221,7 @@ window.CBO.initToolbar = function initToolbar() {
 
     if (!button || button.disabled) {
       historyActionInFlight = false;
-      setHistoryBusy(normalizedAction, false);
+      clearHistoryBusy(normalizedAction);
       return;
     }
 
