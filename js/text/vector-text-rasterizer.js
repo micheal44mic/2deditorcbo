@@ -1,5 +1,8 @@
 (function registerVectorTextRasterizer(namespace) {
   const TEXT_LAYER_TYPE = "vector-text";
+  const TEXT_RASTER_SUPERSAMPLE_MAX_SCALE = 4;
+  const TEXT_RASTER_SUPERSAMPLE_MAX_SOURCE_BYTES = 32 * 1024 * 1024;
+  const TEXT_RASTER_SUPERSAMPLE_MAX_SOURCE_SIDE = 4096;
 
   function isVectorTextLayer(layer) {
     return layer?.type === TEXT_LAYER_TYPE || layer?.type === "text" || layer?.kind === "text";
@@ -29,6 +32,17 @@
     }
 
     return String(value || "").replace(/["\\]/g, "\\$&");
+  }
+
+  function getTextRasterSupersampleScale(rasterBox) {
+    const width = Math.max(1, Math.round(Number(rasterBox?.width) || 1));
+    const height = Math.max(1, Math.round(Number(rasterBox?.height) || 1));
+    const maxPixels = TEXT_RASTER_SUPERSAMPLE_MAX_SOURCE_BYTES / 4;
+    const sideScale = TEXT_RASTER_SUPERSAMPLE_MAX_SOURCE_SIDE / Math.max(width, height);
+    const pixelScale = Math.sqrt(maxPixels / Math.max(1, width * height));
+    const scale = Math.floor(Math.min(TEXT_RASTER_SUPERSAMPLE_MAX_SCALE, sideScale, pixelScale));
+
+    return Math.max(1, scale);
   }
 
   function findLayerNode(layerId) {
@@ -71,7 +85,7 @@
     };
   }
 
-  function createRasterSvg(layerNode, size, rasterBox = null) {
+  function createRasterSvg(layerNode, size, rasterBox = null, rasterScale = 1) {
     const sourceSvg = namespace.vectorTextRenderer?.svg || document.querySelector(".editor-vector-overlay");
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     const defs = sourceSvg?.querySelector("defs")?.cloneNode(true);
@@ -82,14 +96,16 @@
       x: 0,
       y: 0,
     };
+    const outputWidth = Math.max(1, Math.round(box.width * Math.max(1, rasterScale)));
+    const outputHeight = Math.max(1, Math.round(box.height * Math.max(1, rasterScale)));
 
     clonedLayer.classList.remove("active");
     clonedLayer.setAttribute("opacity", "1");
     clonedLayer.querySelectorAll(".editor-vector-envelope-ui").forEach((node) => node.remove());
 
     svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    svg.setAttribute("width", String(box.width));
-    svg.setAttribute("height", String(box.height));
+    svg.setAttribute("width", String(outputWidth));
+    svg.setAttribute("height", String(outputHeight));
     svg.setAttribute("viewBox", `${box.x} ${box.y} ${box.width} ${box.height}`);
 
     if (defs) {
@@ -128,7 +144,10 @@
       x: 0,
       y: 0,
     };
-    const svgMarkup = createRasterSvg(layerNode, size, box);
+    const rasterScale = getTextRasterSupersampleScale(box);
+    const outputWidth = Math.max(1, Math.round(box.width * rasterScale));
+    const outputHeight = Math.max(1, Math.round(box.height * rasterScale));
+    const svgMarkup = createRasterSvg(layerNode, size, box, rasterScale);
     const image = await loadSvgImage(svgMarkup);
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d", { alpha: true });
@@ -137,8 +156,8 @@
       throw new Error("Canvas 2D non disponibile per rasterizzare il testo.");
     }
 
-    canvas.width = box.width;
-    canvas.height = box.height;
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
@@ -182,6 +201,38 @@
     return {
       rasterBox,
       source: await renderLayerNodeToCanvas(layerNode, size, rasterBox),
+    };
+  }
+
+  function createTextRasterizeTarget(renderer, layerId, rasterBox) {
+    const target = renderer?.createRasterTargetForDocumentRect?.(layerId, rasterBox, {
+      source: "vector-text-rasterize-target",
+    });
+
+    if (target?.framebuffer && target?.texture) {
+      if (renderer.replaceRasterTarget?.(layerId, target, {
+        emit: false,
+        source: "vector-text-rasterize-target",
+      })) {
+        return {
+          ...target,
+          layerId,
+        };
+      }
+
+      renderer.deleteRasterTargetObject?.(target);
+    }
+
+    return renderer?.getRasterTarget?.(layerId) || null;
+  }
+
+  function getRasterBoxPlacement(target, rasterBox) {
+    const targetX = Number.isFinite(target?.x) ? Math.round(target.x) : 0;
+    const targetY = Number.isFinite(target?.y) ? Math.round(target.y) : 0;
+
+    return {
+      x: rasterBox.x - targetX,
+      y: rasterBox.y - targetY,
     };
   }
 
@@ -320,17 +371,28 @@
     const size = getDocumentSize();
     const rasterSource = await createRasterSource(layer, layerNode, size);
     const requiresRasterSnapshot = Boolean(rasterSource.source && rasterSource.rasterBox);
-    const target = renderer.getRasterTarget(rasterLayer.id);
+    const target = requiresRasterSnapshot
+      ? createTextRasterizeTarget(renderer, rasterLayer.id, rasterSource.rasterBox)
+      : null;
 
-    renderer.clearLayer?.(rasterLayer.id, { emit: false });
     if (requiresRasterSnapshot) {
+      if (!target?.framebuffer || !target?.texture) {
+        renderer.deleteRasterTarget?.(rasterLayer.id, { emit: false });
+        throw new Error("Impossibile preparare il target raster del testo.");
+      }
+
+      const placement = getRasterBoxPlacement(target, rasterSource.rasterBox);
+
+      renderer.clearLayer?.(rasterLayer.id, { emit: false });
       rasterizer.placeRasterImage(rasterSource.source, {
+        drawHeight: rasterSource.rasterBox.height,
+        drawWidth: rasterSource.rasterBox.width,
         emit: false,
         layerId: rasterLayer.id,
         source: "vector-text-rasterize",
         target,
-        x: rasterSource.rasterBox.x,
-        y: rasterSource.rasterBox.y,
+        x: placement.x,
+        y: placement.y,
       });
       namespace.vectorTextRenderer?.debugTextRaster?.(
         layer,

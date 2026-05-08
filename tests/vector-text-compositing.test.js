@@ -156,14 +156,18 @@ test("vector text renderer caches visual text into the matching WebGL layer targ
   );
 
   assert.match(source, /syncTextLayerRaster\(layer, pathData, pathBounds\)/);
-  assert.match(source, /renderer\.getRasterTarget\(layer\.id\)/);
+  assert.match(source, /createTextRasterTarget\(layerId, rasterBox, source = "vector-text-cache-target"\)/);
+  assert.match(source, /this\.createTextRasterTarget\(layer\.id, rasterBox, "vector-text-cache-target"\)/);
   assert.match(source, /rasterizer\.placeRasterImage\(image,/);
   assert.match(source, /layerId: layer\.id/);
+  assert.match(source, /drawWidth: rasterBox\.width/);
+  assert.match(source, /drawHeight: rasterBox\.height/);
   assert.match(source, /getTextLayerRasterBox\(layer, pathBounds, size\)/);
   assert.match(source, /renderer\.rasterTargetsByLayerId\?\.get\?\.?\(layer\.id\)/);
   assert.match(source, /cached\?\.signature === signature && \(!rasterBox \|\| hasRasterTarget\)/);
-  assert.match(source, /x: rasterBox\.x/);
-  assert.match(source, /y: rasterBox\.y/);
+  assert.match(source, /const placement = this\.getRasterBoxPlacement\(target, rasterBox\)/);
+  assert.match(source, /x: placement\.x/);
+  assert.match(source, /y: placement\.y/);
   assert.match(source, /renderer\.invalidatePreviewCache\?\.\("vector-text-cache"\)/);
   assert.doesNotMatch(source, /type:\s*"paint"[\s\S]{0,120}vector-text-cache/);
 });
@@ -366,9 +370,33 @@ test("manual vector text rasterization uses the cropped renderer asset when avai
   );
 
   assert.match(source, /createRasterTextAsset\?\.\(layer, \{ size \}\)/);
-  assert.match(source, /x: rasterSource\.rasterBox\.x/);
-  assert.match(source, /y: rasterSource\.rasterBox\.y/);
+  assert.match(source, /createTextRasterizeTarget\(renderer, rasterLayer\.id, rasterSource\.rasterBox\)/);
+  assert.match(source, /drawWidth: rasterSource\.rasterBox\.width/);
+  assert.match(source, /drawHeight: rasterSource\.rasterBox\.height/);
+  assert.match(source, /const placement = getRasterBoxPlacement\(target, rasterSource\.rasterBox\)/);
+  assert.match(source, /x: placement\.x/);
+  assert.match(source, /y: placement\.y/);
   assert.doesNotMatch(source, /rasterizer\.placeRasterImage\(canvas,[\s\S]{0,120}x:\s*0,[\s\S]{0,80}y:\s*0/);
+});
+
+test("text rasterization supersamples small text before downscaling into the layer", () => {
+  const rendererSource = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+  const rasterizerSource = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-rasterizer.js"),
+    "utf8",
+  );
+
+  assert.match(rendererSource, /TEXT_RASTER_SUPERSAMPLE_MAX_SCALE = 4/);
+  assert.match(rendererSource, /function getTextRasterSupersampleScale\(rasterBox\)/);
+  assert.match(rendererSource, /height: Math\.max\(1, Math\.round\(box\.height \* rasterScale\)\)/);
+  assert.match(rendererSource, /width: Math\.max\(1, Math\.round\(box\.width \* rasterScale\)\)/);
+  assert.match(rendererSource, /viewBox: `\$\{box\.x\} \$\{box\.y\} \$\{box\.width\} \$\{box\.height\}`/);
+  assert.match(rasterizerSource, /TEXT_RASTER_SUPERSAMPLE_MAX_SCALE = 4/);
+  assert.match(rasterizerSource, /canvas\.width = outputWidth/);
+  assert.match(rasterizerSource, /canvas\.height = outputHeight/);
 });
 
 test("text rasterization uses a document-scale drop shadow filter region", () => {

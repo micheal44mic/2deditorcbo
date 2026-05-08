@@ -81,6 +81,17 @@ test("raster transform supports Photoshop-style warp mesh preview and commit", (
   assert.match(cssSource, /\.editor-raster-transform-warp-point/);
 });
 
+test("raster transform samples snapshots linearly while resizing", () => {
+  const source = readRepoFile("js", "document", "document-renderer.js");
+
+  assert.match(source, /setRasterTextureSampling\(texture, minFilter, magFilter = minFilter\)/);
+  assert.match(source, /const textureFilter = Number\.isFinite\(options\.textureFilter\) \? options\.textureFilter : null/);
+  assert.match(source, /this\.setRasterTextureSampling\(texture, textureFilter\)/);
+  assert.match(source, /this\.setRasterTextureSampling\(texture, restoreTextureFilter\)/);
+  assert.match(source, /textureFilter: this\.gl\?\.LINEAR/);
+  assert.match(source, /textureFilter: gl\.LINEAR/);
+});
+
 test("document renderer uses analytic anti-aliased quad edge coverage for raster transforms", () => {
   const source = readRepoFile("js", "document", "document-renderer.js");
 

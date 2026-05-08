@@ -3364,6 +3364,21 @@ void main() {
       return true;
     }
 
+    setRasterTextureSampling(texture, minFilter, magFilter = minFilter) {
+      if (!texture || !Number.isFinite(minFilter)) {
+        return;
+      }
+
+      const gl = this.gl;
+      const resolvedMagFilter = Number.isFinite(magFilter) ? magFilter : minFilter;
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, resolvedMagFilter);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
     drawWarpTexturedMesh(texture, controlPoints, options = {}) {
       const points = this.normalizeRasterWarpControlPoints(controlPoints);
 
@@ -3378,9 +3393,14 @@ void main() {
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
+      const textureFilter = Number.isFinite(options.textureFilter) ? options.textureFilter : null;
 
       if (!this.updateRasterWarpMeshVertices(resource, points)) {
         return false;
+      }
+
+      if (textureFilter !== null) {
+        this.setRasterTextureSampling(texture, textureFilter);
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
@@ -3406,6 +3426,14 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.useProgram(null);
 
+      if (textureFilter !== null) {
+        const restoreTextureFilter = Number.isFinite(options.restoreTextureFilter)
+          ? options.restoreTextureFilter
+          : gl.NEAREST;
+
+        this.setRasterTextureSampling(texture, restoreTextureFilter);
+      }
+
       return true;
     }
 
@@ -3422,6 +3450,7 @@ void main() {
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
       const edgeFeatherPixels = this.getRasterTransformEdgeFeatherPixels(options);
+      const textureFilter = Number.isFinite(options.textureFilter) ? options.textureFilter : null;
       const matrix = this.computeAffineDestToSourceUvMatrix(quad);
       const edgeData = this.computeQuadEdgeUniformData(quad);
       const vertices = this.createExpandedQuadDrawVertices(
@@ -3431,6 +3460,10 @@ void main() {
 
       if (!matrix || !edgeData || !vertices) {
         return false;
+      }
+
+      if (textureFilter !== null) {
+        this.setRasterTextureSampling(texture, textureFilter);
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
@@ -3458,6 +3491,14 @@ void main() {
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
+
+      if (textureFilter !== null) {
+        const restoreTextureFilter = Number.isFinite(options.restoreTextureFilter)
+          ? options.restoreTextureFilter
+          : gl.NEAREST;
+
+        this.setRasterTextureSampling(texture, restoreTextureFilter);
+      }
 
       return true;
     }
@@ -3481,6 +3522,7 @@ void main() {
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
       const edgeFeatherPixels = this.getRasterTransformEdgeFeatherPixels(options);
+      const textureFilter = Number.isFinite(options.textureFilter) ? options.textureFilter : null;
       const edgeData = this.computeQuadEdgeUniformData(quad);
       const vertices = this.createExpandedQuadDrawVertices(
         quad,
@@ -3489,6 +3531,10 @@ void main() {
 
       if (!edgeData || !vertices) {
         return false;
+      }
+
+      if (textureFilter !== null) {
+        this.setRasterTextureSampling(texture, textureFilter);
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
@@ -3516,6 +3562,14 @@ void main() {
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
+
+      if (textureFilter !== null) {
+        const restoreTextureFilter = Number.isFinite(options.restoreTextureFilter)
+          ? options.restoreTextureFilter
+          : gl.NEAREST;
+
+        this.setRasterTextureSampling(texture, restoreTextureFilter);
+      }
 
       return true;
     }
@@ -7726,6 +7780,7 @@ void main() {
         edgeFeatherPixels: options.edgeFeatherPixels,
         framebuffer: nextTarget.framebuffer,
         opacity: 1,
+        textureFilter: this.gl?.LINEAR,
         viewportHeight: nextTarget.height,
         viewportWidth: nextTarget.width,
       };
@@ -7910,6 +7965,7 @@ void main() {
         edgeFeatherPixels: options.edgeFeatherPixels,
         framebuffer: target.framebuffer,
         opacity: 1,
+        textureFilter: this.gl?.LINEAR,
         viewportHeight: target.height,
         viewportWidth: target.width,
       };
@@ -10091,6 +10147,7 @@ void main() {
           camera,
           edgeFeatherPixels: rasterTransformPreview.edgeFeatherPixels,
           opacity: rasterTransformPreview.opacity * layerOpacity,
+          textureFilter: gl.LINEAR,
           viewportHeight,
           viewportWidth,
         };

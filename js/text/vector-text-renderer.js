@@ -16,6 +16,9 @@
   const ACTIVE_TEXT_RASTER_DEBOUNCE_MS = 180;
   const TEXT_RASTER_PREVIEW_MS = 260;
   const TEXT_RASTER_BOUNDS_PADDING = 2;
+  const TEXT_RASTER_SUPERSAMPLE_MAX_SCALE = 4;
+  const TEXT_RASTER_SUPERSAMPLE_MAX_SOURCE_BYTES = 32 * 1024 * 1024;
+  const TEXT_RASTER_SUPERSAMPLE_MAX_SOURCE_SIDE = 4096;
   const TEXT_RASTER_DEBUG = false;
 
   function createSvgElement(name, attributes = {}) {
@@ -56,6 +59,17 @@
       reduction,
       savedMB: bytesToMega(savedBytes),
     };
+  }
+
+  function getTextRasterSupersampleScale(rasterBox) {
+    const width = Math.max(1, Math.round(Number(rasterBox?.width) || 1));
+    const height = Math.max(1, Math.round(Number(rasterBox?.height) || 1));
+    const maxPixels = TEXT_RASTER_SUPERSAMPLE_MAX_SOURCE_BYTES / 4;
+    const sideScale = TEXT_RASTER_SUPERSAMPLE_MAX_SOURCE_SIDE / Math.max(width, height);
+    const pixelScale = Math.sqrt(maxPixels / Math.max(1, width * height));
+    const scale = Math.floor(Math.min(TEXT_RASTER_SUPERSAMPLE_MAX_SCALE, sideScale, pixelScale));
+
+    return Math.max(1, scale);
   }
 
   function isTextLayer(entry) {
@@ -461,6 +475,7 @@
         x: rasterBox.x,
         y: rasterBox.y,
       } : null,
+      rasterScale: getTextRasterSupersampleScale(rasterBox),
       rotation: layer.rotation,
       scaleX: layer.scaleX,
       scaleY: layer.scaleY,
@@ -473,17 +488,18 @@
     });
   }
 
-  function serializeTextLayerSvg(layerNode, defs, size, rasterBox = null) {
+  function serializeTextLayerSvg(layerNode, defs, size, rasterBox = null, options = {}) {
     const box = rasterBox || {
       height: size.height,
       width: size.width,
       x: 0,
       y: 0,
     };
+    const rasterScale = Math.max(1, Number(options.rasterScale) || 1);
     const svg = createSvgElement("svg", {
-      height: box.height,
+      height: Math.max(1, Math.round(box.height * rasterScale)),
       viewBox: `${box.x} ${box.y} ${box.width} ${box.height}`,
-      width: box.width,
+      width: Math.max(1, Math.round(box.width * rasterScale)),
       xmlns: SVG_NS,
     });
 
@@ -1196,9 +1212,10 @@
       };
     }
 
-    createRasterTextLayerMarkup(layer, pathData, size, rasterBox) {
+    createRasterTextLayerMarkup(layer, pathData, size, rasterBox, options = {}) {
       const defs = [];
       const filter = this.createDropShadowFilter(layer, { ignoreInteraction: true });
+      const rasterScale = Math.max(1, Number(options.rasterScale) || getTextRasterSupersampleScale(rasterBox));
       const rasterLayer = {
         ...layer,
         opacity: 1,
@@ -1217,7 +1234,7 @@
         defs.push(filter.node);
       }
 
-      return serializeTextLayerSvg(node, defs, size, rasterBox);
+      return serializeTextLayerSvg(node, defs, size, rasterBox, { rasterScale });
     }
 
     createRasterTextAsset(layer, options = {}) {
@@ -1239,10 +1256,13 @@
         };
       }
 
+      const rasterScale = getTextRasterSupersampleScale(rasterBox);
+
       return {
         pathData: metrics.pathData,
+        rasterScale,
         rasterBox,
-        svgMarkup: this.createRasterTextLayerMarkup(layer, metrics.pathData, size, rasterBox),
+        svgMarkup: this.createRasterTextLayerMarkup(layer, metrics.pathData, size, rasterBox, { rasterScale }),
       };
     }
 
@@ -1319,6 +1339,56 @@
         size,
         source,
       });
+    }
+
+    createTextRasterTarget(layerId, rasterBox, source = "vector-text-cache-target") {
+      const renderer = namespace.documentRenderer;
+      const existingTarget = renderer?.rasterTargetsByLayerId?.get?.(layerId);
+      const existingRect = renderer?.getRasterTargetDocumentRect?.(existingTarget);
+
+      if (
+        existingTarget?.framebuffer &&
+        existingTarget?.texture &&
+        existingRect &&
+        existingRect.x === rasterBox.x &&
+        existingRect.y === rasterBox.y &&
+        existingRect.width === rasterBox.width &&
+        existingRect.height === rasterBox.height
+      ) {
+        return {
+          ...existingTarget,
+          layerId,
+        };
+      }
+
+      const target = renderer?.createRasterTargetForDocumentRect?.(layerId, rasterBox, { source });
+
+      if (!target?.framebuffer || !target?.texture) {
+        return renderer?.getRasterTarget?.(layerId) || null;
+      }
+
+      if (!renderer.replaceRasterTarget?.(layerId, target, {
+        emit: false,
+        source,
+      })) {
+        renderer.deleteRasterTargetObject?.(target);
+        return renderer?.getRasterTarget?.(layerId) || null;
+      }
+
+      return {
+        ...target,
+        layerId,
+      };
+    }
+
+    getRasterBoxPlacement(target, rasterBox) {
+      const targetX = Number.isFinite(target?.x) ? Math.round(target.x) : 0;
+      const targetY = Number.isFinite(target?.y) ? Math.round(target.y) : 0;
+
+      return {
+        x: rasterBox.x - targetX,
+        y: rasterBox.y - targetY,
+      };
     }
 
     syncTextLayerRaster(layer, pathData, pathBounds) {
@@ -1415,7 +1485,8 @@
         return;
       }
 
-      const svgMarkup = this.createRasterTextLayerMarkup(layer, pathData, size, rasterBox);
+      const rasterScale = getTextRasterSupersampleScale(rasterBox);
+      const svgMarkup = this.createRasterTextLayerMarkup(layer, pathData, size, rasterBox, { rasterScale });
 
       loadSvgImage(svgMarkup)
         .then((image) => {
@@ -1431,16 +1502,24 @@
             return;
           }
 
-          const target = renderer.getRasterTarget(layer.id);
+          const target = this.createTextRasterTarget(layer.id, rasterBox, "vector-text-cache-target");
+
+          if (!target?.framebuffer || !target?.texture) {
+            throw new Error("Target raster testo non disponibile.");
+          }
+
+          const placement = this.getRasterBoxPlacement(target, rasterBox);
 
           renderer.clearLayer(layer.id, { emit: false });
           rasterizer.placeRasterImage(image, {
+            drawHeight: rasterBox.height,
+            drawWidth: rasterBox.width,
             emit: false,
             layerId: layer.id,
             source: "vector-text-cache",
             target,
-            x: rasterBox.x,
-            y: rasterBox.y,
+            x: placement.x,
+            y: placement.y,
           });
           renderer.invalidatePreviewCache?.("vector-text-cache");
           this.debugTextRaster(layer, rasterBox, size, "vector-text-cache");
