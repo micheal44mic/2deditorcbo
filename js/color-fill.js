@@ -653,7 +653,10 @@
     return dr * dr + dg * dg + db * db + da * da;
   }
 
-  function floodFillMask(referenceSource, width, height, seedX, seedY, tolerance, originX = 0, originY = 0) {
+  function floodFillMask(referenceSource, width, height, seedX, seedY, tolerance, originX = 0, originY = 0, options = {}) {
+    const selectionContains = typeof options.selectionContains === "function"
+      ? options.selectionContains
+      : null;
     const pixelCount = width * height;
     const seedIndex = seedY * width + seedX;
     const seedOffset = getReferencePixelOffset(referenceSource, originX + seedX, originY + seedY);
@@ -674,6 +677,15 @@
     const pushPixel = (pixelIndex) => {
       if (mask[pixelIndex] !== 0) {
         return;
+      }
+
+      if (selectionContains) {
+        const y = Math.floor(pixelIndex / width);
+        const x = pixelIndex - y * width;
+
+        if (!selectionContains(originX + x, originY + y)) {
+          return;
+        }
       }
 
       if (stackPtr >= stack.length) {
@@ -969,6 +981,7 @@
     maskOriginX = 0,
     maskOriginY = 0,
     maskWidth = documentWidth,
+    selectionContains = null,
   ) {
     for (let row = 0; row < dirtyRect.height; row += 1) {
       const docY = dirtyRect.y + dirtyRect.height - 1 - row;
@@ -982,6 +995,10 @@
           : 0;
 
         if (coverageByte <= 0) {
+          continue;
+        }
+
+        if (selectionContains && !selectionContains(docX, docY)) {
           continue;
         }
 
@@ -1196,6 +1213,9 @@
     const selectionRect = namespace.areaSelection?.hasSelection?.()
       ? namespace.areaSelection.getRect?.()
       : null;
+    const selectionContains = selectionRect
+      ? (docX, docY) => namespace.areaSelection.isPointInside?.(docX, docY) !== false
+      : null;
 
     if (selectionRect && !namespace.areaSelection.isPointInside?.(seedX, seedY)) {
       return false;
@@ -1230,6 +1250,7 @@
       tolerance,
       analysisRect.x,
       analysisRect.y,
+      { selectionContains },
     );
 
     if (!fillResult) {
@@ -1301,6 +1322,7 @@
         analysisRect.x,
         analysisRect.y,
         analysisRect.width,
+        selectionContains,
       );
       writeDirtyPixelsToTarget(
         gl,

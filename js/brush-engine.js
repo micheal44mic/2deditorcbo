@@ -3500,6 +3500,63 @@ void main() {
       return patchRects.length > 0 ? patchRects : null;
     }
 
+    getActiveAreaSelectionCoverageRects(rect) {
+      if (!namespace.areaSelection?.hasSelection?.()) {
+        return null;
+      }
+
+      const rects = namespace.areaSelection.getIntersectingRects?.(rect) || [];
+
+      return rects.length > 0 ? rects : [];
+    }
+
+    getBoundsForDocumentRects(rects) {
+      if (!Array.isArray(rects) || rects.length === 0) {
+        return null;
+      }
+
+      const x0 = Math.min(...rects.map((rect) => rect.x));
+      const y0 = Math.min(...rects.map((rect) => rect.y));
+      const x1 = Math.max(...rects.map((rect) => rect.x + rect.width));
+      const y1 = Math.max(...rects.map((rect) => rect.y + rect.height));
+
+      return {
+        height: y1 - y0,
+        width: x1 - x0,
+        x: x0,
+        y: y0,
+      };
+    }
+
+    filterTilePatchRectsToCoverage(tilePatchRects, coverageRects) {
+      if (!Array.isArray(tilePatchRects) || !Array.isArray(coverageRects) || coverageRects.length === 0) {
+        return tilePatchRects;
+      }
+
+      const renderer = this.documentRenderer;
+      const filtered = [];
+
+      tilePatchRects.forEach((item) => {
+        const patchRect = item?.patchRect || item?.rect || item;
+
+        coverageRects.forEach((coverageRect) => {
+          const clippedPatch = renderer?.intersectRasterHistoryRects?.(patchRect, coverageRect);
+
+          if (!clippedPatch) {
+            return;
+          }
+
+          filtered.push({
+            ...item,
+            patchRect: { ...clippedPatch },
+            rect: { ...clippedPatch },
+          });
+        });
+      });
+
+      return filtered.length > 0 ? filtered : null;
+    }
+
     getActiveStrokeRect() {
       if (!this.activeStrokeBounds) {
         return null;
@@ -4124,17 +4181,17 @@ void main() {
       const isEraserStroke = this.currentStrokeTool === "eraser";
       const { program, uniforms } = this.compositeProgramInfo;
       const strokeRect = this.getActiveStrokeRect();
-      const selectionRect = namespace.areaSelection?.hasSelection?.()
-        ? namespace.areaSelection.getRect?.()
-        : null;
-      const effectiveStrokeRect = selectionRect
-        ? this.documentRenderer?.intersectRasterHistoryRects?.(strokeRect, selectionRect)
-        : strokeRect;
 
       if (!this.strokeTexture || !strokeRect) {
         this.releaseStrokeLayerTarget();
         return;
       }
+
+      const selectionCoverageRects = this.getActiveAreaSelectionCoverageRects(strokeRect);
+      const hasAreaSelection = Array.isArray(selectionCoverageRects);
+      const effectiveStrokeRect = hasAreaSelection
+        ? this.getBoundsForDocumentRects(selectionCoverageRects)
+        : strokeRect;
 
       if (!effectiveStrokeRect) {
         this.clearStrokeLayer();
@@ -4145,7 +4202,10 @@ void main() {
 
       const documentTarget = this.getDocumentDrawTarget(layerId);
       const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, documentTarget);
-      const activeStrokeTilePatchRects = this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
+      const activeStrokeTilePatchRects = this.filterTilePatchRectsToCoverage(
+        this.getActiveStrokeTilePatchRects(effectiveStrokeRect),
+        selectionCoverageRects,
+      );
       const paintTargets = isEraserStroke
         ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
             source: "brush-eraser-target",
@@ -4214,11 +4274,13 @@ void main() {
       paintTargets.forEach((item) => {
         const paintTarget = item?.target;
         const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(paintTarget) || { x: 0, y: 0 };
-        const selectionTargetRect = selectionRect
-          ? this.documentRenderer?.intersectRasterHistoryRects?.(selectionRect, targetRect)
-          : null;
         const localBakeX = Math.round(bakeRect.x - targetRect.x);
         const localBakeY = Math.round(bakeRect.y - targetRect.y);
+        const targetCoverageRects = hasAreaSelection
+          ? selectionCoverageRects
+              .map((selectionRect) => this.documentRenderer?.intersectRasterHistoryRects?.(selectionRect, targetRect))
+              .filter(Boolean)
+          : null;
 
         if (!paintTarget?.framebuffer || !paintTarget?.texture) {
           return;
@@ -4226,26 +4288,28 @@ void main() {
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, paintTarget.framebuffer);
         gl.viewport(localBakeX, paintTarget.height - (localBakeY + bakeRect.height), bakeRect.width, bakeRect.height);
-        if (selectionRect) {
-          if (!selectionTargetRect) {
+        if (hasAreaSelection) {
+          if (!targetCoverageRects?.length) {
             return;
           }
 
-          gl.enable(gl.SCISSOR_TEST);
-          gl.scissor(
-            selectionTargetRect.x - targetRect.x,
-            paintTarget.height - ((selectionTargetRect.y - targetRect.y) + selectionTargetRect.height),
-            selectionTargetRect.width,
-            selectionTargetRect.height,
-          );
-        }
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        if (selectionRect) {
+          targetCoverageRects.forEach((selectionTargetRect) => {
+            gl.enable(gl.SCISSOR_TEST);
+            gl.scissor(
+              selectionTargetRect.x - targetRect.x,
+              paintTarget.height - ((selectionTargetRect.y - targetRect.y) + selectionTargetRect.height),
+              selectionTargetRect.width,
+              selectionTargetRect.height,
+            );
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          });
           gl.disable(gl.SCISSOR_TEST);
+        } else {
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
         this.documentRenderer?.markRasterTargetDirty?.(paintTarget);
       });
-      if (selectionRect) {
+      if (hasAreaSelection) {
         gl.disable(gl.SCISSOR_TEST);
       }
       gl.bindVertexArray(null);
@@ -5038,6 +5102,7 @@ void main() {
         activeStrokeClipRect: namespace.areaSelection?.hasSelection?.()
           ? namespace.areaSelection.getRect?.()
           : null,
+        activeStrokeClipRects: this.getActiveAreaSelectionCoverageRects(this.strokeBufferRect),
         activeStrokeLayerId,
         activeStrokeMode: this.currentStrokeTool === "eraser" ? "eraser" : "paint",
         activeStrokeRect: this.strokeBufferRect,

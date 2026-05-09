@@ -70,6 +70,8 @@ uniform float u_maskMode;
 uniform vec4 u_maskRect;
 uniform float u_maskRectMode;
 uniform vec4 u_maskClipRect;
+uniform vec4 u_maskClipRects[32];
+uniform int u_maskClipRectCount;
 uniform float u_maskClipMode;
 uniform float u_clipMode;
 uniform float u_clipOpacity;
@@ -126,11 +128,28 @@ void main() {
       }
 
       if (u_maskClipMode > 0.5) {
-        bool insideMaskClipRect =
+        bool insideMaskClipRect = false;
+        bool insideLegacyMaskClipRect =
           globalDocPixel.x >= u_maskClipRect.x &&
           globalDocPixel.y >= u_maskClipRect.y &&
           globalDocPixel.x <= u_maskClipRect.x + u_maskClipRect.z &&
           globalDocPixel.y <= u_maskClipRect.y + u_maskClipRect.w;
+
+        insideMaskClipRect = insideLegacyMaskClipRect && u_maskClipRectCount <= 0;
+
+        for (int i = 0; i < 32; i++) {
+          if (i >= u_maskClipRectCount) {
+            break;
+          }
+
+          vec4 clipRect = u_maskClipRects[i];
+          insideMaskClipRect = insideMaskClipRect || (
+            globalDocPixel.x >= clipRect.x &&
+            globalDocPixel.y >= clipRect.y &&
+            globalDocPixel.x <= clipRect.x + clipRect.z &&
+            globalDocPixel.y <= clipRect.y + clipRect.w
+          );
+        }
 
         if (!insideMaskClipRect) {
           eraseAlpha = 0.0;
@@ -700,6 +719,8 @@ uniform float u_maskMode;
 uniform vec4 u_maskRect;
 uniform float u_maskRectMode;
 uniform vec4 u_maskClipRect;
+uniform vec4 u_maskClipRects[32];
+uniform int u_maskClipRectCount;
 uniform float u_maskClipMode;
 uniform float u_clipMode;
 uniform float u_clipOpacity;
@@ -784,11 +805,28 @@ void main() {
     }
 
     if (u_maskClipMode > 0.5) {
-      bool insideMaskClipRect =
+      bool insideMaskClipRect = false;
+      bool insideLegacyMaskClipRect =
         globalDocPixel.x >= u_maskClipRect.x &&
         globalDocPixel.y >= u_maskClipRect.y &&
         globalDocPixel.x <= u_maskClipRect.x + u_maskClipRect.z &&
         globalDocPixel.y <= u_maskClipRect.y + u_maskClipRect.w;
+
+      insideMaskClipRect = insideLegacyMaskClipRect && u_maskClipRectCount <= 0;
+
+      for (int i = 0; i < 32; i++) {
+        if (i >= u_maskClipRectCount) {
+          break;
+        }
+
+        vec4 clipRect = u_maskClipRects[i];
+        insideMaskClipRect = insideMaskClipRect || (
+          globalDocPixel.x >= clipRect.x &&
+          globalDocPixel.y >= clipRect.y &&
+          globalDocPixel.x <= clipRect.x + clipRect.z &&
+          globalDocPixel.y <= clipRect.y + clipRect.w
+        );
+      }
 
       if (!insideMaskClipRect) {
         eraseAlpha = 0.0;
@@ -2351,6 +2389,8 @@ void main() {
           drawOrigin: gl.getUniformLocation(program, "u_drawOrigin"),
           maskClipMode: gl.getUniformLocation(program, "u_maskClipMode"),
           maskClipRect: gl.getUniformLocation(program, "u_maskClipRect"),
+          maskClipRectCount: gl.getUniformLocation(program, "u_maskClipRectCount"),
+          maskClipRects: gl.getUniformLocation(program, "u_maskClipRects[0]"),
           maskMode: gl.getUniformLocation(program, "u_maskMode"),
           maskRect: gl.getUniformLocation(program, "u_maskRect"),
           maskRectMode: gl.getUniformLocation(program, "u_maskRectMode"),
@@ -2740,6 +2780,8 @@ void main() {
           drawOrigin: gl.getUniformLocation(program, "u_drawOrigin"),
           maskClipMode: gl.getUniformLocation(program, "u_maskClipMode"),
           maskClipRect: gl.getUniformLocation(program, "u_maskClipRect"),
+          maskClipRectCount: gl.getUniformLocation(program, "u_maskClipRectCount"),
+          maskClipRects: gl.getUniformLocation(program, "u_maskClipRects[0]"),
           maskMode: gl.getUniformLocation(program, "u_maskMode"),
           maskRect: gl.getUniformLocation(program, "u_maskRect"),
           maskRectMode: gl.getUniformLocation(program, "u_maskRectMode"),
@@ -8716,6 +8758,7 @@ void main() {
         gl.uniform4f(uniforms.maskRect, 0, 0, documentWidth, documentHeight);
         gl.uniform1f(uniforms.maskClipMode, 0.0);
         gl.uniform4f(uniforms.maskClipRect, 0, 0, 0, 0);
+        gl.uniform1i(uniforms.maskClipRectCount, 0);
         gl.uniform1f(uniforms.clipMode, 0.0);
         gl.uniform1f(uniforms.clipOpacity, 1.0);
         gl.uniform2f(uniforms.clipOrigin, 0, 0);
@@ -8816,6 +8859,7 @@ void main() {
         gl.uniform4f(blendUniforms.maskRect, 0, 0, documentWidth, documentHeight);
         gl.uniform1f(blendUniforms.maskClipMode, 0.0);
         gl.uniform4f(blendUniforms.maskClipRect, 0, 0, 0, 0);
+        gl.uniform1i(blendUniforms.maskClipRectCount, 0);
         if (clipBase?.target?.texture) {
           const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
             ? Math.min(1, Math.max(0, clipBase.layer.opacity))
@@ -9927,7 +9971,18 @@ void main() {
       const activeStrokeLayerId = options.activeStrokeLayerId || target.layerId;
       const activeStrokeMode = String(options.activeStrokeMode || "paint").toLowerCase();
       const activeStrokeRect = options.activeStrokeRect || null;
-      const activeStrokeHasClip = Boolean(options.activeStrokeClipRect && activeStrokeRect);
+      const activeStrokeClipRects = Array.isArray(options.activeStrokeClipRects) && activeStrokeRect
+        ? options.activeStrokeClipRects
+            .map((rect) => this.intersectRasterHistoryRects?.(rect, activeStrokeRect))
+            .filter(Boolean)
+        : null;
+      const activeStrokeHasClip = Boolean(
+        activeStrokeRect &&
+        (
+          options.activeStrokeClipRect ||
+          activeStrokeClipRects
+        )
+      );
       const activeStrokeClipRect = activeStrokeHasClip
         ? this.intersectRasterHistoryRects?.(options.activeStrokeClipRect, activeStrokeRect)
         : null;
@@ -9997,6 +10052,7 @@ void main() {
       let currentMaskTexture = null;
       let currentMaskRect = null;
       let currentMaskClipRect = null;
+      let currentMaskClipRects = null;
       let currentPreviewCutRect = null;
       const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
         gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
@@ -10029,21 +10085,72 @@ void main() {
         };
       };
       const withActiveStrokeClip = (callback) => {
-        const scissor = getViewportScissorForDocumentRect(activeStrokeClipRect);
+        const clipRects = activeStrokeClipRects?.length
+          ? activeStrokeClipRects
+          : activeStrokeClipRect
+            ? [activeStrokeClipRect]
+            : null;
 
-        if (activeStrokeHasClip && !scissor) {
+        if (activeStrokeHasClip && !clipRects?.length) {
           return;
         }
 
-        if (!scissor) {
+        if (!clipRects) {
           callback();
           return;
         }
 
         gl.enable(gl.SCISSOR_TEST);
-        gl.scissor(scissor.x, scissor.y, scissor.width, scissor.height);
-        callback();
+        clipRects.forEach((clipRect) => {
+          const scissor = getViewportScissorForDocumentRect(clipRect);
+
+          if (!scissor) {
+            return;
+          }
+
+          gl.scissor(scissor.x, scissor.y, scissor.width, scissor.height);
+          callback();
+        });
         gl.disable(gl.SCISSOR_TEST);
+      };
+      const setMaskClipUniforms = (uniformSet, clipRect = null, clipRects = null) => {
+        const rects = Array.isArray(clipRects)
+          ? clipRects.slice(0, 32)
+          : [];
+
+        if (rects.length > 0) {
+          const values = new Float32Array(32 * 4);
+
+          rects.forEach((rect, index) => {
+            values[index * 4] = rect.x;
+            values[index * 4 + 1] = rect.y;
+            values[index * 4 + 2] = rect.width;
+            values[index * 4 + 3] = rect.height;
+          });
+
+          gl.uniform1f(uniformSet.maskClipMode, 1.0);
+          gl.uniform4f(uniformSet.maskClipRect, 0, 0, 0, 0);
+          gl.uniform1i(uniformSet.maskClipRectCount, rects.length);
+          gl.uniform4fv(uniformSet.maskClipRects, values);
+          return;
+        }
+
+        if (clipRect) {
+          gl.uniform1f(uniformSet.maskClipMode, 1.0);
+          gl.uniform4f(
+            uniformSet.maskClipRect,
+            clipRect.x,
+            clipRect.y,
+            clipRect.width,
+            clipRect.height,
+          );
+          gl.uniform1i(uniformSet.maskClipRectCount, 0);
+          return;
+        }
+
+        gl.uniform1f(uniformSet.maskClipMode, 0.0);
+        gl.uniform4f(uniformSet.maskClipRect, 0, 0, 0, 0);
+        gl.uniform1i(uniformSet.maskClipRectCount, 0);
       };
       const drawTexture = (texture, opacity, rect = null, clipBase = null) => {
         if (rect) {
@@ -10164,25 +10271,12 @@ void main() {
             gl.uniform1f(blendUniforms.maskRectMode, 0.0);
             gl.uniform4f(blendUniforms.maskRect, 0, 0, target.width, target.height);
           }
-          if (currentMaskClipRect) {
-            gl.uniform1f(blendUniforms.maskClipMode, 1.0);
-            gl.uniform4f(
-              blendUniforms.maskClipRect,
-              currentMaskClipRect.x,
-              currentMaskClipRect.y,
-              currentMaskClipRect.width,
-              currentMaskClipRect.height,
-            );
-          } else {
-            gl.uniform1f(blendUniforms.maskClipMode, 0.0);
-            gl.uniform4f(blendUniforms.maskClipRect, 0, 0, 0, 0);
-          }
+          setMaskClipUniforms(blendUniforms, currentMaskClipRect, currentMaskClipRects);
         } else {
           gl.uniform1f(blendUniforms.maskMode, 0.0);
           gl.uniform1f(blendUniforms.maskRectMode, 0.0);
           gl.uniform4f(blendUniforms.maskRect, 0, 0, target.width, target.height);
-          gl.uniform1f(blendUniforms.maskClipMode, 0.0);
-          gl.uniform4f(blendUniforms.maskClipRect, 0, 0, 0, 0);
+          setMaskClipUniforms(blendUniforms);
         }
 
         if (clipBase?.target?.texture) {
@@ -10412,7 +10506,7 @@ void main() {
             let renderTarget = layerTarget;
             let didMergeActiveStroke = false;
 
-            if (isActiveStrokeLayer && activeStrokeMode !== "eraser" && !activeStrokeClipRect) {
+            if (isActiveStrokeLayer && activeStrokeMode !== "eraser" && !activeStrokeHasClip) {
               const mergedTarget = this.renderLayerWithActiveStrokeTexture(
                 layerTarget.texture,
                 options.activeStrokeTexture,
@@ -10454,23 +10548,12 @@ void main() {
                 gl.uniform1f(uniforms.maskRectMode, 0.0);
                 gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
               }
-              if (activeStrokeClipRect) {
-                gl.uniform1f(uniforms.maskClipMode, 1.0);
-                gl.uniform4f(
-                  uniforms.maskClipRect,
-                  activeStrokeClipRect.x,
-                  activeStrokeClipRect.y,
-                  activeStrokeClipRect.width,
-                  activeStrokeClipRect.height,
-                );
-              } else {
-                gl.uniform1f(uniforms.maskClipMode, 0.0);
-                gl.uniform4f(uniforms.maskClipRect, 0, 0, 0, 0);
-              }
+              setMaskClipUniforms(uniforms, activeStrokeClipRect, activeStrokeClipRects);
               gl.activeTexture(gl.TEXTURE0);
               currentMaskTexture = eraserMaskTexture;
               currentMaskRect = activeStrokeRect || null;
               currentMaskClipRect = activeStrokeClipRect || null;
+              currentMaskClipRects = activeStrokeClipRects || null;
             }
 
             if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
@@ -10498,14 +10581,14 @@ void main() {
             if (eraserMaskTexture) {
               gl.uniform1f(uniforms.maskMode, 0.0);
               gl.uniform1f(uniforms.maskRectMode, 0.0);
-              gl.uniform1f(uniforms.maskClipMode, 0.0);
-              gl.uniform4f(uniforms.maskClipRect, 0, 0, 0, 0);
+              setMaskClipUniforms(uniforms);
               gl.activeTexture(gl.TEXTURE1);
               gl.bindTexture(gl.TEXTURE_2D, null);
               gl.activeTexture(gl.TEXTURE0);
               currentMaskTexture = null;
               currentMaskRect = null;
               currentMaskClipRect = null;
+              currentMaskClipRects = null;
               didDrawActiveStroke = true;
             }
 
@@ -10513,6 +10596,7 @@ void main() {
               currentMaskTexture = null;
               currentMaskRect = null;
               currentMaskClipRect = null;
+              currentMaskClipRects = null;
             }
           } else if (this.isSparseRasterTarget(layerTarget)) {
             const blendModeId = this.getLayerBlendModeId(layer);

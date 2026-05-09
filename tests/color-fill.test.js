@@ -796,6 +796,38 @@ test("applyFillToDirtyPixels writes solid interiors and partial boundary pixels"
   assert.ok(targetPixels[boundaryOffset + 3] < 255);
 });
 
+test("floodFillMask treats the active selection as a traversal barrier", () => {
+  const CBO = loadColorFillModule();
+  const { floodFillMask } = CBO.__colorFillTestHooks;
+  const width = 5;
+  const height = 1;
+  const pixels = new Uint8Array(width * height * 4);
+
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    pixels[offset] = 24;
+    pixels[offset + 1] = 80;
+    pixels[offset + 2] = 160;
+    pixels[offset + 3] = 255;
+  }
+
+  const result = floodFillMask(
+    { height, pixels, width, x: 0, y: 0 },
+    width,
+    height,
+    0,
+    0,
+    0,
+    0,
+    0,
+    {
+      selectionContains: (docX) => docX < 2 || docX === 4,
+    },
+  );
+
+  assert.deepEqual(Array.from(result.mask), [1, 1, 0, 0, 0]);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.bounds)), { maxX: 1, maxY: 0, minX: 0, minY: 0 });
+});
+
 test("fill mask memory accounting includes coverage mask bytes", () => {
   const CBO = loadColorFillModule();
   const { getFillMaskMemoryBytes } = CBO.__colorFillTestHooks;

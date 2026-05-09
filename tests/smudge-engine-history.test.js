@@ -81,10 +81,12 @@ test("smudge keeps sparse layers tiled while dabbing", () => {
 test("smudge clips live dabs to the active area selection before tile work", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
 
-  assert.match(source, /getActiveAreaSelectionRect\(\) \{/);
+  assert.match(source, /getActiveAreaSelectionCoverageRects\(bounds\) \{/);
   assert.match(source, /namespace\.areaSelection\?\.hasSelection\?\.\(\)/);
+  assert.match(source, /namespace\.areaSelection\.getIntersectingRects\?\.\(bounds\)/);
   assert.match(source, /clipBoundsToAreaSelection\(bounds\) \{/);
-  assert.match(source, /this\.intersectDocumentRects\(bounds, selectionRect\)/);
-  assert.match(source, /bounds = this\.clipBoundsToAreaSelection\(bounds\)[\s\S]*target = this\.prepareSmudgeTargetForBounds\(bounds\)/);
-  assert.match(source, /this\.includeSmudgeBounds\(bounds\)[\s\S]*this\.renderSparseDab\(target, cx, cy, pressure, direction, radius, bounds, stepDistance\)/);
+  assert.match(source, /this\.getBoundsForDocumentRects\(selectionCoverageRects\)/);
+  assert.match(source, /let selectionCoverageRects = this\.getActiveAreaSelectionCoverageRects\(bounds\)/);
+  assert.match(source, /selectionCoverageRects\.forEach\(\(coverageRect\) => \{/);
+  assert.match(source, /this\.includeSmudgeBounds\(bounds\)[\s\S]*this\.renderSparseDab\(target, cx, cy, pressure, direction, radius, bounds, stepDistance, selectionCoverageRects\)/);
 });

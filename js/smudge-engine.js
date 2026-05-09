@@ -524,11 +524,34 @@ void main() {
         : null;
     }
 
-    clipBoundsToAreaSelection(bounds) {
-      const selectionRect = this.getActiveAreaSelectionRect();
+    getActiveAreaSelectionCoverageRects(bounds) {
+      if (!namespace.areaSelection?.hasSelection?.()) {
+        return null;
+      }
 
-      return selectionRect
-        ? this.intersectDocumentRects(bounds, selectionRect)
+      const rects = namespace.areaSelection.getIntersectingRects?.(bounds) || [];
+
+      return rects.length > 0 ? rects : [];
+    }
+
+    getBoundsForDocumentRects(rects) {
+      if (!Array.isArray(rects) || rects.length === 0) {
+        return null;
+      }
+
+      const x0 = Math.min(...rects.map((rect) => rect.x));
+      const y0 = Math.min(...rects.map((rect) => rect.y));
+      const x1 = Math.max(...rects.map((rect) => rect.x + rect.width));
+      const y1 = Math.max(...rects.map((rect) => rect.y + rect.height));
+
+      return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    }
+
+    clipBoundsToAreaSelection(bounds) {
+      const selectionCoverageRects = this.getActiveAreaSelectionCoverageRects(bounds);
+
+      return Array.isArray(selectionCoverageRects)
+        ? this.getBoundsForDocumentRects(selectionCoverageRects)
         : bounds;
     }
 
@@ -2112,7 +2135,7 @@ void main() {
       return true;
     }
 
-    renderSparseDab(sparseTarget, cx, cy, pressure, direction, radius, bounds, stepDistance) {
+    renderSparseDab(sparseTarget, cx, cy, pressure, direction, radius, bounds, stepDistance, selectionCoverageRects = null) {
       const layerId = this.activeHistoryLayerId || sparseTarget?.layerId || null;
 
       if (!layerId || !this.documentRenderer?.ensureRasterTargetsForPaintRect) {
@@ -2175,7 +2198,17 @@ void main() {
             continue;
           }
 
-          this.blitScratchToTarget(scratch, paintTarget, targetBounds);
+          if (Array.isArray(selectionCoverageRects)) {
+            selectionCoverageRects.forEach((coverageRect) => {
+              const coverageTargetBounds = this.intersectDocumentRects(targetBounds, coverageRect);
+
+              if (coverageTargetBounds) {
+                this.blitScratchToTarget(scratch, paintTarget, coverageTargetBounds);
+              }
+            });
+          } else {
+            this.blitScratchToTarget(scratch, paintTarget, targetBounds);
+          }
           this.documentRenderer?.markRasterTargetDirty?.(paintTarget);
         }
 
@@ -2208,7 +2241,15 @@ void main() {
       const radius = this.getRadius();
       let bounds = this.getDabBounds(cx, cy, radius, target);
 
-      bounds = this.clipBoundsToAreaSelection(bounds);
+      if (!bounds) {
+        return;
+      }
+
+      let selectionCoverageRects = this.getActiveAreaSelectionCoverageRects(bounds);
+
+      bounds = Array.isArray(selectionCoverageRects)
+        ? this.getBoundsForDocumentRects(selectionCoverageRects)
+        : bounds;
 
       if (!bounds) {
         return;
@@ -2228,7 +2269,7 @@ void main() {
 
       if (this.documentRenderer?.isSparseRasterTarget?.(target)) {
         this.includeSmudgeBounds(bounds);
-        this.renderSparseDab(target, cx, cy, pressure, direction, radius, bounds, stepDistance);
+        this.renderSparseDab(target, cx, cy, pressure, direction, radius, bounds, stepDistance, selectionCoverageRects);
         return;
       }
 
@@ -2237,6 +2278,12 @@ void main() {
       if (!bounds) {
         return;
       }
+
+      selectionCoverageRects = Array.isArray(selectionCoverageRects)
+        ? selectionCoverageRects
+            .map((coverageRect) => this.intersectDocumentRects(coverageRect, bounds))
+            .filter(Boolean)
+        : null;
 
       this.includeSmudgeBounds(bounds);
 
@@ -2267,7 +2314,13 @@ void main() {
         return;
       }
 
-      this.blitScratchToTarget(scratch, target, bounds);
+      if (Array.isArray(selectionCoverageRects)) {
+        selectionCoverageRects.forEach((coverageRect) => {
+          this.blitScratchToTarget(scratch, target, coverageRect);
+        });
+      } else {
+        this.blitScratchToTarget(scratch, target, bounds);
+      }
       this.documentRenderer?.markRasterTargetDirty?.(target);
       this.restoreDocumentTextureFiltering(target);
       this.documentRenderer?.invalidatePreviewCache?.("smudge-live");
