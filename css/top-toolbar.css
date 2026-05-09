@@ -495,6 +495,107 @@
   flex: 0 0 auto;
 }
 
+.area-selection-tolerance-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 37px;
+  min-width: 168px;
+  padding: 0 8px;
+  border-radius: 9px;
+  background: transparent;
+  color: #c3c8d1;
+}
+
+.area-selection-tolerance-control:hover,
+.area-selection-tolerance-control:focus-within {
+  background: rgb(44, 48, 58);
+  color: #ffffff;
+}
+
+.area-selection-tolerance-control[hidden] {
+  display: none;
+}
+
+.area-selection-tolerance-swatch {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  border: 2px solid #dfe3ea;
+  border-radius: 50%;
+  background: var(--color-range-sample, #ffffff);
+  box-shadow: 0 0 0 1px #181a1f;
+}
+
+.area-selection-tolerance-range {
+  width: 96px;
+  min-width: 0;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: transparent;
+}
+
+.area-selection-tolerance-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 8px;
+  background: linear-gradient(
+    to right,
+    #dfe3ea 0 var(--color-range-tolerance-progress, 19%),
+    #2c303a var(--color-range-tolerance-progress, 19%) 100%
+  );
+}
+
+.area-selection-tolerance-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: #dfe3ea;
+  box-shadow: 0 0 0 2px #181a1f;
+}
+
+.area-selection-tolerance-range:hover::-webkit-slider-thumb,
+.area-selection-tolerance-range:focus-visible::-webkit-slider-thumb {
+  background: #ffffff;
+}
+
+.area-selection-tolerance-range::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: #2c303a;
+}
+
+.area-selection-tolerance-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 8px;
+  background: #dfe3ea;
+}
+
+.area-selection-tolerance-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: #dfe3ea;
+  box-shadow: 0 0 0 2px #181a1f;
+}
+
+.area-selection-tolerance-value {
+  flex: 0 0 auto;
+  min-width: 28px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: right;
+}
+
 .transform-mode-button .transform-mode-fill-icon {
   fill: currentColor;
   stroke: none;

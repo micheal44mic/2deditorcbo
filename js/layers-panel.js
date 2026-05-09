@@ -1419,6 +1419,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     layerContextMenu.innerHTML = `
       <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="reference"></button>
       <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="clipping-mask"></button>
+      <button class="layer-context-menu-item" type="button" role="menuitem" data-layer-context-action="select-alpha">SELECT ALPHA</button>
     `;
 
     layerContextMenu.addEventListener("click", (event) => {
@@ -1448,6 +1449,14 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
       if (actionButton.dataset.layerContextAction === "clipping-mask") {
         toggleClippingMask(contextMenuLayerId);
+        closeLayerContextMenu();
+        return;
+      }
+
+      if (actionButton.dataset.layerContextAction === "select-alpha") {
+        window.CBO.areaSelection?.selectLayerAlpha?.(contextMenuLayerId, {
+          source: "layers-panel-select-alpha-commit",
+        });
         closeLayerContextMenu();
         return;
       }
@@ -1492,11 +1501,14 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const menu = ensureLayerContextMenu();
     const referenceButton = menu.querySelector("[data-layer-context-action='reference']");
     const clippingButton = menu.querySelector("[data-layer-context-action='clipping-mask']");
+    const selectAlphaButton = menu.querySelector("[data-layer-context-action='select-alpha']");
     const layerId = getLayerId(row);
     const layer = layerModel?.findEntryById?.(layerId);
     const isReference = layerId && getReferenceLayerId() === layerId;
     const isClipping = layer?.clippingMask === true;
     const canClip = layer?.locked !== true && (isClippingMaskAllowed(layerId) || isClipping);
+    const canSelectAlpha = typeof window.CBO.areaSelection?.selectLayerAlpha === "function" &&
+      window.CBO.areaSelection?.canSelectLayerAlpha?.(layerId) !== false;
 
     contextMenuLayerId = layerId;
     referenceButton.textContent = isReference ? "REMOVE REFERENCE" : "SET AS REFERENCE";
@@ -1506,6 +1518,11 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       clippingButton.setAttribute("aria-checked", String(isClipping));
       clippingButton.disabled = !canClip;
       clippingButton.classList.toggle("disabled", !canClip);
+    }
+    if (selectAlphaButton) {
+      selectAlphaButton.textContent = "SELECT ALPHA";
+      selectAlphaButton.disabled = !canSelectAlpha;
+      selectAlphaButton.classList.toggle("disabled", !canSelectAlpha);
     }
     positionLayerContextMenu(menu, event.clientX, event.clientY);
   }

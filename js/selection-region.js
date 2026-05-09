@@ -244,7 +244,7 @@
       this.rows = new Map();
       this.version = Number.isFinite(version) ? version : 0;
 
-      if (rows instanceof Map) {
+      if (rows && typeof rows.forEach === "function" && !Array.isArray(rows)) {
         rows.forEach((intervals, y) => {
           const row = mergeIntervals(intervals);
 
@@ -277,6 +277,26 @@
       const region = new SelectionRegion();
 
       return region.replacePolygon(points);
+    }
+
+    static fromRows(rows) {
+      const regionRows = new Map();
+
+      if (rows && typeof rows.forEach === "function" && !Array.isArray(rows)) {
+        rows.forEach((intervals, y) => {
+          regionRows.set(Number(y), intervals);
+        });
+      } else if (Array.isArray(rows)) {
+        rows.forEach((row) => {
+          const y = Number(row?.y);
+
+          if (Number.isFinite(y)) {
+            regionRows.set(y, row?.intervals || []);
+          }
+        });
+      }
+
+      return new SelectionRegion(regionRows);
     }
 
     static deserialize(data) {
@@ -520,6 +540,48 @@
       return this.touch();
     }
 
+    addRegion(region) {
+      const sourceRows = region?.rows && typeof region.rows.forEach === "function" ? region.rows : null;
+
+      if (!sourceRows || sourceRows.size === 0) {
+        return this.touch();
+      }
+
+      sourceRows.forEach((intervals, y) => {
+        const existing = this.rows.get(y) || [];
+
+        this.rows.set(y, mergeIntervals([...existing, ...intervals]));
+      });
+
+      return this.touch();
+    }
+
+    subtractRegion(region) {
+      const sourceRows = region?.rows && typeof region.rows.forEach === "function" ? region.rows : null;
+
+      if (!sourceRows || sourceRows.size === 0 || this.isEmpty()) {
+        return this.touch();
+      }
+
+      sourceRows.forEach((blockerIntervals, y) => {
+        const intervals = this.rows.get(y);
+
+        if (!intervals) {
+          return;
+        }
+
+        const nextIntervals = subtractIntervals(intervals, blockerIntervals);
+
+        if (nextIntervals.length > 0) {
+          this.rows.set(y, mergeIntervals(nextIntervals));
+        } else {
+          this.rows.delete(y);
+        }
+      });
+
+      return this.touch();
+    }
+
     applyRect(rect, mode = "replace") {
       const normalizedMode = mode === "add" || mode === "subtract" ? mode : "replace";
 
@@ -560,6 +622,21 @@
       }
 
       return this.replacePolygon(points);
+    }
+
+    applyRegion(region, mode = "replace") {
+      const normalizedMode = mode === "add" || mode === "subtract" ? mode : "replace";
+
+      if (normalizedMode === "add") {
+        return this.addRegion(region);
+      }
+
+      if (normalizedMode === "subtract") {
+        return this.subtractRegion(region);
+      }
+
+      this.rows.clear();
+      return this.addRegion(region);
     }
 
     containsPoint(x, y) {

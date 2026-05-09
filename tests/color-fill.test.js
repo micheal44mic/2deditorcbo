@@ -862,10 +862,15 @@ test("layers panel exposes a right-click reference layer action", () => {
 
   assert.match(source, /panel\.addEventListener\("contextmenu"/);
   assert.match(source, /data-layer-context-action="reference"/);
+  assert.match(source, /data-layer-context-action="select-alpha"/);
   assert.match(source, /SET AS REFERENCE/);
   assert.match(source, /REMOVE REFERENCE/);
+  assert.match(source, /SELECT ALPHA/);
   assert.match(source, /window\.CBO\.colorFill\.setReferenceLayerId\(layerId, \{ \.\.\.options, source \}\)/);
   assert.match(source, /window\.CBO\.colorFill\.clearReferenceLayerId\(\{ \.\.\.options, source \}\)/);
+  assert.match(source, /window\.CBO\.areaSelection\?\.selectLayerAlpha\?\.\(contextMenuLayerId/);
+  assert.match(source, /window\.CBO\.areaSelection\?\.canSelectLayerAlpha\?\.\(layerId\)/);
+  assert.match(source, /layers-panel-select-alpha-commit/);
   assert.match(source, /clearReferenceLayerId\("layers-panel-prune-reference", \{ history: false \}\)/);
   assert.match(source, /classList\.toggle\("reference-layer"/);
   assert.match(source, /cbo:color-fill-reference-change/);

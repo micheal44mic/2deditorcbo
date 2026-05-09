@@ -3,18 +3,28 @@
   const CIRCLE_TOOL_MODE = "selection-circle";
   const LASSO_TOOL_MODE = "selection-lasso";
   const POLYGON_LASSO_TOOL_MODE = "selection-polygon-lasso";
+  const COLOR_RANGE_TOOL_MODE = "selection-color-range";
   const LASSO_MIN_POINTS = 3;
   const LASSO_POINT_SPACING = 1.5;
   const POLYGON_LASSO_CLOSE_DISTANCE_PX = 10;
   const MIN_SELECTION_SIZE = 3;
   const PASTE_OFFSET_PX = 60;
   const AREA_SELECTION_ANTS_ENABLED = false;
+  const DEFAULT_COLOR_RANGE_TOLERANCE = 48;
+  const MAX_COLOR_RANGE_TOLERANCE = 255;
+  const COLOR_RANGE_MIN_ALPHA = 1;
 
   const state = {
     activeToolMode: "",
     baseRegion: null,
     canvas: null,
     clipboard: null,
+    colorRangeSampleColor: null,
+    colorRangeTolerance: clamp(
+      namespace.colorRangeSelectionTolerance ?? DEFAULT_COLOR_RANGE_TOLERANCE,
+      0,
+      MAX_COLOR_RANGE_TOLERANCE,
+    ),
     overlay: null,
     overlayAnimationPausedUntil: 0,
     overlayDashOffset: 0,
@@ -211,6 +221,53 @@
     return state.operationMode;
   }
 
+  function setColorRangeTolerance(value, options = {}) {
+    state.colorRangeTolerance = Math.round(clamp(value, 0, MAX_COLOR_RANGE_TOLERANCE));
+    namespace.colorRangeSelectionTolerance = state.colorRangeTolerance;
+
+    if (options.emit !== false) {
+      window.dispatchEvent(new CustomEvent("cbo:color-range-tolerance-change", {
+        detail: {
+          source: options.source || "color-range-tolerance",
+          tolerance: state.colorRangeTolerance,
+        },
+      }));
+    }
+
+    return state.colorRangeTolerance;
+  }
+
+  function getColorRangeTolerance() {
+    return state.colorRangeTolerance;
+  }
+
+  function channelToHex(value) {
+    return Math.round(clamp(value, 0, 255)).toString(16).padStart(2, "0").toUpperCase();
+  }
+
+  function rgbToHexColor(red, green, blue) {
+    return `#${channelToHex(red)}${channelToHex(green)}${channelToHex(blue)}`;
+  }
+
+  function setColorRangeSampleColor(color, options = {}) {
+    state.colorRangeSampleColor = color || null;
+
+    if (options.emit !== false) {
+      window.dispatchEvent(new CustomEvent("cbo:color-range-sample-change", {
+        detail: {
+          color: state.colorRangeSampleColor,
+          source: options.source || "color-range-sample",
+        },
+      }));
+    }
+
+    return state.colorRangeSampleColor;
+  }
+
+  function getColorRangeSampleColor() {
+    return state.colorRangeSampleColor;
+  }
+
   function cloneRect(rect) {
     return rect
       ? {
@@ -253,6 +310,10 @@
 
   function createRegionFromPolygon(points) {
     return namespace.SelectionRegion?.fromPolygon?.(points) || createEmptyRegion();
+  }
+
+  function createRegionFromRows(rows) {
+    return namespace.SelectionRegion?.fromRows?.(rows) || createEmptyRegion();
   }
 
   function cloneRegion(region) {
@@ -443,6 +504,27 @@
     return createRegionFromPolygon(points);
   }
 
+  function applyRegionOperation(baseSelection, nextRegion, mode = "replace") {
+    const baseRegion = Array.isArray(baseSelection)
+      ? setRectsOnRegion(baseSelection)
+      : cloneRegion(baseSelection);
+    const region = cloneRegion(nextRegion);
+
+    if (!region || region.isEmpty?.()) {
+      return mode === "replace" ? createEmptyRegion() : baseRegion;
+    }
+
+    if (mode === "add") {
+      return baseRegion?.addRegion?.(region) || region;
+    }
+
+    if (mode === "subtract") {
+      return baseRegion?.subtractRegion?.(region) || baseRegion;
+    }
+
+    return region;
+  }
+
   function setRectsOnRegion(rects) {
     const region = createEmptyRegion();
 
@@ -482,6 +564,452 @@
       x: x0,
       y: y0,
     };
+  }
+
+  function getColorRangeLayerSource() {
+    const renderer = getRenderer();
+    const layerModel = namespace.documentLayerModel;
+    const activeId = layerModel?.activeLayerId || "";
+    const layer = activeId ? layerModel.findEntryById?.(activeId) : null;
+    const target = activeId ? renderer?.rasterTargetsByLayerId?.get?.(activeId) : null;
+
+    if (!renderer || !layer || !target || (layer.type !== "paint" && layer.type !== "image")) {
+      return null;
+    }
+
+    return {
+      layer,
+      layerId: activeId,
+      target,
+    };
+  }
+
+  function getLayerAlphaSource(layerId) {
+    const renderer = getRenderer();
+    const layerModel = namespace.documentLayerModel;
+    const resolvedLayerId = String(layerId || layerModel?.activeLayerId || "").trim();
+    const layer = resolvedLayerId ? layerModel?.findEntryById?.(resolvedLayerId) : null;
+    const target = resolvedLayerId ? renderer?.rasterTargetsByLayerId?.get?.(resolvedLayerId) : null;
+
+    if (!renderer || !layer || !target || layer.type === "group" || layer.type === "background" || layer.id === "background") {
+      return null;
+    }
+
+    return {
+      layer,
+      layerId: resolvedLayerId,
+      target,
+    };
+  }
+
+  function canReadColorRangeTarget(target) {
+    const renderer = getRenderer();
+
+    if (!target) {
+      return false;
+    }
+
+    if (renderer?.isSparseRasterTarget?.(target) === true) {
+      let hasReadableTile = false;
+
+      target.tiles?.forEach?.((tileTarget) => {
+        if (
+          tileTarget &&
+          ((tileTarget.framebuffer && tileTarget.texture) || tileTarget.cpuPixels instanceof Uint8Array)
+        ) {
+          hasReadableTile = true;
+        }
+      });
+
+      return hasReadableTile;
+    }
+
+    return Boolean((target.framebuffer && target.texture) || target.cpuPixels instanceof Uint8Array);
+  }
+
+  function canSelectLayerAlpha(layerId) {
+    const sourceInfo = getLayerAlphaSource(layerId);
+
+    return Boolean(sourceInfo?.target && canReadColorRangeTarget(sourceInfo.target));
+  }
+
+  function readFramebufferPixelsTopDown(gl, framebuffer, width, height) {
+    const pixels = new Uint8Array(width * height * 4);
+
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, framebuffer);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+
+    return pixels;
+  }
+
+  function getTopDownRgbaOffset(pixelIndex, width, height) {
+    const y = Math.floor(pixelIndex / width);
+    const x = pixelIndex - y * width;
+    const webglY = height - 1 - y;
+
+    return (webglY * width + x) * 4;
+  }
+
+  function getColorRangeTargetDocumentRect(target, width, height) {
+    const renderer = getRenderer();
+    const rect = renderer?.getRasterTargetDocumentRect?.(target);
+
+    if (rect) {
+      return rect;
+    }
+
+    return {
+      height,
+      width,
+      x: Number.isFinite(target?.x) ? Math.round(target.x) : 0,
+      y: Number.isFinite(target?.y) ? Math.round(target.y) : 0,
+    };
+  }
+
+  function createDenseColorRangePixelSource(gl, target, options = {}) {
+    const renderer = getRenderer();
+
+    if ((!target?.framebuffer || !target?.texture) && renderer?.hydrateRasterTarget) {
+      renderer.hydrateRasterTarget(target, {
+        kind: target?.kind || "layer",
+        label: target?.layerId || target?.id || "color range target",
+        layerId: target?.layerId || "",
+        ownerId: target?.ownerId || target?.layerId || target?.id || "",
+        ownerType: "live",
+        reason: options.reason || "color-range-selection-hydrate",
+      });
+    }
+
+    if (!target?.framebuffer || !target?.texture) {
+      return null;
+    }
+
+    const width = Math.max(1, Math.round(target.width || 1));
+    const height = Math.max(1, Math.round(target.height || 1));
+    const rect = getColorRangeTargetDocumentRect(target, width, height);
+
+    return {
+      height,
+      pixels: readFramebufferPixelsTopDown(gl, target.framebuffer, width, height),
+      sparse: false,
+      width,
+      x: rect.x,
+      y: rect.y,
+    };
+  }
+
+  function createSparseColorRangePixelSource(gl, sparseTarget, options = {}) {
+    const renderer = getRenderer();
+    const tileSources = [];
+    const tileMap = new Map();
+    const tileSize = Math.max(1, Math.round(sparseTarget?.tileSize || 256));
+
+    sparseTarget?.tiles?.forEach?.((tileTarget) => {
+      if (!tileTarget) {
+        return;
+      }
+
+      if ((!tileTarget.framebuffer || !tileTarget.texture) && renderer?.hydrateRasterTarget) {
+        renderer.hydrateRasterTarget(tileTarget, {
+          kind: "paintTile",
+          label: `${sparseTarget.layerId || "color-range"} tile ${tileTarget.tx},${tileTarget.ty}`,
+          layerId: sparseTarget.layerId || "",
+          ownerId: tileTarget.ownerId || `${sparseTarget.layerId || "color-range"}:${tileTarget.tx}:${tileTarget.ty}`,
+          ownerType: "live",
+          reason: options.reason || "color-range-selection-hydrate",
+        });
+      }
+
+      if (!tileTarget.framebuffer || !tileTarget.texture) {
+        return;
+      }
+
+      const width = Math.max(1, Math.round(tileTarget.width || tileSize));
+      const height = Math.max(1, Math.round(tileTarget.height || tileSize));
+      const rect = getColorRangeTargetDocumentRect(tileTarget, width, height);
+      const tx = Number.isFinite(tileTarget.tx) ? Math.round(tileTarget.tx) : Math.floor(rect.x / tileSize);
+      const ty = Number.isFinite(tileTarget.ty) ? Math.round(tileTarget.ty) : Math.floor(rect.y / tileSize);
+      const tileSource = {
+        height,
+        pixels: readFramebufferPixelsTopDown(gl, tileTarget.framebuffer, width, height),
+        width,
+        x: rect.x,
+        y: rect.y,
+      };
+
+      tileSources.push(tileSource);
+      tileMap.set(`${tx}:${ty}`, tileSource);
+    });
+
+    return {
+      sparse: true,
+      tileMap,
+      tiles: tileSources,
+      tileSize,
+    };
+  }
+
+  function createColorRangePixelSource(gl, target, options = {}) {
+    const renderer = getRenderer();
+
+    if (renderer?.isSparseRasterTarget?.(target) === true) {
+      return createSparseColorRangePixelSource(gl, target, options);
+    }
+
+    return createDenseColorRangePixelSource(gl, target, options);
+  }
+
+  function getColorRangePixelOffset(source, documentX, documentY) {
+    if (!source) {
+      return null;
+    }
+
+    if (source.sparse === true) {
+      const x = Math.floor(documentX);
+      const y = Math.floor(documentY);
+      const tileSize = Math.max(1, Math.round(source.tileSize || 1));
+      const tx = Math.floor(x / tileSize);
+      const ty = Math.floor(y / tileSize);
+      const tileSource = source.tileMap?.get?.(`${tx}:${ty}`);
+
+      if (!tileSource) {
+        return null;
+      }
+
+      const localX = x - tileSource.x;
+      const localY = y - tileSource.y;
+
+      if (
+        localX < 0 ||
+        localY < 0 ||
+        localX >= tileSource.width ||
+        localY >= tileSource.height
+      ) {
+        return null;
+      }
+
+      return {
+        offset: getTopDownRgbaOffset(
+          localY * tileSource.width + localX,
+          tileSource.width,
+          tileSource.height,
+        ),
+        pixels: tileSource.pixels,
+      };
+    }
+
+    const localX = Math.floor(documentX) - source.x;
+    const localY = Math.floor(documentY) - source.y;
+
+    if (
+      localX < 0 ||
+      localY < 0 ||
+      localX >= source.width ||
+      localY >= source.height
+    ) {
+      return null;
+    }
+
+    return {
+      offset: getTopDownRgbaOffset(localY * source.width + localX, source.width, source.height),
+      pixels: source.pixels,
+    };
+  }
+
+  function getColorRangePixel(source, documentX, documentY) {
+    const offset = getColorRangePixelOffset(source, documentX, documentY);
+
+    if (!offset?.pixels || offset.offset < 0) {
+      return null;
+    }
+
+    return {
+      a: offset.pixels[offset.offset + 3],
+      b: offset.pixels[offset.offset + 2],
+      g: offset.pixels[offset.offset + 1],
+      r: offset.pixels[offset.offset],
+    };
+  }
+
+  function colorRangeDistanceSq(pixels, offset, sample) {
+    const dr = pixels[offset] - sample.r;
+    const dg = pixels[offset + 1] - sample.g;
+    const db = pixels[offset + 2] - sample.b;
+    const da = pixels[offset + 3] - sample.a;
+
+    return dr * dr + dg * dg + db * db + da * da;
+  }
+
+  function appendColorRangeInterval(rows, y, startX, endX) {
+    if (endX <= startX) {
+      return;
+    }
+
+    const intervals = rows.get(y) || [];
+
+    intervals.push([startX, endX]);
+    rows.set(y, intervals);
+  }
+
+  function scanColorRangeTile(rows, tileSource, sample, toleranceSq) {
+    for (let localY = 0; localY < tileSource.height; localY += 1) {
+      const docY = tileSource.y + localY;
+      let startX = null;
+
+      for (let localX = 0; localX < tileSource.width; localX += 1) {
+        const offset = getTopDownRgbaOffset(localY * tileSource.width + localX, tileSource.width, tileSource.height);
+        const alpha = tileSource.pixels[offset + 3];
+        const isMatch = alpha >= COLOR_RANGE_MIN_ALPHA &&
+          colorRangeDistanceSq(tileSource.pixels, offset, sample) <= toleranceSq;
+        const docX = tileSource.x + localX;
+
+        if (isMatch && startX == null) {
+          startX = docX;
+        } else if (!isMatch && startX != null) {
+          appendColorRangeInterval(rows, docY, startX, docX);
+          startX = null;
+        }
+      }
+
+      if (startX != null) {
+        appendColorRangeInterval(rows, docY, startX, tileSource.x + tileSource.width);
+      }
+    }
+  }
+
+  function createColorRangeRegion(source, sample, tolerance) {
+    if (!source || !sample || sample.a < COLOR_RANGE_MIN_ALPHA) {
+      return createEmptyRegion();
+    }
+
+    const rows = new Map();
+    const toleranceSq = Math.round(clamp(tolerance, 0, MAX_COLOR_RANGE_TOLERANCE)) ** 2;
+
+    if (source.sparse === true) {
+      source.tiles.forEach((tileSource) => {
+        scanColorRangeTile(rows, tileSource, sample, toleranceSq);
+      });
+    } else {
+      scanColorRangeTile(rows, source, sample, toleranceSq);
+    }
+
+    return createRegionFromRows(rows);
+  }
+
+  function scanLayerAlphaTile(rows, tileSource, alphaThreshold = COLOR_RANGE_MIN_ALPHA) {
+    for (let localY = 0; localY < tileSource.height; localY += 1) {
+      const docY = tileSource.y + localY;
+      let startX = null;
+
+      for (let localX = 0; localX < tileSource.width; localX += 1) {
+        const offset = getTopDownRgbaOffset(localY * tileSource.width + localX, tileSource.width, tileSource.height);
+        const isOpaqueEnough = tileSource.pixels[offset + 3] >= alphaThreshold;
+        const docX = tileSource.x + localX;
+
+        if (isOpaqueEnough && startX == null) {
+          startX = docX;
+        } else if (!isOpaqueEnough && startX != null) {
+          appendColorRangeInterval(rows, docY, startX, docX);
+          startX = null;
+        }
+      }
+
+      if (startX != null) {
+        appendColorRangeInterval(rows, docY, startX, tileSource.x + tileSource.width);
+      }
+    }
+  }
+
+  function createLayerAlphaRegion(source, alphaThreshold = COLOR_RANGE_MIN_ALPHA) {
+    if (!source) {
+      return createEmptyRegion();
+    }
+
+    const rows = new Map();
+    const threshold = Math.round(clamp(alphaThreshold, COLOR_RANGE_MIN_ALPHA, 255));
+
+    if (source.sparse === true) {
+      source.tiles.forEach((tileSource) => {
+        scanLayerAlphaTile(rows, tileSource, threshold);
+      });
+    } else {
+      scanLayerAlphaTile(rows, source, threshold);
+    }
+
+    return createRegionFromRows(rows);
+  }
+
+  function selectLayerAlpha(layerId, options = {}) {
+    const renderer = getRenderer();
+    const gl = renderer?.gl || renderer?.context;
+    const sourceInfo = getLayerAlphaSource(layerId);
+
+    if (!renderer || !gl || !sourceInfo?.target) {
+      return false;
+    }
+
+    const source = createColorRangePixelSource(gl, sourceInfo.target, {
+      reason: "layer-alpha-selection-hydrate",
+    });
+    const threshold = options.alphaThreshold ?? options.threshold ?? COLOR_RANGE_MIN_ALPHA;
+    const alphaRegion = createLayerAlphaRegion(source, threshold);
+
+    if (!alphaRegion || alphaRegion.isEmpty?.()) {
+      return false;
+    }
+
+    const beforeRegion = getRegionSnapshot();
+    const nextRegion = applyRegionOperation(
+      beforeRegion,
+      alphaRegion,
+      normalizeOperationMode(options.operationMode || "replace"),
+    );
+
+    setRegion(nextRegion, {
+      historyBeforeRegion: beforeRegion,
+      source: options.source || "area-selection-layer-alpha-commit",
+    });
+
+    return true;
+  }
+
+  function selectColorRangeAt(point) {
+    const renderer = getRenderer();
+    const gl = renderer?.gl || renderer?.context;
+    const sourceInfo = getColorRangeLayerSource();
+
+    if (!renderer || !gl || !sourceInfo?.target) {
+      return false;
+    }
+
+    const seedX = Math.floor(point?.docX ?? point?.x);
+    const seedY = Math.floor(point?.docY ?? point?.y);
+    const source = createColorRangePixelSource(gl, sourceInfo.target);
+    const sample = getColorRangePixel(source, seedX, seedY);
+
+    if (!sample || sample.a < COLOR_RANGE_MIN_ALPHA) {
+      return false;
+    }
+
+    const sampledRegion = createColorRangeRegion(source, sample, state.colorRangeTolerance);
+
+    if (!sampledRegion || sampledRegion.isEmpty?.()) {
+      return false;
+    }
+
+    const beforeRegion = getRegionSnapshot();
+    const nextRegion = applyRegionOperation(beforeRegion, sampledRegion, state.operationMode);
+
+    setColorRangeSampleColor(rgbToHexColor(sample.r, sample.g, sample.b), {
+      source: "area-selection-color-range",
+    });
+    setRegion(nextRegion, {
+      historyBeforeRegion: beforeRegion,
+      source: "area-selection-color-range-commit",
+    });
+
+    return true;
   }
 
   function isEditableTarget(target) {
@@ -1273,12 +1801,16 @@
     return state.activeToolMode === POLYGON_LASSO_TOOL_MODE;
   }
 
+  function isColorRangeToolActive() {
+    return state.activeToolMode === COLOR_RANGE_TOOL_MODE;
+  }
+
   function isPolygonLassoInProgress() {
     return state.polygonLassoActive === true;
   }
 
   function isAreaSelectionToolActive() {
-    return isRectToolActive() || isCircleToolActive() || isLassoToolActive() || isPolygonLassoToolActive();
+    return isRectToolActive() || isCircleToolActive() || isLassoToolActive() || isPolygonLassoToolActive() || isColorRangeToolActive();
   }
 
   function getActiveSelectionShape() {
@@ -1475,6 +2007,13 @@
     const brushEngine = getBrushEngine();
 
     if (!point || !brushEngine?.isDocumentPointInside?.(point)) {
+      return;
+    }
+
+    if (isColorRangeToolActive()) {
+      event.preventDefault();
+      event.stopPropagation();
+      selectColorRangeAt(point);
       return;
     }
 
@@ -2210,10 +2749,13 @@
   }
 
   namespace.areaSelection = {
+    canSelectLayerAlpha,
     clear,
     copySelectionPixels,
     deleteSelectionPixels,
     getBounds,
+    getColorRangeSampleColor,
+    getColorRangeTolerance,
     getIntersectingRects,
     getOperationMode,
     getRegionSnapshot,
@@ -2223,7 +2765,9 @@
     intersectRect,
     isPointInside,
     pasteSelectionPixels,
+    selectLayerAlpha,
     setRect,
+    setColorRangeTolerance,
     setRegion: setRegionSnapshot,
     setOperationMode,
     setSelectionRects,

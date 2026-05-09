@@ -72,6 +72,28 @@ test("SelectionRegion produces compact coverage rects and tile patch rects", () 
   assert.ok(patches.some((rect) => rect.x === 20 && rect.y === 20));
 });
 
+test("SelectionRegion creates and combines arbitrary row regions", () => {
+  const SelectionRegion = loadSelectionRegion();
+  const base = SelectionRegion.fromRect({ x: 0, y: 0, width: 5, height: 2 });
+  const range = SelectionRegion.fromRows(new Map([
+    [1, [[3, 8]]],
+    [3, [[10, 12]]],
+  ]));
+
+  base.addRegion(range);
+
+  assert.equal(base.containsPoint(7, 1), true);
+  assert.equal(base.containsPoint(11, 3), true);
+
+  base.subtractRegion(SelectionRegion.fromRows([
+    { y: 1, intervals: [[2, 6]] },
+  ]));
+
+  assert.equal(base.containsPoint(1, 1), true);
+  assert.equal(base.containsPoint(4, 1), false);
+  assert.equal(base.containsPoint(7, 1), true);
+});
+
 test("SelectionRegion boundary segments skip internal coverage seams", () => {
   const SelectionRegion = loadSelectionRegion();
   const region = SelectionRegion.fromRect({ x: 0, y: 0, width: 10, height: 10 });

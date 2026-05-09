@@ -189,6 +189,11 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       <button class="area-selection-operation-button" type="button" aria-label="SUBTRACT FROM SELECTION" aria-pressed="false" data-tooltip="SUBTRACT FROM SELECTION 3" data-area-selection-operation="subtract">
         ${AREA_SELECTION_OPERATION_ICONS.subtract}
       </button>
+      <label class="area-selection-tolerance-control" data-tooltip="COLOR RANGE FUZZINESS" data-color-range-tolerance-control hidden>
+        <span class="area-selection-tolerance-swatch" aria-hidden="true" data-color-range-swatch></span>
+        <input class="area-selection-tolerance-range" type="range" min="0" max="255" step="1" value="48" aria-label="Color range fuzziness" data-color-range-tolerance-input />
+        <output class="area-selection-tolerance-value" data-color-range-tolerance-value>48</output>
+      </label>
     </nav>
     <nav class="bottom-toolbar transform-mode-toolbar" aria-label="Transform toolbar" data-transform-mode-toolbar hidden>
       <button class="transform-mode-button active" type="button" aria-label="FREE TRANSFORM" aria-pressed="true" data-tooltip="FREE TRANSFORM" data-transform-mode="free">
@@ -481,6 +486,10 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const rasterizeTextButtons = document.querySelectorAll("[data-rasterize-text]");
   const areaSelectionOperationToolbar = dock.querySelector("[data-area-selection-operation-toolbar]");
   const areaSelectionOperationButtons = dock.querySelectorAll("[data-area-selection-operation]");
+  const colorRangeToleranceControl = dock.querySelector("[data-color-range-tolerance-control]");
+  const colorRangeToleranceInput = dock.querySelector("[data-color-range-tolerance-input]");
+  const colorRangeToleranceValue = dock.querySelector("[data-color-range-tolerance-value]");
+  const colorRangeSwatch = dock.querySelector("[data-color-range-swatch]");
   const transformModeToolbar = dock.querySelector("[data-transform-mode-toolbar]");
   const transformModeButtons = dock.querySelectorAll("[data-transform-mode]");
   const transformAngleControl = dock.querySelector("[data-transform-angle-control]");
@@ -660,6 +669,40 @@ window.CBO.initTopToolbar = function initTopToolbar() {
         window.CBO.areaSelection?.getOperationMode?.() || selectedAreaSelectionOperation,
         { emit: false },
       );
+    }
+  }
+
+  function syncColorRangeToleranceControl() {
+    if (!colorRangeToleranceInput || !colorRangeToleranceValue) {
+      return;
+    }
+
+    const tolerance = clamp(
+      window.CBO.areaSelection?.getColorRangeTolerance?.() ?? window.CBO.colorRangeSelectionTolerance ?? 48,
+      0,
+      255,
+    );
+    const progress = (tolerance / 255) * 100;
+    const sampleColor =
+      window.CBO.areaSelection?.getColorRangeSampleColor?.() ||
+      window.CBO.selectedColor ||
+      "#FFFFFF";
+
+    colorRangeToleranceInput.value = String(Math.round(tolerance));
+    colorRangeToleranceInput.style.setProperty("--color-range-tolerance-progress", `${progress}%`);
+    colorRangeToleranceValue.textContent = String(Math.round(tolerance));
+    colorRangeSwatch?.style.setProperty("--color-range-sample", sampleColor);
+  }
+
+  function showColorRangeToleranceControl(isVisible) {
+    if (!colorRangeToleranceControl) {
+      return;
+    }
+
+    colorRangeToleranceControl.hidden = !isVisible;
+
+    if (isVisible) {
+      syncColorRangeToleranceControl();
     }
   }
 
@@ -2010,6 +2053,13 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   });
 
+  colorRangeToleranceInput?.addEventListener("input", () => {
+    window.CBO.areaSelection?.setColorRangeTolerance?.(colorRangeToleranceInput.value, {
+      source: "color-range-toolbar",
+    });
+    syncColorRangeToleranceControl();
+  });
+
   window.addEventListener("cbo:transform-mode-change", (event) => {
     setTransformMode(event.detail?.mode, { emit: false });
   });
@@ -2017,6 +2067,9 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   window.addEventListener("cbo:area-selection-operation-change", (event) => {
     setAreaSelectionOperation(event.detail?.mode, { emit: false });
   });
+
+  window.addEventListener("cbo:color-range-tolerance-change", syncColorRangeToleranceControl);
+  window.addEventListener("cbo:color-range-sample-change", syncColorRangeToleranceControl);
 
   rasterTransformActionButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -2055,7 +2108,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const toolMode = String(event.detail?.toolMode || "").toLowerCase();
     const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
     const isBrush = label === "BRUSH" || label === "ERASER" || toolMode === "eraser" || (toolMode === "brush" && syncGroup === "brush");
-    const isAreaSelection = toolMode === "selection-rect" || toolMode === "selection-circle" || toolMode === "selection-lasso" || toolMode === "selection-polygon-lasso";
+    const isColorRange = toolMode === "selection-color-range";
+    const isAreaSelection = toolMode === "selection-rect" || toolMode === "selection-circle" || toolMode === "selection-lasso" || toolMode === "selection-polygon-lasso" || isColorRange;
     const isResize = label === "RESIZE" || toolMode === "resize";
     const isRotate = label === "ROTATE" || toolMode === "rotate";
     const isText = label === "TYPE" || toolMode === "text";
@@ -2074,6 +2128,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
     syncMobileTextState();
     showAreaSelectionOperationToolbar(isAreaSelection);
+    showColorRangeToleranceControl(isColorRange);
     showTransformModeToolbar(isResize || isRotate);
     showTransformAngleControl(isRotate);
   });
