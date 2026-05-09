@@ -379,8 +379,10 @@ window.CBO = window.CBO || {};
         <button class="layer-effects-tab" type="button" data-curves-channel="b">B</button>
       </div>
       <div class="layer-effects-curve-box" data-curves-graph>
-        <svg viewBox="0 0 255 255" fill="none" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" data-curves-svg>
-          <path class="curves-grid" d="M0 63.75H255M0 127.5H255M0 191.25H255M63.75 0V255M127.5 0V255M191.25 0V255" />
+        <svg viewBox="0 0 255 255" fill="none" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" data-curves-svg>
+          <rect class="curves-graph-surface" x="0" y="0" width="255" height="255" />
+          <path class="curves-grid curves-grid-minor" d="M0 31.875H255M0 95.625H255M0 159.375H255M0 223.125H255M31.875 0V255M95.625 0V255M159.375 0V255M223.125 0V255" />
+          <path class="curves-grid curves-grid-major" d="M0 63.75H255M0 127.5H255M0 191.25H255M63.75 0V255M127.5 0V255M191.25 0V255" />
           <path class="curves-baseline" d="M0 255L255 0" />
           <path class="curves-overlay curves-overlay-r" data-curves-overlay="r" />
           <path class="curves-overlay curves-overlay-g" data-curves-overlay="g" />
@@ -1546,10 +1548,20 @@ window.CBO = window.CBO || {};
       return normalized.find((point) => point.id === activeCurvesPointId) || normalized[0] || null;
     }
 
-    function screenToCurvesPoint(clientX, clientY) {
-      const rect = curvesGraph?.getBoundingClientRect?.();
+    function getCurvesGraphRect() {
+      const rect = curvesSvg?.getBoundingClientRect?.() || curvesGraph?.getBoundingClientRect?.();
 
       if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+
+      return rect;
+    }
+
+    function screenToCurvesPoint(clientX, clientY) {
+      const rect = getCurvesGraphRect();
+
+      if (!rect) {
         return { x: 0, y: 0 };
       }
 
@@ -1560,7 +1572,7 @@ window.CBO = window.CBO || {};
     }
 
     function getCurvesPointScreenPosition(point) {
-      const rect = curvesGraph?.getBoundingClientRect?.();
+      const rect = getCurvesGraphRect();
       const width = Math.max(1, rect?.width || 1);
       const height = Math.max(1, rect?.height || 1);
 
@@ -1571,7 +1583,7 @@ window.CBO = window.CBO || {};
     }
 
     function findCurvesPointNearEvent(event, points) {
-      const rect = curvesGraph?.getBoundingClientRect?.();
+      const rect = getCurvesGraphRect();
 
       if (!rect) {
         return null;
@@ -1643,6 +1655,7 @@ window.CBO = window.CBO || {};
         const channel = path.dataset.curvesOverlay;
         const channelPoints = getCurvesChannelPoints(pointsByChannel, channel);
 
+        path.hidden = channel === activeCurvesChannel;
         path.setAttribute("d", engine?.buildSvgPath?.(channelPoints) || "");
         path.style.stroke = getCurvesChannelColor(channel);
       });
@@ -1654,11 +1667,12 @@ window.CBO = window.CBO || {};
 
         return `
           <circle
-            class="curves-point${isActive ? " active" : ""}"
+            class="curves-point${isActive ? " active" : ""}${point.endpoint ? " endpoint" : ""}"
             cx="${point.x}"
             cy="${255 - point.y}"
             r="${isActive ? 5.6 : 4.6}"
             data-curves-point="${point.id}"
+            vector-effect="non-scaling-stroke"
           />
         `;
       }).join("");

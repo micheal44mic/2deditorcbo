@@ -12,6 +12,10 @@
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38);
 }
 
+.layer-effects-popover[data-active-effect="curves"] {
+  width: 344px;
+}
+
 .layer-effects-popover[hidden] {
   display: none;
 }
@@ -506,60 +510,118 @@
 }
 
 .layer-effects-curve-box {
-  height: 138px;
-  padding: 9px;
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 7px;
+  position: relative;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 11px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012)),
+    #101217;
+  border: 1px solid rgba(246, 247, 251, 0.18);
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.26),
+    inset 0 -26px 42px rgba(0, 0, 0, 0.18);
   cursor: crosshair;
   touch-action: none;
 }
 
+.layer-effects-curve-box::before,
+.layer-effects-curve-box::after {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.layer-effects-curve-box::before {
+  inset: 0 auto 0 0;
+  width: 18px;
+  background: linear-gradient(0deg, #050608, #f8f9fb);
+  opacity: 0.16;
+}
+
+.layer-effects-curve-box::after {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 18px;
+  background: linear-gradient(90deg, #050608, #f8f9fb);
+  opacity: 0.18;
+}
+
 .layer-effects-curve-box svg {
+  position: relative;
+  z-index: 1;
   display: block;
   width: 100%;
   height: 100%;
+  overflow: visible;
+  shape-rendering: geometricPrecision;
 }
 
 .layer-effects-curve-box path {
   pointer-events: none;
-  stroke: rgba(246, 247, 251, 0.16);
+  vector-effect: non-scaling-stroke;
+}
+
+.layer-effects-curve-box .curves-graph-surface {
+  fill: rgba(255, 255, 255, 0.018);
+  stroke: rgba(246, 247, 251, 0.22);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
 }
 
 .layer-effects-curve-box .curve-line {
   stroke: rgba(246, 247, 251, 0.82);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2.2;
+  stroke-width: 2.4;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.42));
 }
 
 .layer-effects-curve-box .curves-baseline {
-  stroke: rgba(246, 247, 251, 0.26);
+  stroke: rgba(246, 247, 251, 0.28);
   stroke-dasharray: 5 5;
-  stroke-width: 1.2;
+  stroke-width: 1.1;
 }
 
-.layer-effects-curve-box .curves-grid {
-  stroke: rgba(246, 247, 251, 0.13);
-  stroke-width: 1;
+.layer-effects-curve-box .curves-grid-minor {
+  stroke: rgba(246, 247, 251, 0.055);
+  stroke-width: 0.75;
+}
+
+.layer-effects-curve-box .curves-grid-major {
+  stroke: rgba(246, 247, 251, 0.16);
+  stroke-width: 1.05;
 }
 
 .layer-effects-curve-box .curves-overlay {
-  opacity: 0.42;
-  stroke-width: 1.5;
+  opacity: 0.48;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.55;
 }
 
 .layer-effects-curve-box circle {
-  fill: rgba(246, 247, 251, 0.86);
+  fill: #f6f7fb;
   pointer-events: none;
-  stroke: rgba(18, 20, 25, 0.94);
-  stroke-width: 2;
+  stroke: #101217;
+  stroke-width: 2.4;
+}
+
+.layer-effects-curve-box .curves-point.endpoint {
+  fill: #d9deea;
 }
 
 .layer-effects-curve-box .curves-point.active {
   fill: #ffffff;
-  stroke: rgba(145, 189, 243, 0.98);
-  stroke-width: 2.2;
+  stroke: #78b9ff;
+  stroke-width: 2.8;
+  filter: drop-shadow(0 0 5px rgba(120, 185, 255, 0.44));
 }
 
 .curves-point-controls {
@@ -616,6 +678,10 @@
 }
 
 @media (max-width: 900px) {
+  .layer-effects-popover[data-active-effect="curves"] {
+    width: min(344px, calc(100vw - 24px));
+  }
+
   .field-blur-pin-overlay {
     touch-action: none;
   }
