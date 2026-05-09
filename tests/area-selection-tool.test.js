@@ -13,7 +13,9 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   const indexSource = readRepoFile("index.html");
   const appSource = readRepoFile("js", "app.js");
   const toolbarSource = readRepoFile("js", "vertical-toolbar.js");
+  const topToolbarSource = readRepoFile("js", "top-toolbar.js");
   const selectionSource = readRepoFile("js", "area-selection-tool.js");
+  const topToolbarCss = readRepoFile("css", "top-toolbar.css");
   const layoutSource = readRepoFile("css", "layout.css");
 
   assert.match(indexSource, /js\/area-selection-tool\.js/);
@@ -47,6 +49,7 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   assert.match(selectionSource, /if \(AREA_SELECTION_ANTS_ENABLED\) \{/);
   assert.match(selectionSource, /drawSelectionShade\(overlay, viewportRect, dpr\)/);
   assert.match(selectionSource, /drawOverlayBoundaryFrame\(overlay, viewportRect, dpr\)/);
+  assert.match(selectionSource, /ctx\.globalCompositeOperation = "destination-out";[\s\S]*ctx\.fillStyle = "#000000";/);
   assert.match(selectionSource, /state\.region = cloneRegion\(region\)/);
   assert.match(selectionSource, /namespace\.activeAreaSelectionRects = cloneRects\(state\.rects\)/);
   assert.match(selectionSource, /getRegionSnapshot/);
@@ -56,6 +59,20 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   assert.match(selectionSource, /pointerTarget\.addEventListener\("wheel", handleOverlayActivity, true\)/);
   assert.match(selectionSource, /window\.addEventListener\("cbo:camera-change", handleOverlayCameraChange\)/);
   assert.match(selectionSource, /window\.addEventListener\("resize", handleOverlayResize\)/);
+  assert.match(topToolbarSource, /data-area-selection-operation-toolbar/);
+  assert.match(topToolbarSource, /data-area-selection-operation="replace"/);
+  assert.match(topToolbarSource, /data-area-selection-operation="add"/);
+  assert.match(topToolbarSource, /data-area-selection-operation="subtract"/);
+  assert.match(topToolbarSource, /REPLACE SELECTION 1/);
+  assert.match(topToolbarSource, /ADD TO SELECTION 2/);
+  assert.match(topToolbarSource, /SUBTRACT FROM SELECTION 3/);
+  assert.match(topToolbarSource, /window\.CBO\.areaSelection\?\.setOperationMode\?\./);
+  assert.match(topToolbarSource, /window\.CBO\.areaSelection\?\.getOperationMode\?\./);
+  assert.match(topToolbarSource, /cbo:area-selection-operation-change/);
+  assert.match(topToolbarSource, /toolMode === "selection-rect"/);
+  assert.match(topToolbarSource, /showAreaSelectionOperationToolbar\(isAreaSelection\)/);
+  assert.match(topToolbarCss, /\.area-selection-operation-toolbar/);
+  assert.match(topToolbarCss, /\.area-selection-operation-button/);
   assert.match(layoutSource, /\.editor-area-selection-overlay/);
   assert.match(layoutSource, /position: absolute/);
   assert.match(layoutSource, /z-index: 3/);
@@ -149,6 +166,8 @@ test("rect selection drag supports shift square and alt center modifiers", () =>
   assert.match(selectionSource, /function normalizeOperationMode\(mode\) \{/);
   assert.match(selectionSource, /function setOperationMode\(mode, options = \{\}\) \{/);
   assert.match(selectionSource, /function getOperationMode\(\) \{/);
+  assert.match(selectionSource, /function isRectToolActive\(\) \{/);
+  assert.match(selectionSource, /state\.activeToolMode === RECT_TOOL_MODE/);
   assert.match(selectionSource, /cbo:area-selection-operation-change/);
   assert.match(selectionSource, /state\.baseRegion = getRegionSnapshot\(\)/);
   assert.match(selectionSource, /state\.dragOperationMode = state\.operationMode/);

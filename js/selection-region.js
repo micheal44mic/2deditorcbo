@@ -118,6 +118,68 @@
     return pieces;
   }
 
+  function normalizePolygonPoints(points) {
+    return Array.isArray(points)
+      ? points
+        .map((point) => ({
+          x: Number(point?.x ?? point?.docX),
+          y: Number(point?.y ?? point?.docY),
+        }))
+        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      : [];
+  }
+
+  function getPolygonRows(points) {
+    const polygon = normalizePolygonPoints(points);
+
+    if (polygon.length < 3) {
+      return [];
+    }
+
+    const minY = Math.floor(Math.min(...polygon.map((point) => point.y)));
+    const maxY = Math.ceil(Math.max(...polygon.map((point) => point.y)));
+    const rows = [];
+
+    for (let y = minY; y < maxY; y += 1) {
+      const scanY = y + 0.5;
+      const intersections = [];
+
+      for (let index = 0; index < polygon.length; index += 1) {
+        const a = polygon[index];
+        const b = polygon[(index + 1) % polygon.length];
+
+        if ((a.y <= scanY && b.y > scanY) || (b.y <= scanY && a.y > scanY)) {
+          const t = (scanY - a.y) / (b.y - a.y);
+
+          intersections.push(a.x + t * (b.x - a.x));
+        }
+      }
+
+      intersections.sort((a, b) => a - b);
+
+      const intervals = [];
+
+      for (let index = 0; index + 1 < intersections.length; index += 2) {
+        const left = intersections[index];
+        const right = intersections[index + 1];
+        const x0 = Math.ceil(Math.min(left, right) - 0.5);
+        const x1 = Math.floor(Math.max(left, right) - 0.5) + 1;
+
+        if (x1 > x0) {
+          intervals.push([x0, x1]);
+        }
+      }
+
+      const merged = mergeIntervals(intervals);
+
+      if (merged.length > 0) {
+        rows.push({ intervals: merged, y });
+      }
+    }
+
+    return rows;
+  }
+
   class SelectionRegion {
     constructor(rows = null, version = 0) {
       this.rows = new Map();
@@ -144,6 +206,12 @@
       const region = new SelectionRegion();
 
       return region.replaceRect(rect);
+    }
+
+    static fromPolygon(points) {
+      const region = new SelectionRegion();
+
+      return region.replacePolygon(points);
     }
 
     static deserialize(data) {
@@ -231,6 +299,11 @@
       return this.addRect(rect);
     }
 
+    replacePolygon(points) {
+      this.rows.clear();
+      return this.addPolygon(points);
+    }
+
     addRect(rect) {
       const normalized = normalizeRect(rect);
 
@@ -245,6 +318,22 @@
         const intervals = this.rows.get(y) || [];
         this.rows.set(y, mergeIntervals([...intervals, [x0, x1]]));
       }
+
+      return this.touch();
+    }
+
+    addPolygon(points) {
+      const rows = getPolygonRows(points);
+
+      if (rows.length === 0) {
+        return this.touch();
+      }
+
+      rows.forEach((row) => {
+        const intervals = this.rows.get(row.y) || [];
+
+        this.rows.set(row.y, mergeIntervals([...intervals, ...row.intervals]));
+      });
 
       return this.touch();
     }
@@ -293,6 +382,32 @@
       return this.touch();
     }
 
+    subtractPolygon(points) {
+      const rows = getPolygonRows(points);
+
+      if (rows.length === 0 || this.isEmpty()) {
+        return this.touch();
+      }
+
+      rows.forEach((row) => {
+        const intervals = this.rows.get(row.y);
+
+        if (!intervals) {
+          return;
+        }
+
+        const nextIntervals = subtractIntervals(intervals, row.intervals);
+
+        if (nextIntervals.length > 0) {
+          this.rows.set(row.y, mergeIntervals(nextIntervals));
+        } else {
+          this.rows.delete(row.y);
+        }
+      });
+
+      return this.touch();
+    }
+
     applyRect(rect, mode = "replace") {
       const normalizedMode = mode === "add" || mode === "subtract" ? mode : "replace";
 
@@ -305,6 +420,20 @@
       }
 
       return this.replaceRect(rect);
+    }
+
+    applyPolygon(points, mode = "replace") {
+      const normalizedMode = mode === "add" || mode === "subtract" ? mode : "replace";
+
+      if (normalizedMode === "add") {
+        return this.addPolygon(points);
+      }
+
+      if (normalizedMode === "subtract") {
+        return this.subtractPolygon(points);
+      }
+
+      return this.replacePolygon(points);
     }
 
     containsPoint(x, y) {
@@ -563,6 +692,7 @@
   SelectionRegion.normalizeRect = normalizeRect;
   SelectionRegion.intervalsEqual = intervalsEqual;
   SelectionRegion.subtractIntervals = subtractIntervals;
+  SelectionRegion.getPolygonRows = getPolygonRows;
 
   namespace.SelectionRegion = SelectionRegion;
 })(window.CBO = window.CBO || {});

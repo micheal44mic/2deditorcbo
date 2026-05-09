@@ -1,5 +1,8 @@
 (function registerAreaSelectionTool(namespace) {
   const RECT_TOOL_MODE = "selection-rect";
+  const LASSO_TOOL_MODE = "selection-lasso";
+  const LASSO_MIN_POINTS = 3;
+  const LASSO_POINT_SPACING = 1.5;
   const MIN_SELECTION_SIZE = 3;
   const PASTE_OFFSET_PX = 60;
   const AREA_SELECTION_ANTS_ENABLED = true;
@@ -20,6 +23,7 @@
     rect: null,
     rects: [],
     dragOperationMode: "replace",
+    lassoPoints: [],
     operationMode: "replace",
     overlayCache: {
       boundaryPath: null,
@@ -225,6 +229,10 @@
     return namespace.SelectionRegion?.fromRect?.(rect) || null;
   }
 
+  function createRegionFromPolygon(points) {
+    return namespace.SelectionRegion?.fromPolygon?.(points) || createEmptyRegion();
+  }
+
   function cloneRegion(region) {
     return region?.clone?.() || createEmptyRegion();
   }
@@ -356,6 +364,52 @@
     }
 
     return createRegionFromRect(rect);
+  }
+
+  function getPolygonBounds(points) {
+    const validPoints = Array.isArray(points)
+      ? points.filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y))
+      : [];
+
+    if (validPoints.length < LASSO_MIN_POINTS) {
+      return null;
+    }
+
+    const x0 = Math.floor(Math.min(...validPoints.map((point) => point.x)));
+    const y0 = Math.floor(Math.min(...validPoints.map((point) => point.y)));
+    const x1 = Math.ceil(Math.max(...validPoints.map((point) => point.x)));
+    const y1 = Math.ceil(Math.max(...validPoints.map((point) => point.y)));
+
+    if (x1 - x0 < MIN_SELECTION_SIZE || y1 - y0 < MIN_SELECTION_SIZE) {
+      return null;
+    }
+
+    return {
+      height: y1 - y0,
+      width: x1 - x0,
+      x: x0,
+      y: y0,
+    };
+  }
+
+  function applyLassoOperation(baseSelection, points, mode = "replace") {
+    const baseRegion = Array.isArray(baseSelection)
+      ? setRectsOnRegion(baseSelection)
+      : cloneRegion(baseSelection);
+
+    if (!getPolygonBounds(points)) {
+      return mode === "replace" ? createEmptyRegion() : baseRegion;
+    }
+
+    if (mode === "add") {
+      return baseRegion?.addPolygon?.(points) || createRegionFromPolygon(points);
+    }
+
+    if (mode === "subtract") {
+      return baseRegion?.subtractPolygon?.(points) || createEmptyRegion();
+    }
+
+    return createRegionFromPolygon(points);
   }
 
   function setRectsOnRegion(rects) {
@@ -508,6 +562,22 @@
       left,
       top,
       width,
+    };
+  }
+
+  function getScreenPoint(point) {
+    const brushEngine = getBrushEngine();
+    const canvas = state.canvas;
+    const camera = brushEngine?.camera;
+    const dpr = Math.max(1, Number(brushEngine?.dpr) || window.devicePixelRatio || 1);
+
+    if (!canvas || !camera || !point) {
+      return null;
+    }
+
+    return {
+      x: (camera.x + point.x * camera.zoom) / dpr,
+      y: (camera.y + point.y * camera.zoom) / dpr,
     };
   }
 
@@ -676,6 +746,38 @@
     ctx.setLineDash([]);
   }
 
+  function strokeLassoPath(ctx, dashOffset = 0) {
+    if (!Array.isArray(state.lassoPoints) || state.lassoPoints.length < 2) {
+      return;
+    }
+
+    ctx.beginPath();
+    state.lassoPoints.forEach((point, index) => {
+      const screenPoint = getScreenPoint(point);
+
+      if (!screenPoint) {
+        return;
+      }
+
+      if (index === 0) {
+        ctx.moveTo(screenPoint.x, screenPoint.y);
+      } else {
+        ctx.lineTo(screenPoint.x, screenPoint.y);
+      }
+    });
+    ctx.lineWidth = 1;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = "rgba(245, 251, 255, 0.96)";
+    ctx.lineDashOffset = dashOffset;
+    ctx.stroke();
+    ctx.strokeStyle = "#18a0fb";
+    ctx.lineDashOffset = dashOffset + 6;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
 
   function ensureOverlay() {
     if (state.overlay?.isConnected) {
@@ -765,6 +867,7 @@
     ctx.fillStyle = "rgba(24, 160, 251, 0.11)";
     ctx.fillRect(documentRect.left, documentRect.top, documentRect.width, documentRect.height);
     ctx.globalCompositeOperation = "destination-out";
+    ctx.fillStyle = "#000000";
     state.overlayCache.coverageRectsScreen.forEach((rectScreen) => {
       ctx.fillRect(rectScreen.left, rectScreen.top, rectScreen.width, rectScreen.height);
     });
@@ -793,14 +896,18 @@
     } else {
       strokeCachedBoundary(ctx, 0, false);
     }
+
+    if (isLassoToolActive() && state.pointerId != null) {
+      strokeLassoPath(ctx, dashOffset);
+    }
   }
 
   function updateOverlay(options = {}) {
     const overlay = ensureOverlay();
-    const screenRect = getScreenRect(state.rect);
     const documentRect = getDocumentScreenRect();
+    const hasLassoPath = isLassoToolActive() && state.pointerId != null && state.lassoPoints.length > 1;
 
-    if (!screenRect || !documentRect || !state.rect) {
+    if (!documentRect || (!state.rect && !hasLassoPath)) {
       overlay.hidden = true;
       clearOverlayCanvases(overlay);
       return;
@@ -840,8 +947,13 @@
       rebuildOverlayScreenCache(documentRect);
     }
 
-    if (options.shadeDirty !== false && state.overlayCache.shadeDirty) {
+    if (state.rect && options.shadeDirty !== false && state.overlayCache.shadeDirty) {
       drawSelectionShade(overlay, viewportRect, dpr);
+    } else if (!state.rect) {
+      const shadeCanvas = overlay.querySelector(".editor-area-selection-shade-canvas");
+      const shadeCtx = shadeCanvas?.getContext?.("2d");
+
+      shadeCtx?.clearRect?.(0, 0, shadeCanvas.width || 0, shadeCanvas.height || 0);
     }
 
     drawOverlayBoundaryFrame(overlay, viewportRect, dpr);
@@ -891,6 +1003,14 @@
     return state.activeToolMode === RECT_TOOL_MODE;
   }
 
+  function isLassoToolActive() {
+    return state.activeToolMode === LASSO_TOOL_MODE;
+  }
+
+  function isAreaSelectionToolActive() {
+    return isRectToolActive() || isLassoToolActive();
+  }
+
   function getEventDocumentPoint(event) {
     const brushEngine = getBrushEngine();
 
@@ -901,8 +1021,38 @@
     return brushEngine.screenToDocumentSpace(event.clientX, event.clientY);
   }
 
+  function clampDocumentPoint(point) {
+    const documentRect = getDocumentRect();
+
+    return {
+      x: clamp(point?.docX ?? point?.x, documentRect.x, documentRect.x + documentRect.width),
+      y: clamp(point?.docY ?? point?.y, documentRect.y, documentRect.y + documentRect.height),
+    };
+  }
+
+  function shouldAppendLassoPoint(point) {
+    const previous = state.lassoPoints[state.lassoPoints.length - 1];
+
+    if (!previous) {
+      return true;
+    }
+
+    return Math.hypot(point.x - previous.x, point.y - previous.y) >= LASSO_POINT_SPACING;
+  }
+
+  function appendLassoPoint(point) {
+    const clampedPoint = clampDocumentPoint(point);
+
+    if (shouldAppendLassoPoint(clampedPoint)) {
+      state.lassoPoints.push(clampedPoint);
+      return true;
+    }
+
+    return false;
+  }
+
   function handlePointerDown(event) {
-    if (!isRectToolActive() || event.button !== 0 || state.pointerId != null) {
+    if (!isAreaSelectionToolActive() || event.button !== 0 || state.pointerId != null) {
       return;
     }
 
@@ -919,6 +1069,10 @@
     state.startPoint = point;
     state.baseRegion = getRegionSnapshot();
     state.dragOperationMode = state.operationMode;
+    state.lassoPoints = [];
+    if (isLassoToolActive()) {
+      appendLassoPoint(point);
+    }
     if (state.dragOperationMode === "replace") {
       setRect(null, { source: "area-selection-drag-start" });
     }
@@ -939,6 +1093,20 @@
 
     event.preventDefault();
     event.stopPropagation();
+
+    if (isLassoToolActive()) {
+      appendLassoPoint(point);
+      setRegion(applyLassoOperation(
+        state.baseRegion,
+        state.lassoPoints,
+        state.dragOperationMode,
+      ), {
+        emit: false,
+        source: "area-selection-lasso-drag",
+      });
+      return;
+    }
+
     setRegion(applySelectionOperation(
       state.baseRegion,
       normalizeRectFromPoints(state.startPoint, point, getSelectionDragOptions(event)),
@@ -965,6 +1133,15 @@
 
     if (didCancel || !point || !state.startPoint) {
       setRegion(state.baseRegion, { source: "area-selection-cancel" });
+    } else if (isLassoToolActive()) {
+      appendLassoPoint(point);
+      setRegion(applyLassoOperation(
+        state.baseRegion,
+        state.lassoPoints,
+        state.dragOperationMode,
+      ), {
+        source: "area-selection-lasso-commit",
+      });
     } else {
       setRegion(applySelectionOperation(
         state.baseRegion,
@@ -979,6 +1156,7 @@
     state.startPoint = null;
     state.baseRegion = null;
     state.dragOperationMode = "replace";
+    state.lassoPoints = [];
     stopOverlayLoop();
   }
 
@@ -1449,7 +1627,7 @@
 
     const shortcutKey = String(event.key || "").toLowerCase();
 
-    if (isRectToolActive() && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (isAreaSelectionToolActive() && !event.ctrlKey && !event.metaKey && !event.altKey) {
       if (shortcutKey === "r" || event.key === "1") {
         setOperationMode("replace", { source: "area-selection-shortcut" });
         event.preventDefault();

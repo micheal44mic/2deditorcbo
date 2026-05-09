@@ -36,6 +36,60 @@ const TRANSFORM_MODE_ICONS = Object.freeze({
   `,
 });
 
+const AREA_SELECTION_OPERATION_ICONS = Object.freeze({
+  replace: `
+    <svg class="lucide lucide-square-dashed-icon lucide-square-dashed" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 3a2 2 0 0 0-2 2" />
+      <path d="M19 3a2 2 0 0 1 2 2" />
+      <path d="M21 19a2 2 0 0 1-2 2" />
+      <path d="M5 21a2 2 0 0 1-2-2" />
+      <path d="M9 3h1" />
+      <path d="M14 3h1" />
+      <path d="M9 21h1" />
+      <path d="M14 21h1" />
+      <path d="M3 9v1" />
+      <path d="M3 14v1" />
+      <path d="M21 9v1" />
+      <path d="M21 14v1" />
+    </svg>
+  `,
+  add: `
+    <svg class="lucide lucide-square-dashed-plus-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 3a2 2 0 0 0-2 2" />
+      <path d="M19 3a2 2 0 0 1 2 2" />
+      <path d="M21 19a2 2 0 0 1-2 2" />
+      <path d="M5 21a2 2 0 0 1-2-2" />
+      <path d="M9 3h1" />
+      <path d="M14 3h1" />
+      <path d="M9 21h1" />
+      <path d="M14 21h1" />
+      <path d="M3 9v1" />
+      <path d="M3 14v1" />
+      <path d="M21 9v1" />
+      <path d="M21 14v1" />
+      <path d="M12 8v8" />
+      <path d="M8 12h8" />
+    </svg>
+  `,
+  subtract: `
+    <svg class="lucide lucide-square-dashed-minus-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 3a2 2 0 0 0-2 2" />
+      <path d="M19 3a2 2 0 0 1 2 2" />
+      <path d="M21 19a2 2 0 0 1-2 2" />
+      <path d="M5 21a2 2 0 0 1-2-2" />
+      <path d="M9 3h1" />
+      <path d="M14 3h1" />
+      <path d="M9 21h1" />
+      <path d="M14 21h1" />
+      <path d="M3 9v1" />
+      <path d="M3 14v1" />
+      <path d="M21 9v1" />
+      <path d="M21 14v1" />
+      <path d="M8 12h8" />
+    </svg>
+  `,
+});
+
 const MOBILE_TEXT_PANEL_ICONS = Object.freeze({
   color: `
     <svg class="lucide lucide-palette-icon lucide-palette" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -125,6 +179,17 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   window.CBO.brushSettings = BrushDefaults.createSettings(window.CBO.brushSettings);
 
   dock.innerHTML = `
+    <nav class="bottom-toolbar area-selection-operation-toolbar" aria-label="Area selection operation toolbar" data-area-selection-operation-toolbar hidden>
+      <button class="area-selection-operation-button active" type="button" aria-label="REPLACE SELECTION" aria-pressed="true" data-tooltip="REPLACE SELECTION 1" data-area-selection-operation="replace">
+        ${AREA_SELECTION_OPERATION_ICONS.replace}
+      </button>
+      <button class="area-selection-operation-button" type="button" aria-label="ADD TO SELECTION" aria-pressed="false" data-tooltip="ADD TO SELECTION 2" data-area-selection-operation="add">
+        ${AREA_SELECTION_OPERATION_ICONS.add}
+      </button>
+      <button class="area-selection-operation-button" type="button" aria-label="SUBTRACT FROM SELECTION" aria-pressed="false" data-tooltip="SUBTRACT FROM SELECTION 3" data-area-selection-operation="subtract">
+        ${AREA_SELECTION_OPERATION_ICONS.subtract}
+      </button>
+    </nav>
     <nav class="bottom-toolbar transform-mode-toolbar" aria-label="Transform toolbar" data-transform-mode-toolbar hidden>
       <button class="transform-mode-button active" type="button" aria-label="FREE TRANSFORM" aria-pressed="true" data-tooltip="FREE TRANSFORM" data-transform-mode="free">
         ${TRANSFORM_MODE_ICONS.freeTransform}
@@ -414,6 +479,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
   const layersButtons = document.querySelectorAll(".top-layers-button");
   const rasterizeTextButtons = document.querySelectorAll("[data-rasterize-text]");
+  const areaSelectionOperationToolbar = dock.querySelector("[data-area-selection-operation-toolbar]");
+  const areaSelectionOperationButtons = dock.querySelectorAll("[data-area-selection-operation]");
   const transformModeToolbar = dock.querySelector("[data-transform-mode-toolbar]");
   const transformModeButtons = dock.querySelectorAll("[data-transform-mode]");
   const transformAngleControl = dock.querySelector("[data-transform-angle-control]");
@@ -465,6 +532,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const quickInputs = dock.querySelectorAll("[data-brush-quick-input]");
   const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
   let selectedTransformMode = "free";
+  let selectedAreaSelectionOperation = "replace";
   let isResizeToolActive = false;
   let isRotateToolActive = false;
   let isRasterTransformPending = false;
@@ -473,6 +541,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   let isSyncingMobileTextControls = false;
   let textGeometryPatchRevision = 0;
   const allowedTransformModes = new Set(["free", "perspective", "warp"]);
+  const allowedAreaSelectionOperations = new Set(["replace", "add", "subtract"]);
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, Number(value) || 0));
@@ -553,6 +622,44 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
     if (isVisible) {
       syncQuickControls();
+    }
+  }
+
+  function setAreaSelectionOperation(mode, options = {}) {
+    const normalizedMode = String(mode || "").trim().toLowerCase();
+
+    if (!allowedAreaSelectionOperations.has(normalizedMode)) {
+      return;
+    }
+
+    selectedAreaSelectionOperation = normalizedMode;
+
+    areaSelectionOperationButtons.forEach((button) => {
+      const isActive = button.dataset.areaSelectionOperation === selectedAreaSelectionOperation;
+
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+
+    if (options.emit !== false) {
+      window.CBO.areaSelection?.setOperationMode?.(selectedAreaSelectionOperation, {
+        source: options.source || "area-selection-operation-toolbar",
+      });
+    }
+  }
+
+  function showAreaSelectionOperationToolbar(isVisible) {
+    if (!areaSelectionOperationToolbar) {
+      return;
+    }
+
+    areaSelectionOperationToolbar.hidden = !isVisible;
+
+    if (isVisible) {
+      setAreaSelectionOperation(
+        window.CBO.areaSelection?.getOperationMode?.() || selectedAreaSelectionOperation,
+        { emit: false },
+      );
     }
   }
 
@@ -1895,8 +2002,20 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   });
 
+  areaSelectionOperationButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setAreaSelectionOperation(button.dataset.areaSelectionOperation, {
+        source: "area-selection-operation-toolbar",
+      });
+    });
+  });
+
   window.addEventListener("cbo:transform-mode-change", (event) => {
     setTransformMode(event.detail?.mode, { emit: false });
+  });
+
+  window.addEventListener("cbo:area-selection-operation-change", (event) => {
+    setAreaSelectionOperation(event.detail?.mode, { emit: false });
   });
 
   rasterTransformActionButtons.forEach((button) => {
@@ -1936,6 +2055,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const toolMode = String(event.detail?.toolMode || "").toLowerCase();
     const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
     const isBrush = label === "BRUSH" || label === "ERASER" || toolMode === "eraser" || (toolMode === "brush" && syncGroup === "brush");
+    const isAreaSelection = toolMode === "selection-rect" || toolMode === "selection-lasso";
     const isResize = label === "RESIZE" || toolMode === "resize";
     const isRotate = label === "ROTATE" || toolMode === "rotate";
     const isText = label === "TYPE" || toolMode === "text";
@@ -1953,6 +2073,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     }
 
     syncMobileTextState();
+    showAreaSelectionOperationToolbar(isAreaSelection);
     showTransformModeToolbar(isResize || isRotate);
     showTransformAngleControl(isRotate);
   });
@@ -1980,6 +2101,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   window.addEventListener("cbo:image-layer-rasterized", syncRasterizeTextButton);
   window.addEventListener("cbo:brush-settings-change", syncQuickControls);
   setTransformMode(selectedTransformMode, { emit: false });
+  setAreaSelectionOperation(selectedAreaSelectionOperation, { emit: false });
   syncRasterizeTextButton();
   syncMobileTextState();
   syncQuickControls();

@@ -442,6 +442,7 @@
   display: none;
 }
 
+.area-selection-operation-toolbar,
 .transform-mode-toolbar {
   position: fixed;
   top: 28px;
@@ -452,10 +453,12 @@
   overflow: hidden;
 }
 
+.area-selection-operation-toolbar[hidden],
 .transform-mode-toolbar[hidden] {
   display: none;
 }
 
+.area-selection-operation-button,
 .transform-mode-button {
   position: relative;
   display: inline-flex;
@@ -471,17 +474,21 @@
   color: #c3c8d1;
 }
 
+.area-selection-operation-button:hover,
+.area-selection-operation-button:focus-visible,
 .transform-mode-button:hover,
 .transform-mode-button:focus-visible {
   color: #ffffff;
   background: rgb(44, 48, 58);
 }
 
+.area-selection-operation-button.active,
 .transform-mode-button.active {
   color: #ffffff;
   background: rgb(44, 48, 58);
 }
 
+.area-selection-operation-button svg,
 .transform-mode-button svg {
   width: 25px;
   height: 25px;
@@ -694,6 +701,7 @@
     display: none;
   }
 
+  .area-selection-operation-toolbar,
   .transform-mode-toolbar {
     gap: 5px;
     padding: 6px;
@@ -750,6 +758,7 @@
     height: 0;
   }
 
+  .area-selection-operation-toolbar,
   .transform-mode-toolbar {
     top: auto;
     bottom: 88px;

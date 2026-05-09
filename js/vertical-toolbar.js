@@ -59,20 +59,6 @@ window.CBO.initVerticalToolbar = function initVerticalToolbar() {
               <span class="popover-label">RECT SELECT</span>
               <span class="popover-key"></span>
             </span>
-            <span class="popover-option" data-toolset-option="side-selection" data-tool-mode="selection-circle" data-label="CIRCLE SELECT">
-              <svg class="lucide lucide-circle-dashed-icon lucide-circle-dashed" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M10.1 2.182a10 10 0 0 1 3.8 0" />
-                <path d="M13.9 21.818a10 10 0 0 1-3.8 0" />
-                <path d="M17.609 3.721a10 10 0 0 1 2.69 2.7" />
-                <path d="M2.182 13.9a10 10 0 0 1 0-3.8" />
-                <path d="M20.279 17.609a10 10 0 0 1-2.7 2.69" />
-                <path d="M21.818 10.1a10 10 0 0 1 0 3.8" />
-                <path d="M3.721 6.391a10 10 0 0 1 2.7-2.69" />
-                <path d="M6.391 20.279a10 10 0 0 1-2.69-2.7" />
-              </svg>
-              <span class="popover-label">CIRCLE SELECT</span>
-              <span class="popover-key"></span>
-            </span>
             <span class="popover-option" data-toolset-option="side-selection" data-tool-mode="selection-lasso" data-label="LASSO SELECT">
               <svg class="lucide lucide-lasso-icon lucide-lasso" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M3.704 14.467a10 8 0 1 1 3.115 2.375" />
