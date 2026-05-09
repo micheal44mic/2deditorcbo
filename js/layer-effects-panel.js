@@ -12,6 +12,9 @@ window.CBO = window.CBO || {};
   const MAX_GRAIN_AMOUNT = 100;
   const MAX_GRAIN_SCALE = 100;
   const DEFAULT_GRAIN_SCALE = 42;
+  const MAX_NOISE_AMOUNT = 100;
+  const MAX_NOISE_SCALE = 100;
+  const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
   const RASTERIZABLE_EFFECT_TYPES = Object.freeze([
@@ -20,6 +23,7 @@ window.CBO = window.CBO || {};
     "motion-blur",
     "field-blur",
     "radial-blur",
+    "noise",
     "grain",
     "threshold",
   ]);
@@ -45,7 +49,7 @@ window.CBO = window.CBO || {};
     {
       label: "Texture",
       items: Object.freeze([
-        { implemented: false, icon: "noise", label: "Noise", type: "noise" },
+        { implemented: true, icon: "noise", label: "Noise", type: "noise" },
         { implemented: true, icon: "grain", label: "Grain", type: "grain" },
         { implemented: false, icon: "halftone", label: "Halftone", type: "halftone" },
         { implemented: false, icon: "pixelate", label: "Pixelate", type: "pixelate" },
@@ -322,6 +326,12 @@ window.CBO = window.CBO || {};
           <button class="mobile-layer-effect-toggle active" type="button" aria-pressed="true" data-mobile-grain-monochrome>Mono</button>
           <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="grain">Reset</button>
         </div>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="noise" hidden>
+          ${getMobileEffectRangeMarkup("Amount", 0, MAX_NOISE_AMOUNT, "noise-amount", { suffix: "%" })}
+          ${getMobileEffectRangeMarkup("Scale", DEFAULT_NOISE_SCALE, MAX_NOISE_SCALE, "noise-scale", { min: 1, suffix: "%" })}
+          <button class="mobile-layer-effect-toggle active" type="button" aria-pressed="true" data-mobile-noise-monochrome>Mono</button>
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="noise">Reset</button>
+        </div>
         <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="threshold" hidden>
           ${getMobileEffectRangeMarkup("Level", DEFAULT_THRESHOLD_VALUE, MAX_THRESHOLD_VALUE, "threshold-level")}
           <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="threshold">Reset</button>
@@ -425,6 +435,7 @@ window.CBO = window.CBO || {};
       effect.type === "field-blur" ||
       effect.type === "radial-blur" ||
       effect.type === "grain" ||
+      effect.type === "noise" ||
       effect.type === "threshold"
     ) {
       return "";
@@ -459,11 +470,6 @@ window.CBO = window.CBO || {};
       "motion-blur": [
         getAdjustmentControlMarkup("Distance", 26),
         getAdjustmentControlMarkup("Angle", 38),
-      ],
-      noise: [
-        getAdjustmentControlMarkup("Amount", 14),
-        getAdjustmentControlMarkup("Scale", 28),
-        getAdjustmentControlMarkup("Monochrome", true, "checkbox"),
       ],
       pixelate: [
         getAdjustmentControlMarkup("Size", 18),
@@ -588,6 +594,20 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function getNoise(layer) {
+    const effect = findLayerEffect(layer, "noise", "noise");
+    const amount = Number(effect?.amount);
+    const scale = Number(effect?.scale);
+    const seed = Number(effect?.seed);
+
+    return {
+      amount: Number.isFinite(amount) ? Math.max(0, Math.min(MAX_NOISE_AMOUNT, amount)) : 0,
+      scale: Number.isFinite(scale) ? Math.max(1, Math.min(MAX_NOISE_SCALE, scale)) : DEFAULT_NOISE_SCALE,
+      monochrome: effect ? effect.monochrome !== false : true,
+      seed: Number.isFinite(seed) ? seed : 0,
+    };
+  }
+
   function getThreshold(layer) {
     const effect = findLayerEffect(layer, "threshold", "threshold");
 
@@ -606,8 +626,8 @@ window.CBO = window.CBO || {};
     };
   }
 
-  function createGrainSeed(layerId) {
-    const text = `grain:${layerId || ""}`;
+  function createEffectSeed(type, layerId) {
+    const text = `${type}:${layerId || ""}`;
     let hash = 2166136261;
 
     for (let index = 0; index < text.length; index += 1) {
@@ -616,6 +636,14 @@ window.CBO = window.CBO || {};
     }
 
     return ((hash >>> 0) % 100000) / 100;
+  }
+
+  function createGrainSeed(layerId) {
+    return createEffectSeed("grain", layerId);
+  }
+
+  function createNoiseSeed(layerId) {
+    return createEffectSeed("noise", layerId);
   }
 
   function getNextEffects(layer, radius) {
@@ -720,6 +748,30 @@ window.CBO = window.CBO || {};
     return effects;
   }
 
+  function getNextNoiseEffects(layer, amount, scale, monochrome) {
+    const nextAmount = clamp(amount, 0, MAX_NOISE_AMOUNT);
+    const nextScale = clamp(scale, 1, MAX_NOISE_SCALE);
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const existingNoise = existingEffects.find((effect) => effect && effect.type === "noise");
+    const existingSeed = Number(existingNoise?.seed);
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "noise")
+      .map((effect) => cloneValue(effect));
+
+    if (nextAmount > 0) {
+      effects.push({
+        type: "noise",
+        enabled: true,
+        amount: nextAmount,
+        scale: nextScale,
+        monochrome: monochrome !== false,
+        seed: Number.isFinite(existingSeed) ? existingSeed : createNoiseSeed(layer?.id),
+      });
+    }
+
+    return effects;
+  }
+
   function getNextThresholdEffects(layer, threshold, enabled = true) {
     const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
     const effects = existingEffects
@@ -780,6 +832,10 @@ window.CBO = window.CBO || {};
       return getGrain({ effects: [effect] }).amount > 0;
     }
 
+    if (effect.type === "noise") {
+      return getNoise({ effects: [effect] }).amount > 0;
+    }
+
     if (effect.type === "threshold") {
       return getThreshold({ effects: [effect] }).enabled;
     }
@@ -833,6 +889,7 @@ window.CBO = window.CBO || {};
   namespace.getLayerFieldBlur = getFieldBlur;
   namespace.getLayerRadialBlur = getRadialBlur;
   namespace.getLayerGrain = getGrain;
+  namespace.getLayerNoise = getNoise;
   namespace.getLayerThreshold = getThreshold;
   namespace.getLayerCurves = getCurves;
 
@@ -984,6 +1041,34 @@ window.CBO = window.CBO || {};
 
     const didUpdate = layerModel.updateLayer(layerId, {
       effects: getNextGrainEffects(layer, amount, scale, monochrome),
+    }, updateOptions);
+
+    if (didUpdate) {
+      namespace.documentRenderer?.requestDraw?.();
+    }
+
+    return didUpdate;
+  };
+
+  namespace.setLayerNoise = function setLayerNoise(layerId, amount, scale, monochrome, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const updateOptions = {
+      historyGroup: options.historyGroup || `noise-${layerId}`,
+      source: options.source || "layer-effects-noise",
+    };
+
+    if (options.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = layerModel.updateLayer(layerId, {
+      effects: getNextNoiseEffects(layer, amount, scale, monochrome),
     }, updateOptions);
 
     if (didUpdate) {
@@ -1387,6 +1472,30 @@ window.CBO = window.CBO || {};
               </button>
             </div>
           </section>
+          <section class="layer-effects-section" aria-label="Noise" data-layer-effects-editor="noise" hidden>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Amount</span>
+              <output class="layer-effects-value" data-layer-noise-amount-value>0%</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="100" step="1" value="0" aria-label="Noise amount" data-layer-noise-amount-input />
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Scale</span>
+              <output class="layer-effects-value" data-layer-noise-scale-value>1%</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="1" max="100" step="1" value="1" aria-label="Noise scale" data-layer-noise-scale-input />
+            <label class="layer-effects-check-row">
+              <span class="layer-effects-label">Monochrome</span>
+              <input class="layer-effects-check" type="checkbox" checked data-layer-noise-monochrome-input />
+            </label>
+            <div class="layer-effects-actions">
+              <button class="layer-effects-icon-button" type="button" aria-label="Reset noise" data-layer-noise-reset>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+            </div>
+          </section>
           <section class="layer-effects-section" aria-label="Threshold" data-layer-effects-editor="threshold" hidden>
             <div class="layer-effects-control-header">
               <span class="layer-effects-label">Level</span>
@@ -1461,6 +1570,11 @@ window.CBO = window.CBO || {};
     const grainScaleInput = panel.querySelector("[data-layer-grain-scale-input]");
     const grainScaleValue = panel.querySelector("[data-layer-grain-scale-value]");
     const grainMonochromeInput = panel.querySelector("[data-layer-grain-monochrome-input]");
+    const noiseAmountInput = panel.querySelector("[data-layer-noise-amount-input]");
+    const noiseAmountValue = panel.querySelector("[data-layer-noise-amount-value]");
+    const noiseScaleInput = panel.querySelector("[data-layer-noise-scale-input]");
+    const noiseScaleValue = panel.querySelector("[data-layer-noise-scale-value]");
+    const noiseMonochromeInput = panel.querySelector("[data-layer-noise-monochrome-input]");
     const thresholdInput = panel.querySelector("[data-layer-threshold-input]");
     const thresholdValue = panel.querySelector("[data-layer-threshold-value]");
     const curvesGraph = panel.querySelector("[data-curves-graph]");
@@ -1478,6 +1592,7 @@ window.CBO = window.CBO || {};
     const motionResetButton = panel.querySelector("[data-layer-motion-reset]");
     const radialResetButton = panel.querySelector("[data-layer-radial-reset]");
     const grainResetButton = panel.querySelector("[data-layer-grain-reset]");
+    const noiseResetButton = panel.querySelector("[data-layer-noise-reset]");
     const thresholdResetButton = panel.querySelector("[data-layer-threshold-reset]");
     const closeButton = panel.querySelector("[data-layer-effects-close]");
     const panelCloseButton = panel.querySelector("[data-layer-effects-panel-close]");
@@ -1488,6 +1603,7 @@ window.CBO = window.CBO || {};
     const mobileLayerEffectResets = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-reset]") || [];
     const mobileRadialModeButtons = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-radial-mode]") || [];
     const mobileGrainMonochromeButton = mobileLayerEffectsPanel?.querySelector("[data-mobile-grain-monochrome]");
+    const mobileNoiseMonochromeButton = mobileLayerEffectsPanel?.querySelector("[data-mobile-noise-monochrome]");
     let activeEffectType = "";
     let activeMobileEffectType = "";
     let fieldBlurDrag = null;
@@ -1809,6 +1925,8 @@ window.CBO = window.CBO || {};
         "grain-amount": "%",
         "grain-scale": "%",
         "motion-distance": "px",
+        "noise-amount": "%",
+        "noise-scale": "%",
         "radial-center-x": "%",
         "radial-center-y": "%",
       };
@@ -1875,6 +1993,19 @@ window.CBO = window.CBO || {};
 
     function isMobileGrainMonochromeEnabled() {
       return mobileGrainMonochromeButton?.getAttribute("aria-pressed") !== "false";
+    }
+
+    function setMobileNoiseMonochromeState(isMonochrome) {
+      if (!mobileNoiseMonochromeButton) {
+        return;
+      }
+
+      mobileNoiseMonochromeButton.classList.toggle("active", isMonochrome);
+      mobileNoiseMonochromeButton.setAttribute("aria-pressed", String(isMonochrome));
+    }
+
+    function isMobileNoiseMonochromeEnabled() {
+      return mobileNoiseMonochromeButton?.getAttribute("aria-pressed") !== "false";
     }
 
     function closeMobileLayerEffectsPanel() {
@@ -2060,6 +2191,9 @@ window.CBO = window.CBO || {};
       const grain = isEligible
         ? getGrain(layer)
         : { amount: 0, scale: DEFAULT_GRAIN_SCALE, monochrome: true };
+      const noise = isEligible
+        ? getNoise(layer)
+        : { amount: 0, scale: DEFAULT_NOISE_SCALE, monochrome: true };
       const threshold = isEligible
         ? getThreshold(layer)
         : { enabled: false, threshold: DEFAULT_THRESHOLD_VALUE };
@@ -2089,6 +2223,10 @@ window.CBO = window.CBO || {};
         mobileGrainMonochromeButton.disabled = !isEligible;
       }
 
+      if (mobileNoiseMonochromeButton) {
+        mobileNoiseMonochromeButton.disabled = !isEligible;
+      }
+
       setMobileLayerEffectControl("gaussian-radius", radius);
       setMobileLayerEffectControl("motion-distance", motionBlur.distance);
       setMobileLayerEffectControl("motion-angle", getDisplayAngle(motionBlur.angle));
@@ -2100,6 +2238,9 @@ window.CBO = window.CBO || {};
       setMobileLayerEffectControl("grain-amount", grain.amount);
       setMobileLayerEffectControl("grain-scale", grain.scale);
       setMobileGrainMonochromeState(grain.monochrome);
+      setMobileLayerEffectControl("noise-amount", noise.amount);
+      setMobileLayerEffectControl("noise-scale", noise.scale);
+      setMobileNoiseMonochromeState(noise.monochrome);
       setMobileLayerEffectControl("threshold-level", threshold.threshold);
 
       mobileLayerEffectsPanel?.classList.toggle("disabled", !isEligible);
@@ -2216,6 +2357,17 @@ window.CBO = window.CBO || {};
             source: "mobile-layer-effects-grain",
           },
         );
+      } else if (name === "noise-amount" || name === "noise-scale") {
+        namespace.setLayerNoise(
+          layer.id,
+          getMobileLayerEffectInput("noise-amount")?.value,
+          getMobileLayerEffectInput("noise-scale")?.value,
+          isMobileNoiseMonochromeEnabled(),
+          {
+            history: false,
+            source: "mobile-layer-effects-noise",
+          },
+        );
       } else if (name === "threshold-level") {
         namespace.setLayerThreshold(layer.id, value, {
           history: false,
@@ -2265,6 +2417,11 @@ window.CBO = window.CBO || {};
         );
       } else if (effectType === "grain") {
         namespace.setLayerGrain(layer.id, 0, DEFAULT_GRAIN_SCALE, true, {
+          history: false,
+          source: "mobile-layer-effects-reset",
+        });
+      } else if (effectType === "noise") {
+        namespace.setLayerNoise(layer.id, 0, DEFAULT_NOISE_SCALE, true, {
           history: false,
           source: "mobile-layer-effects-reset",
         });
@@ -2911,6 +3068,8 @@ window.CBO = window.CBO || {};
         radialAmountInput?.focus?.({ preventScroll: true });
       } else if (effectType === "grain") {
         grainAmountInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "noise") {
+        noiseAmountInput?.focus?.({ preventScroll: true });
       } else if (effectType === "threshold") {
         const threshold = getThreshold(getActiveLayer());
 
@@ -2987,6 +3146,9 @@ window.CBO = window.CBO || {};
       const grain = isEligible
         ? getGrain(layer)
         : { amount: 0, scale: DEFAULT_GRAIN_SCALE, monochrome: true, seed: 0 };
+      const noise = isEligible
+        ? getNoise(layer)
+        : { amount: 0, scale: DEFAULT_NOISE_SCALE, monochrome: true, seed: 0 };
       const threshold = isEligible
         ? getThreshold(layer)
         : { enabled: false, threshold: DEFAULT_THRESHOLD_VALUE };
@@ -3018,6 +3180,9 @@ window.CBO = window.CBO || {};
       grainAmountInput.disabled = !isEligible;
       grainScaleInput.disabled = !isEligible;
       grainMonochromeInput.disabled = !isEligible;
+      noiseAmountInput.disabled = !isEligible;
+      noiseScaleInput.disabled = !isEligible;
+      noiseMonochromeInput.disabled = !isEligible;
       thresholdInput.disabled = !isEligible;
       if (curvesInput) {
         curvesInput.disabled = !isEligible;
@@ -3038,12 +3203,14 @@ window.CBO = window.CBO || {};
         (activeEffectType === "field-blur" && !hasActiveFieldBlur) ||
         (activeEffectType === "radial-blur" && radialBlur.amount <= 0) ||
         (activeEffectType === "grain" && grain.amount <= 0) ||
+        (activeEffectType === "noise" && noise.amount <= 0) ||
         (activeEffectType === "threshold" && !threshold.enabled) ||
         (activeEffectType === "curves" && !hasActiveCurves);
       resetButton.disabled = !isEligible || radius <= 0;
       motionResetButton.disabled = !isEligible || motionBlur.distance <= 0;
       radialResetButton.disabled = !isEligible || radialBlur.amount <= 0;
       grainResetButton.disabled = !isEligible || grain.amount <= 0;
+      noiseResetButton.disabled = !isEligible || noise.amount <= 0;
       thresholdResetButton.disabled = !isEligible || !threshold.enabled;
       blurInput.value = String(radius);
       blurValue.textContent = `${Math.round(radius)} px`;
@@ -3063,6 +3230,11 @@ window.CBO = window.CBO || {};
       grainScaleInput.value = String(grain.scale);
       grainScaleValue.textContent = `${Math.round(grain.scale)}%`;
       grainMonochromeInput.checked = grain.monochrome;
+      noiseAmountInput.value = String(noise.amount);
+      noiseAmountValue.textContent = `${Math.round(noise.amount)}%`;
+      noiseScaleInput.value = String(noise.scale);
+      noiseScaleValue.textContent = `${Math.round(noise.scale)}%`;
+      noiseMonochromeInput.checked = noise.monochrome;
       thresholdInput.value = String(threshold.threshold);
       thresholdValue.textContent = String(Math.round(threshold.threshold));
       syncFieldBlurUi();
@@ -3168,6 +3340,35 @@ window.CBO = window.CBO || {};
       }
 
       namespace.setLayerGrain(layer.id, nextAmount, nextScale, nextMonochrome, {
+        history: false,
+        source: "layer-effects-preview",
+      });
+    }
+
+    function applyNoise(
+      amount,
+      scale = noiseScaleInput?.value,
+      monochrome = noiseMonochromeInput?.checked,
+    ) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextAmount = clamp(amount, 0, MAX_NOISE_AMOUNT);
+      const nextScale = clamp(scale, 1, MAX_NOISE_SCALE);
+      const nextMonochrome = monochrome !== false;
+      const currentNoise = getNoise(layer);
+
+      noiseAmountValue.textContent = `${Math.round(nextAmount)}%`;
+      noiseScaleValue.textContent = `${Math.round(nextScale)}%`;
+      if (nextAmount <= 0 && currentNoise.amount <= 0) {
+        return;
+      }
+
+      namespace.setLayerNoise(layer.id, nextAmount, nextScale, nextMonochrome, {
         history: false,
         source: "layer-effects-preview",
       });
@@ -3307,6 +3508,13 @@ window.CBO = window.CBO || {};
       applyMobileLayerEffectValue("grain-amount", getMobileLayerEffectInput("grain-amount")?.value);
     });
 
+    mobileNoiseMonochromeButton?.addEventListener("click", () => {
+      const isMonochrome = mobileNoiseMonochromeButton.getAttribute("aria-pressed") !== "true";
+
+      setMobileNoiseMonochromeState(isMonochrome);
+      applyMobileLayerEffectValue("noise-amount", getMobileLayerEffectInput("noise-amount")?.value);
+    });
+
     mobileLayerEffectResets.forEach((reset) => {
       reset.addEventListener("click", () => {
         resetMobileLayerEffect(reset.dataset.mobileLayerEffectReset);
@@ -3425,6 +3633,25 @@ window.CBO = window.CBO || {};
       grainScaleInput.value = String(DEFAULT_GRAIN_SCALE);
       grainMonochromeInput.checked = true;
       applyGrain(0, DEFAULT_GRAIN_SCALE, true);
+    });
+
+    noiseAmountInput.addEventListener("input", () => {
+      applyNoise(noiseAmountInput.value, noiseScaleInput.value, noiseMonochromeInput.checked);
+    });
+
+    noiseScaleInput.addEventListener("input", () => {
+      applyNoise(noiseAmountInput.value, noiseScaleInput.value, noiseMonochromeInput.checked);
+    });
+
+    noiseMonochromeInput.addEventListener("change", () => {
+      applyNoise(noiseAmountInput.value, noiseScaleInput.value, noiseMonochromeInput.checked);
+    });
+
+    noiseResetButton.addEventListener("click", () => {
+      noiseAmountInput.value = "0";
+      noiseScaleInput.value = String(DEFAULT_NOISE_SCALE);
+      noiseMonochromeInput.checked = true;
+      applyNoise(0, DEFAULT_NOISE_SCALE, true);
     });
 
     thresholdInput.addEventListener("input", () => {

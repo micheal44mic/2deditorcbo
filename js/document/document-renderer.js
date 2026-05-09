@@ -688,6 +688,65 @@ void main() {
 }
 `;
 
+  const NOISE_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform float u_amount;
+uniform float u_scale;
+uniform float u_monochrome;
+uniform float u_seed;
+uniform vec2 u_origin;
+uniform vec2 u_size;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.0973);
+  p3 += dot(p3, p3.yzx + 19.19);
+
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+float noiseSample(vec2 cell, float salt) {
+  return hash12(cell + vec2(salt * 1.71, salt * 0.83) + u_seed);
+}
+
+void main() {
+  vec4 base = texture(u_texture, v_uv);
+  float alpha = clamp(base.a, 0.0, 1.0);
+  float amount = clamp(u_amount / 100.0, 0.0, 1.0);
+
+  if (alpha <= 0.0 || amount <= 0.0) {
+    outColor = base;
+    return;
+  }
+
+  vec2 documentPixel = u_origin + vec2(v_uv.x * u_size.x, (1.0 - v_uv.y) * u_size.y);
+  float noiseSize = mix(1.0, 8.0, clamp((u_scale - 1.0) / 99.0, 0.0, 1.0));
+  vec2 noiseCell = floor(documentPixel / max(noiseSize, 1.0));
+  vec3 color = base.rgb / max(alpha, 0.0001);
+  vec3 noise;
+
+  if (u_monochrome > 0.5) {
+    float value = noiseSample(noiseCell, 13.0);
+
+    noise = vec3(value);
+  } else {
+    noise = vec3(
+      noiseSample(noiseCell, 7.0),
+      noiseSample(noiseCell, 23.0),
+      noiseSample(noiseCell, 41.0)
+    );
+  }
+
+  color = clamp(color + (noise * 2.0 - 1.0) * amount, vec3(0.0), vec3(1.0));
+  outColor = vec4(color * alpha, alpha);
+}
+`;
+
   const THRESHOLD_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -933,6 +992,9 @@ void main() {
   const MAX_GRAIN_AMOUNT = 100;
   const MAX_GRAIN_SCALE = 100;
   const DEFAULT_GRAIN_SCALE = 42;
+  const MAX_NOISE_AMOUNT = 100;
+  const MAX_NOISE_SCALE = 100;
+  const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
   const PREVIEW_CACHE_ZOOM_THRESHOLD = 8.0;
@@ -968,6 +1030,18 @@ void main() {
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.max(1, Math.min(MAX_GRAIN_SCALE, number)) : DEFAULT_GRAIN_SCALE;
+  }
+
+  function normalizeNoiseAmount(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_NOISE_AMOUNT, number)) : 0;
+  }
+
+  function normalizeNoiseScale(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(1, Math.min(MAX_NOISE_SCALE, number)) : DEFAULT_NOISE_SCALE;
   }
 
   function normalizeThresholdValue(value) {
@@ -1130,6 +1204,7 @@ void main() {
       this.fieldBlurProgramInfo = null;
       this.radialBlurProgramInfo = null;
       this.grainProgramInfo = null;
+      this.noiseProgramInfo = null;
       this.thresholdProgramInfo = null;
       this.curvesProgramInfo = null;
       this.curvesLutTexture = null;
@@ -2804,6 +2879,45 @@ void main() {
       };
     }
 
+    createNoiseProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, NOISE_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma noise WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma noise.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          amount: gl.getUniformLocation(program, "u_amount"),
+          monochrome: gl.getUniformLocation(program, "u_monochrome"),
+          origin: gl.getUniformLocation(program, "u_origin"),
+          scale: gl.getUniformLocation(program, "u_scale"),
+          seed: gl.getUniformLocation(program, "u_seed"),
+          size: gl.getUniformLocation(program, "u_size"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+
     createThresholdProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE);
@@ -2991,6 +3105,14 @@ void main() {
       }
 
       return this.grainProgramInfo;
+    }
+
+    ensureNoiseProgramInfo() {
+      if (!this.noiseProgramInfo) {
+        this.noiseProgramInfo = this.createNoiseProgramInfo();
+      }
+
+      return this.noiseProgramInfo;
     }
 
     ensureThresholdProgramInfo() {
@@ -4195,6 +4317,35 @@ void main() {
         : null;
     }
 
+    getNoise(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "noise" && item.enabled !== false)
+        : effects?.noise;
+      const seed = Number(effect?.seed);
+
+      return {
+        amount: normalizeNoiseAmount(effect?.amount),
+        scale: normalizeNoiseScale(effect?.scale),
+        monochrome: effect ? effect.monochrome !== false : true,
+        seed: Number.isFinite(seed) ? seed : 0,
+      };
+    }
+
+    getLayerNoise(layer) {
+      const noise = this.getNoise(layer);
+
+      return noise.amount > 0
+        ? {
+            enabled: true,
+            amount: noise.amount,
+            scale: noise.scale,
+            monochrome: noise.monochrome,
+            seed: noise.seed,
+          }
+        : null;
+    }
+
     getThreshold(layer) {
       const effects = layer?.effects;
       const effect = Array.isArray(effects)
@@ -4240,6 +4391,7 @@ void main() {
         hasFieldBlurAmount(this.getFieldBlur(layer).pins) ||
         this.getRadialBlur(layer).amount > 0 ||
         this.getGrain(layer).amount > 0 ||
+        this.getNoise(layer).amount > 0 ||
         Boolean(this.getLayerThreshold(layer)) ||
         Boolean(this.getLayerCurves(layer))
       );
@@ -4506,6 +4658,14 @@ void main() {
       }
 
       this.grainProgramInfo = null;
+    }
+
+    deleteNoiseResources() {
+      if (this.noiseProgramInfo?.program) {
+        this.gl.deleteProgram(this.noiseProgramInfo.program);
+      }
+
+      this.noiseProgramInfo = null;
     }
 
     deleteThresholdResources() {
@@ -4835,6 +4995,46 @@ void main() {
       return true;
     }
 
+    runNoisePass({
+      sourceTexture,
+      target,
+      amount,
+      scale,
+      monochrome,
+      seed,
+      originX = 0,
+      originY = 0,
+    }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureNoiseProgramInfo();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1f(uniforms.amount, normalizeNoiseAmount(amount));
+      gl.uniform1f(uniforms.scale, normalizeNoiseScale(scale));
+      gl.uniform1f(uniforms.monochrome, monochrome === false ? 0 : 1);
+      gl.uniform1f(uniforms.seed, Number.isFinite(Number(seed)) ? Number(seed) : 0);
+      gl.uniform2f(uniforms.origin, Number.isFinite(originX) ? originX : 0, Number.isFinite(originY) ? originY : 0);
+      gl.uniform2f(uniforms.size, Math.max(1, target.width || 1), Math.max(1, target.height || 1));
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
     runThresholdPass({ sourceTexture, target, threshold }) {
       if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
         return false;
@@ -5113,6 +5313,31 @@ void main() {
       });
 
       return didGrainPass ? target.texture : sourceTexture;
+    }
+
+    applyNoiseTexture(sourceTexture, noise, options = {}) {
+      const noiseEffect = noise || null;
+      const amount = normalizeNoiseAmount(noiseEffect?.amount);
+
+      if (!sourceTexture || amount <= 0) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const didNoisePass = this.runNoisePass({
+        amount,
+        monochrome: noiseEffect?.monochrome !== false,
+        originX: Number.isFinite(options.originX) ? options.originX : 0,
+        originY: Number.isFinite(options.originY) ? options.originY : 0,
+        scale: normalizeNoiseScale(noiseEffect?.scale),
+        seed: Number.isFinite(Number(noiseEffect?.seed)) ? Number(noiseEffect.seed) : 0,
+        sourceTexture,
+        target,
+      });
+
+      return didNoisePass ? target.texture : sourceTexture;
     }
 
     applyThresholdTexture(sourceTexture, threshold, options = {}) {
@@ -5506,6 +5731,12 @@ void main() {
             if (grain) {
               texture = this.applyGrainTexture(texture, grain, effectOptions);
             }
+          } else if (effect.type === "noise") {
+            const noise = this.getLayerNoise({ effects: [effect] });
+
+            if (noise) {
+              texture = this.applyNoiseTexture(texture, noise, effectOptions);
+            }
           } else if (effect.type === "threshold") {
             const threshold = this.getLayerThreshold({ effects: [effect] });
 
@@ -5529,6 +5760,7 @@ void main() {
       const fieldBlur = this.getLayerFieldBlur(layer);
       const radialBlur = this.getLayerRadialBlur(layer);
       const grain = this.getLayerGrain(layer);
+      const noise = this.getLayerNoise(layer);
       const threshold = this.getLayerThreshold(layer);
       const curves = this.getLayerCurves(layer);
 
@@ -5557,6 +5789,10 @@ void main() {
 
       if (grain) {
         texture = this.applyGrainTexture(texture, grain, effectOptions);
+      }
+
+      if (noise) {
+        texture = this.applyNoiseTexture(texture, noise, effectOptions);
       }
 
       if (threshold) {
@@ -11093,6 +11329,7 @@ void main() {
       this.deleteFieldBlurResources();
       this.deleteRadialBlurResources();
       this.deleteGrainResources();
+      this.deleteNoiseResources();
       this.deleteThresholdResources();
       this.deleteCurvesResources();
       this.deleteActiveStrokeScratchTarget();

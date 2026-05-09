@@ -2016,6 +2016,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /FIELD_BLUR_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /RADIAL_BLUR_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /GRAIN_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /NOISE_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /THRESHOLD_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /CURVES_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /createGaussianBlurProgramInfo\(\)/);
@@ -2023,12 +2024,14 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /createFieldBlurProgramInfo\(\)/);
   assert.match(source, /createRadialBlurProgramInfo\(\)/);
   assert.match(source, /createGrainProgramInfo\(\)/);
+  assert.match(source, /createNoiseProgramInfo\(\)/);
   assert.match(source, /createThresholdProgramInfo\(\)/);
   assert.match(source, /createCurvesProgramInfo\(\)/);
   assert.match(source, /ensureMotionBlurProgramInfo\(\)/);
   assert.match(source, /ensureFieldBlurProgramInfo\(\)/);
   assert.match(source, /ensureRadialBlurProgramInfo\(\)/);
   assert.match(source, /ensureGrainProgramInfo\(\)/);
+  assert.match(source, /ensureNoiseProgramInfo\(\)/);
   assert.match(source, /ensureThresholdProgramInfo\(\)/);
   assert.match(source, /ensureCurvesProgramInfo\(\)/);
   assert.match(source, /ensureLayerEffectScratchTargets\(/);
@@ -2037,6 +2040,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /runFieldBlurPass\(/);
   assert.match(source, /runRadialBlurPass\(/);
   assert.match(source, /runGrainPass\(/);
+  assert.match(source, /runNoisePass\(/);
   assert.match(source, /runThresholdPass\(/);
   assert.match(source, /runCurvesPass\(/);
   assert.match(source, /applyGaussianBlurTexture\(sourceTexture, radius, options = \{\}\)/);
@@ -2044,6 +2048,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /applyFieldBlurTexture\(sourceTexture, pins, options = \{\}\)/);
   assert.match(source, /applyRadialBlurTexture\(\s*sourceTexture,\s*amount,\s*centerX = 50,\s*centerY = 50,\s*mode = "spin",\s*options = \{\},/);
   assert.match(source, /applyGrainTexture\(sourceTexture, grain, options = \{\}\)/);
+  assert.match(source, /applyNoiseTexture\(sourceTexture, noise, options = \{\}\)/);
   assert.match(source, /applyThresholdTexture\(sourceTexture, threshold, options = \{\}\)/);
   assert.match(source, /applyCurvesTexture\(sourceTexture, curves, options = \{\}\)/);
   assert.match(source, /getLayerEffectOutputRect\(layer, targetRect\)/);
@@ -2053,6 +2058,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /getLayerFieldBlur\(layer\)/);
   assert.match(source, /getLayerRadialBlur\(layer\)/);
   assert.match(source, /getLayerGrain\(layer\)/);
+  assert.match(source, /getLayerNoise\(layer\)/);
   assert.match(source, /getLayerThreshold\(layer\)/);
   assert.match(source, /getLayerCurves\(layer\)/);
   assert.match(source, /getLayerRenderTexture\(layer, layerTarget\)/);
@@ -2077,6 +2083,8 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /u_monochrome/);
   assert.match(source, /vec2 documentPixel = u_origin/);
   assert.match(source, /effect\.type === "grain"/);
+  assert.match(source, /float noiseSize = mix\(1\.0, 8\.0/);
+  assert.match(source, /effect\.type === "noise"/);
   assert.match(source, /u_threshold/);
   assert.match(source, /thresholdLuminance\(color\) \* 255\.0 >= level/);
   assert.match(source, /effect\.type === "threshold"/);
@@ -2102,6 +2110,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /this\.deleteFieldBlurResources\(\)/);
   assert.match(source, /this\.deleteRadialBlurResources\(\)/);
   assert.match(source, /this\.deleteGrainResources\(\)/);
+  assert.match(source, /this\.deleteNoiseResources\(\)/);
   assert.match(source, /this\.deleteThresholdResources\(\)/);
   assert.match(source, /this\.deleteCurvesResources\(\)/);
   assert.match(previewCacheBody, /for \(const renderResult of this\.getLayerRenderResults\(layer, layerTarget\)\)/);

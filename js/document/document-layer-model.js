@@ -9,6 +9,9 @@
   const MAX_GRAIN_AMOUNT = 100;
   const MAX_GRAIN_SCALE = 100;
   const DEFAULT_GRAIN_SCALE = 42;
+  const MAX_NOISE_AMOUNT = 100;
+  const MAX_NOISE_SCALE = 100;
+  const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
   const CURVE_CHANNELS = Object.freeze(["rgb", "r", "g", "b"]);
@@ -56,6 +59,18 @@
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.max(1, Math.min(MAX_GRAIN_SCALE, number)) : DEFAULT_GRAIN_SCALE;
+  }
+
+  function normalizeNoiseAmount(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_NOISE_AMOUNT, number)) : 0;
+  }
+
+  function normalizeNoiseScale(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(1, Math.min(MAX_NOISE_SCALE, number)) : DEFAULT_NOISE_SCALE;
   }
 
   function normalizeThresholdValue(value) {
@@ -305,6 +320,20 @@
             };
           }
 
+          if (effect.type === "noise") {
+            const amount = normalizeNoiseAmount(effect.amount);
+            const seed = Number(effect.seed);
+
+            return {
+              type: "noise",
+              enabled: effect.enabled !== false,
+              amount,
+              scale: normalizeNoiseScale(effect.scale),
+              monochrome: effect.monochrome !== false,
+              seed: Number.isFinite(seed) ? seed : 0,
+            };
+          }
+
           if (effect.type === "threshold") {
             return {
               type: "threshold",
@@ -329,6 +358,7 @@
           (effect.type !== "field-blur" || hasFieldBlurAmount(effect.pins)) &&
           (effect.type !== "radial-blur" || effect.amount > 0) &&
           (effect.type !== "grain" || effect.amount > 0) &&
+          (effect.type !== "noise" || effect.amount > 0) &&
           (effect.type !== "threshold" || effect.enabled !== false) &&
           (effect.type !== "curves" || (effect.enabled !== false && hasMeaningfulCurves(effect.points))),
         );
