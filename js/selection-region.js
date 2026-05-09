@@ -151,24 +151,40 @@
         if ((a.y <= scanY && b.y > scanY) || (b.y <= scanY && a.y > scanY)) {
           const t = (scanY - a.y) / (b.y - a.y);
 
-          intersections.push(a.x + t * (b.x - a.x));
+          intersections.push({
+            winding: b.y > a.y ? 1 : -1,
+            x: a.x + t * (b.x - a.x),
+          });
         }
       }
 
-      intersections.sort((a, b) => a - b);
+      intersections.sort((a, b) => a.x - b.x || b.winding - a.winding);
 
       const intervals = [];
+      let winding = 0;
+      let startX = null;
 
-      for (let index = 0; index + 1 < intersections.length; index += 2) {
-        const left = intersections[index];
-        const right = intersections[index + 1];
-        const x0 = Math.ceil(Math.min(left, right) - 0.5);
-        const x1 = Math.floor(Math.max(left, right) - 0.5) + 1;
+      intersections.forEach((intersection) => {
+        const previousWinding = winding;
 
-        if (x1 > x0) {
-          intervals.push([x0, x1]);
+        winding += intersection.winding;
+
+        if (previousWinding === 0 && winding !== 0) {
+          startX = intersection.x;
+          return;
         }
-      }
+
+        if (previousWinding !== 0 && winding === 0 && startX != null) {
+          const x0 = Math.ceil(Math.min(startX, intersection.x) - 0.5);
+          const x1 = Math.floor(Math.max(startX, intersection.x) - 0.5) + 1;
+
+          if (x1 > x0) {
+            intervals.push([x0, x1]);
+          }
+
+          startX = null;
+        }
+      });
 
       const merged = mergeIntervals(intervals);
 

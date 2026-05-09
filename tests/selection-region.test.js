@@ -90,3 +90,47 @@ test("SelectionRegion boundary segments skip internal coverage seams", () => {
     segment.x1 === 0 && segment.x2 === 6 && segment.y1 === 3 && segment.y2 === 3
   ));
 });
+
+test("SelectionRegion adds and subtracts lasso polygon coverage", () => {
+  const SelectionRegion = loadSelectionRegion();
+  const region = SelectionRegion.fromPolygon([
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+    { x: 0, y: 10 },
+  ]);
+
+  assert.equal(region.containsPoint(5, 5), true);
+  assert.equal(region.containsPoint(12, 5), false);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(region.getBounds())),
+    { x: 0, y: 0, width: 10, height: 10 },
+  );
+
+  region.subtractPolygon([
+    { x: 3, y: 3 },
+    { x: 7, y: 3 },
+    { x: 7, y: 7 },
+    { x: 3, y: 7 },
+  ]);
+
+  assert.equal(region.containsPoint(5, 5), false);
+  assert.equal(region.containsPoint(1, 1), true);
+});
+
+test("SelectionRegion lasso polygon uses non-zero union filling for self overlaps", () => {
+  const SelectionRegion = loadSelectionRegion();
+  const region = SelectionRegion.fromPolygon([
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+    { x: 0, y: 10 },
+    { x: 0, y: 0 },
+    { x: 20, y: 0 },
+    { x: 20, y: 10 },
+    { x: 0, y: 10 },
+  ]);
+
+  assert.equal(region.containsPoint(5, 5), true);
+  assert.equal(region.containsPoint(15, 5), true);
+});

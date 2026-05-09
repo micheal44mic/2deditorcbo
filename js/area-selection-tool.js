@@ -29,6 +29,7 @@
       boundaryPath: null,
       boundarySegmentsDoc: [],
       boundarySegmentsScreen: [],
+      coveragePath: null,
       coverageRectsDoc: [],
       coverageRectsScreen: [],
       documentScreenRect: null,
@@ -37,6 +38,7 @@
       shadeDirty: true,
     },
     startPoint: null,
+    visualPolygonPoints: null,
   };
 
   function clamp(value, min, max) {
@@ -218,6 +220,17 @@
   function cloneRects(rects) {
     return Array.isArray(rects)
       ? rects.map(cloneRect).filter(Boolean)
+      : [];
+  }
+
+  function clonePoints(points) {
+    return Array.isArray(points)
+      ? points
+        .map((point) => ({
+          x: Number(point?.x ?? point?.docX),
+          y: Number(point?.y ?? point?.docY),
+        }))
+        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
       : [];
   }
 
@@ -466,9 +479,11 @@
   }
 
   function setRegion(region, options = {}) {
+    const beforeRegion = cloneRegion(options.historyBeforeRegion || state.region);
     state.region = cloneRegion(region);
     state.rect = state.region?.getBounds?.() || null;
     state.rects = state.region?.getCoverageRects?.() || [];
+    state.visualPolygonPoints = clonePoints(options.visualPolygonPoints);
     namespace.activeAreaSelectionRect = cloneRect(state.rect);
     namespace.activeAreaSelectionRects = cloneRects(state.rects);
     markOverlayRegionDirty();
@@ -488,7 +503,66 @@
       startOverlayLoop();
     }
 
+    pushSelectionHistory(beforeRegion, state.region, options);
+
     return cloneRect(state.rect);
+  }
+
+  function serializeRegionForHistory(region) {
+    return region?.serialize?.() || createEmptyRegion()?.serialize?.() || { rows: [], version: 0 };
+  }
+
+  function restoreSelectionHistoryRegion(serializedRegion, source) {
+    const region = namespace.SelectionRegion?.deserialize?.(serializedRegion) || createEmptyRegion();
+
+    setRegion(region, {
+      history: false,
+      source,
+    });
+  }
+
+  function pushSelectionHistory(beforeRegion, afterRegion, options = {}) {
+    const history = namespace.documentHistory;
+
+    if (
+      !history?.push ||
+      history.canRecord?.(options) === false ||
+      options.history === false ||
+      options.recordHistory === false ||
+      options.selectionHistory === false
+    ) {
+      return false;
+    }
+
+    const source = options.source || "area-selection";
+
+    if (!/commit|escape|clear/.test(source)) {
+      return false;
+    }
+
+    const before = serializeRegionForHistory(beforeRegion);
+    const after = serializeRegionForHistory(afterRegion);
+
+    if (JSON.stringify(before.rows || []) === JSON.stringify(after.rows || [])) {
+      return false;
+    }
+
+    return history.push({
+      after,
+      before,
+      source: "area-selection-history",
+      type: "selection",
+      undo: () => {
+        restoreSelectionHistoryRegion(before, "history-undo-area-selection");
+        return true;
+      },
+      redo: () => {
+        restoreSelectionHistoryRegion(after, "history-redo-area-selection");
+        return true;
+      },
+    }, {
+      source: "area-selection-history",
+    });
   }
 
   function clear(options = {}) {
@@ -813,6 +887,123 @@
     return resizeOverlayCanvas(canvas, viewportRect);
   }
 
+  function getBoundaryPointKey(point) {
+    return `${point.x}:${point.y}`;
+  }
+
+  function simplifyBoundaryPath(points) {
+    const simplified = [];
+
+    clonePoints(points).forEach((point) => {
+      const previous = simplified[simplified.length - 1];
+
+      if (!previous || previous.x !== point.x || previous.y !== point.y) {
+        simplified.push(point);
+      }
+    });
+
+    let index = 1;
+
+    while (index < simplified.length - 1) {
+      const previous = simplified[index - 1];
+      const current = simplified[index];
+      const next = simplified[index + 1];
+      const isCollinear = (
+        (previous.x === current.x && current.x === next.x) ||
+        (previous.y === current.y && current.y === next.y)
+      );
+
+      if (isCollinear) {
+        simplified.splice(index, 1);
+      } else {
+        index += 1;
+      }
+    }
+
+    return simplified;
+  }
+
+  function buildContinuousBoundaryPaths(segments) {
+    const edges = Array.isArray(segments)
+      ? segments
+        .map((segment, id) => {
+          const a = { x: Number(segment?.x1), y: Number(segment?.y1) };
+          const b = { x: Number(segment?.x2), y: Number(segment?.y2) };
+
+          if (
+            !Number.isFinite(a.x) ||
+            !Number.isFinite(a.y) ||
+            !Number.isFinite(b.x) ||
+            !Number.isFinite(b.y) ||
+            (a.x === b.x && a.y === b.y)
+          ) {
+            return null;
+          }
+
+          return {
+            a,
+            aKey: getBoundaryPointKey(a),
+            b,
+            bKey: getBoundaryPointKey(b),
+            id,
+          };
+        })
+        .filter(Boolean)
+      : [];
+    const adjacency = new Map();
+    const visited = new Set();
+
+    edges.forEach((edge) => {
+      [edge.aKey, edge.bKey].forEach((key) => {
+        const list = adjacency.get(key) || [];
+
+        list.push(edge.id);
+        adjacency.set(key, list);
+      });
+    });
+
+    const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+    const paths = [];
+
+    edges.forEach((startEdge) => {
+      if (visited.has(startEdge.id)) {
+        return;
+      }
+
+      const points = [startEdge.a, startEdge.b];
+      const startKey = startEdge.aKey;
+      let currentKey = startEdge.bKey;
+
+      visited.add(startEdge.id);
+
+      while (currentKey !== startKey) {
+        const nextId = (adjacency.get(currentKey) || [])
+          .find((id) => !visited.has(id));
+
+        if (nextId == null) {
+          break;
+        }
+
+        const edge = edgeById.get(nextId);
+        const nextPoint = edge.aKey === currentKey ? edge.b : edge.a;
+
+        visited.add(nextId);
+        points.push(nextPoint);
+        currentKey = edge.aKey === currentKey ? edge.bKey : edge.aKey;
+      }
+
+      if (points.length >= 2) {
+        if (currentKey === startKey) {
+          points.pop();
+        }
+
+        paths.push(simplifyBoundaryPath(points));
+      }
+    });
+
+    return paths.filter((path) => path.length >= 2);
+  }
+
   function rebuildOverlayRegionCache() {
     state.overlayCache.coverageRectsDoc = cloneRects(state.rects);
     state.overlayCache.boundarySegmentsDoc = state.region?.getBoundarySegments?.() || [];
@@ -823,28 +1014,57 @@
 
   function rebuildOverlayScreenCache(documentRect) {
     const mapPoint = getDocumentPointToScreenMapper(documentRect);
-    const boundarySegmentsScreen = state.overlayCache.boundarySegmentsDoc.map((segment) => {
-      const start = mapPoint(segment.x1, segment.y1);
-      const end = mapPoint(segment.x2, segment.y2);
-
-      return {
-        x1: start.x,
-        x2: end.x,
-        y1: start.y,
-        y2: end.y,
-      };
-    });
+    let boundarySegmentsScreen = [];
     const boundaryPath = typeof Path2D === "function" ? new Path2D() : null;
+    const coveragePath = typeof Path2D === "function" ? new Path2D() : null;
+    const visualPolygonPoints = clonePoints(state.visualPolygonPoints);
 
-    if (boundaryPath) {
-      boundarySegmentsScreen.forEach((segment) => {
-        boundaryPath.moveTo(segment.x1, segment.y1);
-        boundaryPath.lineTo(segment.x2, segment.y2);
+    if (visualPolygonPoints.length >= LASSO_MIN_POINTS && boundaryPath && coveragePath) {
+      visualPolygonPoints.forEach((point, index) => {
+        const screenPoint = mapPoint(point.x, point.y);
+
+        if (index === 0) {
+          boundaryPath.moveTo(screenPoint.x, screenPoint.y);
+          coveragePath.moveTo(screenPoint.x, screenPoint.y);
+        } else {
+          boundaryPath.lineTo(screenPoint.x, screenPoint.y);
+          coveragePath.lineTo(screenPoint.x, screenPoint.y);
+        }
       });
+      boundaryPath.closePath();
+      coveragePath.closePath();
+    } else {
+      boundarySegmentsScreen = state.overlayCache.boundarySegmentsDoc.map((segment) => {
+        const start = mapPoint(segment.x1, segment.y1);
+        const end = mapPoint(segment.x2, segment.y2);
+
+        return {
+          x1: start.x,
+          x2: end.x,
+          y1: start.y,
+          y2: end.y,
+        };
+      });
+
+      if (boundaryPath) {
+        buildContinuousBoundaryPaths(state.overlayCache.boundarySegmentsDoc).forEach((pathPoints) => {
+          pathPoints.forEach((point, index) => {
+            const screenPoint = mapPoint(point.x, point.y);
+
+            if (index === 0) {
+              boundaryPath.moveTo(screenPoint.x, screenPoint.y);
+            } else {
+              boundaryPath.lineTo(screenPoint.x, screenPoint.y);
+            }
+          });
+          boundaryPath.closePath();
+        });
+      }
     }
 
     state.overlayCache.boundarySegmentsScreen = boundarySegmentsScreen;
     state.overlayCache.boundaryPath = boundaryPath;
+    state.overlayCache.coveragePath = visualPolygonPoints.length >= LASSO_MIN_POINTS ? coveragePath : null;
     state.overlayCache.coverageRectsScreen = state.overlayCache.coverageRectsDoc
       .map(getScreenRect)
       .filter(Boolean);
@@ -862,15 +1082,30 @@
       return;
     }
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, viewportRect.width, viewportRect.height);
+    const fillDeviceRect = (rect) => {
+      const x0 = Math.floor(rect.left * dpr);
+      const y0 = Math.floor(rect.top * dpr);
+      const x1 = Math.ceil((rect.left + rect.width) * dpr);
+      const y1 = Math.ceil((rect.top + rect.height) * dpr);
+
+      ctx.fillRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0));
+    };
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width || Math.ceil(viewportRect.width * dpr), canvas.height || Math.ceil(viewportRect.height * dpr));
     ctx.fillStyle = "rgba(24, 160, 251, 0.11)";
-    ctx.fillRect(documentRect.left, documentRect.top, documentRect.width, documentRect.height);
+    fillDeviceRect(documentRect);
     ctx.globalCompositeOperation = "destination-out";
     ctx.fillStyle = "#000000";
-    state.overlayCache.coverageRectsScreen.forEach((rectScreen) => {
-      ctx.fillRect(rectScreen.left, rectScreen.top, rectScreen.width, rectScreen.height);
-    });
+    if (state.overlayCache.coveragePath) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fill(state.overlayCache.coveragePath);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    } else {
+      state.overlayCache.coverageRectsScreen.forEach((rectScreen) => {
+        fillDeviceRect(rectScreen);
+      });
+    }
     ctx.globalCompositeOperation = "source-over";
     state.overlayCache.shadeDirty = false;
   }
@@ -1095,15 +1330,9 @@
     event.stopPropagation();
 
     if (isLassoToolActive()) {
-      appendLassoPoint(point);
-      setRegion(applyLassoOperation(
-        state.baseRegion,
-        state.lassoPoints,
-        state.dragOperationMode,
-      ), {
-        emit: false,
-        source: "area-selection-lasso-drag",
-      });
+      if (appendLassoPoint(point)) {
+        updateOverlay({ shadeDirty: false });
+      }
       return;
     }
 
@@ -1140,6 +1369,7 @@
         state.lassoPoints,
         state.dragOperationMode,
       ), {
+        historyBeforeRegion: state.baseRegion,
         source: "area-selection-lasso-commit",
       });
     } else {
@@ -1148,6 +1378,7 @@
         normalizeRectFromPoints(state.startPoint, point, getSelectionDragOptions(event)),
         state.dragOperationMode,
       ), {
+        historyBeforeRegion: state.baseRegion,
         source: "area-selection-commit",
       });
     }
