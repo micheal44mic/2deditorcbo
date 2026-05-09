@@ -2055,7 +2055,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const toolMode = String(event.detail?.toolMode || "").toLowerCase();
     const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
     const isBrush = label === "BRUSH" || label === "ERASER" || toolMode === "eraser" || (toolMode === "brush" && syncGroup === "brush");
-    const isAreaSelection = toolMode === "selection-rect" || toolMode === "selection-circle" || toolMode === "selection-lasso";
+    const isAreaSelection = toolMode === "selection-rect" || toolMode === "selection-circle" || toolMode === "selection-lasso" || toolMode === "selection-polygon-lasso";
     const isResize = label === "RESIZE" || toolMode === "resize";
     const isRotate = label === "ROTATE" || toolMode === "rotate";
     const isText = label === "TYPE" || toolMode === "text";

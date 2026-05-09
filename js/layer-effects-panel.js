@@ -15,6 +15,7 @@ window.CBO = window.CBO || {};
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
   const RASTERIZABLE_EFFECT_TYPES = Object.freeze([
+    "curves",
     "gaussian-blur",
     "motion-blur",
     "field-blur",
@@ -35,7 +36,7 @@ window.CBO = window.CBO || {};
     {
       label: "Color",
       items: Object.freeze([
-        { implemented: false, icon: "curves", label: "Curves", type: "curves" },
+        { implemented: true, icon: "curves", label: "Curves", mobile: false, type: "curves" },
         { implemented: false, icon: "levels", label: "Levels", type: "levels" },
         { implemented: true, icon: "threshold", label: "Threshold", type: "threshold" },
         { implemented: false, icon: "hue", label: "Hue/Saturation", type: "hue-saturation" },
@@ -90,6 +91,33 @@ window.CBO = window.CBO || {};
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.max(0, Math.min(MAX_THRESHOLD_VALUE, number)) : DEFAULT_THRESHOLD_VALUE;
+  }
+
+  function getCurvesEngine() {
+    return namespace.CurvesEngine || null;
+  }
+
+  function createDefaultCurvesPoints() {
+    const engine = getCurvesEngine();
+
+    return engine?.createDefaultPointsByChannel?.() || {
+      b: [{ id: "black", x: 0, y: 0, endpoint: true }, { id: "white", x: 255, y: 255, endpoint: true }],
+      g: [{ id: "black", x: 0, y: 0, endpoint: true }, { id: "white", x: 255, y: 255, endpoint: true }],
+      r: [{ id: "black", x: 0, y: 0, endpoint: true }, { id: "white", x: 255, y: 255, endpoint: true }],
+      rgb: [{ id: "black", x: 0, y: 0, endpoint: true }, { id: "white", x: 255, y: 255, endpoint: true }],
+    };
+  }
+
+  function normalizeCurvesPoints(pointsByChannel = {}) {
+    const engine = getCurvesEngine();
+
+    return engine?.normalizePointsByChannel?.(pointsByChannel) || createDefaultCurvesPoints();
+  }
+
+  function hasMeaningfulCurves(pointsByChannel = {}) {
+    const engine = getCurvesEngine();
+
+    return engine?.hasMeaningfulCurves?.(pointsByChannel) === true;
   }
 
   function getRendererDocumentSize() {
@@ -215,7 +243,7 @@ window.CBO = window.CBO || {};
   function getImplementedEffectItems() {
     return EFFECT_GROUPS
       .flatMap((group) => group.items)
-      .filter((effect) => effect.implemented === true);
+      .filter((effect) => effect.implemented === true && effect.mobile !== false);
   }
 
   function getMobileLayerEffectsToolbarMarkup() {
@@ -345,19 +373,45 @@ window.CBO = window.CBO || {};
   function getCurvesEditorMarkup() {
     return `
       <div class="layer-effects-tabs" aria-label="Curve channel">
-        <button class="layer-effects-tab active" type="button" disabled>RGB</button>
-        <button class="layer-effects-tab" type="button" disabled>R</button>
-        <button class="layer-effects-tab" type="button" disabled>G</button>
-        <button class="layer-effects-tab" type="button" disabled>B</button>
+        <button class="layer-effects-tab active" type="button" data-curves-channel="rgb">RGB</button>
+        <button class="layer-effects-tab" type="button" data-curves-channel="r">R</button>
+        <button class="layer-effects-tab" type="button" data-curves-channel="g">G</button>
+        <button class="layer-effects-tab" type="button" data-curves-channel="b">B</button>
       </div>
-      <div class="layer-effects-curve-box" aria-hidden="true">
-        <svg viewBox="0 0 100 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M0 56H100M0 38H100M0 20H100M24 2V72M50 2V72M76 2V72" />
-          <path class="curve-line" d="M5 65C30 62 33 18 52 18C72 18 72 53 95 8" />
-          <circle cx="5" cy="65" r="3" />
-          <circle cx="52" cy="18" r="3" />
-          <circle cx="95" cy="8" r="3" />
+      <div class="layer-effects-curve-box" data-curves-graph>
+        <svg viewBox="0 0 255 255" fill="none" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" data-curves-svg>
+          <path class="curves-grid" d="M0 63.75H255M0 127.5H255M0 191.25H255M63.75 0V255M127.5 0V255M191.25 0V255" />
+          <path class="curves-baseline" d="M0 255L255 0" />
+          <path class="curves-overlay curves-overlay-r" data-curves-overlay="r" />
+          <path class="curves-overlay curves-overlay-g" data-curves-overlay="g" />
+          <path class="curves-overlay curves-overlay-b" data-curves-overlay="b" />
+          <path class="curve-line" data-curves-line />
+          <g data-curves-points></g>
         </svg>
+      </div>
+      <div class="curves-point-controls">
+        <label class="curves-point-field">
+          <span class="layer-effects-label">Input</span>
+          <input class="curves-number-input" type="number" min="0" max="255" step="1" value="0" inputmode="numeric" data-curves-input />
+        </label>
+        <label class="curves-point-field">
+          <span class="layer-effects-label">Output</span>
+          <input class="curves-number-input" type="number" min="0" max="255" step="1" value="0" inputmode="numeric" data-curves-output />
+        </label>
+      </div>
+      <div class="layer-effects-actions curves-actions">
+        <button class="layer-effects-icon-button" type="button" aria-label="Reset current curve" data-curves-reset-channel>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+          </svg>
+        </button>
+        <button class="layer-effects-icon-button" type="button" aria-label="Reset all curves" data-curves-reset-all>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <path d="M21 3v6h-6" />
+          </svg>
+        </button>
       </div>
     `;
   }
@@ -541,6 +595,15 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function getCurves(layer) {
+    const effect = findLayerEffect(layer, "curves", "curves");
+
+    return {
+      enabled: effect?.enabled !== false,
+      points: normalizeCurvesPoints(effect?.points || effect?.curves),
+    };
+  }
+
   function createGrainSeed(layerId) {
     const text = `grain:${layerId || ""}`;
     let hash = 2166136261;
@@ -672,6 +735,24 @@ window.CBO = window.CBO || {};
     return effects;
   }
 
+  function getNextCurvesEffects(layer, pointsByChannel, enabled = true) {
+    const nextPoints = normalizeCurvesPoints(pointsByChannel);
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "curves")
+      .map((effect) => cloneValue(effect));
+
+    if (enabled !== false && hasMeaningfulCurves(nextPoints)) {
+      effects.push({
+        type: "curves",
+        enabled: true,
+        points: nextPoints,
+      });
+    }
+
+    return effects;
+  }
+
   function isRenderableEffect(effect) {
     if (!effect || effect.enabled === false || !RASTERIZABLE_EFFECT_TYPES.includes(effect.type)) {
       return false;
@@ -699,6 +780,10 @@ window.CBO = window.CBO || {};
 
     if (effect.type === "threshold") {
       return getThreshold({ effects: [effect] }).enabled;
+    }
+
+    if (effect.type === "curves") {
+      return hasMeaningfulCurves(getCurves({ effects: [effect] }).points);
     }
 
     return false;
@@ -747,6 +832,7 @@ window.CBO = window.CBO || {};
   namespace.getLayerRadialBlur = getRadialBlur;
   namespace.getLayerGrain = getGrain;
   namespace.getLayerThreshold = getThreshold;
+  namespace.getLayerCurves = getCurves;
 
   namespace.hasRasterizableLayerEffects = function hasRasterizableLayerEffects(layerOrId) {
     const layer = typeof layerOrId === "string"
@@ -924,6 +1010,34 @@ window.CBO = window.CBO || {};
 
     const didUpdate = layerModel.updateLayer(layerId, {
       effects: getNextThresholdEffects(layer, threshold, options.enabled),
+    }, updateOptions);
+
+    if (didUpdate) {
+      namespace.documentRenderer?.requestDraw?.();
+    }
+
+    return didUpdate;
+  };
+
+  namespace.setLayerCurves = function setLayerCurves(layerId, pointsByChannel, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const updateOptions = {
+      historyGroup: options.historyGroup || `curves-${layerId}`,
+      source: options.source || "layer-effects-curves",
+    };
+
+    if (options.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = layerModel.updateLayer(layerId, {
+      effects: getNextCurvesEffects(layer, pointsByChannel, options.enabled),
     }, updateOptions);
 
     if (didUpdate) {
@@ -1347,6 +1461,16 @@ window.CBO = window.CBO || {};
     const grainMonochromeInput = panel.querySelector("[data-layer-grain-monochrome-input]");
     const thresholdInput = panel.querySelector("[data-layer-threshold-input]");
     const thresholdValue = panel.querySelector("[data-layer-threshold-value]");
+    const curvesGraph = panel.querySelector("[data-curves-graph]");
+    const curvesSvg = panel.querySelector("[data-curves-svg]");
+    const curvesLine = panel.querySelector("[data-curves-line]");
+    const curvesPointsGroup = panel.querySelector("[data-curves-points]");
+    const curvesChannelButtons = panel.querySelectorAll("[data-curves-channel]");
+    const curvesOverlayPaths = panel.querySelectorAll("[data-curves-overlay]");
+    const curvesInput = panel.querySelector("[data-curves-input]");
+    const curvesOutput = panel.querySelector("[data-curves-output]");
+    const curvesResetChannelButton = panel.querySelector("[data-curves-reset-channel]");
+    const curvesResetAllButton = panel.querySelector("[data-curves-reset-all]");
     const acceptButton = panel.querySelector("[data-layer-effects-accept]");
     const resetButton = panel.querySelector("[data-layer-blur-reset]");
     const motionResetButton = panel.querySelector("[data-layer-motion-reset]");
@@ -1369,6 +1493,9 @@ window.CBO = window.CBO || {};
     let fieldBlurTapSequence = null;
     let fieldBlurTapTimer = 0;
     let activeFieldBlurPinId = "";
+    let activeCurvesChannel = "rgb";
+    let activeCurvesPointId = "black";
+    let curvesDrag = null;
     let fieldBlurOverlay = null;
     let fieldBlurPinIdSequence = 0;
     let fieldBlurPreviewTimer = 0;
@@ -1394,6 +1521,245 @@ window.CBO = window.CBO || {};
         .find((modeButton) => modeButton.classList.contains("active"));
 
       return normalizeRadialBlurMode(activeModeButton?.dataset.layerRadialModeButton);
+    }
+
+    function getCurvesChannelColor(channel) {
+      return {
+        b: "#7aa6ff",
+        g: "#80d690",
+        r: "#ff7f7f",
+        rgb: "#f6f7fb",
+      }[channel] || "#f6f7fb";
+    }
+
+    function getCurvesPoints(layer = getActiveLayer()) {
+      return normalizeCurvesPoints(getCurves(layer).points);
+    }
+
+    function getCurvesChannelPoints(pointsByChannel, channel = activeCurvesChannel) {
+      return normalizeCurvesPoints(pointsByChannel)[channel] || createDefaultCurvesPoints()[channel];
+    }
+
+    function getActiveCurvesPoint(points) {
+      const normalized = getCurvesEngine()?.normalizePoints?.(points) || points || [];
+
+      return normalized.find((point) => point.id === activeCurvesPointId) || normalized[0] || null;
+    }
+
+    function screenToCurvesPoint(clientX, clientY) {
+      const rect = curvesGraph?.getBoundingClientRect?.();
+
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return { x: 0, y: 0 };
+      }
+
+      return {
+        x: clamp(((clientX - rect.left) / rect.width) * 255, 0, 255),
+        y: clamp((1 - (clientY - rect.top) / rect.height) * 255, 0, 255),
+      };
+    }
+
+    function getCurvesPointScreenPosition(point) {
+      const rect = curvesGraph?.getBoundingClientRect?.();
+      const width = Math.max(1, rect?.width || 1);
+      const height = Math.max(1, rect?.height || 1);
+
+      return {
+        x: (point.x / 255) * width,
+        y: (1 - point.y / 255) * height,
+      };
+    }
+
+    function findCurvesPointNearEvent(event, points) {
+      const rect = curvesGraph?.getBoundingClientRect?.();
+
+      if (!rect) {
+        return null;
+      }
+
+      const px = event.clientX - rect.left;
+      const py = event.clientY - rect.top;
+      const hitRadius = 12;
+
+      return points.find((point) => {
+        const screen = getCurvesPointScreenPosition(point);
+
+        return Math.hypot(screen.x - px, screen.y - py) <= hitRadius;
+      }) || null;
+    }
+
+    function setCurvesChannel(channel) {
+      const nextChannel = ["rgb", "r", "g", "b"].includes(channel) ? channel : "rgb";
+
+      activeCurvesChannel = nextChannel;
+      activeCurvesPointId = getCurvesChannelPoints(getCurvesPoints(), nextChannel)[0]?.id || "black";
+      renderCurvesEditor();
+    }
+
+    function setActiveCurvesPoint(pointId) {
+      activeCurvesPointId = pointId || activeCurvesPointId;
+      renderCurvesEditor();
+    }
+
+    function updateCurvesPointControls(point, isEnabled) {
+      const enabled = Boolean(isEnabled && point);
+
+      if (curvesInput) {
+        curvesInput.disabled = !enabled;
+        curvesInput.value = point ? String(Math.round(point.x)) : "0";
+      }
+
+      if (curvesOutput) {
+        curvesOutput.disabled = !enabled;
+        curvesOutput.value = point ? String(Math.round(point.y)) : "0";
+      }
+    }
+
+    function renderCurvesEditor() {
+      if (activeEffectType !== "curves" || !curvesLine || !curvesPointsGroup) {
+        return;
+      }
+
+      const layer = getActiveLayer();
+      const isEligible = isBlurEligibleLayer(layer);
+      const pointsByChannel = isEligible ? getCurvesPoints(layer) : createDefaultCurvesPoints();
+      const engine = getCurvesEngine();
+      const activePoints = getCurvesChannelPoints(pointsByChannel);
+      const activePoint = getActiveCurvesPoint(activePoints);
+
+      if (activePoint && activePoint.id !== activeCurvesPointId) {
+        activeCurvesPointId = activePoint.id;
+      }
+
+      curvesChannelButtons.forEach((button) => {
+        const isActive = button.dataset.curvesChannel === activeCurvesChannel;
+
+        button.disabled = !isEligible;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+      });
+
+      curvesOverlayPaths.forEach((path) => {
+        const channel = path.dataset.curvesOverlay;
+        const channelPoints = getCurvesChannelPoints(pointsByChannel, channel);
+
+        path.setAttribute("d", engine?.buildSvgPath?.(channelPoints) || "");
+        path.style.stroke = getCurvesChannelColor(channel);
+      });
+
+      curvesLine.setAttribute("d", engine?.buildSvgPath?.(activePoints) || "");
+      curvesLine.style.stroke = getCurvesChannelColor(activeCurvesChannel);
+      curvesPointsGroup.innerHTML = activePoints.map((point) => {
+        const isActive = point.id === activeCurvesPointId;
+
+        return `
+          <circle
+            class="curves-point${isActive ? " active" : ""}"
+            cx="${point.x}"
+            cy="${255 - point.y}"
+            r="${isActive ? 5.6 : 4.6}"
+            data-curves-point="${point.id}"
+          />
+        `;
+      }).join("");
+
+      updateCurvesPointControls(activePoint, isEligible);
+
+      if (curvesResetChannelButton) {
+        curvesResetChannelButton.disabled = !isEligible || !hasMeaningfulCurves({
+          ...createDefaultCurvesPoints(),
+          [activeCurvesChannel]: activePoints,
+        });
+      }
+
+      if (curvesResetAllButton) {
+        curvesResetAllButton.disabled = !isEligible || !hasMeaningfulCurves(pointsByChannel);
+      }
+    }
+
+    function applyCurvesPoints(pointsByChannel, options = {}) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return false;
+      }
+
+      const normalized = normalizeCurvesPoints(pointsByChannel);
+      const didUpdate = namespace.setLayerCurves?.(layer.id, normalized, {
+        history: false,
+        source: options.source || "layer-effects-preview",
+      }) === true;
+
+      renderCurvesEditor();
+      return didUpdate;
+    }
+
+    function updateActiveCurvesChannelPoints(update) {
+      const pointsByChannel = getCurvesPoints();
+      const currentPoints = getCurvesChannelPoints(pointsByChannel);
+      const nextPoints = typeof update === "function" ? update(currentPoints) : currentPoints;
+
+      return applyCurvesPoints({
+        ...pointsByChannel,
+        [activeCurvesChannel]: nextPoints,
+      });
+    }
+
+    function moveActiveCurvesPoint(x, y) {
+      const engine = getCurvesEngine();
+
+      if (!engine?.movePoint) {
+        return;
+      }
+
+      updateActiveCurvesChannelPoints((points) =>
+        engine.movePoint(points, activeCurvesPointId, x, y),
+      );
+    }
+
+    function resetCurvesChannel(channel = activeCurvesChannel) {
+      const pointsByChannel = getCurvesPoints();
+
+      activeCurvesPointId = "black";
+      applyCurvesPoints({
+        ...pointsByChannel,
+        [channel]: getCurvesEngine()?.identityPoints?.() || createDefaultCurvesPoints()[channel],
+      });
+    }
+
+    function resetAllCurves() {
+      activeCurvesPointId = "black";
+      applyCurvesPoints(createDefaultCurvesPoints(), {
+        source: "layer-effects-preview",
+      });
+    }
+
+    function commitCurvesNumberInput() {
+      const x = Number(curvesInput?.value);
+      const y = Number(curvesOutput?.value);
+
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        renderCurvesEditor();
+        return;
+      }
+
+      moveActiveCurvesPoint(x, y);
+    }
+
+    function deleteActiveCurvesPoint() {
+      const engine = getCurvesEngine();
+
+      if (!engine?.deletePoint || !activeCurvesPointId) {
+        return;
+      }
+
+      updateActiveCurvesChannelPoints((points) => {
+        const nextPoints = engine.deletePoint(points, activeCurvesPointId);
+
+        activeCurvesPointId = nextPoints[0]?.id || "black";
+        return nextPoints;
+      });
     }
 
     function getLayerModel() {
@@ -2492,6 +2858,10 @@ window.CBO = window.CBO || {};
       } else if (wasFieldBlur) {
         deactivateFieldBlurUi();
       }
+
+      if (activeEffectType === "curves") {
+        renderCurvesEditor();
+      }
     }
 
     function showEffectPicker(options = {}) {
@@ -2536,6 +2906,9 @@ window.CBO = window.CBO || {};
         }
 
         thresholdInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "curves") {
+        renderCurvesEditor();
+        curvesInput?.focus?.({ preventScroll: true });
       }
     }
 
@@ -2603,9 +2976,13 @@ window.CBO = window.CBO || {};
       const threshold = isEligible
         ? getThreshold(layer)
         : { enabled: false, threshold: DEFAULT_THRESHOLD_VALUE };
+      const curves = isEligible
+        ? getCurves(layer)
+        : { enabled: false, points: createDefaultCurvesPoints() };
       const hasActiveFieldBlur = hasFieldBlurAmount(
         activeEffectType === "field-blur" ? fieldBlurPins : fieldBlur.pins,
       );
+      const hasActiveCurves = hasMeaningfulCurves(curves.points);
 
       const layerName = isEligible ? layer.name || "Layer" : "No layer";
 
@@ -2628,6 +3005,12 @@ window.CBO = window.CBO || {};
       grainScaleInput.disabled = !isEligible;
       grainMonochromeInput.disabled = !isEligible;
       thresholdInput.disabled = !isEligible;
+      if (curvesInput) {
+        curvesInput.disabled = !isEligible;
+      }
+      if (curvesOutput) {
+        curvesOutput.disabled = !isEligible;
+      }
       fieldBlurPinList.querySelectorAll("[data-field-blur-pin-input]").forEach((input) => {
         input.disabled = !isEligible;
       });
@@ -2641,7 +3024,8 @@ window.CBO = window.CBO || {};
         (activeEffectType === "field-blur" && !hasActiveFieldBlur) ||
         (activeEffectType === "radial-blur" && radialBlur.amount <= 0) ||
         (activeEffectType === "grain" && grain.amount <= 0) ||
-        (activeEffectType === "threshold" && !threshold.enabled);
+        (activeEffectType === "threshold" && !threshold.enabled) ||
+        (activeEffectType === "curves" && !hasActiveCurves);
       resetButton.disabled = !isEligible || radius <= 0;
       motionResetButton.disabled = !isEligible || motionBlur.distance <= 0;
       radialResetButton.disabled = !isEligible || radialBlur.amount <= 0;
@@ -2668,6 +3052,7 @@ window.CBO = window.CBO || {};
       thresholdInput.value = String(threshold.threshold);
       thresholdValue.textContent = String(Math.round(threshold.threshold));
       syncFieldBlurUi();
+      renderCurvesEditor();
       panel.classList.toggle("disabled", !isEligible);
     }
 
@@ -3036,6 +3421,113 @@ window.CBO = window.CBO || {};
       clearThreshold();
     });
 
+    curvesChannelButtons.forEach((channelButton) => {
+      channelButton.addEventListener("click", () => {
+        setCurvesChannel(channelButton.dataset.curvesChannel);
+      });
+    });
+
+    curvesGraph?.addEventListener("contextmenu", (event) => {
+      if (activeEffectType !== "curves") {
+        return;
+      }
+
+      event.preventDefault();
+    });
+
+    curvesGraph?.addEventListener("pointerdown", (event) => {
+      if (activeEffectType !== "curves" || !isBlurEligibleLayer(getActiveLayer())) {
+        return;
+      }
+
+      const engine = getCurvesEngine();
+      const pointsByChannel = getCurvesPoints();
+      const channelPoints = getCurvesChannelPoints(pointsByChannel);
+      const hitPoint = findCurvesPointNearEvent(event, channelPoints);
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.button === 2) {
+        if (hitPoint && !hitPoint.endpoint && engine?.deletePoint) {
+          activeCurvesPointId = hitPoint.id;
+          deleteActiveCurvesPoint();
+        }
+        return;
+      }
+
+      if (event.button !== 0) {
+        return;
+      }
+
+      if (hitPoint) {
+        activeCurvesPointId = hitPoint.id;
+      } else if (engine?.addPoint) {
+        const point = screenToCurvesPoint(event.clientX, event.clientY);
+        const result = engine.addPoint(channelPoints, point.x, point.y);
+
+        activeCurvesPointId = result.selectedId;
+        applyCurvesPoints({
+          ...pointsByChannel,
+          [activeCurvesChannel]: result.points,
+        });
+      }
+
+      curvesDrag = {
+        pointerId: event.pointerId,
+      };
+      curvesGraph.setPointerCapture?.(event.pointerId);
+      renderCurvesEditor();
+    });
+
+    curvesGraph?.addEventListener("pointermove", (event) => {
+      if (activeEffectType !== "curves" || !curvesDrag || curvesDrag.pointerId !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const point = screenToCurvesPoint(event.clientX, event.clientY);
+
+      moveActiveCurvesPoint(point.x, point.y);
+    });
+
+    const stopCurvesDrag = (event) => {
+      if (!curvesDrag || curvesDrag.pointerId !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      curvesGraph?.releasePointerCapture?.(event.pointerId);
+      curvesDrag = null;
+      syncControls();
+    };
+
+    curvesGraph?.addEventListener("pointerup", stopCurvesDrag);
+    curvesGraph?.addEventListener("pointercancel", stopCurvesDrag);
+
+    curvesInput?.addEventListener("input", () => {
+      if (curvesInput.value !== "" && curvesOutput?.value !== "") {
+        commitCurvesNumberInput();
+      }
+    });
+
+    curvesOutput?.addEventListener("input", () => {
+      if (curvesOutput.value !== "" && curvesInput?.value !== "") {
+        commitCurvesNumberInput();
+      }
+    });
+
+    curvesResetChannelButton?.addEventListener("click", () => {
+      resetCurvesChannel();
+    });
+
+    curvesResetAllButton?.addEventListener("click", () => {
+      resetAllCurves();
+    });
+
     fieldBlurPinList.addEventListener("click", (event) => {
       const valueControl = event.target?.closest?.("[data-field-blur-pin-input], [data-field-blur-pin-number], .field-blur-number");
       const control = event.target?.closest?.("[data-field-blur-pin-control]");
@@ -3134,6 +3626,25 @@ window.CBO = window.CBO || {};
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closePanel({ cancel: true });
+        return;
+      }
+
+      if (
+        activeEffectType === "curves" &&
+        (event.key === "Delete" || event.key === "Backspace") &&
+        event.target instanceof Node &&
+        panel.contains(event.target)
+      ) {
+        const isTyping =
+          event.target instanceof HTMLInputElement ||
+          event.target instanceof HTMLTextAreaElement ||
+          event.target instanceof HTMLSelectElement ||
+          event.target.isContentEditable;
+
+        if (!isTyping) {
+          event.preventDefault();
+          deleteActiveCurvesPoint();
+        }
       }
     });
 

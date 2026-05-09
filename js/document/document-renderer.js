@@ -719,6 +719,40 @@ void main() {
 }
 `;
 
+  const CURVES_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform sampler2D u_curveLut;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+float lutCoord(float value) {
+  return (clamp(value, 0.0, 1.0) * 255.0 + 0.5) / 256.0;
+}
+
+void main() {
+  vec4 base = texture(u_texture, v_uv);
+  float alpha = clamp(base.a, 0.0, 1.0);
+
+  if (alpha <= 0.0) {
+    outColor = vec4(0.0);
+    return;
+  }
+
+  vec3 color = clamp(base.rgb / max(alpha, 0.0001), vec3(0.0), vec3(1.0));
+  vec3 mapped = vec3(
+    texture(u_curveLut, vec2(lutCoord(color.r), 0.5)).r,
+    texture(u_curveLut, vec2(lutCoord(color.g), 0.5)).g,
+    texture(u_curveLut, vec2(lutCoord(color.b), 0.5)).b
+  );
+
+  outColor = vec4(mapped * alpha, alpha);
+}
+`;
+
   const LAYER_BLEND_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -942,6 +976,49 @@ void main() {
     return Number.isFinite(number) ? Math.max(0, Math.min(MAX_THRESHOLD_VALUE, number)) : DEFAULT_THRESHOLD_VALUE;
   }
 
+  function getCurvesEngine() {
+    return namespace.CurvesEngine || null;
+  }
+
+  function createDefaultCurvesPoints() {
+    const engine = getCurvesEngine();
+
+    return engine?.createDefaultPointsByChannel?.() || {
+      b: [{ id: "black", x: 0, y: 0, endpoint: true }, { id: "white", x: 255, y: 255, endpoint: true }],
+      g: [{ id: "black", x: 0, y: 0, endpoint: true }, { id: "white", x: 255, y: 255, endpoint: true }],
+      r: [{ id: "black", x: 0, y: 0, endpoint: true }, { id: "white", x: 255, y: 255, endpoint: true }],
+      rgb: [{ id: "black", x: 0, y: 0, endpoint: true }, { id: "white", x: 255, y: 255, endpoint: true }],
+    };
+  }
+
+  function normalizeCurvesEffect(effect) {
+    const engine = getCurvesEngine();
+
+    if (engine?.normalizeEffect) {
+      return engine.normalizeEffect(effect || {});
+    }
+
+    return {
+      type: "curves",
+      enabled: effect?.enabled !== false,
+      points: createDefaultCurvesPoints(),
+    };
+  }
+
+  function hasMeaningfulCurvesEffect(effect) {
+    const normalized = normalizeCurvesEffect(effect);
+    const engine = getCurvesEngine();
+
+    return normalized.enabled !== false && engine?.hasMeaningfulCurves?.(normalized.points) === true;
+  }
+
+  function buildPackedCurvesLut(effect) {
+    const engine = getCurvesEngine();
+    const normalized = normalizeCurvesEffect(effect);
+
+    return engine?.buildPackedLut?.(normalized.points) || null;
+  }
+
   function normalizeFieldBlurPins(pins) {
     if (!Array.isArray(pins)) {
       return [];
@@ -1054,6 +1131,8 @@ void main() {
       this.radialBlurProgramInfo = null;
       this.grainProgramInfo = null;
       this.thresholdProgramInfo = null;
+      this.curvesProgramInfo = null;
+      this.curvesLutTexture = null;
       this.layerBlendProgramInfo = null;
       this.layerBlendBackdropTexture = null;
       this.layerBlendBackdropWidth = 0;
@@ -2759,6 +2838,40 @@ void main() {
       };
     }
 
+    createCurvesProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, CURVES_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma curves WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma curves.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          curveLut: gl.getUniformLocation(program, "u_curveLut"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+
     createLayerBlendProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, ARTBOARD_VERTEX_SHADER_SOURCE);
@@ -2886,6 +2999,14 @@ void main() {
       }
 
       return this.thresholdProgramInfo;
+    }
+
+    ensureCurvesProgramInfo() {
+      if (!this.curvesProgramInfo) {
+        this.curvesProgramInfo = this.createCurvesProgramInfo();
+      }
+
+      return this.curvesProgramInfo;
     }
 
     ensureLayerBlendProgramInfo() {
@@ -4097,6 +4218,21 @@ void main() {
         : null;
     }
 
+    getCurves(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "curves" && item.enabled !== false)
+        : effects?.curves;
+
+      return normalizeCurvesEffect(effect);
+    }
+
+    getLayerCurves(layer) {
+      const curves = this.getCurves(layer);
+
+      return hasMeaningfulCurvesEffect(curves) ? curves : null;
+    }
+
     hasEnabledLayerEffects(layer) {
       return (
         this.getGaussianBlurRadius(layer) > 0 ||
@@ -4104,7 +4240,8 @@ void main() {
         hasFieldBlurAmount(this.getFieldBlur(layer).pins) ||
         this.getRadialBlur(layer).amount > 0 ||
         this.getGrain(layer).amount > 0 ||
-        Boolean(this.getLayerThreshold(layer))
+        Boolean(this.getLayerThreshold(layer)) ||
+        Boolean(this.getLayerCurves(layer))
       );
     }
 
@@ -4377,6 +4514,22 @@ void main() {
       }
 
       this.thresholdProgramInfo = null;
+    }
+
+    deleteCurvesResources() {
+      const gl = this.gl;
+
+      if (this.curvesProgramInfo?.program) {
+        gl.deleteProgram(this.curvesProgramInfo.program);
+      }
+
+      this.curvesProgramInfo = null;
+
+      if (this.curvesLutTexture) {
+        this.deleteRasterTexture(this.curvesLutTexture);
+        gl.deleteTexture(this.curvesLutTexture);
+        this.curvesLutTexture = null;
+      }
     }
 
     ensureLayerEffectScratchTargets(width = this.width, height = this.height) {
@@ -4708,6 +4861,116 @@ void main() {
       return true;
     }
 
+    ensureCurvesLutTexture() {
+      if (this.curvesLutTexture) {
+        this.markRasterResourceUsed(this.curvesLutTexture);
+        return this.curvesLutTexture;
+      }
+
+      const gl = this.gl;
+      const texture = gl.createTexture();
+
+      if (!texture) {
+        throw new Error("Impossibile creare la texture LUT curves.");
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        256,
+        1,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        null,
+      );
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      this.curvesLutTexture = texture;
+      this.registerRasterTexture(texture, {
+        height: 1,
+        kind: "curvesLut",
+        label: "curves LUT texture",
+        ownerId: "curves-lut",
+        ownerType: "scratch",
+        purgeable: true,
+        reason: "ensure-curves-lut-texture",
+        width: 256,
+      });
+
+      return texture;
+    }
+
+    uploadCurvesLutTexture(lutData) {
+      if (!(lutData instanceof Uint8Array) || lutData.length !== 256 * 4) {
+        return null;
+      }
+
+      const gl = this.gl;
+      const texture = this.ensureCurvesLutTexture();
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texSubImage2D(
+        gl.TEXTURE_2D,
+        0,
+        0,
+        0,
+        256,
+        1,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        lutData,
+      );
+      gl.activeTexture(gl.TEXTURE0);
+
+      return texture;
+    }
+
+    runCurvesPass({ sourceTexture, target, curves }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao || !curves) {
+        return false;
+      }
+
+      const lutData = buildPackedCurvesLut(curves);
+      const lutTexture = this.uploadCurvesLutTexture(lutData);
+
+      if (!lutTexture) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureCurvesProgramInfo();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1i(uniforms.curveLut, 1);
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, lutTexture);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+
     applyGaussianBlurTexture(sourceTexture, radius, options = {}) {
       const blurRadius = Number.isFinite(radius)
         ? Math.max(0, Math.min(MAX_GAUSSIAN_BLUR_RADIUS, radius))
@@ -4867,6 +5130,23 @@ void main() {
       });
 
       return didThresholdPass ? target.texture : sourceTexture;
+    }
+
+    applyCurvesTexture(sourceTexture, curves, options = {}) {
+      if (!sourceTexture || !curves || !hasMeaningfulCurvesEffect(curves)) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const didCurvesPass = this.runCurvesPass({
+        curves,
+        sourceTexture,
+        target,
+      });
+
+      return didCurvesPass ? target.texture : sourceTexture;
     }
 
     resolveRadialBlurCenter(centerX, centerY, options = {}) {
@@ -5232,6 +5512,12 @@ void main() {
             if (threshold) {
               texture = this.applyThresholdTexture(texture, threshold, effectOptions);
             }
+          } else if (effect.type === "curves") {
+            const curves = this.getLayerCurves({ effects: [effect] });
+
+            if (curves) {
+              texture = this.applyCurvesTexture(texture, curves, effectOptions);
+            }
           }
         }
 
@@ -5244,6 +5530,7 @@ void main() {
       const radialBlur = this.getLayerRadialBlur(layer);
       const grain = this.getLayerGrain(layer);
       const threshold = this.getLayerThreshold(layer);
+      const curves = this.getLayerCurves(layer);
 
       if (radius > 0) {
         texture = this.applyGaussianBlurTexture(texture, radius, effectOptions);
@@ -5274,6 +5561,10 @@ void main() {
 
       if (threshold) {
         texture = this.applyThresholdTexture(texture, threshold, effectOptions);
+      }
+
+      if (curves) {
+        texture = this.applyCurvesTexture(texture, curves, effectOptions);
       }
 
       return texture;
@@ -10803,6 +11094,7 @@ void main() {
       this.deleteRadialBlurResources();
       this.deleteGrainResources();
       this.deleteThresholdResources();
+      this.deleteCurvesResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteActiveStrokeSelectionClipTexture();
       this.deleteLayerBlendResources();

@@ -15,6 +15,10 @@ function loadDocumentModules() {
     path.join(repoRoot, "js", "blend-modes.js"),
     "utf8",
   );
+  const curvesSource = fs.readFileSync(
+    path.join(repoRoot, "js", "curves-engine.js"),
+    "utf8",
+  );
   const layerModelSource = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-layer-model.js"),
     "utf8",
@@ -37,10 +41,12 @@ function loadDocumentModules() {
     EventTarget,
     JSON,
     Map,
+    Math,
     Number,
     Object,
     Set,
     String,
+    Uint8Array,
     WeakMap,
     console,
     queueMicrotask,
@@ -48,6 +54,7 @@ function loadDocumentModules() {
   });
 
   vm.runInContext(blendModesSource, context);
+  vm.runInContext(curvesSource, context);
   vm.runInContext(historySource, context);
   vm.runInContext(layerModelSource, context);
 
@@ -244,6 +251,7 @@ test("layer effects are normalized and preserved through layer state history", a
       { type: "radial-blur", amount: 260, centerX: 125, centerY: -25, mode: "zoom", enabled: true },
       { type: "grain", amount: 140, scale: -20, monochrome: false, seed: 0.25, enabled: true },
       { type: "threshold", threshold: 300, enabled: true },
+      { type: "curves", points: { rgb: [{ id: "black", x: 0, y: 16 }, { id: "white", x: 255, y: 240 }] }, enabled: true },
       { type: "future-effect", strength: 0.5 },
     ],
   }, {
@@ -268,7 +276,9 @@ test("layer effects are normalized and preserved through layer state history", a
   assert.equal(model.findEntryById("paint-main").effects[4].monochrome, false);
   assert.equal(model.findEntryById("paint-main").effects[4].seed, 0.25);
   assert.equal(model.findEntryById("paint-main").effects[5].threshold, 255);
-  assert.equal(model.findEntryById("paint-main").effects[6].type, "future-effect");
+  assert.equal(model.findEntryById("paint-main").effects[6].type, "curves");
+  assert.equal(model.findEntryById("paint-main").effects[6].points.rgb[0].y, 16);
+  assert.equal(model.findEntryById("paint-main").effects[7].type, "future-effect");
 
   model.updateLayer("paint-main", {
     effects: [{ type: "gaussian-blur", radius: 12, enabled: true }],
@@ -331,6 +341,14 @@ test("layer effects are normalized and preserved through layer state history", a
     effects: [{ type: "threshold", threshold: 128, enabled: false }],
   }, {
     source: "threshold-clear",
+  });
+
+  assert.equal(model.findEntryById("paint-main").effects, undefined);
+
+  model.updateLayer("paint-main", {
+    effects: [{ type: "curves", points: { rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }] }, enabled: true }],
+  }, {
+    source: "curves-clear",
   });
 
   assert.equal(model.findEntryById("paint-main").effects, undefined);

@@ -24,10 +24,14 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   assert.match(toolbarSource, /data-tool-mode="selection-rect"/);
   assert.match(toolbarSource, /data-tool-mode="selection-circle"/);
   assert.match(toolbarSource, /data-tool-mode="selection-lasso"/);
+  assert.match(toolbarSource, /data-tool-mode="selection-polygon-lasso"/);
+  assert.match(toolbarSource, /POLYGON LASSO/);
   assert.match(selectionSource, /const RECT_TOOL_MODE = "selection-rect"/);
   assert.match(selectionSource, /const CIRCLE_TOOL_MODE = "selection-circle"/);
   assert.match(selectionSource, /const LASSO_TOOL_MODE = "selection-lasso"/);
+  assert.match(selectionSource, /const POLYGON_LASSO_TOOL_MODE = "selection-polygon-lasso"/);
   assert.match(selectionSource, /const LASSO_MIN_POINTS = 3/);
+  assert.match(selectionSource, /const POLYGON_LASSO_CLOSE_DISTANCE_PX = 10/);
   assert.match(selectionSource, /const MIN_SELECTION_SIZE = 3/);
   assert.match(selectionSource, /const AREA_SELECTION_ANTS_ENABLED = false/);
   assert.match(selectionSource, /namespace\.areaSelection = \{/);
@@ -76,7 +80,7 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   assert.match(topToolbarSource, /window\.CBO\.areaSelection\?\.setOperationMode\?\./);
   assert.match(topToolbarSource, /window\.CBO\.areaSelection\?\.getOperationMode\?\./);
   assert.match(topToolbarSource, /cbo:area-selection-operation-change/);
-  assert.match(topToolbarSource, /toolMode === "selection-rect" \|\| toolMode === "selection-circle" \|\| toolMode === "selection-lasso"/);
+  assert.match(topToolbarSource, /toolMode === "selection-rect" \|\| toolMode === "selection-circle" \|\| toolMode === "selection-lasso" \|\| toolMode === "selection-polygon-lasso"/);
   assert.match(topToolbarSource, /showAreaSelectionOperationToolbar\(isAreaSelection\)/);
   assert.match(topToolbarCss, /\.area-selection-operation-toolbar/);
   assert.match(topToolbarCss, /\.area-selection-operation-button/);
@@ -198,7 +202,11 @@ test("rect selection drag supports shift square and alt center modifiers", () =>
   assert.match(selectionSource, /state\.activeToolMode === CIRCLE_TOOL_MODE/);
   assert.match(selectionSource, /function isLassoToolActive\(\) \{/);
   assert.match(selectionSource, /state\.activeToolMode === LASSO_TOOL_MODE/);
+  assert.match(selectionSource, /function isPolygonLassoToolActive\(\) \{/);
+  assert.match(selectionSource, /state\.activeToolMode === POLYGON_LASSO_TOOL_MODE/);
+  assert.match(selectionSource, /function isPolygonLassoInProgress\(\) \{/);
   assert.match(selectionSource, /function isAreaSelectionToolActive\(\) \{/);
+  assert.match(selectionSource, /isPolygonLassoToolActive\(\)/);
   assert.match(selectionSource, /function getActiveSelectionShape\(\) \{/);
   assert.match(selectionSource, /isCircleToolActive\(\) \? "ellipse" : "rect"/);
   assert.match(selectionSource, /function createRegionFromEllipse\(rect\) \{/);
@@ -207,6 +215,10 @@ test("rect selection drag supports shift square and alt center modifiers", () =>
   assert.match(selectionSource, /baseRegion\?\.addPolygon\?\.\(points\)/);
   assert.match(selectionSource, /baseRegion\?\.subtractPolygon\?\.\(points\)/);
   assert.match(selectionSource, /function appendLassoPoint\(point\) \{/);
+  assert.match(selectionSource, /function beginPolygonLasso\(point\) \{/);
+  assert.match(selectionSource, /function commitPolygonLasso\(source = "area-selection-polygon-lasso-commit"\) \{/);
+  assert.match(selectionSource, /function removeLastPolygonLassoPoint\(\) \{/);
+  assert.match(selectionSource, /function handlePolygonLassoPointerDown\(event, point\) \{/);
   assert.match(selectionSource, /function strokeLassoPath\(ctx, dashOffset = 0\) \{/);
   assert.match(selectionSource, /state\.overlayCache\.coveragePath/);
   assert.match(selectionSource, /ctx\.fill\(state\.overlayCache\.coveragePath\)/);
@@ -222,6 +234,8 @@ test("rect selection drag supports shift square and alt center modifiers", () =>
   assert.match(selectionSource, /normalizeRectFromPoints\(state\.startPoint, point, getSelectionDragOptions\(event\)\)/);
   assert.match(selectionSource, /updateOverlay\(\{ shadeDirty: false \}\)/);
   assert.match(selectionSource, /source: "area-selection-lasso-commit"/);
+  assert.match(selectionSource, /visualPolygonPoints: operationMode === "replace" \? points : null/);
+  assert.match(selectionSource, /event\.key === "Enter"/);
   assert.doesNotMatch(selectionSource, /visualPolygonPoints: state\.dragOperationMode === "replace" \? state\.lassoPoints : null/);
   assert.match(selectionSource, /state\.lassoPoints = \[\]/);
   assert.match(selectionSource, /state\.baseRegion = null/);

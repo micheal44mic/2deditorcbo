@@ -11,6 +11,7 @@
   const DEFAULT_GRAIN_SCALE = 42;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
+  const CURVE_CHANNELS = Object.freeze(["rgb", "r", "g", "b"]);
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
     fill: "#000000",
     stroke: "#000000",
@@ -61,6 +62,95 @@
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.max(0, Math.min(MAX_THRESHOLD_VALUE, number)) : DEFAULT_THRESHOLD_VALUE;
+  }
+
+  function getCurvesEngine() {
+    return namespace.CurvesEngine || null;
+  }
+
+  function getIdentityCurvePoints() {
+    return [
+      { id: "black", x: 0, y: 0, endpoint: true },
+      { id: "white", x: 255, y: 255, endpoint: true },
+    ];
+  }
+
+  function normalizeCurvePoint(point, fallbackId) {
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+
+    return {
+      id: typeof point?.id === "string" && point.id.trim() ? point.id : fallbackId,
+      x: Number.isFinite(x) ? Math.max(0, Math.min(255, Math.round(x))) : 0,
+      y: Number.isFinite(y) ? Math.max(0, Math.min(255, Math.round(y))) : 0,
+      endpoint: point?.endpoint === true,
+    };
+  }
+
+  function normalizeCurvePoints(points) {
+    const engine = getCurvesEngine();
+
+    if (engine?.normalizePoints) {
+      return engine.normalizePoints(points);
+    }
+
+    const source = Array.isArray(points) && points.length >= 2 ? points : getIdentityCurvePoints();
+    const sorted = source
+      .filter(Boolean)
+      .map((point, index) => normalizeCurvePoint(point, `curve-${index}`))
+      .sort((a, b) => a.x - b.x || a.y - b.y);
+    const unique = [];
+
+    for (const point of sorted) {
+      const last = unique[unique.length - 1];
+
+      if (!last || last.x !== point.x) {
+        unique.push(point);
+      }
+    }
+
+    if (unique.length < 2) {
+      return getIdentityCurvePoints();
+    }
+
+    return unique.slice(0, 19).map((point, index, list) => ({
+      ...point,
+      endpoint: index === 0 || index === list.length - 1,
+    }));
+  }
+
+  function normalizeCurvesPointsByChannel(pointsByChannel = {}) {
+    const engine = getCurvesEngine();
+
+    if (engine?.normalizePointsByChannel) {
+      return engine.normalizePointsByChannel(pointsByChannel);
+    }
+
+    return Object.fromEntries(
+      CURVE_CHANNELS.map((channel) => [channel, normalizeCurvePoints(pointsByChannel?.[channel])]),
+    );
+  }
+
+  function hasMeaningfulCurves(pointsByChannel = {}) {
+    const engine = getCurvesEngine();
+
+    if (engine?.hasMeaningfulCurves) {
+      return engine.hasMeaningfulCurves(pointsByChannel);
+    }
+
+    const points = normalizeCurvesPointsByChannel(pointsByChannel);
+
+    return CURVE_CHANNELS.some((channel) => {
+      const channelPoints = points[channel];
+
+      return !(
+        channelPoints.length === 2 &&
+        channelPoints[0].x === 0 &&
+        channelPoints[0].y === 0 &&
+        channelPoints[1].x === 255 &&
+        channelPoints[1].y === 255
+      );
+    });
   }
 
   function normalizeFieldBlurPins(pins) {
@@ -223,6 +313,14 @@
             };
           }
 
+          if (effect.type === "curves") {
+            return {
+              type: "curves",
+              enabled: effect.enabled !== false,
+              points: normalizeCurvesPointsByChannel(effect.points || effect.curves),
+            };
+          }
+
           return this.cloneValue(effect);
         })
         .filter((effect) =>
@@ -231,7 +329,8 @@
           (effect.type !== "field-blur" || hasFieldBlurAmount(effect.pins)) &&
           (effect.type !== "radial-blur" || effect.amount > 0) &&
           (effect.type !== "grain" || effect.amount > 0) &&
-          (effect.type !== "threshold" || effect.enabled !== false),
+          (effect.type !== "threshold" || effect.enabled !== false) &&
+          (effect.type !== "curves" || (effect.enabled !== false && hasMeaningfulCurves(effect.points))),
         );
     }
 

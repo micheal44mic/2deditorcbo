@@ -511,6 +511,8 @@
   background: rgba(255, 255, 255, 0.055);
   border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 7px;
+  cursor: crosshair;
+  touch-action: none;
 }
 
 .layer-effects-curve-box svg {
@@ -520,15 +522,87 @@
 }
 
 .layer-effects-curve-box path {
+  pointer-events: none;
   stroke: rgba(246, 247, 251, 0.16);
 }
 
 .layer-effects-curve-box .curve-line {
   stroke: rgba(246, 247, 251, 0.82);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+
+.layer-effects-curve-box .curves-baseline {
+  stroke: rgba(246, 247, 251, 0.26);
+  stroke-dasharray: 5 5;
+  stroke-width: 1.2;
+}
+
+.layer-effects-curve-box .curves-grid {
+  stroke: rgba(246, 247, 251, 0.13);
+  stroke-width: 1;
+}
+
+.layer-effects-curve-box .curves-overlay {
+  opacity: 0.42;
+  stroke-width: 1.5;
 }
 
 .layer-effects-curve-box circle {
   fill: rgba(246, 247, 251, 0.86);
+  pointer-events: none;
+  stroke: rgba(18, 20, 25, 0.94);
+  stroke-width: 2;
+}
+
+.layer-effects-curve-box .curves-point.active {
+  fill: #ffffff;
+  stroke: rgba(145, 189, 243, 0.98);
+  stroke-width: 2.2;
+}
+
+.curves-point-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.curves-point-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.curves-number-input {
+  width: 100%;
+  height: 28px;
+  min-width: 0;
+  padding: 0 8px;
+  color: #f6f7fb;
+  appearance: textfield;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 28px;
+  outline: none;
+}
+
+.curves-number-input:focus {
+  border-color: rgba(145, 189, 243, 0.62);
+}
+
+.curves-number-input::-webkit-outer-spin-button,
+.curves-number-input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.curves-actions {
+  gap: 6px;
 }
 
 .layer-effects-actions {

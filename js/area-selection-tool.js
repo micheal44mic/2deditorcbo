@@ -2,8 +2,10 @@
   const RECT_TOOL_MODE = "selection-rect";
   const CIRCLE_TOOL_MODE = "selection-circle";
   const LASSO_TOOL_MODE = "selection-lasso";
+  const POLYGON_LASSO_TOOL_MODE = "selection-polygon-lasso";
   const LASSO_MIN_POINTS = 3;
   const LASSO_POINT_SPACING = 1.5;
+  const POLYGON_LASSO_CLOSE_DISTANCE_PX = 10;
   const MIN_SELECTION_SIZE = 3;
   const PASTE_OFFSET_PX = 60;
   const AREA_SELECTION_ANTS_ENABLED = false;
@@ -18,6 +20,8 @@
     overlayDashOffset: 0,
     pointerId: null,
     pointerTarget: null,
+    polygonLassoActive: false,
+    polygonPreviewPoint: null,
     rafId: 0,
     resumeTimerId: 0,
     region: null,
@@ -837,12 +841,14 @@
   }
 
   function strokeLassoPath(ctx, dashOffset = 0) {
-    if (!Array.isArray(state.lassoPoints) || state.lassoPoints.length < 2) {
+    const points = getActiveLassoPathPoints();
+
+    if (!Array.isArray(points) || points.length < 2) {
       return;
     }
 
     ctx.beginPath();
-    state.lassoPoints.forEach((point, index) => {
+    points.forEach((point, index) => {
       const screenPoint = getScreenPoint(point);
 
       if (!screenPoint) {
@@ -1148,7 +1154,7 @@
       strokeCachedBoundary(ctx, 0, false);
     }
 
-    if (isLassoToolActive() && state.pointerId != null) {
+    if ((isLassoToolActive() && state.pointerId != null) || isPolygonLassoInProgress()) {
       strokeLassoPath(ctx, AREA_SELECTION_ANTS_ENABLED ? dashOffset : 0);
     }
   }
@@ -1157,8 +1163,9 @@
     const overlay = ensureOverlay();
     const documentRect = getDocumentScreenRect();
     const hasLassoPath = isLassoToolActive() && state.pointerId != null && state.lassoPoints.length > 1;
+    const hasPolygonLassoPath = isPolygonLassoInProgress() && getActiveLassoPathPoints().length > 1;
 
-    if (!documentRect || (!state.rect && !hasLassoPath)) {
+    if (!documentRect || (!state.rect && !hasLassoPath && !hasPolygonLassoPath)) {
       overlay.hidden = true;
       clearOverlayCanvases(overlay);
       return;
@@ -1224,9 +1231,9 @@
       state.rafId = 0;
       updateOverlay();
 
-      if ((state.rect || state.pointerId != null) && !isOverlayAnimationPaused()) {
+      if ((state.rect || state.pointerId != null || state.polygonLassoActive) && !isOverlayAnimationPaused()) {
         state.rafId = window.requestAnimationFrame(tick);
-      } else if (state.rect || state.pointerId != null) {
+      } else if (state.rect || state.pointerId != null || state.polygonLassoActive) {
         state.resumeTimerId = window.setTimeout?.(() => {
           state.resumeTimerId = 0;
           startOverlayLoop();
@@ -1238,7 +1245,7 @@
   }
 
   function stopOverlayLoop() {
-    if (!state.rafId || state.rect || state.pointerId != null) {
+    if (!state.rafId || state.rect || state.pointerId != null || state.polygonLassoActive) {
       return;
     }
 
@@ -1262,8 +1269,16 @@
     return state.activeToolMode === LASSO_TOOL_MODE;
   }
 
+  function isPolygonLassoToolActive() {
+    return state.activeToolMode === POLYGON_LASSO_TOOL_MODE;
+  }
+
+  function isPolygonLassoInProgress() {
+    return state.polygonLassoActive === true;
+  }
+
   function isAreaSelectionToolActive() {
-    return isRectToolActive() || isCircleToolActive() || isLassoToolActive();
+    return isRectToolActive() || isCircleToolActive() || isLassoToolActive() || isPolygonLassoToolActive();
   }
 
   function getActiveSelectionShape() {
@@ -1310,6 +1325,147 @@
     return false;
   }
 
+  function getActiveLassoPathPoints() {
+    const points = clonePoints(state.lassoPoints);
+    const previewPoint = state.polygonLassoActive
+      ? clonePoints([state.polygonPreviewPoint])[0]
+      : null;
+    const lastPoint = points[points.length - 1];
+
+    if (
+      previewPoint &&
+      (!lastPoint || Math.hypot(previewPoint.x - lastPoint.x, previewPoint.y - lastPoint.y) >= LASSO_POINT_SPACING)
+    ) {
+      points.push(previewPoint);
+    }
+
+    return points;
+  }
+
+  function isNearFirstLassoPoint(point) {
+    const firstPoint = state.lassoPoints[0];
+
+    if (!firstPoint || state.lassoPoints.length < LASSO_MIN_POINTS) {
+      return false;
+    }
+
+    const screenPoint = getScreenPoint(clampDocumentPoint(point));
+    const firstScreenPoint = getScreenPoint(firstPoint);
+
+    if (!screenPoint || !firstScreenPoint) {
+      return Math.hypot(point.x - firstPoint.x, point.y - firstPoint.y) <= POLYGON_LASSO_CLOSE_DISTANCE_PX;
+    }
+
+    return Math.hypot(screenPoint.x - firstScreenPoint.x, screenPoint.y - firstScreenPoint.y) <= POLYGON_LASSO_CLOSE_DISTANCE_PX;
+  }
+
+  function resetPolygonLassoInteraction() {
+    state.polygonLassoActive = false;
+    state.polygonPreviewPoint = null;
+    state.startPoint = null;
+    state.baseRegion = null;
+    state.dragOperationMode = "replace";
+    state.lassoPoints = [];
+  }
+
+  function beginPolygonLasso(point) {
+    const clampedPoint = clampDocumentPoint(point);
+
+    state.polygonLassoActive = true;
+    state.startPoint = point;
+    state.baseRegion = getRegionSnapshot();
+    state.dragOperationMode = state.operationMode;
+    state.lassoPoints = [clampedPoint];
+    state.polygonPreviewPoint = clampedPoint;
+
+    if (state.dragOperationMode === "replace") {
+      setRect(null, { source: "area-selection-polygon-lasso-start" });
+    }
+
+    updateOverlay({ shadeDirty: false });
+    startOverlayLoop();
+  }
+
+  function cancelPolygonLasso(source = "area-selection-polygon-lasso-cancel") {
+    const baseRegion = state.baseRegion;
+
+    resetPolygonLassoInteraction();
+    setRegion(baseRegion, { source });
+    stopOverlayLoop();
+  }
+
+  function commitPolygonLasso(source = "area-selection-polygon-lasso-commit") {
+    const points = clonePoints(state.lassoPoints);
+    const baseRegion = state.baseRegion;
+    const operationMode = state.dragOperationMode;
+
+    if (!state.polygonLassoActive || !getPolygonBounds(points)) {
+      return false;
+    }
+
+    resetPolygonLassoInteraction();
+    setRegion(applyLassoOperation(
+      baseRegion,
+      points,
+      operationMode,
+    ), {
+      historyBeforeRegion: baseRegion,
+      source,
+      visualPolygonPoints: operationMode === "replace" ? points : null,
+    });
+    stopOverlayLoop();
+
+    return true;
+  }
+
+  function removeLastPolygonLassoPoint() {
+    if (!state.polygonLassoActive) {
+      return false;
+    }
+
+    if (state.lassoPoints.length <= 1) {
+      cancelPolygonLasso();
+      return true;
+    }
+
+    state.lassoPoints.pop();
+    state.polygonPreviewPoint = state.lassoPoints[state.lassoPoints.length - 1] || null;
+    updateOverlay({ shadeDirty: false });
+
+    return true;
+  }
+
+  function handlePolygonLassoPointerDown(event, point) {
+    if (state.pointerId != null) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const clampedPoint = clampDocumentPoint(point);
+
+    if (!state.polygonLassoActive) {
+      beginPolygonLasso(clampedPoint);
+      return;
+    }
+
+    if (isNearFirstLassoPoint(clampedPoint)) {
+      commitPolygonLasso();
+      return;
+    }
+
+    appendLassoPoint(clampedPoint);
+    state.polygonPreviewPoint = clampedPoint;
+
+    if (event.detail >= 2) {
+      commitPolygonLasso();
+      return;
+    }
+
+    updateOverlay({ shadeDirty: false });
+  }
+
   function handlePointerDown(event) {
     if (!isAreaSelectionToolActive() || event.button !== 0 || state.pointerId != null) {
       return;
@@ -1319,6 +1475,11 @@
     const brushEngine = getBrushEngine();
 
     if (!point || !brushEngine?.isDocumentPointInside?.(point)) {
+      return;
+    }
+
+    if (isPolygonLassoToolActive()) {
+      handlePolygonLassoPointerDown(event, point);
       return;
     }
 
@@ -1340,6 +1501,20 @@
   }
 
   function handlePointerMove(event) {
+    if (state.polygonLassoActive) {
+      const point = getEventDocumentPoint(event);
+
+      if (!point) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      state.polygonPreviewPoint = clampDocumentPoint(point);
+      updateOverlay({ shadeDirty: false });
+      return;
+    }
+
     if (event.pointerId !== state.pointerId || !state.startPoint) {
       return;
     }
@@ -1870,6 +2045,13 @@
 
   function handleKeyDown(event) {
     if (event.key === "Escape") {
+      if (state.polygonLassoActive) {
+        event.preventDefault();
+        event.stopPropagation();
+        cancelPolygonLasso();
+        return;
+      }
+
       if (state.rect) {
         event.preventDefault();
         event.stopPropagation();
@@ -1883,6 +2065,24 @@
     }
 
     const shortcutKey = String(event.key || "").toLowerCase();
+
+    if (state.polygonLassoActive && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (event.key === "Enter") {
+        if (commitPolygonLasso()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
+      if (event.key === "Backspace" || event.key === "Delete" || event.code === "Backspace" || event.code === "Delete") {
+        if (removeLastPolygonLassoPoint()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+    }
 
     if (isAreaSelectionToolActive() && !event.ctrlKey && !event.metaKey && !event.altKey) {
       if (shortcutKey === "r" || event.key === "1") {
@@ -1938,11 +2138,17 @@
   }
 
   function handleToolChange(event) {
-    state.activeToolMode = String(event.detail?.toolMode || "").trim().toLowerCase();
+    const nextToolMode = String(event.detail?.toolMode || "").trim().toLowerCase();
+
+    if (state.polygonLassoActive && nextToolMode !== POLYGON_LASSO_TOOL_MODE) {
+      cancelPolygonLasso("area-selection-polygon-lasso-tool-change");
+    }
+
+    state.activeToolMode = nextToolMode;
   }
 
   function handleOverlayActivity(event = null) {
-    if (!state.rect) {
+    if (!state.rect && !state.polygonLassoActive) {
       return;
     }
 
@@ -1955,7 +2161,7 @@
   }
 
   function handleOverlayCameraChange() {
-    if (!state.rect) {
+    if (!state.rect && !state.polygonLassoActive) {
       return;
     }
 
@@ -1965,7 +2171,7 @@
   }
 
   function handleOverlayResize() {
-    if (!state.rect) {
+    if (!state.rect && !state.polygonLassoActive) {
       return;
     }
 
