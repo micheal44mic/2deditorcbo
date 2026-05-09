@@ -118,6 +118,25 @@ test("SelectionRegion adds and subtracts lasso polygon coverage", () => {
   assert.equal(region.containsPoint(1, 1), true);
 });
 
+test("SelectionRegion adds and subtracts elliptical coverage", () => {
+  const SelectionRegion = loadSelectionRegion();
+  const region = SelectionRegion.fromEllipse({ x: 10, y: 10, width: 20, height: 20 });
+
+  assert.equal(region.containsPoint(20, 20), true);
+  assert.equal(region.containsPoint(10, 10), false);
+  assert.equal(region.containsPoint(20, 10), true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(region.getBounds())),
+    { x: 10, y: 10, width: 20, height: 20 },
+  );
+
+  region.subtractEllipse({ x: 15, y: 15, width: 10, height: 10 });
+
+  assert.equal(region.containsPoint(20, 20), false);
+  assert.equal(region.containsPoint(20, 12), true);
+  assert.equal(region.getCoverageRects().length > 1, true);
+});
+
 test("SelectionRegion lasso polygon uses non-zero union filling for self overlaps", () => {
   const SelectionRegion = loadSelectionRegion();
   const region = SelectionRegion.fromPolygon([

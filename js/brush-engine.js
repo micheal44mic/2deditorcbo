@@ -3510,6 +3510,22 @@ void main() {
       return rects.length > 0 ? rects : [];
     }
 
+    getActiveAreaSelectionMask(rect) {
+      if (!namespace.areaSelection?.hasSelection?.() || !rect) {
+        return null;
+      }
+
+      const region = namespace.areaSelection.getRegionSnapshot?.();
+      const mask = region?.createMaskPixels?.(rect);
+
+      return mask?.rect && mask.width > 0 && mask.height > 0
+        ? {
+            ...mask,
+            version: region.version,
+          }
+        : null;
+    }
+
     getBoundsForDocumentRects(rects) {
       if (!Array.isArray(rects) || rects.length === 0) {
         return null;
@@ -5106,6 +5122,9 @@ void main() {
         activeStrokeLayerId,
         activeStrokeMode: this.currentStrokeTool === "eraser" ? "eraser" : "paint",
         activeStrokeRect: this.strokeBufferRect,
+        activeStrokeSelectionMask: this.currentStrokeTool === "eraser"
+          ? this.getActiveAreaSelectionMask(this.strokeBufferRect)
+          : null,
         activeStrokeTexture: this.isDrawing ? this.strokeTexture : null,
         camera: this.camera,
         viewportWidth: this.viewportWidth,

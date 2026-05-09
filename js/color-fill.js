@@ -619,7 +619,7 @@
     };
   }
 
-  function getWritableTargetsForDirtyRect(layerId, dirtyRect) {
+  function getWritableTargetsForDirtyRect(layerId, dirtyRect, tilePatchRects = null) {
     const renderer = namespace.documentRenderer;
 
     if (!renderer || !layerId || !dirtyRect) {
@@ -628,6 +628,7 @@
 
     const paintTargets = renderer.ensureRasterTargetsForPaintRect?.(layerId, dirtyRect, {
       source: "color-fill",
+      tilePatchRects,
     });
 
     if (Array.isArray(paintTargets) && paintTargets.length > 0) {
@@ -1210,14 +1211,21 @@
       return false;
     }
 
-    const selectionRect = namespace.areaSelection?.hasSelection?.()
-      ? namespace.areaSelection.getRect?.()
+    const selectionRegion = namespace.areaSelection?.hasSelection?.()
+      ? namespace.areaSelection.getRegionSnapshot?.()
       : null;
-    const selectionContains = selectionRect
-      ? (docX, docY) => namespace.areaSelection.isPointInside?.(docX, docY) !== false
-      : null;
+    const selectionRect = selectionRegion?.getBounds?.() || (
+      namespace.areaSelection?.hasSelection?.()
+        ? namespace.areaSelection.getRect?.()
+        : null
+    );
+    const selectionContains = selectionRegion
+      ? (docX, docY) => selectionRegion.containsPoint?.(docX, docY) === true
+      : selectionRect
+        ? (docX, docY) => namespace.areaSelection.isPointInside?.(docX, docY) !== false
+        : null;
 
-    if (selectionRect && !namespace.areaSelection.isPointInside?.(seedX, seedY)) {
+    if (selectionContains && !selectionContains(seedX, seedY)) {
       return false;
     }
 
@@ -1276,7 +1284,9 @@
       analysisRect.y,
     );
 
-    if (selectionRect) {
+    if (selectionRegion) {
+      dirtyRect = selectionRegion.intersectBounds?.(dirtyRect) || null;
+    } else if (selectionRect) {
       dirtyRect = intersectRects(dirtyRect, selectionRect);
     }
 
@@ -1285,7 +1295,8 @@
     }
 
     const layerId = writableLayer.layerId;
-    const writeTargets = getWritableTargetsForDirtyRect(layerId, dirtyRect);
+    const tilePatchRects = selectionRegion?.getTilePatchRects?.(dirtyRect) || null;
+    const writeTargets = getWritableTargetsForDirtyRect(layerId, dirtyRect, tilePatchRects);
 
     if (writeTargets.length === 0) {
       return false;
@@ -1294,6 +1305,7 @@
     const tileHistory = renderer.beginRasterTileHistory?.(layerId, dirtyRect, {
       label: "color-fill",
       source: "color-fill",
+      tilePatchRects,
     });
     const beforeSnapshot = tileHistory
       ? null

@@ -62,6 +62,7 @@ precision highp float;
 uniform sampler2D u_texture;
 uniform sampler2D u_maskTexture;
 uniform sampler2D u_clipTexture;
+uniform sampler2D u_selectionClipTexture;
 uniform float u_opacity;
 uniform vec2 uDocumentSize;
 uniform float uCameraZoom;
@@ -80,6 +81,8 @@ uniform vec2 u_clipTextureSize;
 uniform vec2 u_drawOrigin;
 uniform float u_previewCutMode;
 uniform vec4 u_previewCutRect;
+uniform float u_selectionClipMode;
+uniform vec4 u_selectionClipRect;
 
 in vec2 v_uv;
 in vec2 v_documentPixel;
@@ -154,6 +157,17 @@ void main() {
         if (!insideMaskClipRect) {
           eraseAlpha = 0.0;
         }
+      }
+
+      if (u_selectionClipMode > 0.5) {
+        vec2 selectionLocal = (globalDocPixel - u_selectionClipRect.xy) / max(u_selectionClipRect.zw, vec2(1.0));
+        float selectionAlpha = 0.0;
+
+        if (!any(lessThan(selectionLocal, vec2(0.0))) && !any(greaterThan(selectionLocal, vec2(1.0)))) {
+          selectionAlpha = texture(u_selectionClipTexture, vec2(selectionLocal.x, 1.0 - selectionLocal.y)).r;
+        }
+
+        eraseAlpha *= selectionAlpha;
       }
 
       color *= 1.0 - eraseAlpha;
@@ -1047,6 +1061,10 @@ void main() {
       this.layerEffectScratchA = null;
       this.layerEffectScratchB = null;
       this.activeStrokeScratchTarget = null;
+      this.activeStrokeSelectionClipTexture = null;
+      this.activeStrokeSelectionClipKey = "";
+      this.activeStrokeSelectionClipWidth = 0;
+      this.activeStrokeSelectionClipHeight = 0;
       this.quad = null;
       this.isDisposed = false;
       this.handleLayerModelChange = this.handleLayerModelChange.bind(this);
@@ -2397,6 +2415,9 @@ void main() {
           maskTexture: gl.getUniformLocation(program, "u_maskTexture"),
           previewCutMode: gl.getUniformLocation(program, "u_previewCutMode"),
           previewCutRect: gl.getUniformLocation(program, "u_previewCutRect"),
+          selectionClipMode: gl.getUniformLocation(program, "u_selectionClipMode"),
+          selectionClipRect: gl.getUniformLocation(program, "u_selectionClipRect"),
+          selectionClipTexture: gl.getUniformLocation(program, "u_selectionClipTexture"),
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
@@ -3835,6 +3856,82 @@ void main() {
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewCacheReady = false;
+    }
+
+    deleteActiveStrokeSelectionClipTexture() {
+      if (this.activeStrokeSelectionClipTexture) {
+        this.gl.deleteTexture(this.activeStrokeSelectionClipTexture);
+        this.activeStrokeSelectionClipTexture = null;
+      }
+
+      this.activeStrokeSelectionClipKey = "";
+      this.activeStrokeSelectionClipWidth = 0;
+      this.activeStrokeSelectionClipHeight = 0;
+    }
+
+    getActiveStrokeSelectionClipTexture(mask) {
+      const rect = mask?.rect;
+      const width = Math.max(0, Math.round(mask?.width || rect?.width || 0));
+      const height = Math.max(0, Math.round(mask?.height || rect?.height || 0));
+      const pixels = mask?.pixels;
+
+      if (!rect || width <= 0 || height <= 0 || !pixels || pixels.length < width * height) {
+        this.deleteActiveStrokeSelectionClipTexture();
+        return null;
+      }
+
+      const key = [
+        Math.round(rect.x || 0),
+        Math.round(rect.y || 0),
+        width,
+        height,
+        Number.isFinite(mask.version) ? mask.version : 0,
+      ].join(":");
+
+      if (
+        this.activeStrokeSelectionClipTexture &&
+        this.activeStrokeSelectionClipKey === key &&
+        this.activeStrokeSelectionClipWidth === width &&
+        this.activeStrokeSelectionClipHeight === height
+      ) {
+        return this.activeStrokeSelectionClipTexture;
+      }
+
+      this.deleteActiveStrokeSelectionClipTexture();
+
+      const gl = this.gl;
+      const texture = gl.createTexture();
+
+      if (!texture) {
+        return null;
+      }
+
+      const rgba = new Uint8Array(width * height * 4);
+
+      for (let index = 0; index < width * height; index += 1) {
+        const value = pixels[index] || 0;
+        const offset = index * 4;
+
+        rgba[offset] = value;
+        rgba[offset + 1] = value;
+        rgba[offset + 2] = value;
+        rgba[offset + 3] = 255;
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      this.activeStrokeSelectionClipTexture = texture;
+      this.activeStrokeSelectionClipKey = key;
+      this.activeStrokeSelectionClipWidth = width;
+      this.activeStrokeSelectionClipHeight = height;
+
+      return texture;
     }
 
     invalidatePreviewCache(reason = "unknown") {
@@ -9991,6 +10088,17 @@ void main() {
         : null;
       const vectorTextTransformPreviewLayerId = this.vectorTextTransformPreviewLayerId || "";
       const hasActiveEraserStroke = Boolean(options.activeStrokeTexture && activeStrokeMode === "eraser");
+      const activeStrokeSelectionMask = hasActiveEraserStroke
+        ? options.activeStrokeSelectionMask
+        : null;
+      const activeStrokeSelectionClipTexture = activeStrokeSelectionMask
+        ? this.getActiveStrokeSelectionClipTexture(activeStrokeSelectionMask)
+        : null;
+
+      if (!activeStrokeSelectionMask) {
+        this.deleteActiveStrokeSelectionClipTexture();
+      }
+
       const orderedLayers = this.getOrderedLayersBottomToTop();
       const renderableLayers = orderedLayers.filter((layer) => layer.visible !== false);
       const hasClippingMasks = orderedLayers.some((layer) => layer?.clippingMask === true);
@@ -10350,6 +10458,7 @@ void main() {
         gl.uniform1i(uniforms.texture, 0);
         gl.uniform1i(uniforms.maskTexture, 1);
         gl.uniform1i(uniforms.clipTexture, 2);
+        gl.uniform1i(uniforms.selectionClipTexture, 3);
         gl.uniform1f(uniforms.maskMode, 0.0);
         gl.uniform1f(uniforms.maskRectMode, 0.0);
         gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
@@ -10362,6 +10471,8 @@ void main() {
         gl.uniform2f(uniforms.drawOrigin, 0, 0);
         gl.uniform1f(uniforms.previewCutMode, 0.0);
         gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
+        gl.uniform1f(uniforms.selectionClipMode, 0.0);
+        gl.uniform4f(uniforms.selectionClipRect, 0, 0, 0, 0);
         gl.uniform1f(uniforms.gridMode, 0.0);
         gl.bindVertexArray(this.quad.vao);
         gl.activeTexture(gl.TEXTURE0);
@@ -10549,6 +10660,21 @@ void main() {
                 gl.uniform4f(uniforms.maskRect, 0, 0, target.width, target.height);
               }
               setMaskClipUniforms(uniforms, activeStrokeClipRect, activeStrokeClipRects);
+              if (activeStrokeSelectionClipTexture && activeStrokeSelectionMask?.rect) {
+                gl.activeTexture(gl.TEXTURE3);
+                gl.bindTexture(gl.TEXTURE_2D, activeStrokeSelectionClipTexture);
+                gl.uniform1f(uniforms.selectionClipMode, 1.0);
+                gl.uniform4f(
+                  uniforms.selectionClipRect,
+                  activeStrokeSelectionMask.rect.x,
+                  activeStrokeSelectionMask.rect.y,
+                  activeStrokeSelectionMask.rect.width,
+                  activeStrokeSelectionMask.rect.height,
+                );
+              } else {
+                gl.uniform1f(uniforms.selectionClipMode, 0.0);
+                gl.uniform4f(uniforms.selectionClipRect, 0, 0, 0, 0);
+              }
               gl.activeTexture(gl.TEXTURE0);
               currentMaskTexture = eraserMaskTexture;
               currentMaskRect = activeStrokeRect || null;
@@ -10582,6 +10708,10 @@ void main() {
               gl.uniform1f(uniforms.maskMode, 0.0);
               gl.uniform1f(uniforms.maskRectMode, 0.0);
               setMaskClipUniforms(uniforms);
+              gl.uniform1f(uniforms.selectionClipMode, 0.0);
+              gl.uniform4f(uniforms.selectionClipRect, 0, 0, 0, 0);
+              gl.activeTexture(gl.TEXTURE3);
+              gl.bindTexture(gl.TEXTURE_2D, null);
               gl.activeTexture(gl.TEXTURE1);
               gl.bindTexture(gl.TEXTURE_2D, null);
               gl.activeTexture(gl.TEXTURE0);
@@ -10674,6 +10804,7 @@ void main() {
       this.deleteGrainResources();
       this.deleteThresholdResources();
       this.deleteActiveStrokeScratchTarget();
+      this.deleteActiveStrokeSelectionClipTexture();
       this.deleteLayerBlendResources();
       this.deletePreviewCache();
 

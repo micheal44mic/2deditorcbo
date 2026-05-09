@@ -22,18 +22,21 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   assert.match(indexSource, /js\/selection-region\.js[\s\S]*js\/area-selection-tool\.js/);
   assert.match(appSource, /initAreaSelectionTool\?\.\(\)/);
   assert.match(toolbarSource, /data-tool-mode="selection-rect"/);
+  assert.match(toolbarSource, /data-tool-mode="selection-circle"/);
   assert.match(toolbarSource, /data-tool-mode="selection-lasso"/);
   assert.match(selectionSource, /const RECT_TOOL_MODE = "selection-rect"/);
+  assert.match(selectionSource, /const CIRCLE_TOOL_MODE = "selection-circle"/);
   assert.match(selectionSource, /const LASSO_TOOL_MODE = "selection-lasso"/);
   assert.match(selectionSource, /const LASSO_MIN_POINTS = 3/);
   assert.match(selectionSource, /const MIN_SELECTION_SIZE = 3/);
-  assert.match(selectionSource, /const AREA_SELECTION_ANTS_ENABLED = true/);
+  assert.match(selectionSource, /const AREA_SELECTION_ANTS_ENABLED = false/);
   assert.match(selectionSource, /namespace\.areaSelection = \{/);
   assert.match(selectionSource, /function getDocumentScreenRect\(\)/);
   assert.match(selectionSource, /overlayCache: \{/);
   assert.match(selectionSource, /function markOverlayRegionDirty\(\)/);
   assert.match(selectionSource, /function markOverlayScreenDirty\(\)/);
   assert.match(selectionSource, /function strokeCachedBoundary\(ctx, dashOffset = 0, isAnimated = false\)/);
+  assert.match(selectionSource, /if \(!isAnimated\) \{[\s\S]*ctx\.setLineDash\(\[6, 6\]\);[\s\S]*ctx\.lineDashOffset = 0;[\s\S]*strokePath\(\);[\s\S]*return;/);
   assert.match(selectionSource, /function isOverlayAnimationPaused\(\) \{/);
   assert.match(selectionSource, /brushEngine\?\.isDrawing === true/);
   assert.match(selectionSource, /brushEngine\?\.isPanning === true/);
@@ -50,6 +53,7 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   assert.match(selectionSource, /state\.overlayCache\.boundarySegmentsDoc = state\.region\?\.getBoundarySegments\?\.\(\) \|\| \[\]/);
   assert.match(selectionSource, /const boundaryPath = typeof Path2D === "function" \? new Path2D\(\) : null/);
   assert.match(selectionSource, /if \(AREA_SELECTION_ANTS_ENABLED\) \{/);
+  assert.match(selectionSource, /strokeLassoPath\(ctx, AREA_SELECTION_ANTS_ENABLED \? dashOffset : 0\)/);
   assert.match(selectionSource, /drawSelectionShade\(overlay, viewportRect, dpr\)/);
   assert.match(selectionSource, /drawOverlayBoundaryFrame\(overlay, viewportRect, dpr\)/);
   assert.match(selectionSource, /ctx\.globalCompositeOperation = "destination-out";[\s\S]*ctx\.fillStyle = "#000000";/);
@@ -72,7 +76,7 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   assert.match(topToolbarSource, /window\.CBO\.areaSelection\?\.setOperationMode\?\./);
   assert.match(topToolbarSource, /window\.CBO\.areaSelection\?\.getOperationMode\?\./);
   assert.match(topToolbarSource, /cbo:area-selection-operation-change/);
-  assert.match(topToolbarSource, /toolMode === "selection-rect" \|\| toolMode === "selection-lasso"/);
+  assert.match(topToolbarSource, /toolMode === "selection-rect" \|\| toolMode === "selection-circle" \|\| toolMode === "selection-lasso"/);
   assert.match(topToolbarSource, /showAreaSelectionOperationToolbar\(isAreaSelection\)/);
   assert.match(topToolbarCss, /\.area-selection-operation-toolbar/);
   assert.match(topToolbarCss, /\.area-selection-operation-button/);
@@ -100,7 +104,14 @@ test("brush and fill constrain raster edits to an active area selection", () => 
   assert.match(brushSource, /beginRasterTileHistory\?\.\(layerId, effectiveStrokeRect/);
   assert.match(brushSource, /activeStrokeClipRect: namespace\.areaSelection\?\.hasSelection\?\.\(\)/);
   assert.match(brushSource, /activeStrokeClipRects: this\.getActiveAreaSelectionCoverageRects\(this\.strokeBufferRect\)/);
+  assert.match(brushSource, /function[\s\S]*getActiveAreaSelectionMask\(rect\) \{|getActiveAreaSelectionMask\(rect\) \{/);
+  assert.match(brushSource, /region\?\.createMaskPixels\?\.\(rect\)/);
+  assert.match(brushSource, /activeStrokeSelectionMask: this\.currentStrokeTool === "eraser"/);
   assert.match(rendererSource, /const activeStrokeClipRects = Array\.isArray\(options\.activeStrokeClipRects\) && activeStrokeRect/);
+  assert.match(rendererSource, /uniform sampler2D u_selectionClipTexture/);
+  assert.match(rendererSource, /uniform float u_selectionClipMode/);
+  assert.match(rendererSource, /eraseAlpha \*= selectionAlpha/);
+  assert.match(rendererSource, /getActiveStrokeSelectionClipTexture\(mask\)/);
   assert.match(rendererSource, /options\.activeStrokeClipRect \|\|[\s\S]*activeStrokeClipRects/);
   assert.match(rendererSource, /withActiveStrokeClip\(\(\) => \{/);
   assert.match(rendererSource, /clipRects\.forEach\(\(clipRect\) => \{/);
@@ -118,8 +129,10 @@ test("brush and fill constrain raster edits to an active area selection", () => 
   assert.match(smudgeSource, /namespace\.areaSelection\?\.hasSelection\?\.\(\)/);
   assert.match(smudgeSource, /namespace\.areaSelection\.getIntersectingRects\?\.\(bounds\)/);
   assert.match(smudgeSource, /selectionCoverageRects\.forEach\(\(coverageRect\) => \{/);
-  assert.match(fillSource, /namespace\.areaSelection\.isPointInside\?\.\(seedX, seedY\)/);
-  assert.match(fillSource, /dirtyRect = intersectRects\(dirtyRect, selectionRect\)/);
+  assert.match(fillSource, /namespace\.areaSelection\.getRegionSnapshot\?\.\(\)/);
+  assert.match(fillSource, /selectionRegion\.containsPoint\?\.\(docX, docY\) === true/);
+  assert.match(fillSource, /dirtyRect = selectionRegion\.intersectBounds\?\.\(dirtyRect\) \|\| null/);
+  assert.match(fillSource, /tilePatchRects: options\.tilePatchRects|tilePatchRects,/);
 });
 
 test("delete and escape shortcuts operate on the active area selection", () => {
@@ -181,9 +194,15 @@ test("rect selection drag supports shift square and alt center modifiers", () =>
   assert.match(selectionSource, /function getOperationMode\(\) \{/);
   assert.match(selectionSource, /function isRectToolActive\(\) \{/);
   assert.match(selectionSource, /state\.activeToolMode === RECT_TOOL_MODE/);
+  assert.match(selectionSource, /function isCircleToolActive\(\) \{/);
+  assert.match(selectionSource, /state\.activeToolMode === CIRCLE_TOOL_MODE/);
   assert.match(selectionSource, /function isLassoToolActive\(\) \{/);
   assert.match(selectionSource, /state\.activeToolMode === LASSO_TOOL_MODE/);
   assert.match(selectionSource, /function isAreaSelectionToolActive\(\) \{/);
+  assert.match(selectionSource, /function getActiveSelectionShape\(\) \{/);
+  assert.match(selectionSource, /isCircleToolActive\(\) \? "ellipse" : "rect"/);
+  assert.match(selectionSource, /function createRegionFromEllipse\(rect\) \{/);
+  assert.match(selectionSource, /baseRegion\?\.addEllipse\?\.|baseRegion\?\.subtractEllipse\?\./);
   assert.match(selectionSource, /function applyLassoOperation\(baseSelection, points, mode = "replace"\) \{/);
   assert.match(selectionSource, /baseRegion\?\.addPolygon\?\.\(points\)/);
   assert.match(selectionSource, /baseRegion\?\.subtractPolygon\?\.\(points\)/);

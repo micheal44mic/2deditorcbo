@@ -118,6 +118,49 @@
     return pieces;
   }
 
+  function getEllipseRows(rect) {
+    const normalized = normalizeRect(rect);
+
+    if (!normalized) {
+      return [];
+    }
+
+    const rows = [];
+    const left = normalized.x;
+    const top = normalized.y;
+    const right = normalized.x + normalized.width;
+    const bottom = normalized.y + normalized.height;
+    const cx = normalized.x + normalized.width / 2;
+    const cy = normalized.y + normalized.height / 2;
+    const rx = normalized.width / 2;
+    const ry = normalized.height / 2;
+
+    if (rx <= 0 || ry <= 0) {
+      return rows;
+    }
+
+    for (let y = top; y < bottom; y += 1) {
+      const dy = ((y + 0.5) - cy) / ry;
+
+      if (Math.abs(dy) > 1) {
+        continue;
+      }
+
+      const halfWidth = rx * Math.sqrt(Math.max(0, 1 - dy * dy));
+      const x0 = Math.max(left, Math.ceil(cx - halfWidth - 0.5));
+      const x1 = Math.min(right, Math.floor(cx + halfWidth - 0.5) + 1);
+
+      if (x1 > x0) {
+        rows.push({
+          intervals: [[x0, x1]],
+          y,
+        });
+      }
+    }
+
+    return rows;
+  }
+
   function normalizePolygonPoints(points) {
     return Array.isArray(points)
       ? points
@@ -224,6 +267,12 @@
       return region.replaceRect(rect);
     }
 
+    static fromEllipse(rect) {
+      const region = new SelectionRegion();
+
+      return region.replaceEllipse(rect);
+    }
+
     static fromPolygon(points) {
       const region = new SelectionRegion();
 
@@ -315,6 +364,11 @@
       return this.addRect(rect);
     }
 
+    replaceEllipse(rect) {
+      this.rows.clear();
+      return this.addEllipse(rect);
+    }
+
     replacePolygon(points) {
       this.rows.clear();
       return this.addPolygon(points);
@@ -340,6 +394,22 @@
 
     addPolygon(points) {
       const rows = getPolygonRows(points);
+
+      if (rows.length === 0) {
+        return this.touch();
+      }
+
+      rows.forEach((row) => {
+        const intervals = this.rows.get(row.y) || [];
+
+        this.rows.set(row.y, mergeIntervals([...intervals, ...row.intervals]));
+      });
+
+      return this.touch();
+    }
+
+    addEllipse(rect) {
+      const rows = getEllipseRows(rect);
 
       if (rows.length === 0) {
         return this.touch();
@@ -398,6 +468,32 @@
       return this.touch();
     }
 
+    subtractEllipse(rect) {
+      const rows = getEllipseRows(rect);
+
+      if (rows.length === 0 || this.isEmpty()) {
+        return this.touch();
+      }
+
+      rows.forEach((row) => {
+        const intervals = this.rows.get(row.y);
+
+        if (!intervals) {
+          return;
+        }
+
+        const nextIntervals = subtractIntervals(intervals, row.intervals);
+
+        if (nextIntervals.length > 0) {
+          this.rows.set(row.y, mergeIntervals(nextIntervals));
+        } else {
+          this.rows.delete(row.y);
+        }
+      });
+
+      return this.touch();
+    }
+
     subtractPolygon(points) {
       const rows = getPolygonRows(points);
 
@@ -436,6 +532,20 @@
       }
 
       return this.replaceRect(rect);
+    }
+
+    applyEllipse(rect, mode = "replace") {
+      const normalizedMode = mode === "add" || mode === "subtract" ? mode : "replace";
+
+      if (normalizedMode === "add") {
+        return this.addEllipse(rect);
+      }
+
+      if (normalizedMode === "subtract") {
+        return this.subtractEllipse(rect);
+      }
+
+      return this.replaceEllipse(rect);
     }
 
     applyPolygon(points, mode = "replace") {
@@ -708,6 +818,7 @@
   SelectionRegion.normalizeRect = normalizeRect;
   SelectionRegion.intervalsEqual = intervalsEqual;
   SelectionRegion.subtractIntervals = subtractIntervals;
+  SelectionRegion.getEllipseRows = getEllipseRows;
   SelectionRegion.getPolygonRows = getPolygonRows;
 
   namespace.SelectionRegion = SelectionRegion;

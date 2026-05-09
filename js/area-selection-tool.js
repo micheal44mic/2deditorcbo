@@ -1,11 +1,12 @@
 (function registerAreaSelectionTool(namespace) {
   const RECT_TOOL_MODE = "selection-rect";
+  const CIRCLE_TOOL_MODE = "selection-circle";
   const LASSO_TOOL_MODE = "selection-lasso";
   const LASSO_MIN_POINTS = 3;
   const LASSO_POINT_SPACING = 1.5;
   const MIN_SELECTION_SIZE = 3;
   const PASTE_OFFSET_PX = 60;
-  const AREA_SELECTION_ANTS_ENABLED = true;
+  const AREA_SELECTION_ANTS_ENABLED = false;
 
   const state = {
     activeToolMode: "",
@@ -242,6 +243,10 @@
     return namespace.SelectionRegion?.fromRect?.(rect) || null;
   }
 
+  function createRegionFromEllipse(rect) {
+    return namespace.SelectionRegion?.fromEllipse?.(rect) || createRegionFromRect(rect);
+  }
+
   function createRegionFromPolygon(points) {
     return namespace.SelectionRegion?.fromPolygon?.(points) || createEmptyRegion();
   }
@@ -358,25 +363,34 @@
     ];
   }
 
-  function applySelectionOperation(baseSelection, nextRect, mode = "replace") {
+  function applySelectionOperation(baseSelection, nextRect, mode = "replace", shape = "rect") {
     const baseRegion = Array.isArray(baseSelection)
       ? setRectsOnRegion(baseSelection)
       : cloneRegion(baseSelection);
     const rect = normalizeSelectionRect(nextRect);
+    const isEllipse = shape === "ellipse";
 
     if (!rect) {
       return mode === "replace" ? createEmptyRegion() : baseRegion;
     }
 
     if (mode === "add") {
+      if (isEllipse) {
+        return baseRegion?.addEllipse?.(rect) || createRegionFromEllipse(rect);
+      }
+
       return baseRegion?.addRect?.(rect) || createRegionFromRect(rect);
     }
 
     if (mode === "subtract") {
+      if (isEllipse) {
+        return baseRegion?.subtractEllipse?.(rect) || createEmptyRegion();
+      }
+
       return baseRegion?.subtractRect?.(rect) || createEmptyRegion();
     }
 
-    return createRegionFromRect(rect);
+    return isEllipse ? createRegionFromEllipse(rect) : createRegionFromRect(rect);
   }
 
   function getPolygonBounds(points) {
@@ -804,9 +818,11 @@
     ctx.lineJoin = "miter";
 
     if (!isAnimated) {
-      ctx.setLineDash([]);
+      ctx.setLineDash([6, 6]);
+      ctx.lineDashOffset = 0;
       ctx.strokeStyle = "#18a0fb";
       strokePath();
+      ctx.setLineDash([]);
       return;
     }
 
@@ -1133,7 +1149,7 @@
     }
 
     if (isLassoToolActive() && state.pointerId != null) {
-      strokeLassoPath(ctx, dashOffset);
+      strokeLassoPath(ctx, AREA_SELECTION_ANTS_ENABLED ? dashOffset : 0);
     }
   }
 
@@ -1238,12 +1254,20 @@
     return state.activeToolMode === RECT_TOOL_MODE;
   }
 
+  function isCircleToolActive() {
+    return state.activeToolMode === CIRCLE_TOOL_MODE;
+  }
+
   function isLassoToolActive() {
     return state.activeToolMode === LASSO_TOOL_MODE;
   }
 
   function isAreaSelectionToolActive() {
-    return isRectToolActive() || isLassoToolActive();
+    return isRectToolActive() || isCircleToolActive() || isLassoToolActive();
+  }
+
+  function getActiveSelectionShape() {
+    return isCircleToolActive() ? "ellipse" : "rect";
   }
 
   function getEventDocumentPoint(event) {
@@ -1340,6 +1364,7 @@
       state.baseRegion,
       normalizeRectFromPoints(state.startPoint, point, getSelectionDragOptions(event)),
       state.dragOperationMode,
+      getActiveSelectionShape(),
     ), {
       emit: false,
       source: "area-selection-drag",
@@ -1377,6 +1402,7 @@
         state.baseRegion,
         normalizeRectFromPoints(state.startPoint, point, getSelectionDragOptions(event)),
         state.dragOperationMode,
+        getActiveSelectionShape(),
       ), {
         historyBeforeRegion: state.baseRegion,
         source: "area-selection-commit",
