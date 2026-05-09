@@ -83,6 +83,7 @@ document.addEventListener(
 document.addEventListener("DOMContentLoaded", () => {
   function initCanvasDependentTools() {
     window.CBO.initBrushShapeOutlinePreview?.();
+    window.CBO.initAreaSelectionTool?.();
     window.CBO.initRasterTransformTool?.();
     window.CBO.initPuppetTransformTool?.();
     window.CBO.initVectorTextRenderer();

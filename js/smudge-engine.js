@@ -518,6 +518,20 @@ void main() {
       return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
     }
 
+    getActiveAreaSelectionRect() {
+      return namespace.areaSelection?.hasSelection?.()
+        ? namespace.areaSelection.getRect?.()
+        : null;
+    }
+
+    clipBoundsToAreaSelection(bounds) {
+      const selectionRect = this.getActiveAreaSelectionRect();
+
+      return selectionRect
+        ? this.intersectDocumentRects(bounds, selectionRect)
+        : bounds;
+    }
+
     createScratchTarget(target, bounds = null) {
       const rect = CROPPED_SMUDGE_SCRATCH && bounds
         ? { ...bounds }
@@ -2193,6 +2207,8 @@ void main() {
 
       const radius = this.getRadius();
       let bounds = this.getDabBounds(cx, cy, radius, target);
+
+      bounds = this.clipBoundsToAreaSelection(bounds);
 
       if (!bounds) {
         return;

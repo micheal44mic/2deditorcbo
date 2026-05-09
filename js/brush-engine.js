@@ -1346,13 +1346,12 @@ void main() {
       };
     }
 
-    prepareBatchedBrushHistory(layerId, strokeRect, memoryReport) {
+    prepareBatchedBrushHistory(layerId, strokeRect, memoryReport, tilePatchRects = this.getActiveStrokeTilePatchRects(strokeRect)) {
       if (!this.canBatchBrushHistory() || !layerId || !strokeRect) {
         return null;
       }
 
       const source = this.currentStrokeTool || "brush";
-      const tilePatchRects = this.getActiveStrokeTilePatchRects();
 
       if (this.pendingBrushHistory && !this.isPendingBrushHistoryCompatible(layerId, source)) {
         this.flushPendingBrushHistory({
@@ -3472,16 +3471,33 @@ void main() {
       }
     }
 
-    getActiveStrokeTilePatchRects() {
-      return this.activeStrokeTilePatchRects instanceof Map
-        ? Array.from(this.activeStrokeTilePatchRects.values(), (item) => ({
-            patchRect: { ...item.patchRect },
-            rect: { ...item.rect },
-            tileRect: item.tileRect ? { ...item.tileRect } : null,
-            tx: item.tx,
-            ty: item.ty,
-          }))
-        : null;
+    getActiveStrokeTilePatchRects(clipRect = null) {
+      if (!(this.activeStrokeTilePatchRects instanceof Map)) {
+        return null;
+      }
+
+      const renderer = this.documentRenderer;
+      const patchRects = [];
+
+      for (const item of this.activeStrokeTilePatchRects.values()) {
+        const patchRect = clipRect
+          ? renderer?.intersectRasterHistoryRects?.(item.patchRect, clipRect)
+          : item.patchRect;
+
+        if (!patchRect) {
+          continue;
+        }
+
+        patchRects.push({
+          patchRect: { ...patchRect },
+          rect: { ...patchRect },
+          tileRect: item.tileRect ? { ...item.tileRect } : null,
+          tx: item.tx,
+          ty: item.ty,
+        });
+      }
+
+      return patchRects.length > 0 ? patchRects : null;
     }
 
     getActiveStrokeRect() {
@@ -4108,27 +4124,40 @@ void main() {
       const isEraserStroke = this.currentStrokeTool === "eraser";
       const { program, uniforms } = this.compositeProgramInfo;
       const strokeRect = this.getActiveStrokeRect();
+      const selectionRect = namespace.areaSelection?.hasSelection?.()
+        ? namespace.areaSelection.getRect?.()
+        : null;
+      const effectiveStrokeRect = selectionRect
+        ? this.documentRenderer?.intersectRasterHistoryRects?.(strokeRect, selectionRect)
+        : strokeRect;
 
       if (!this.strokeTexture || !strokeRect) {
         this.releaseStrokeLayerTarget();
         return;
       }
 
+      if (!effectiveStrokeRect) {
+        this.clearStrokeLayer();
+        this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+        return;
+      }
+
       const documentTarget = this.getDocumentDrawTarget(layerId);
       const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, documentTarget);
-      const activeStrokeTilePatchRects = this.getActiveStrokeTilePatchRects();
+      const activeStrokeTilePatchRects = this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
       const paintTargets = isEraserStroke
-        ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, finalStrokeBufferRect, {
+        ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
             source: "brush-eraser-target",
             tilePatchRects: activeStrokeTilePatchRects,
           }) || [{
             target: this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget(),
           }]
-        : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, finalStrokeBufferRect, {
+        : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
             source: "brush-stroke-target",
             tilePatchRects: activeStrokeTilePatchRects,
           }) || [{
-            target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, finalStrokeBufferRect, {
+            target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, effectiveStrokeRect, {
               source: "brush-stroke-target",
             }) || this.documentRenderer?.getRasterTarget?.(layerId),
           }];
@@ -4143,20 +4172,25 @@ void main() {
         layerId,
         phase: "brush-bake",
         strokeBufferRect: finalStrokeBufferRect,
-        strokeRect,
+        strokeRect: effectiveStrokeRect,
         target: documentTarget,
         tool: this.currentStrokeTool,
       });
-      const batchedTileHistory = this.prepareBatchedBrushHistory(layerId, strokeRect, memoryReport);
-      const tileHistory = !batchedTileHistory && this.options.enableHistory && strokeRect
-        ? this.documentRenderer?.beginRasterTileHistory?.(layerId, strokeRect, {
+      const batchedTileHistory = this.prepareBatchedBrushHistory(
+        layerId,
+        effectiveStrokeRect,
+        memoryReport,
+        activeStrokeTilePatchRects,
+      );
+      const tileHistory = !batchedTileHistory && this.options.enableHistory && effectiveStrokeRect
+        ? this.documentRenderer?.beginRasterTileHistory?.(layerId, effectiveStrokeRect, {
             label: "brush-stroke",
             source: this.currentStrokeTool,
             tilePatchRects: activeStrokeTilePatchRects,
           })
         : null;
-      const beforeSnapshot = this.options.enableHistory && strokeRect && !batchedTileHistory && !tileHistory
-        ? this.createHistorySnapshot(target, strokeRect, "before-stroke")
+      const beforeSnapshot = this.options.enableHistory && effectiveStrokeRect && !batchedTileHistory && !tileHistory
+        ? this.createHistorySnapshot(target, effectiveStrokeRect, "before-stroke")
         : null;
 
       this.recordStrokeMemory(memoryReport);
@@ -4180,6 +4214,9 @@ void main() {
       paintTargets.forEach((item) => {
         const paintTarget = item?.target;
         const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(paintTarget) || { x: 0, y: 0 };
+        const selectionTargetRect = selectionRect
+          ? this.documentRenderer?.intersectRasterHistoryRects?.(selectionRect, targetRect)
+          : null;
         const localBakeX = Math.round(bakeRect.x - targetRect.x);
         const localBakeY = Math.round(bakeRect.y - targetRect.y);
 
@@ -4189,9 +4226,28 @@ void main() {
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, paintTarget.framebuffer);
         gl.viewport(localBakeX, paintTarget.height - (localBakeY + bakeRect.height), bakeRect.width, bakeRect.height);
+        if (selectionRect) {
+          if (!selectionTargetRect) {
+            return;
+          }
+
+          gl.enable(gl.SCISSOR_TEST);
+          gl.scissor(
+            selectionTargetRect.x - targetRect.x,
+            paintTarget.height - ((selectionTargetRect.y - targetRect.y) + selectionTargetRect.height),
+            selectionTargetRect.width,
+            selectionTargetRect.height,
+          );
+        }
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (selectionRect) {
+          gl.disable(gl.SCISSOR_TEST);
+        }
         this.documentRenderer?.markRasterTargetDirty?.(paintTarget);
       });
+      if (selectionRect) {
+        gl.disable(gl.SCISSOR_TEST);
+      }
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
@@ -4979,6 +5035,9 @@ void main() {
 
       this.documentRenderer.drawToCanvas({
         allowPreviewCache,
+        activeStrokeClipRect: namespace.areaSelection?.hasSelection?.()
+          ? namespace.areaSelection.getRect?.()
+          : null,
         activeStrokeLayerId,
         activeStrokeMode: this.currentStrokeTool === "eraser" ? "eraser" : "paint",
         activeStrokeRect: this.strokeBufferRect,

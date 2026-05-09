@@ -20,7 +20,7 @@ window.CBO.initVerticalToolbar = function initVerticalToolbar() {
     <nav class="bottom-toolbar right-vertical-toolbar" aria-label="Canvas side toolbar">
       ${window.CBO.createMobileTransformTools ? window.CBO.createMobileTransformTools() : ""}
       <div class="tool-group vertical-selection-tool-group" aria-label="Area select tools">
-        <button class="tool-button" type="button" aria-label="RECT SELECT" aria-pressed="false" data-tooltip="RECT SELECT" data-toolset-primary="side-selection" data-tool>
+        <button class="tool-button" type="button" aria-label="RECT SELECT" aria-pressed="false" data-tooltip="RECT SELECT" data-toolset-primary="side-selection" data-tool-mode="selection-rect" data-tool>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M5 3a2 2 0 0 0-2 2" />
             <path d="M19 3a2 2 0 0 1 2 2" />
@@ -41,7 +41,7 @@ window.CBO.initVerticalToolbar = function initVerticalToolbar() {
             <path d="m6 9 6 6 6-6" />
           </svg>
           <span class="tool-popover" aria-hidden="true">
-            <span class="popover-option active" data-toolset-option="side-selection" data-label="RECT SELECT">
+            <span class="popover-option active" data-toolset-option="side-selection" data-tool-mode="selection-rect" data-label="RECT SELECT">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M5 3a2 2 0 0 0-2 2" />
                 <path d="M19 3a2 2 0 0 1 2 2" />
@@ -59,7 +59,7 @@ window.CBO.initVerticalToolbar = function initVerticalToolbar() {
               <span class="popover-label">RECT SELECT</span>
               <span class="popover-key"></span>
             </span>
-            <span class="popover-option" data-toolset-option="side-selection" data-label="CIRCLE SELECT">
+            <span class="popover-option" data-toolset-option="side-selection" data-tool-mode="selection-circle" data-label="CIRCLE SELECT">
               <svg class="lucide lucide-circle-dashed-icon lucide-circle-dashed" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M10.1 2.182a10 10 0 0 1 3.8 0" />
                 <path d="M13.9 21.818a10 10 0 0 1-3.8 0" />
@@ -73,7 +73,7 @@ window.CBO.initVerticalToolbar = function initVerticalToolbar() {
               <span class="popover-label">CIRCLE SELECT</span>
               <span class="popover-key"></span>
             </span>
-            <span class="popover-option" data-toolset-option="side-selection" data-label="LASSO SELECT">
+            <span class="popover-option" data-toolset-option="side-selection" data-tool-mode="selection-lasso" data-label="LASSO SELECT">
               <svg class="lucide lucide-lasso-icon lucide-lasso" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M3.704 14.467a10 8 0 1 1 3.115 2.375" />
                 <path d="M7 22a5 5 0 0 1-2-3.994" />
@@ -82,7 +82,7 @@ window.CBO.initVerticalToolbar = function initVerticalToolbar() {
               <span class="popover-label">LASSO SELECT</span>
               <span class="popover-key"></span>
             </span>
-            <span class="popover-option" data-toolset-option="side-selection" data-label="PEN SELECT">
+            <span class="popover-option" data-toolset-option="side-selection" data-tool-mode="selection-pen" data-label="PEN SELECT">
               <svg class="lucide lucide-spline-icon lucide-spline" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <circle cx="19" cy="5" r="2" />
                 <circle cx="5" cy="19" r="2" />

@@ -1193,6 +1193,14 @@
       return false;
     }
 
+    const selectionRect = namespace.areaSelection?.hasSelection?.()
+      ? namespace.areaSelection.getRect?.()
+      : null;
+
+    if (selectionRect && !namespace.areaSelection.isPointInside?.(seedX, seedY)) {
+      return false;
+    }
+
     const tolerance = clamp(options.tolerance ?? fillTolerance, 0, MAX_FILL_TOLERANCE);
     const referenceLayerId = getReferenceLayerId();
     const referenceTarget = getReferenceTarget(writableLayer.layerId, writableLayer.existingTarget);
@@ -1236,7 +1244,7 @@
       fillResult.bounds,
       coverageRadius,
     );
-    const dirtyRect = offsetRect(
+    let dirtyRect = offsetRect(
       createDirtyRect(
         fillResult.bounds,
         analysisRect.width,
@@ -1247,7 +1255,11 @@
       analysisRect.y,
     );
 
-    if (dirtyRect.width <= 0 || dirtyRect.height <= 0) {
+    if (selectionRect) {
+      dirtyRect = intersectRects(dirtyRect, selectionRect);
+    }
+
+    if (!dirtyRect || dirtyRect.width <= 0 || dirtyRect.height <= 0) {
       return false;
     }
 

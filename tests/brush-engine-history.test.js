@@ -63,15 +63,15 @@ function loadBrushEngine() {
 test("brush stroke history prefers tile-memento before and after snapshots", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 
-  assert.match(source, /beginRasterTileHistory\?\.\(layerId, strokeRect/);
+  assert.match(source, /beginRasterTileHistory\?\.\(layerId, effectiveStrokeRect/);
   assert.match(source, /commitRasterTileHistory\?\.\(tileHistory,/);
   assert.match(source, /activeStrokeTilePatchRects/);
   assert.match(source, /includeStrokeTilePatchRect\(rect\)/);
-  assert.match(source, /getActiveStrokeTilePatchRects\(\)/);
+  assert.match(source, /getActiveStrokeTilePatchRects\(clipRect = null\)/);
   assert.match(source, /tilePatchRects: activeStrokeTilePatchRects/);
   assert.match(source, /historyMode = hasTileHistory[\s\S]*"tile-before-after"/);
-  assert.match(source, /tileHistory[\s\S]*this\.createHistorySnapshot\(target, strokeRect, "before-stroke"\)/);
-  assert.match(source, /this\.createHistorySnapshot\(target, strokeRect, "before-stroke"\)/);
+  assert.match(source, /tileHistory[\s\S]*this\.createHistorySnapshot\(target, effectiveStrokeRect, "before-stroke"\)/);
+  assert.match(source, /this\.createHistorySnapshot\(target, effectiveStrokeRect, "before-stroke"\)/);
   assert.match(source, /dehydrateHistorySnapshot\(snapshot\)/);
   assert.match(source, /hydrateHistorySnapshot\(snapshot\)/);
   assert.match(source, /snapshot\.dehydrateGpu = \(\) => this\.dehydrateHistorySnapshot\(snapshot\)/);
@@ -111,10 +111,10 @@ test("brush first paint stroke can defer full live target materialization", () =
   assert.match(source, /const existingTarget = this\.documentRenderer\?\.rasterTargetsByLayerId\?\.get\?\.\(activeId\)/);
   assert.match(source, /if \(!existingTarget \|\| isEmptySparseTarget\) \{\s*this\.showEmptyEraserLayerToast\(\);\s*return null;\s*\}/);
   assert.match(source, /const paintTargets = isEraserStroke/);
-  assert.match(source, /const activeStrokeTilePatchRects = this\.getActiveStrokeTilePatchRects\(\)/);
-  assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, finalStrokeBufferRect/);
+  assert.match(source, /const activeStrokeTilePatchRects = this\.getActiveStrokeTilePatchRects\(effectiveStrokeRect\)/);
+  assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
   assert.match(source, /source: "brush-eraser-target"/);
-  assert.match(source, /ensureRasterTargetsForPaintRect\?\.\(layerId, finalStrokeBufferRect/);
+  assert.match(source, /ensureRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
   assert.match(source, /source: "brush-stroke-target"/);
   assert.match(source, /tilePatchRects: activeStrokeTilePatchRects/);
   assert.match(source, /const documentTarget = this\.getDocumentDrawTarget\(layerId\)/);
