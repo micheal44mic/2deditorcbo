@@ -2443,8 +2443,8 @@
 
     pushPasteHistory(layerId, dirtyRect, tileHistory, beforeSnapshot, layerState);
     clear({ source: "area-selection-paste" });
-    renderer.invalidatePreviewCache?.("area-selection-paste");
-    renderer.emitContentChange?.({ layerId, source: "area-selection-paste" });
+    renderer.invalidatePreviewCache?.("area-selection-paste", { layerId, rect: dirtyRect });
+    renderer.emitContentChange?.({ layerId, rect: dirtyRect, source: "area-selection-paste" });
     renderer.requestDraw?.();
 
     return true;
@@ -2596,8 +2596,8 @@
     }
 
     pushDeleteHistory(layerId, rect, tileHistory, beforeSnapshot);
-    renderer.invalidatePreviewCache?.("area-selection-delete");
-    renderer.emitContentChange?.({ layerId, source: "area-selection-delete" });
+    renderer.invalidatePreviewCache?.("area-selection-delete", { layerId, rect });
+    renderer.emitContentChange?.({ layerId, rect, source: "area-selection-delete" });
     renderer.requestDraw?.();
 
     return true;

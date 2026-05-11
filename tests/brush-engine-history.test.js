@@ -68,6 +68,7 @@ test("brush stroke history prefers tile-memento before and after snapshots", () 
   assert.match(source, /activeStrokeTilePatchRects/);
   assert.match(source, /includeStrokeTilePatchRect\(rect\)/);
   assert.match(source, /getActiveStrokeTilePatchRects\(clipRect = null\)/);
+  assert.match(source, /getActiveStrokePreviewDirtyRects\(effectiveStrokeRect, tilePatchRects = null\)/);
   assert.match(source, /tilePatchRects: activeStrokeTilePatchRects/);
   assert.match(source, /historyMode = hasTileHistory[\s\S]*"tile-before-after"/);
   assert.match(source, /tileHistory[\s\S]*this\.createHistorySnapshot\(target, effectiveStrokeRect, "before-stroke"\)/);
@@ -113,12 +114,14 @@ test("brush first paint stroke can defer full live target materialization", () =
   assert.match(source, /const paintTargets = isEraserStroke/);
   assert.match(source, /const activeStrokeTilePatchRects = this\.filterTilePatchRectsToCoverage\(/);
   assert.match(source, /this\.getActiveStrokeTilePatchRects\(effectiveStrokeRect\)/);
+  assert.match(source, /const previewDirtyRects = this\.getActiveStrokePreviewDirtyRects\(/);
   assert.match(source, /selectionCoverageRects/);
   assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
   assert.match(source, /source: "brush-eraser-target"/);
   assert.match(source, /ensureRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
   assert.match(source, /source: "brush-stroke-target"/);
   assert.match(source, /tilePatchRects: activeStrokeTilePatchRects/);
+  assert.match(source, /rects: previewDirtyRects/);
   assert.match(source, /const documentTarget = this\.getDocumentDrawTarget\(layerId\)/);
   assert.match(source, /const target = this\.getDocumentDrawTarget\(this\.strokeTargetLayerId \|\| ""\)/);
   assert.match(source, /paintTargets\.forEach\(\(item\) =>/);

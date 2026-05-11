@@ -915,6 +915,28 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return rows.reduce((total, row) => total + estimateLayerRowRasterBytes(row), 0);
   }
 
+  function estimateLayerRowRasterDuplicateBytes(row) {
+    if (!isContentLayerRow(row)) {
+      return 0;
+    }
+
+    const renderer = window.CBO.documentRenderer;
+    const layerId = getLayerId(row);
+    const target = layerId ? renderer?.rasterTargetsByLayerId?.get?.(layerId) : null;
+
+    if (target && typeof renderer?.estimateRasterTargetDuplicateBytes === "function") {
+      return renderer.estimateRasterTargetDuplicateBytes(target);
+    }
+
+    return estimateLayerRowRasterBytes(row);
+  }
+
+  function estimateEntryRasterDuplicateBytes(entries) {
+    const rows = getContentLayerRowsInside(entries);
+
+    return rows.reduce((total, row) => total + estimateLayerRowRasterDuplicateBytes(row), 0);
+  }
+
   function clearLayerContents(rows) {
     const renderer = window.CBO.documentRenderer;
     const layerIds = Array.from(new Set(rows.map(getLayerId).filter(Boolean)));
@@ -1047,7 +1069,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
 
     if (!allowNewRasterLayers({
-      estimatedNewBytes: estimateEntryRasterBytes(selectedEntries),
+      estimatedNewBytes: estimateEntryRasterDuplicateBytes(selectedEntries),
       source: "layers-panel-copy",
     })) {
       return;

@@ -242,6 +242,49 @@ test("dehydrateRasterTarget compresses cold layer targets when history compressi
   assert.equal(pixels.every((value) => value === 0), true);
 });
 
+test("copy-on-write raster targets stay shared during memory cleanup", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const sourceTarget = {
+    copyOnWriteRefCount: 1,
+    framebuffer: { id: "source-framebuffer" },
+    height: 40,
+    texture: { id: "source-texture" },
+    width: 30,
+    x: 8,
+    y: 12,
+  };
+  const sharedTarget = {
+    copyOnWrite: true,
+    copyOnWriteSource: sourceTarget,
+    framebuffer: sourceTarget.framebuffer,
+    height: 40,
+    texture: sourceTarget.texture,
+    width: 30,
+    x: 8,
+    y: 12,
+  };
+
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-copy", type: "paint" }),
+  };
+  renderer.paintLayerId = "paint-main";
+  renderer.rasterTargetsByLayerId = new Map([["paint-copy", sharedTarget]]);
+
+  assert.equal(renderer.dehydrateRasterTarget(sharedTarget), false);
+  assert.equal(renderer.dehydrateRasterTarget(sourceTarget), false);
+  assert.equal(sharedTarget.texture, sourceTarget.texture);
+  assert.equal(sharedTarget.framebuffer, sourceTarget.framebuffer);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(renderer.compactPaintTargetToContent("paint-copy"))), {
+    action: "copy-on-write-kept",
+    bytesAfter: 0,
+    bytesBefore: 0,
+    layerId: "paint-copy",
+    savingsBytes: 0,
+  });
+});
+
 test("reconcileRasterTargetResourceOwnership hydrates restored cold history targets", () => {
   const { DocumentRenderer, window } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -371,7 +414,7 @@ test("raster snapshot rectangles clamp crop bounds safely", () => {
   });
 });
 
-test("duplicateRasterTarget clones a source raster target into a new layer target", () => {
+test("duplicateRasterTarget shares source pixels until copy-on-write detach", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
   const sourceTarget = {
@@ -386,21 +429,31 @@ test("duplicateRasterTarget clones a source raster target into a new layer targe
   };
   const destinationTarget = {
     framebuffer: { id: "destination-framebuffer" },
+    height: 40,
     texture: { id: "destination-texture" },
+    width: 30,
+    x: 8,
+    y: 12,
   };
   const copyCalls = [];
-  const replaceCalls = [];
+  const contentChanges = [];
+  const invalidations = [];
 
   renderer.width = 100;
   renderer.height = 100;
+  renderer.rasterTargetIdSequence = 1;
   renderer.rasterTargetsByLayerId = new Map([["source-layer", sourceTarget]]);
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.emitContentChange = (detail) => contentChanges.push(detail);
+  renderer.invalidatePreviewCache = (source) => invalidations.push(source);
+  renderer.updateRasterTargetResourceMetadata = () => {};
   renderer.createRasterTarget = (clearColor, options = {}) => {
     assert.deepEqual(JSON.parse(JSON.stringify(clearColor)), sourceTarget.clearColor);
     assert.deepEqual(JSON.parse(JSON.stringify(options)), {
       cropped: true,
       height: 40,
       layerId: "copy-layer",
-      reason: "unit-duplicate",
+      reason: "copy-on-write-detach",
       width: 30,
       x: 8,
       y: 12,
@@ -411,18 +464,36 @@ test("duplicateRasterTarget clones a source raster target into a new layer targe
     copyCalls.push({ destination, rect, source });
     return true;
   };
-  renderer.replaceRasterTarget = (layerId, target, options = {}) => {
-    replaceCalls.push({ layerId, options, target });
-    return true;
-  };
   renderer.deleteRasterTargetObject = () => {
-    throw new Error("destination target should not be deleted after a successful copy");
+    throw new Error("copy-on-write duplicate should not delete resources");
   };
 
   assert.equal(renderer.duplicateRasterTarget("source-layer", "copy-layer", {
     emit: false,
     source: "unit-duplicate",
   }), true);
+
+  const sharedTarget = renderer.rasterTargetsByLayerId.get("copy-layer");
+
+  assert.equal(renderer.isCopyOnWriteRasterTarget(sharedTarget), true);
+  assert.equal(sharedTarget.texture, sourceTarget.texture);
+  assert.equal(sharedTarget.framebuffer, sourceTarget.framebuffer);
+  assert.equal(renderer.estimateRasterTargetBytes(sharedTarget), 0);
+  assert.equal(sourceTarget.copyOnWriteRefCount, 1);
+  assert.equal(copyCalls.length, 0);
+  assert.deepEqual(invalidations, ["unit-duplicate"]);
+  assert.equal(contentChanges.length, 0);
+
+  renderer.deleteRasterTargetObject = (target) => DocumentRenderer.prototype.deleteRasterTargetObject.call(renderer, target);
+
+  const writableTarget = renderer.ensureWritableRasterTarget("copy-layer", {
+    source: "copy-on-write-detach",
+  });
+
+  assert.equal(writableTarget, destinationTarget);
+  assert.equal(renderer.rasterTargetsByLayerId.get("copy-layer"), destinationTarget);
+  assert.equal(sourceTarget.copyOnWriteRefCount, 0);
+  assert.equal(copyCalls.length, 1);
   assert.equal(copyCalls[0].destination, destinationTarget);
   assert.equal(copyCalls[0].source, sourceTarget);
   assert.deepEqual(JSON.parse(JSON.stringify(copyCalls[0].rect)), {
@@ -430,14 +501,6 @@ test("duplicateRasterTarget clones a source raster target into a new layer targe
     width: 30,
     x: 8,
     y: 12,
-  });
-  assert.equal(replaceCalls.length, 1);
-  assert.equal(replaceCalls[0].layerId, "copy-layer");
-  assert.equal(replaceCalls[0].target, destinationTarget);
-  assert.deepEqual(JSON.parse(JSON.stringify(replaceCalls[0].options)), {
-    emit: false,
-    label: "copy-layer",
-    source: "unit-duplicate",
   });
 });
 
@@ -503,14 +566,14 @@ test("duplicateRasterTarget preserves sparse paint tiles without full materializ
   const destinationTarget = renderer.rasterTargetsByLayerId.get("copy-layer");
 
   assert.equal(renderer.isSparseRasterTarget(destinationTarget), true);
+  assert.equal(renderer.isCopyOnWriteRasterTarget(destinationTarget), true);
   assert.equal(destinationTarget.texture, null);
   assert.equal(destinationTarget.framebuffer, null);
   assert.equal(destinationTarget.tiles.size, 1);
-  assert.equal(copyCalls.length, 1);
-  assert.equal(copyCalls[0].source, sourceTile);
-  assert.deepEqual(copyCalls[0].rect, { height: 256, width: 256, x: 0, y: 0 });
-  assert.equal(copyCalls[0].destination.kind, "paintTile");
-  assert.equal(renderer.estimateRasterTargetBytes(destinationTarget), 256 * 256 * 4);
+  assert.equal(destinationTarget.tiles, sourceTarget.tiles);
+  assert.equal(copyCalls.length, 0);
+  assert.equal(sourceTarget.copyOnWriteRefCount, 1);
+  assert.equal(renderer.estimateRasterTargetBytes(destinationTarget), 0);
 });
 
 test("ensureRasterTargetForPaintRect creates and grows cropped live targets", () => {
@@ -1953,6 +2016,35 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /allowPreviewCache &&\s*isWithinPreviewCacheZoom/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
+});
+
+test("preview cache supports dirty-region compositing", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+  const previewCacheBody = source.match(/updatePreviewCache\(\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
+
+  assert.match(source, /previewDirtyRects/);
+  assert.match(source, /previewLastDirtyMode/);
+  assert.match(source, /createPreviewDirtyStats\(\)/);
+  assert.match(source, /recordPreviewDirtyFrame\(options = \{\}\)/);
+  assert.match(source, /getPreviewDirtyStats\(\)/);
+  assert.match(source, /getDirtyRegionRectsFromOptions\(options = \{\}\)/);
+  assert.match(source, /compactDirtyRegionRects\(rects = \[\], options = \{\}\)/);
+  assert.match(source, /getPreviewDirtyRegionScissor\(rect, cacheWidth, cacheHeight, cacheScale\)/);
+  assert.match(source, /getPreviewDirtyRegionScissors\(rects, cacheWidth, cacheHeight, cacheScale\)/);
+  assert.match(source, /invalidatePreviewCache\(reason = "unknown", options = \{\}\)/);
+  assert.match(source, /this\.invalidatePreviewCache\(detail\.source \|\| "document-content-change", detail\)/);
+  assert.match(source, /stackOnlySources/);
+  assert.match(previewCacheBody, /const dirtyRects = this\.previewCacheReady && Array\.isArray\(this\.previewDirtyRects\)/);
+  assert.match(previewCacheBody, /const dirtyScissors = dirtyRects/);
+  assert.match(previewCacheBody, /const drawPreviewCachePass = \(dirtyScissor = null\) =>/);
+  assert.match(previewCacheBody, /const previewPassScissors = Array\.isArray\(dirtyScissors\) && dirtyScissors\.length > 0/);
+  assert.match(previewCacheBody, /gl\.enable\(gl\.SCISSOR_TEST\)/);
+  assert.match(previewCacheBody, /gl\.scissor\(dirtyScissor\.x, dirtyScissor\.y, dirtyScissor\.width, dirtyScissor\.height\)/);
+  assert.match(previewCacheBody, /this\.previewDirtyRects = \[\]/);
+  assert.match(previewCacheBody, /this\.recordPreviewDirtyFrame\(\{/);
 });
 
 test("preview cache dimensions cap large documents while preserving aspect", () => {

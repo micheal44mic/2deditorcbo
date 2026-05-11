@@ -1479,14 +1479,16 @@ void main() {
       return true;
     }
 
-    emitContentChange(layerId, source) {
+    emitContentChange(layerId, source, rect = null) {
+      const detail = rect ? { layerId, rect, source } : { layerId, source };
+
       if (typeof this.documentRenderer?.emitContentChange === "function") {
-        this.documentRenderer.emitContentChange({ layerId, source });
+        this.documentRenderer.emitContentChange(detail);
         return;
       }
 
       window.dispatchEvent(new CustomEvent("cbo:document-content-change", {
-        detail: { layerId, source },
+        detail,
       }));
     }
 
@@ -1522,7 +1524,13 @@ void main() {
         this.restoreHistorySnapshot(target, dab[snapshotKey]);
       }
 
-      this.emitContentChange(layerId, source);
+      const rect = orderedDabs.reduce((result, dab) => {
+        const snapshotRect = dab?.[snapshotKey]?.rect;
+
+        return this.documentRenderer?.unionRasterHistoryRects?.(result, snapshotRect) || result || snapshotRect || null;
+      }, null);
+
+      this.emitContentChange(layerId, source, rect);
       this.requestDraw?.();
 
       return true;
@@ -1616,7 +1624,7 @@ void main() {
               const didRestore = this.restoreHistorySnapshot(restoreTarget, before);
 
               if (didRestore) {
-                this.emitContentChange(layerId, "smudge-undo");
+                this.emitContentChange(layerId, "smudge-undo", before.rect);
                 this.requestDraw?.();
               }
 
@@ -1631,7 +1639,7 @@ void main() {
             const didRestore = this.restoreHistorySnapshot(restoreTarget, before);
 
             if (didRestore) {
-              this.emitContentChange(layerId, "smudge-undo");
+              this.emitContentChange(layerId, "smudge-undo", before.rect);
               this.requestDraw?.();
             }
 
@@ -1646,7 +1654,7 @@ void main() {
             const didRestore = this.restoreHistorySnapshot(restoreTarget, after);
 
             if (didRestore) {
-              this.emitContentChange(layerId, "smudge-redo");
+              this.emitContentChange(layerId, "smudge-redo", after.rect);
               this.requestDraw?.();
             }
 
@@ -2468,7 +2476,10 @@ void main() {
         excludeLayerId: layerId,
         source: "smudge-compact-inactive",
       });
-      this.documentRenderer?.invalidatePreviewCache?.("smudge-stroke");
+      this.documentRenderer?.invalidatePreviewCache?.("smudge-stroke", {
+        layerId,
+        rect: smudgeRect,
+      });
       this.debugSmudgeRaster(smudgeRect, finalTarget, layerId, debugInfo);
       this.releaseScratchTarget();
       this.activeSmudgeBounds = null;

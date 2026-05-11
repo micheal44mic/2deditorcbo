@@ -17,6 +17,7 @@ test("layers panel copies raster targets when duplicating layers", () => {
   assert.match(source, /renderer\.duplicateRasterTarget\(sourceLayerId, destinationLayerId,/);
   assert.match(source, /source: "layers-panel-copy"/);
   assert.match(source, /duplicateCopiedLayerRasterTargets\(copiedEntries\)/);
+  assert.match(source, /estimateEntryRasterDuplicateBytes\(selectedEntries\)/);
 });
 
 test("layers panel blocks new raster layers when the layer memory cap is exceeded", () => {
@@ -28,7 +29,7 @@ test("layers panel blocks new raster layers when the layer memory cap is exceede
   assert.match(source, /window\.CBO\.getRasterLayerCreationBudget\?\.\(\{/);
   assert.match(source, /source: "layers-panel-new-layer"/);
   assert.match(source, /source: "layers-panel-copy"/);
-  assert.match(source, /estimateEntryRasterBytes\(selectedEntries\)/);
+  assert.match(source, /function estimateEntryRasterDuplicateBytes\(entries\)/);
   assert.match(source, /if \(!allowNewRasterLayers\(\{[\s\S]*return;[\s\S]*\}/);
   assert.match(cssSource, /\.cbo-layer-limit-toast/);
 });

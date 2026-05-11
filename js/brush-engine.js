@@ -3581,6 +3581,22 @@ void main() {
       return filtered.length > 0 ? filtered : null;
     }
 
+    getActiveStrokePreviewDirtyRects(effectiveStrokeRect, tilePatchRects = null) {
+      const sourceRects = Array.isArray(tilePatchRects) && tilePatchRects.length > 0
+        ? tilePatchRects
+        : this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
+      const dirtyRects = Array.isArray(sourceRects)
+        ? sourceRects
+            .map((item) => item?.patchRect || item?.rect || item)
+            .filter((rect) => rect && rect.width > 0 && rect.height > 0)
+            .map((rect) => ({ ...rect }))
+        : [];
+
+      return dirtyRects.length > 0
+        ? dirtyRects
+        : (effectiveStrokeRect ? [{ ...effectiveStrokeRect }] : []);
+    }
+
     getActiveStrokeRect() {
       if (!this.activeStrokeBounds) {
         return null;
@@ -4230,6 +4246,10 @@ void main() {
         this.getActiveStrokeTilePatchRects(effectiveStrokeRect),
         selectionCoverageRects,
       );
+      const previewDirtyRects = this.getActiveStrokePreviewDirtyRects(
+        effectiveStrokeRect,
+        activeStrokeTilePatchRects,
+      );
       const paintTargets = isEraserStroke
         ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
             source: "brush-eraser-target",
@@ -4450,7 +4470,10 @@ void main() {
         excludeLayerId: layerId,
         source: "brush-bake-compact-inactive",
       });
-      this.documentRenderer?.invalidatePreviewCache?.("bake-stroke");
+      this.documentRenderer?.invalidatePreviewCache?.("bake-stroke", {
+        layerId,
+        rects: previewDirtyRects,
+      });
       this.requestDraw();
     }
 

@@ -4,6 +4,9 @@
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_HISTORY_TILE_SIZE = 256;
   const RASTER_HISTORY_MOBILE_TILE_SIZE = 128;
+  const PREVIEW_DIRTY_MAX_RECTS = 96;
+  const PREVIEW_DIRTY_MERGE_WASTE_RATIO = 1.18;
+  const PREVIEW_DIRTY_FULL_COVERAGE_RATIO = 0.92;
   const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
   const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
   const RASTER_WARP_MESH_COLS = 64;
@@ -1191,6 +1194,10 @@ void main() {
       this.previewCacheScale = 1;
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
+      this.previewDirtyRects = null;
+      this.previewLastDirtyMode = "full";
+      this.previewLastDirtyRect = null;
+      this.previewDirtyStats = this.createPreviewDirtyStats();
       this.previewCacheReady = false;
       this.previewCacheReason = "init";
       this.texturedQuad = null;
@@ -1551,6 +1558,10 @@ void main() {
     }
 
     estimateRasterTargetBytes(target) {
+      if (this.isCopyOnWriteRasterTarget(target)) {
+        return 0;
+      }
+
       if (this.isSparseRasterTarget(target)) {
         let total = 0;
 
@@ -1567,8 +1578,295 @@ void main() {
       return width * height * RASTER_BYTES_PER_PIXEL;
     }
 
+    estimateRasterTargetDuplicateBytes(target, options = {}) {
+      if (!target) {
+        return 0;
+      }
+
+      return options.copyOnWrite === false
+        ? this.estimateRasterTargetBytes(target)
+        : 0;
+    }
+
     isSparseRasterTarget(target) {
       return Boolean(target?.sparse === true && target.tiles instanceof Map);
+    }
+
+    isCopyOnWriteRasterTarget(target) {
+      return Boolean(target?.copyOnWrite === true && target.copyOnWriteSource);
+    }
+
+    hasCopyOnWriteDependents(target) {
+      return Math.max(0, Math.round(Number(target?.copyOnWriteRefCount) || 0)) > 0;
+    }
+
+    needsCopyOnWriteDetach(target) {
+      return Boolean(this.isCopyOnWriteRasterTarget(target) || this.hasCopyOnWriteDependents(target));
+    }
+
+    getCopyOnWriteSourceTarget(target) {
+      let source = target;
+
+      while (source?.copyOnWrite === true && source.copyOnWriteSource) {
+        source = source.copyOnWriteSource;
+      }
+
+      return source || target;
+    }
+
+    addCopyOnWriteReference(sourceTarget) {
+      const source = this.getCopyOnWriteSourceTarget(sourceTarget);
+
+      if (!source) {
+        return null;
+      }
+
+      source.copyOnWriteRefCount = Math.max(0, Math.round(Number(source.copyOnWriteRefCount) || 0)) + 1;
+
+      return source;
+    }
+
+    releaseCopyOnWriteReference(target) {
+      if (!this.isCopyOnWriteRasterTarget(target)) {
+        return;
+      }
+
+      const source = target.copyOnWriteSource;
+
+      target.copyOnWrite = false;
+      target.copyOnWriteSource = null;
+      target.copyOnWriteSourceLayerId = "";
+      target.framebuffer = null;
+      target.texture = null;
+      target.tiles = new Map();
+      target.state = "DELETED";
+
+      if (!source) {
+        return;
+      }
+
+      source.copyOnWriteRefCount = Math.max(0, Math.round(Number(source.copyOnWriteRefCount) || 0) - 1);
+
+      if (source.copyOnWriteRefCount === 0 && source.copyOnWriteDeleted === true) {
+        source.copyOnWriteDeleted = false;
+        this.deleteRasterTargetObject(source);
+      }
+    }
+
+    createCopyOnWriteRasterTarget(sourceLayerId, destinationLayerId, options = {}) {
+      if (!sourceLayerId || !destinationLayerId) {
+        return null;
+      }
+
+      const sourceTarget = this.rasterTargetsByLayerId.get(sourceLayerId);
+      const source = this.addCopyOnWriteReference(sourceTarget);
+
+      if (!source) {
+        return null;
+      }
+
+      const sourceRect = this.getRasterTargetDocumentRect(source);
+      const target = {
+        clearColor: Array.isArray(source.clearColor) ? [...source.clearColor] : [0, 0, 0, 0],
+        copyOnWrite: true,
+        copyOnWriteSource: source,
+        copyOnWriteSourceLayerId: sourceLayerId,
+        cropped: source.cropped === true,
+        framebuffer: this.isSparseRasterTarget(source) ? null : source.framebuffer,
+        height: Math.max(1, Math.round(source.height || sourceRect?.height || this.height || 1)),
+        id: `raster-cow-target-${this.rasterTargetIdSequence++}`,
+        layerId: destinationLayerId,
+        materializedFromSparse: source.materializedFromSparse === true,
+        sparse: source.sparse === true,
+        sparseTileSize: source.sparseTileSize || source.tileSize,
+        texture: this.isSparseRasterTarget(source) ? null : source.texture,
+        tileSize: source.tileSize,
+        tiles: this.isSparseRasterTarget(source) ? source.tiles : new Map(),
+        version: source.version || 0,
+        width: Math.max(1, Math.round(source.width || sourceRect?.width || this.width || 1)),
+        x: Number.isFinite(source.x) ? Math.round(source.x) : sourceRect?.x || 0,
+        y: Number.isFinite(source.y) ? Math.round(source.y) : sourceRect?.y || 0,
+      };
+
+      target.copyOnWriteReason = options.source || "copy-on-write-duplicate";
+
+      return target;
+    }
+
+    cloneRasterTargetForCopyOnWrite(sourceTarget, destinationLayerId, options = {}) {
+      const source = this.getCopyOnWriteSourceTarget(sourceTarget);
+      const reason = options.source || "copy-on-write-detach";
+
+      if (!source || !destinationLayerId) {
+        return null;
+      }
+
+      if (this.isSparseRasterTarget(source)) {
+        const destinationTarget = this.createSparseRasterTarget(destinationLayerId, {
+          clearColor: source.clearColor,
+          tileSize: source.tileSize,
+        });
+        let copiedCount = 0;
+
+        for (const sourceTile of source.tiles.values()) {
+          if ((!sourceTile.texture || !sourceTile.framebuffer) && !this.hydrateRasterTarget(sourceTile, {
+            kind: "paintTile",
+            label: `${destinationLayerId} COW tile ${sourceTile.tx},${sourceTile.ty}`,
+            layerId: destinationLayerId,
+            ownerId: `${destinationLayerId}:${sourceTile.tx}:${sourceTile.ty}`,
+            ownerType: "live",
+            reason,
+          })) {
+            this.deleteRasterTargetObject(destinationTarget);
+            return null;
+          }
+
+          const tileRect = this.getRasterTargetDocumentRect(sourceTile);
+          const destinationTile = this.ensureSparseRasterTileTarget(destinationLayerId, destinationTarget, {
+            tileRect,
+            tx: sourceTile.tx,
+            ty: sourceTile.ty,
+          }, {
+            source: reason,
+          });
+
+          if (!destinationTile || !this.copyRasterTargetRectToTarget(sourceTile, tileRect, destinationTile)) {
+            this.deleteRasterTargetObject(destinationTarget);
+            return null;
+          }
+
+          copiedCount += 1;
+        }
+
+        if (copiedCount === 0 && source.tiles.size > 0) {
+          this.deleteRasterTargetObject(destinationTarget);
+          return null;
+        }
+
+        destinationTarget.layerId = destinationLayerId;
+        destinationTarget.version = (source.version || 0) + 1;
+        return destinationTarget;
+      }
+
+      if ((!source.texture || !source.framebuffer) && !this.hydrateRasterTarget(source, {
+        kind: "layer",
+        label: destinationLayerId,
+        layerId: destinationLayerId,
+        ownerId: destinationLayerId,
+        ownerType: "live",
+        reason,
+      })) {
+        return null;
+      }
+
+      const sourceRect = this.getRasterTargetDocumentRect(source);
+      const clearColor = Array.isArray(source.clearColor) ? [...source.clearColor] : [0, 0, 0, 0];
+      const destinationTarget = this.createRasterTarget(clearColor, {
+        cropped: this.isCroppedRasterTarget(source),
+        height: sourceRect.height,
+        layerId: destinationLayerId,
+        reason,
+        width: sourceRect.width,
+        x: sourceRect.x,
+        y: sourceRect.y,
+      });
+
+      if (!destinationTarget?.framebuffer || !destinationTarget?.texture) {
+        return null;
+      }
+
+      if (!this.copyRasterTargetRectToTarget(source, sourceRect, destinationTarget)) {
+        this.deleteRasterTargetObject(destinationTarget);
+        return null;
+      }
+
+      destinationTarget.layerId = destinationLayerId;
+      destinationTarget.materializedFromSparse = source.materializedFromSparse === true;
+      destinationTarget.sparseTileSize = source.sparseTileSize || source.tileSize;
+
+      return destinationTarget;
+    }
+
+    installRasterTargetForLayer(layerId, nextTarget, options = {}) {
+      if (!layerId || !nextTarget) {
+        return false;
+      }
+
+      const previousTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      nextTarget.layerId = layerId;
+      this.rasterTargetsByLayerId.set(layerId, nextTarget);
+
+      if (layerId === this.paintLayerId || previousTarget?.texture === this.texture) {
+        this.texture = this.isSparseRasterTarget(nextTarget) ? null : nextTarget.texture;
+        this.framebuffer = this.isSparseRasterTarget(nextTarget) ? null : nextTarget.framebuffer;
+      }
+
+      if (!this.isSparseRasterTarget(nextTarget) && !this.isCopyOnWriteRasterTarget(nextTarget)) {
+        const nextKind =
+          layerId === "background"
+            ? "background"
+            : this.isPaintRasterLayer(layerId, nextTarget)
+              ? "paintTarget"
+              : "layer";
+
+        this.updateRasterTargetResourceMetadata(nextTarget, {
+          kind: nextKind,
+          label: options.label || layerId,
+          layerId,
+          ownerId: layerId,
+          ownerType: "live",
+          purgeable: false,
+          reason: options.source || "install-raster-target",
+        });
+      }
+
+      if (previousTarget && previousTarget !== nextTarget) {
+        this.deleteRasterTargetObject(previousTarget);
+      }
+
+      this.deletePuppetMeshResource(layerId);
+
+      if (options.invalidate !== false) {
+        this.invalidatePreviewCache(options.source || "install-raster-target");
+      }
+
+      if (options.emit !== false) {
+        this.emitContentChange({
+          layerId,
+          source: options.source || "install-raster-target",
+        });
+      }
+
+      return true;
+    }
+
+    ensureWritableRasterTarget(layerId, options = {}) {
+      const target = this.rasterTargetsByLayerId.get(layerId);
+
+      if (!target || !this.needsCopyOnWriteDetach(target)) {
+        return target || null;
+      }
+
+      const nextTarget = this.cloneRasterTargetForCopyOnWrite(target, layerId, {
+        source: options.source || "copy-on-write-detach",
+      });
+
+      if (!nextTarget) {
+        return target;
+      }
+
+      if (!this.installRasterTargetForLayer(layerId, nextTarget, {
+        emit: false,
+        invalidate: false,
+        label: options.label || layerId,
+        source: options.source || "copy-on-write-detach",
+      })) {
+        this.deleteRasterTargetObject(nextTarget);
+        return target;
+      }
+
+      return nextTarget;
     }
 
     createSparseRasterTarget(layerId, options = {}) {
@@ -1660,7 +1958,9 @@ void main() {
         return null;
       }
 
-      let sparseTarget = this.rasterTargetsByLayerId.get(layerId);
+      let sparseTarget = this.ensureWritableRasterTarget(layerId, {
+        source: options.source || "paint-copy-on-write-detach",
+      }) || this.rasterTargetsByLayerId.get(layerId);
 
       if (!this.isSparseRasterTarget(sparseTarget)) {
         if (sparseTarget?.framebuffer || sparseTarget?.texture) {
@@ -1708,6 +2008,10 @@ void main() {
 
     dehydrateRasterTarget(target, options = {}) {
       if (!target) {
+        return false;
+      }
+
+      if (this.needsCopyOnWriteDetach(target)) {
         return false;
       }
 
@@ -2490,6 +2794,9 @@ void main() {
       if (options.emit !== false) {
         this.emitContentChange({
           layerId: entry.layerId,
+          rects: Array.isArray(entry.projectionInvalidation)
+            ? entry.projectionInvalidation.map((rect) => ({ ...rect }))
+            : (entry.rect ? [{ ...entry.rect }] : []),
           source: options.source || "raster-tile-history-restore",
         });
       }
@@ -4085,6 +4392,9 @@ void main() {
       this.previewCacheScale = scale;
       this.previewMipLevels = levels;
       this.previewCacheDirty = true;
+      this.previewDirtyRects = null;
+      this.previewLastDirtyMode = "full";
+      this.previewLastDirtyRect = null;
       this.previewCacheReady = false;
       this.previewCacheReason = "init";
 
@@ -4147,6 +4457,9 @@ void main() {
       this.previewCacheScale = 1;
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
+      this.previewDirtyRects = null;
+      this.previewLastDirtyMode = "full";
+      this.previewLastDirtyRect = null;
       this.previewCacheReady = false;
     }
 
@@ -4226,9 +4539,294 @@ void main() {
       return texture;
     }
 
-    invalidatePreviewCache(reason = "unknown") {
+    getFullDocumentRect() {
+      return {
+        x: 0,
+        y: 0,
+        width: Math.max(1, Math.round(this.width || 1)),
+        height: Math.max(1, Math.round(this.height || 1)),
+      };
+    }
+
+    normalizeDirtyRegionRect(rect) {
+      const clamped = this.getClampedDocumentRect(rect);
+
+      return clamped ? { ...clamped } : null;
+    }
+
+    getDirtyRegionRectsFromOptions(options = {}) {
+      const rawRects = [];
+
+      if (options.rect) {
+        rawRects.push(options.rect);
+      }
+
+      if (Array.isArray(options.rects)) {
+        rawRects.push(...options.rects);
+      }
+
+      if (Array.isArray(options.projectionInvalidation)) {
+        rawRects.push(...options.projectionInvalidation);
+      }
+
+      const layer = options.layerId
+        ? this.layerModel?.findEntryById?.(options.layerId)
+        : null;
+      const normalizedRects = rawRects
+        .map((rect) => this.normalizeDirtyRegionRect(rect))
+        .filter(Boolean)
+        .map((rect) => (
+          layer && this.hasEnabledLayerEffects(layer)
+            ? this.getLayerEffectOutputRect(layer, rect) || rect
+            : rect
+        ))
+        .map((rect) => this.normalizeDirtyRegionRect(rect))
+        .filter(Boolean);
+
+      return normalizedRects;
+    }
+
+    unionDirtyRegionRects(rects = []) {
+      return rects.reduce((result, rect) => this.unionRasterHistoryRects(result, rect), null);
+    }
+
+    getDirtyRegionRectArea(rect) {
+      if (!rect) {
+        return 0;
+      }
+
+      return Math.max(0, Math.round(rect.width || 0)) * Math.max(0, Math.round(rect.height || 0));
+    }
+
+    getDirtyRegionRectListArea(rects = []) {
+      return rects.reduce((total, rect) => total + this.getDirtyRegionRectArea(rect), 0);
+    }
+
+    compactDirtyRegionRects(rects = [], options = {}) {
+      const maxRects = Math.max(1, Math.round(Number(options.maxRects) || PREVIEW_DIRTY_MAX_RECTS));
+      const normalizedRects = rects
+        .map((rect) => (
+          options.skipNormalize === true
+            ? (rect && rect.width > 0 && rect.height > 0 ? { ...rect } : null)
+            : this.normalizeDirtyRegionRect(rect)
+        ))
+        .filter(Boolean);
+      const compacted = [];
+      const canMerge = (a, b) => {
+        const merged = this.unionRasterHistoryRects(a, b);
+        const mergedArea = this.getDirtyRegionRectArea(merged);
+        const sourceArea = this.getDirtyRegionRectArea(a) + this.getDirtyRegionRectArea(b);
+
+        return mergedArea <= sourceArea * PREVIEW_DIRTY_MERGE_WASTE_RATIO;
+      };
+
+      normalizedRects.forEach((rect) => {
+        let mergedRect = { ...rect };
+        let didMerge = true;
+
+        while (didMerge) {
+          didMerge = false;
+
+          for (let index = 0; index < compacted.length; index += 1) {
+            if (!canMerge(compacted[index], mergedRect)) {
+              continue;
+            }
+
+            mergedRect = this.unionRasterHistoryRects(compacted[index], mergedRect);
+            compacted.splice(index, 1);
+            didMerge = true;
+            break;
+          }
+        }
+
+        compacted.push(mergedRect);
+      });
+
+      while (compacted.length > maxRects) {
+        let bestA = 0;
+        let bestB = 1;
+        let bestExtraArea = Infinity;
+
+        for (let a = 0; a < compacted.length; a += 1) {
+          for (let b = a + 1; b < compacted.length; b += 1) {
+            const merged = this.unionRasterHistoryRects(compacted[a], compacted[b]);
+            const extraArea = this.getDirtyRegionRectArea(merged) -
+              this.getDirtyRegionRectArea(compacted[a]) -
+              this.getDirtyRegionRectArea(compacted[b]);
+
+            if (extraArea < bestExtraArea) {
+              bestA = a;
+              bestB = b;
+              bestExtraArea = extraArea;
+            }
+          }
+        }
+
+        compacted[bestA] = this.unionRasterHistoryRects(compacted[bestA], compacted[bestB]);
+        compacted.splice(bestB, 1);
+      }
+
+      return compacted;
+    }
+
+    createPreviewDirtyStats() {
+      return {
+        fullFrames: 0,
+        lastCacheHeight: 0,
+        lastCacheScale: 1,
+        lastCacheWidth: 0,
+        lastCoverage: 1,
+        lastDrawnPixels: 0,
+        lastFullPixels: 0,
+        lastMode: "full",
+        lastReason: "init",
+        lastRect: null,
+        lastRectCount: 0,
+        lastScissorCount: 0,
+        lastSavedPixels: 0,
+        partialFrames: 0,
+        totalDrawnPixels: 0,
+        totalFrames: 0,
+        totalFullPixels: 0,
+        totalSavedPixels: 0,
+      };
+    }
+
+    resetPreviewDirtyStats() {
+      this.previewDirtyStats = this.createPreviewDirtyStats();
+
+      return this.getPreviewDirtyStats();
+    }
+
+    recordPreviewDirtyFrame(options = {}) {
+      const cacheWidth = Math.max(1, Math.round(Number(options.cacheWidth) || this.previewCacheWidth || 1));
+      const cacheHeight = Math.max(1, Math.round(Number(options.cacheHeight) || this.previewCacheHeight || 1));
+      const fullPixels = cacheWidth * cacheHeight;
+      const scissors = Array.isArray(options.dirtyScissors)
+        ? options.dirtyScissors.filter(Boolean)
+        : (options.dirtyScissor ? [options.dirtyScissor] : []);
+      const mode = scissors.length > 0 ? "partial" : "full";
+      const drawnPixels = mode === "partial"
+        ? Math.min(fullPixels, Math.max(1, this.getDirtyRegionRectListArea(scissors)))
+        : fullPixels;
+      const savedPixels = Math.max(0, fullPixels - drawnPixels);
+      const dirtyRects = Array.isArray(options.dirtyRects)
+        ? options.dirtyRects.filter(Boolean)
+        : (options.dirtyRect ? [options.dirtyRect] : []);
+      const stats = this.previewDirtyStats || this.createPreviewDirtyStats();
+
+      stats.totalFrames += 1;
+      stats.totalFullPixels += fullPixels;
+      stats.totalDrawnPixels += drawnPixels;
+      stats.totalSavedPixels += savedPixels;
+
+      if (mode === "partial") {
+        stats.partialFrames += 1;
+      } else {
+        stats.fullFrames += 1;
+      }
+
+      stats.lastCacheHeight = cacheHeight;
+      stats.lastCacheScale = Math.max(0.0001, Number(options.cacheScale) || this.previewCacheScale || 1);
+      stats.lastCacheWidth = cacheWidth;
+      stats.lastCoverage = fullPixels > 0 ? drawnPixels / fullPixels : 1;
+      stats.lastDrawnPixels = drawnPixels;
+      stats.lastFullPixels = fullPixels;
+      stats.lastMode = mode;
+      stats.lastReason = this.previewCacheReason || "unknown";
+      stats.lastRect = options.dirtyRect ? { ...options.dirtyRect } : null;
+      stats.lastRectCount = dirtyRects.length;
+      stats.lastScissorCount = scissors.length;
+      stats.lastSavedPixels = savedPixels;
+
+      this.previewDirtyStats = stats;
+      this.previewLastDirtyMode = mode;
+      this.previewLastDirtyRect = stats.lastRect ? { ...stats.lastRect } : null;
+
+      return this.getPreviewDirtyStats();
+    }
+
+    getPreviewDirtyStats() {
+      const stats = this.previewDirtyStats || this.createPreviewDirtyStats();
+      const totalFrames = Math.max(0, Number(stats.totalFrames) || 0);
+      const totalFullPixels = Math.max(0, Number(stats.totalFullPixels) || 0);
+      const totalSavedPixels = Math.max(0, Number(stats.totalSavedPixels) || 0);
+
+      return {
+        ...stats,
+        hitRate: totalFrames > 0 ? stats.partialFrames / totalFrames : 0,
+        lastRect: stats.lastRect ? { ...stats.lastRect } : null,
+        totalSavedRatio: totalFullPixels > 0 ? totalSavedPixels / totalFullPixels : 0,
+      };
+    }
+
+    getPreviewDirtyRegionScissor(rect, cacheWidth, cacheHeight, cacheScale) {
+      const dirtyRect = this.normalizeDirtyRegionRect(rect);
+
+      if (!dirtyRect) {
+        return null;
+      }
+
+      const x0 = Math.max(0, Math.floor(dirtyRect.x * cacheScale));
+      const y0 = Math.max(0, Math.floor(dirtyRect.y * cacheScale));
+      const x1 = Math.min(cacheWidth, Math.ceil((dirtyRect.x + dirtyRect.width) * cacheScale));
+      const y1 = Math.min(cacheHeight, Math.ceil((dirtyRect.y + dirtyRect.height) * cacheScale));
+
+      if (x1 <= x0 || y1 <= y0) {
+        return null;
+      }
+
+      return {
+        height: y1 - y0,
+        width: x1 - x0,
+        x: x0,
+        y: cacheHeight - y1,
+      };
+    }
+
+    getPreviewDirtyRegionScissors(rects, cacheWidth, cacheHeight, cacheScale) {
+      const cachePixels = Math.max(1, Math.round(cacheWidth || 1) * Math.round(cacheHeight || 1));
+      const scissors = this.compactDirtyRegionRects(
+        (Array.isArray(rects) ? rects : [])
+          .map((rect) => this.getPreviewDirtyRegionScissor(rect, cacheWidth, cacheHeight, cacheScale))
+          .filter(Boolean),
+        {
+          maxRects: PREVIEW_DIRTY_MAX_RECTS,
+          skipNormalize: true,
+        },
+      );
+      const redrawPixels = Math.min(cachePixels, this.getDirtyRegionRectListArea(scissors));
+
+      if (!scissors.length || redrawPixels / cachePixels >= PREVIEW_DIRTY_FULL_COVERAGE_RATIO) {
+        return null;
+      }
+
+      return scissors;
+    }
+
+    invalidatePreviewCache(reason = "unknown", options = {}) {
+      const hadFullInvalidation = this.previewCacheDirty && this.previewDirtyRects === null;
+
       this.previewCacheDirty = true;
       this.previewCacheReason = reason;
+
+      const dirtyRects = this.getDirtyRegionRectsFromOptions(options);
+
+      if (!dirtyRects.length || !this.previewCacheReady) {
+        this.previewDirtyRects = null;
+        return;
+      }
+
+      if (hadFullInvalidation) {
+        return;
+      }
+
+      const nextDirtyRects = this.compactDirtyRegionRects([
+        ...(Array.isArray(this.previewDirtyRects) ? this.previewDirtyRects : []),
+        ...dirtyRects,
+      ]);
+
+      this.previewDirtyRects = nextDirtyRects.length > 0 ? nextDirtyRects : null;
     }
 
     getLayerOpacity(layerId, layers = this.getRenderableLayers()) {
@@ -6414,7 +7012,9 @@ void main() {
         return false;
       }
 
-      const target = this.rasterTargetsByLayerId.get(layerId);
+      const target = this.ensureWritableRasterTarget(layerId, {
+        source: options.source || "clear-layer-copy-on-write-detach",
+      }) || this.rasterTargetsByLayerId.get(layerId);
 
       if (!target) {
         return false;
@@ -6989,6 +7589,7 @@ void main() {
       if (options.emit !== false) {
         this.emitContentChange({
           layerId,
+          rect: snapshot.rect ? { ...snapshot.rect } : null,
           source: options.source || "raster-snapshot-sparse-restore",
         });
       }
@@ -7039,11 +7640,15 @@ void main() {
       }
 
       this.deletePuppetMeshResource(layerId);
-      this.invalidatePreviewCache(source);
+      this.invalidatePreviewCache(source, {
+        layerId,
+        rect: snapshot.rect,
+      });
 
       if (options.emit !== false) {
         this.emitContentChange({
           layerId,
+          rect: snapshot.rect ? { ...snapshot.rect } : null,
           source,
         });
       }
@@ -7061,12 +7666,18 @@ void main() {
         return false;
       }
 
-      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      let existingTarget = this.rasterTargetsByLayerId.get(layerId);
       const shouldRestoreAsSparseTarget = Boolean(
         options.sparse !== false &&
         (options.preferSparse === true || options.replaceSparse === true) &&
         this.isPaintRasterLayer(layerId, existingTarget)
       );
+
+      if (this.needsCopyOnWriteDetach(existingTarget) && !shouldRestoreAsSparseTarget) {
+        existingTarget = this.ensureWritableRasterTarget(layerId, {
+          source: options.source || "raster-snapshot-copy-on-write-detach",
+        }) || existingTarget;
+      }
 
       if (this.isSparseRasterTarget(existingTarget)) {
         if (options.replaceSparse === true && shouldRestoreAsSparseTarget) {
@@ -7162,6 +7773,7 @@ void main() {
       if (options.emit !== false) {
         this.emitContentChange({
           layerId,
+          rect: snapshot.rect ? { ...snapshot.rect } : null,
           source: options.source || "raster-snapshot-restore",
         });
       }
@@ -7195,6 +7807,17 @@ void main() {
 
     deleteRasterTargetObject(target) {
       if (!target) {
+        return;
+      }
+
+      if (this.isCopyOnWriteRasterTarget(target)) {
+        this.releaseCopyOnWriteReference(target);
+        return;
+      }
+
+      if (this.hasCopyOnWriteDependents(target)) {
+        target.copyOnWriteDeleted = true;
+        target.layerId = "";
         return;
       }
 
@@ -7834,7 +8457,12 @@ void main() {
       const rows = [];
 
       for (const [layerId, target] of this.rasterTargetsByLayerId.entries()) {
-        if (!target?.framebuffer || !target?.texture || !this.isPaintRasterLayer(layerId, target)) {
+        if (
+          this.needsCopyOnWriteDetach(target) ||
+          !target?.framebuffer ||
+          !target?.texture ||
+          !this.isPaintRasterLayer(layerId, target)
+        ) {
           continue;
         }
 
@@ -7990,7 +8618,9 @@ void main() {
     }
 
     ensureRasterTargetsForPaintRect(layerId, rect, options = {}) {
-      let existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      let existingTarget = this.ensureWritableRasterTarget(layerId, {
+        source: options.source || "paint-copy-on-write-detach",
+      }) || this.rasterTargetsByLayerId.get(layerId);
 
       if (this.shouldRetileRasterTargetForPaint(layerId, existingTarget, options)) {
         existingTarget = this.sparsifyRasterTarget(layerId, existingTarget, {
@@ -8016,7 +8646,9 @@ void main() {
     }
 
     getRasterTargetsForPaintRect(layerId, rect, options = {}) {
-      let existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      let existingTarget = this.ensureWritableRasterTarget(layerId, {
+        source: options.source || "paint-copy-on-write-detach",
+      }) || this.rasterTargetsByLayerId.get(layerId);
       const requiredRect = this.getClampedDocumentRect(rect, options.padding || 0);
 
       if (!layerId || !requiredRect || !existingTarget) {
@@ -8065,7 +8697,9 @@ void main() {
         return null;
       }
 
-      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+      const existingTarget = this.ensureWritableRasterTarget(layerId, {
+        source: options.source || "paint-copy-on-write-detach",
+      }) || this.rasterTargetsByLayerId.get(layerId);
       const existingRect = this.getRasterTargetDocumentRect(existingTarget);
       const source = options.source || "ensure-raster-target-for-paint-rect";
 
@@ -8155,6 +8789,22 @@ void main() {
         return false;
       }
 
+      if (options.copyOnWrite !== false) {
+        const sharedTarget = this.createCopyOnWriteRasterTarget(sourceLayerId, destinationLayerId, {
+          source: options.source || "duplicate-sparse-raster-target",
+        });
+
+        if (!sharedTarget) {
+          return false;
+        }
+
+        return this.installRasterTargetForLayer(destinationLayerId, sharedTarget, {
+          emit: options.emit,
+          label: options.label || destinationLayerId,
+          source: options.source || "duplicate-sparse-raster-target",
+        });
+      }
+
       const destinationTarget = this.createSparseRasterTarget(destinationLayerId, {
         clearColor: sourceTarget.clearColor,
         tileSize: sourceTarget.tileSize,
@@ -8240,6 +8890,22 @@ void main() {
         return false;
       }
 
+      if (options.copyOnWrite !== false) {
+        const sharedTarget = this.createCopyOnWriteRasterTarget(sourceLayerId, destinationLayerId, {
+          source: options.source || "duplicate-raster-target",
+        });
+
+        if (!sharedTarget) {
+          return false;
+        }
+
+        return this.installRasterTargetForLayer(destinationLayerId, sharedTarget, {
+          emit: options.emit,
+          label: options.label || destinationLayerId,
+          source: options.source || "duplicate-raster-target",
+        });
+      }
+
       const clearColor = Array.isArray(sourceTarget.clearColor)
         ? [...sourceTarget.clearColor]
         : [0, 0, 0, 0];
@@ -8283,6 +8949,17 @@ void main() {
       }
 
       const currentBytes = this.estimateRasterTargetBytes(target);
+
+      if (this.needsCopyOnWriteDetach(target)) {
+        return {
+          action: "copy-on-write-kept",
+          bytesAfter: currentBytes,
+          bytesBefore: currentBytes,
+          layerId,
+          savingsBytes: 0,
+        };
+      }
+
       const isFullCanvas = !this.isCroppedRasterTarget(target);
       const minSavingsBytes = Math.max(0, Number(options.minSavingsMiB ?? 8) || 0) * RASTER_MIB;
       const maxCropCoverage = Number.isFinite(options.maxCropCoverage)
@@ -8433,7 +9110,9 @@ void main() {
         return false;
       }
 
-      const target = this.rasterTargetsByLayerId.get(layerId);
+      const target = this.ensureWritableRasterTarget(layerId, {
+        source: "clear-raster-rect-copy-on-write-detach",
+      }) || this.rasterTargetsByLayerId.get(layerId);
       const mappedRect = this.getRasterTargetLocalRect(target, rect);
       const clearRect = mappedRect?.localRect;
 
@@ -8762,7 +9441,9 @@ void main() {
         transformMode = "free",
         warpControlPoints,
       } = options;
-      let target = this.rasterTargetsByLayerId.get(layerId);
+      let target = this.ensureWritableRasterTarget(layerId, {
+        source: `${source}-copy-on-write-detach`,
+      }) || this.rasterTargetsByLayerId.get(layerId);
       const bounds = namespace.documentBounds;
       const normalizedTransformMode = String(transformMode).trim().toLowerCase();
 
@@ -9030,11 +9711,27 @@ void main() {
     }
 
     handleDocumentContentChange(event) {
-      this.invalidatePreviewCache(event?.detail?.source || "document-content-change");
+      const detail = event?.detail || {};
+
+      this.invalidatePreviewCache(detail.source || "document-content-change", detail);
     }
 
-    handleHistoryChange() {
-      this.invalidatePreviewCache("history-change");
+    handleHistoryChange(event) {
+      const source = event?.detail?.source || "history-change";
+      const stackOnlySources = new Set([
+        "history-budget-change",
+        "history-gpu-hot-budget-change",
+        "init",
+        "merge",
+        "push",
+        "redo-empty",
+        "undo-empty",
+      ]);
+
+      if (!stackOnlySources.has(source) && !this.previewCacheDirty) {
+        this.invalidatePreviewCache("history-change");
+      }
+
       this.pruneOrphanRasterTargets();
     }
 
@@ -9213,6 +9910,11 @@ void main() {
           continue;
         }
 
+        if (this.needsCopyOnWriteDetach(target)) {
+          updatedCount += 1;
+          continue;
+        }
+
         if (this.dehydrateRasterTarget(target, {
           layerId,
           reason: "history-retained-layer-target",
@@ -9350,6 +10052,10 @@ void main() {
         source: "get-paint-target",
       });
 
+      target = this.ensureWritableRasterTarget(layerId, {
+        source: "get-paint-target-copy-on-write-detach",
+      }) || target;
+
       if (this.isSparseRasterTarget(target)) {
         target = this.materializeRasterTarget(layerId, {
           emit: false,
@@ -9437,6 +10143,10 @@ void main() {
       let target = this.rasterTargetsByLayerId.get(layerId) || this.createPaintTarget(layerId, {
         source: "get-raster-target",
       });
+
+      target = this.ensureWritableRasterTarget(layerId, {
+        source: "get-raster-target-copy-on-write-detach",
+      }) || target;
 
       if (this.isSparseRasterTarget(target)) {
         target = this.materializeRasterTarget(layerId, {
@@ -9533,6 +10243,15 @@ void main() {
         0.0001,
         Number(this.previewCacheScale) || Math.min(cacheWidth / documentWidth, cacheHeight / documentHeight),
       );
+      const dirtyRects = this.previewCacheReady && Array.isArray(this.previewDirtyRects) && this.previewDirtyRects.length > 0
+        ? this.compactDirtyRegionRects(this.previewDirtyRects)
+        : null;
+      const dirtyScissors = dirtyRects
+        ? this.getPreviewDirtyRegionScissors(dirtyRects, cacheWidth, cacheHeight, cacheScale)
+        : null;
+      const dirtyRect = dirtyScissors
+        ? this.unionDirtyRegionRects(dirtyRects)
+        : null;
       const { program, uniforms } = this.programInfo;
       const flatCamera = { x: 0, y: 0, zoom: cacheScale };
       const setDocumentProjection = (projectionWidth, projectionHeight, cameraX, cameraY, cameraZoom = cacheScale) => {
@@ -9698,17 +10417,6 @@ void main() {
         bindArtboardProgram();
       };
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
-      gl.viewport(0, 0, cacheWidth, cacheHeight);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.enable(gl.BLEND);
-      gl.blendEquation(gl.FUNC_ADD);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-
-      bindArtboardProgram();
-
-      let currentClipBase = null;
       const orderedPreviewLayers = this.getOrderedLayersBottomToTop();
       const isValidClipBaseLayer = (layer) => Boolean(
         layer &&
@@ -9729,94 +10437,136 @@ void main() {
         }
       });
 
-      for (const layer of orderedPreviewLayers) {
-        const rawLayerTarget = this.rasterTargetsByLayerId.get(layer.id);
-        const isClippingLayer = layer.clippingMask === true;
-        const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
-        const clipBase = isClippingLayer ? currentClipBase : null;
-        let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
-          forceSingleTexture: false,
-          source: "preview-cache-sparse-layer",
-        });
+      const drawPreviewCachePass = (dirtyScissor = null) => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
+        gl.viewport(0, 0, cacheWidth, cacheHeight);
 
-        if (!isClippingLayer) {
-          const shouldMaterializeClipBase = clipBaseLayerIds.has(layer.id);
-          const baseTarget = shouldMaterializeClipBase
-            ? this.getRenderableLayerTarget(layer, layerTarget, {
-                forceSingleTexture: true,
-                source: "preview-cache-clip-base",
-              })
-            : layerTarget;
+        if (dirtyScissor) {
+          gl.enable(gl.SCISSOR_TEST);
+          gl.scissor(dirtyScissor.x, dirtyScissor.y, dirtyScissor.width, dirtyScissor.height);
+        } else {
+          gl.disable(gl.SCISSOR_TEST);
+        }
 
-          if (shouldMaterializeClipBase) {
-            layerTarget = baseTarget;
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+        bindArtboardProgram();
+
+        let currentClipBase = null;
+
+        for (const layer of orderedPreviewLayers) {
+          const rawLayerTarget = this.rasterTargetsByLayerId.get(layer.id);
+          const isClippingLayer = layer.clippingMask === true;
+          const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
+          const clipBase = isClippingLayer ? currentClipBase : null;
+          let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
+            forceSingleTexture: false,
+            source: "preview-cache-sparse-layer",
+          });
+
+          if (!isClippingLayer) {
+            const shouldMaterializeClipBase = clipBaseLayerIds.has(layer.id);
+            const baseTarget = shouldMaterializeClipBase
+              ? this.getRenderableLayerTarget(layer, layerTarget, {
+                  forceSingleTexture: true,
+                  source: "preview-cache-clip-base",
+                })
+              : layerTarget;
+
+            if (shouldMaterializeClipBase) {
+              layerTarget = baseTarget;
+            }
+
+            currentClipBase = isValidClipBaseLayer(layer)
+              ? {
+                  layer,
+                  target: baseTarget,
+                  visible: layer.visible !== false,
+                }
+              : null;
           }
 
-          currentClipBase = isValidClipBaseLayer(layer)
-            ? {
-                layer,
-                target: baseTarget,
-                visible: layer.visible !== false,
-              }
-            : null;
-        }
-
-        if (layer.visible === false) {
-          continue;
-        }
-
-        if (isClippingLayer && (!clipBase?.visible || !clipBase?.target?.texture)) {
-          continue;
-        }
-
-        if (!this.hasRenderableRasterTarget(layerTarget)) {
-          continue;
-        }
-
-        for (const renderResult of this.getLayerRenderResults(layer, layerTarget)) {
-          const layerTexture = renderResult?.texture;
-
-          if (!layerTexture) {
+          if (layer.visible === false) {
             continue;
           }
 
-          if (layerTexture !== layerTarget.texture) {
-            bindArtboardProgram();
+          if (isClippingLayer && (!clipBase?.visible || !clipBase?.target?.texture)) {
+            continue;
           }
 
-          if (this.hasPuppetLayerTransform(layer)) {
-            if (isClippingLayer) {
-              drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
-            } else {
-              const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
-              const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
-                camera: flatCamera,
-                sourceTexture: layerTexture,
-                viewportHeight: cacheHeight,
-                viewportWidth: cacheWidth,
-              });
+          if (!this.hasRenderableRasterTarget(layerTarget)) {
+            continue;
+          }
 
-              bindArtboardProgram();
+          for (const renderResult of this.getLayerRenderResults(layer, layerTarget)) {
+            const layerTexture = renderResult?.texture;
 
-              if (!didDrawPuppet) {
-                drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, null);
-              }
+            if (!layerTexture) {
+              continue;
             }
-          } else {
-            drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+
+            if (layerTexture !== layerTarget.texture) {
+              bindArtboardProgram();
+            }
+
+            if (this.hasPuppetLayerTransform(layer)) {
+              if (isClippingLayer) {
+                drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+              } else {
+                const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
+                const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
+                  camera: flatCamera,
+                  sourceTexture: layerTexture,
+                  viewportHeight: cacheHeight,
+                  viewportWidth: cacheWidth,
+                });
+
+                bindArtboardProgram();
+
+                if (!didDrawPuppet) {
+                  drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, null);
+                }
+              }
+            } else {
+              drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+            }
           }
         }
-      }
 
-      gl.bindVertexArray(null);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      gl.useProgram(null);
+        gl.bindVertexArray(null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.useProgram(null);
+
+        if (dirtyScissor) {
+          gl.disable(gl.SCISSOR_TEST);
+        }
+      };
+
+      const previewPassScissors = Array.isArray(dirtyScissors) && dirtyScissors.length > 0
+        ? dirtyScissors
+        : [null];
+
+      previewPassScissors.forEach((dirtyScissor) => drawPreviewCachePass(dirtyScissor));
+
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
       gl.generateMipmap(gl.TEXTURE_2D);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
       this.previewCacheDirty = false;
+      this.previewDirtyRects = [];
+      this.recordPreviewDirtyFrame({
+        cacheHeight,
+        cacheScale,
+        cacheWidth,
+        dirtyRect,
+        dirtyRects,
+        dirtyScissors,
+      });
       this.previewCacheReady = true;
 
       return true;
@@ -10442,7 +11192,9 @@ void main() {
         return null;
       }
 
-      let target = this.rasterTargetsByLayerId.get(layer.id);
+      let target = this.ensureWritableRasterTarget(layer.id, {
+        source: options.source || "puppet-copy-on-write-detach",
+      }) || this.rasterTargetsByLayerId.get(layer.id);
       const wasSparseTarget = this.isSparseRasterTarget(target);
 
       if (wasSparseTarget) {
@@ -10611,7 +11363,9 @@ void main() {
 
       const captureBeforeSnapshot = options.captureBeforeSnapshot !== false;
       const captureAfterSnapshot = options.captureAfterSnapshot !== false;
-      let target = this.rasterTargetsByLayerId.get(layer.id);
+      let target = this.ensureWritableRasterTarget(layer.id, {
+        source: options.source || "layer-effects-copy-on-write-detach",
+      }) || this.rasterTargetsByLayerId.get(layer.id);
       const wasSparseTarget = this.isSparseRasterTarget(target);
 
       if (wasSparseTarget) {
@@ -10751,6 +11505,7 @@ void main() {
       if (options.emit !== false) {
         this.emitContentChange({
           layerId: layer.id,
+          rect: finalTargetRect ? { ...finalTargetRect } : null,
           source: options.source || "layer-effects-rasterize",
         });
       }

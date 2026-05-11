@@ -1363,8 +1363,8 @@
       width,
     });
     pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy, tileHistory);
-    renderer.invalidatePreviewCache?.("color-fill");
-    renderer.emitContentChange?.({ layerId, source: "color-fill" });
+    renderer.invalidatePreviewCache?.("color-fill", { layerId, rect: dirtyRect });
+    renderer.emitContentChange?.({ layerId, rect: dirtyRect, source: "color-fill" });
     renderer.requestDraw?.();
 
     return true;

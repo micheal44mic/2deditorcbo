@@ -47,7 +47,7 @@ test("smudge invalidates the zoom-out preview cache while painting live", () => 
   const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
 
   assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.\("smudge-live"\)/);
-  assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.\("smudge-stroke"\)/);
+  assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.\("smudge-stroke", \{\s*layerId,\s*rect: smudgeRect,\s*\}\)/);
 });
 
 test("smudge refuses empty raster layers without allocating a full target", () => {
