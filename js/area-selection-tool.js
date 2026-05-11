@@ -343,10 +343,18 @@
       return null;
     }
 
-    const x0 = Math.min(...validRects.map((rect) => rect.x));
-    const y0 = Math.min(...validRects.map((rect) => rect.y));
-    const x1 = Math.max(...validRects.map((rect) => rect.x + rect.width));
-    const y1 = Math.max(...validRects.map((rect) => rect.y + rect.height));
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+
+    for (let i = 0; i < validRects.length; i += 1) {
+      const rect = validRects[i];
+      x0 = Math.min(x0, rect.x);
+      y0 = Math.min(y0, rect.y);
+      x1 = Math.max(x1, rect.x + rect.width);
+      y1 = Math.max(y1, rect.y + rect.height);
+    }
 
     return {
       height: y1 - y0,
@@ -467,10 +475,23 @@
       return null;
     }
 
-    const x0 = Math.floor(Math.min(...validPoints.map((point) => point.x)));
-    const y0 = Math.floor(Math.min(...validPoints.map((point) => point.y)));
-    const x1 = Math.ceil(Math.max(...validPoints.map((point) => point.x)));
-    const y1 = Math.ceil(Math.max(...validPoints.map((point) => point.y)));
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (let i = 0; i < validPoints.length; i += 1) {
+      const point = validPoints[i];
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+
+    const x0 = Math.floor(minX);
+    const y0 = Math.floor(minY);
+    const x1 = Math.ceil(maxX);
+    const y1 = Math.ceil(maxY);
 
     if (x1 - x0 < MIN_SELECTION_SIZE || y1 - y0 < MIN_SELECTION_SIZE) {
       return null;

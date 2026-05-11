@@ -475,7 +475,23 @@
           renderer.dehydrateRasterSnapshot?.(snapshot);
         }
 
-        const pixels = snapshot.cpuPixels;
+        let pixels = snapshot.cpuPixels;
+
+        if (pixels instanceof Uint8Array) {
+          const compression = window.CBO?.HistoryCompression;
+
+          if (compression?.isCompressedEncoding?.(snapshot.cpuPixelsEncoding)) {
+            try {
+              pixels = compression.decompressRgba(
+                pixels,
+                Number(snapshot.cpuRawBytes) || 0,
+              );
+            } catch (error) {
+              console.warn?.("[CBO autosave] Decompressione RLE tile fallita.", error);
+              continue;
+            }
+          }
+        }
 
         if (!(pixels instanceof Uint8Array) || pixelsAreTransparent(pixels)) {
           continue;

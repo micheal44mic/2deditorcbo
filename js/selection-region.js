@@ -179,8 +179,16 @@
       return [];
     }
 
-    const minY = Math.floor(Math.min(...polygon.map((point) => point.y)));
-    const maxY = Math.ceil(Math.max(...polygon.map((point) => point.y)));
+    let rawMinY = Infinity;
+    let rawMaxY = -Infinity;
+
+    for (let i = 0; i < polygon.length; i += 1) {
+      rawMinY = Math.min(rawMinY, polygon[i].y);
+      rawMaxY = Math.max(rawMaxY, polygon[i].y);
+    }
+
+    const minY = Math.floor(rawMinY);
+    const maxY = Math.ceil(rawMaxY);
     const rows = [];
 
     for (let y = minY; y < maxY; y += 1) {

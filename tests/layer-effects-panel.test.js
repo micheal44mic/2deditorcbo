@@ -89,8 +89,8 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /defaultToLayerCenter: activeEffectType === "radial-blur"/);
   assert.match(source, /preferSparse: beforePreferSparse/);
   assert.match(source, /replaceSparse: beforePreferSparse/);
-  assert.match(source, /preferSparse: afterPreferSparse/);
-  assert.match(source, /replaceSparse: afterPreferSparse/);
+  assert.match(source, /captureAfterSnapshot: false/);
+  assert.match(source, /history-redo-layer-effects-rasterize-retile/);
   assert.match(source, /layerModel\.updateLayer\(layerId,/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `gaussian-blur-\$\{layerId\}`/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `motion-blur-\$\{layerId\}`/);
@@ -681,7 +681,6 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
   const namespace = loadLayerEffectsNamespace();
   const calls = [];
   const beforeSnapshot = { framebuffer: {}, texture: {} };
-  const afterSnapshot = { framebuffer: {}, texture: {} };
   const beforeState = {
     activeLayerId: "paint-main",
     entries: [{ id: "paint-main", type: "paint" }],
@@ -734,9 +733,8 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
       calls.push(`content:${detail.source}:${detail.layerId}`);
     },
     rasterizeLayerEffects(inputLayer, options = {}) {
-      calls.push(`bake:${inputLayer.id}:${inputLayer.effects.map((effect) => effect.type).join(",")}:${options.emit}`);
+      calls.push(`bake:${inputLayer.id}:${inputLayer.effects.map((effect) => effect.type).join(",")}:${options.emit}:${options.captureAfterSnapshot}`);
       return {
-        afterSnapshot,
         beforeSnapshot,
         layerId: inputLayer.id,
       };
@@ -753,11 +751,11 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
   assert.equal(namespace.rasterizeActiveLayerEffects({ beforeState }), true);
   assert.deepEqual(layer.effects, [{ strength: 0.5, type: "future-effect" }]);
   assert.equal(history.entry.beforeSnapshot, beforeSnapshot);
-  assert.equal(history.entry.afterSnapshot, afterSnapshot);
+  assert.equal("afterSnapshot" in history.entry, false);
   assert.deepEqual(history.entry.beforeEntries, beforeState.entries);
   assert.deepEqual(calls, [
     "flush:true",
-    "bake:paint-main:gaussian-blur,motion-blur,field-blur,radial-blur,noise,grain,threshold,curves,future-effect:false",
+    "bake:paint-main:gaussian-blur,motion-blur,field-blur,radial-blur,noise,grain,threshold,curves,future-effect:false:false",
     "update:paint-main:1:layer-effects-rasterize:false",
     "snapshot:1",
     "push:layer-effects-rasterize",
@@ -769,8 +767,7 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
 test("layer effects rasterizer turns image layers into paint layers", () => {
   const namespace = loadLayerEffectsNamespace();
   const beforeSnapshot = { framebuffer: {}, texture: {} };
-  const afterSnapshot = { framebuffer: {}, texture: {} };
-  const snapshots = { afterSnapshot, beforeSnapshot, layerId: "image-1" };
+  const snapshots = { beforeSnapshot, layerId: "image-1" };
   const beforeState = {
     activeLayerId: "image-1",
     entries: [{ id: "image-1", type: "image" }],
@@ -837,4 +834,93 @@ test("layer effects rasterizer turns image layers into paint layers", () => {
     layerId: "image-1",
     source: "layer-effects-rasterize-retile",
   }]);
+});
+
+test("layer effects rasterize history recomputes redo without an after snapshot", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const calls = [];
+  const beforeSnapshot = { texture: {} };
+  const beforeState = {
+    activeLayerId: "paint-main",
+    entries: [{
+      id: "paint-main",
+      type: "paint",
+    }],
+  };
+  const afterState = {
+    activeLayerId: "paint-main",
+    entries: [{
+      id: "paint-main",
+      type: "paint",
+    }],
+  };
+  let activeEntries = afterState.entries.map((entry) => ({ ...entry }));
+  const layerModel = {
+    findEntryById(id) {
+      return activeEntries.find((entry) => entry.id === id) || null;
+    },
+  };
+  const history = {
+    restoreLayerState(model, snapshot, options = {}) {
+      calls.push(`state:${options.source}:${snapshot.entries[0].effects ? "effects" : "baked"}`);
+      activeEntries = snapshot.entries.map((entry) => {
+        const nextEntry = { ...entry };
+
+        if (entry.effects) {
+          nextEntry.effects = entry.effects.map((effect) => ({ ...effect }));
+        }
+
+        return nextEntry;
+      });
+      return model === layerModel;
+    },
+  };
+  const renderer = {
+    deleteRasterSnapshot(snapshot) {
+      if (!snapshot) {
+        return;
+      }
+
+      calls.push(`delete:${snapshot === beforeSnapshot ? "before" : "other"}`);
+    },
+    rasterizeLayerEffects(layer, options = {}) {
+      calls.push(`redo-bake:${layer.effects[0].type}:${options.captureBeforeSnapshot}:${options.captureAfterSnapshot}`);
+      return { layerId: layer.id };
+    },
+    restoreRasterSnapshot(layerId, snapshot, options = {}) {
+      calls.push(`pixels:${options.source}:${layerId}:${snapshot === beforeSnapshot}`);
+      return true;
+    },
+  };
+
+  namespace.brushEngine = {
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  const entry = namespace.createLayerEffectsRasterizeHistoryEntry({
+    afterState,
+    beforeSnapshot,
+    beforeState,
+    history,
+    layerId: "paint-main",
+    layerModel,
+    renderer,
+    rasterizeEffects: [{ type: "gaussian-blur", radius: 8, enabled: true }],
+  });
+
+  assert.equal(entry.afterSnapshot, undefined);
+  assert.equal(entry.redo(), true);
+  assert.deepEqual(activeEntries, afterState.entries);
+  assert.deepEqual(calls, [
+    "state:history-redo-layer-effects-rasterize-prepare:baked",
+    "pixels:history-redo-layer-effects-rasterize-prepare:paint-main:true",
+    "redo-bake:gaussian-blur:false:false",
+    "state:history-redo-layer-effects-rasterize:baked",
+    "draw",
+  ]);
+
+  entry.destroy();
+  assert.equal(calls.at(-1), "delete:before");
 });

@@ -998,7 +998,7 @@ void main() {
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
   const PREVIEW_CACHE_ZOOM_THRESHOLD = 8.0;
-  const PREVIEW_CACHE_MAX_SIZE = 4000;
+  const PREVIEW_CACHE_MAX_SIZE = 2048;
 
   function normalizeAngle(value) {
     const number = Number(value);
@@ -1713,12 +1713,17 @@ void main() {
 
       if (this.isSparseRasterTarget(target)) {
         let didCool = false;
+        let totalCpuBytes = 0;
+        let totalRawBytes = 0;
 
         target.tiles.forEach((tile) => {
           didCool = this.dehydrateRasterTarget(tile, options) || didCool;
+          totalCpuBytes += Math.max(0, Math.round(Number(tile.cpuBytes) || Number(tile.cpuPixels?.byteLength) || 0));
+          totalRawBytes += Math.max(0, Math.round(Number(tile.cpuRawBytes) || Number(tile.cpuBytes) || Number(tile.cpuPixels?.byteLength) || this.estimateRasterTargetBytes(tile)));
         });
         target.state = "CPU_COLD";
-        target.cpuBytes = this.estimateRasterTargetBytes(target);
+        target.cpuBytes = totalCpuBytes;
+        target.cpuRawBytes = totalRawBytes;
 
         return didCool || target.tiles.size === 0;
       }
@@ -1756,8 +1761,30 @@ void main() {
       target.texture = null;
       target.textureResourceId = "";
 
-      target.cpuBytes = pixels.byteLength;
-      target.cpuPixels = pixels;
+      const compression = window.CBO?.HistoryCompression;
+      let storedPixels = pixels;
+      let storedEncoding = null;
+      const rawByteLength = pixels.byteLength;
+
+      if (compression && typeof compression.compressRgba === "function") {
+        try {
+          const result = compression.compressRgba(pixels);
+
+          if (result && result.encoding && result.bytes instanceof Uint8Array) {
+            storedPixels = result.bytes;
+            storedEncoding = result.encoding;
+          }
+        } catch (error) {
+          console.warn?.("[CBO renderer] Compressione RLE target raster fallita, salvo raw.", error);
+          storedPixels = pixels;
+          storedEncoding = null;
+        }
+      }
+
+      target.cpuBytes = storedPixels.byteLength;
+      target.cpuPixels = storedPixels;
+      target.cpuPixelsEncoding = storedEncoding;
+      target.cpuRawBytes = rawByteLength;
       target.state = "CPU_COLD";
       target.reason = options.reason || target.reason || "raster-target-cpu-cold";
 
@@ -1788,6 +1815,7 @@ void main() {
         });
         target.state = "GPU_HOT";
         target.cpuBytes = 0;
+        target.cpuRawBytes = 0;
 
         return didHydrate;
       }
@@ -1802,6 +1830,25 @@ void main() {
 
       const width = Math.max(1, Math.round(target.width || 1));
       const height = Math.max(1, Math.round(target.height || 1));
+      const compression = window.CBO?.HistoryCompression;
+      let uploadPixels = target.cpuPixels;
+
+      if (target.cpuPixelsEncoding) {
+        if (!compression?.isCompressedEncoding?.(target.cpuPixelsEncoding)) {
+          return false;
+        }
+
+        try {
+          uploadPixels = compression.decompressRgba(
+            target.cpuPixels,
+            Number(target.cpuRawBytes) || width * height * RASTER_BYTES_PER_PIXEL,
+          );
+        } catch (error) {
+          console.warn?.("[CBO renderer] Decompressione RLE target raster fallita.", error);
+          return false;
+        }
+      }
+
       const nextTarget = this.createRasterTarget(target.clearColor || [0, 0, 0, 0], {
         cropped: target.cropped === true,
         height,
@@ -1820,7 +1867,7 @@ void main() {
 
       try {
         gl.bindTexture(gl.TEXTURE_2D, nextTarget.texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, target.cpuPixels);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, uploadPixels);
         gl.bindTexture(gl.TEXTURE_2D, null);
       } catch (error) {
         gl.bindTexture?.(gl.TEXTURE_2D, null);
@@ -1833,6 +1880,8 @@ void main() {
       Object.assign(target, nextTarget, {
         cpuBytes: 0,
         cpuPixels: null,
+        cpuPixelsEncoding: null,
+        cpuRawBytes: 0,
         state: "GPU_HOT",
       });
 
@@ -6622,9 +6671,31 @@ void main() {
         snapshot.texture = null;
       }
 
-      snapshot.bytes = snapshot.bytes || pixels.byteLength;
-      snapshot.cpuBytes = pixels.byteLength;
-      snapshot.cpuPixels = pixels;
+      const compression = window.CBO?.HistoryCompression;
+      let storedPixels = pixels;
+      let storedEncoding = null;
+      const rawByteLength = pixels.byteLength;
+
+      if (compression && typeof compression.compressRgba === "function") {
+        try {
+          const result = compression.compressRgba(pixels);
+
+          if (result && result.encoding && result.bytes instanceof Uint8Array) {
+            storedPixels = result.bytes;
+            storedEncoding = result.encoding;
+          }
+        } catch (error) {
+          console.warn?.("[CBO renderer] Compressione RLE history fallita, salvo raw.", error);
+          storedPixels = pixels;
+          storedEncoding = null;
+        }
+      }
+
+      snapshot.bytes = snapshot.bytes || rawByteLength;
+      snapshot.cpuBytes = storedPixels.byteLength;
+      snapshot.cpuPixels = storedPixels;
+      snapshot.cpuPixelsEncoding = storedEncoding;
+      snapshot.cpuRawBytes = rawByteLength;
       snapshot.state = "CPU_COLD";
 
       return true;
@@ -6643,6 +6714,25 @@ void main() {
 
       if (width <= 0 || height <= 0) {
         return false;
+      }
+
+      const compression = window.CBO?.HistoryCompression;
+      let uploadPixels = snapshot.cpuPixels;
+
+      if (snapshot.cpuPixelsEncoding) {
+        if (!compression?.isCompressedEncoding?.(snapshot.cpuPixelsEncoding)) {
+          return false;
+        }
+
+        try {
+          uploadPixels = compression.decompressRgba(
+            snapshot.cpuPixels,
+            Number(snapshot.cpuRawBytes) || width * height * 4,
+          );
+        } catch (error) {
+          console.warn?.("[CBO renderer] Decompressione RLE history fallita.", error);
+          return false;
+        }
       }
 
       const gl = this.gl;
@@ -6666,7 +6756,7 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, snapshot.cpuPixels);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, uploadPixels);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
@@ -6718,6 +6808,8 @@ void main() {
 
       snapshot.cpuBytes = 0;
       snapshot.cpuPixels = null;
+      snapshot.cpuPixelsEncoding = null;
+      snapshot.cpuRawBytes = 0;
 
       return true;
     }
@@ -6761,13 +6853,41 @@ void main() {
       return true;
     }
 
+    getRasterTargetCpuPixels(target) {
+      if (!(target?.cpuPixels instanceof Uint8Array)) {
+        return null;
+      }
+
+      const compression = window.CBO?.HistoryCompression;
+
+      if (!target.cpuPixelsEncoding) {
+        return target.cpuPixels;
+      }
+
+      if (!compression?.isCompressedEncoding?.(target.cpuPixelsEncoding)) {
+        return null;
+      }
+
+      try {
+        return compression.decompressRgba(
+          target.cpuPixels,
+          Number(target.cpuRawBytes) || Math.max(1, Math.round(target.width || 1)) * Math.max(1, Math.round(target.height || 1)) * RASTER_BYTES_PER_PIXEL,
+        );
+      } catch (error) {
+        console.warn?.("[CBO renderer] Decompressione RLE target raster fallita.", error);
+        return null;
+      }
+    }
+
     isRasterTargetFullyTransparent(target) {
       if (!target) {
         return true;
       }
 
       if (target.cpuPixels instanceof Uint8Array) {
-        return this.isTransparentPixelBuffer(target.cpuPixels);
+        const pixels = this.getRasterTargetCpuPixels(target);
+
+        return pixels ? this.isTransparentPixelBuffer(pixels) : false;
       }
 
       if (!target.framebuffer || !target.texture) {
@@ -7068,6 +7188,8 @@ void main() {
 
       snapshot.cpuBytes = 0;
       snapshot.cpuPixels = null;
+      snapshot.cpuPixelsEncoding = null;
+      snapshot.cpuRawBytes = 0;
       snapshot.state = "DELETED";
     }
 
@@ -7081,6 +7203,8 @@ void main() {
         target.tiles.clear();
         target.cpuBytes = 0;
         target.cpuPixels = null;
+        target.cpuPixelsEncoding = null;
+        target.cpuRawBytes = 0;
         target.state = "DELETED";
         return;
       }
@@ -7103,6 +7227,8 @@ void main() {
       target.textureResourceId = "";
       target.cpuBytes = 0;
       target.cpuPixels = null;
+      target.cpuPixelsEncoding = null;
+      target.cpuRawBytes = 0;
       target.state = "DELETED";
     }
 
@@ -7528,6 +7654,7 @@ void main() {
       const targetHeight = Math.max(1, Math.round(target.height || this.height || 1));
       const hasGpuPixels = Boolean(target.framebuffer && target.texture);
       const hasCpuPixels = target.cpuPixels instanceof Uint8Array;
+      const cpuPixels = hasCpuPixels ? this.getRasterTargetCpuPixels(target) : null;
       const sampleCols = Math.max(16, Math.min(512, Math.floor(options.sampleCols || 256)));
       const sampleRows = Math.max(16, Math.min(512, Math.floor(options.sampleRows || 256)));
       const alphaThreshold = Number.isFinite(options.alphaThreshold)
@@ -7536,11 +7663,11 @@ void main() {
       const pixelPerfect = options.pixelPerfect === true;
       let coarseRect = null;
 
-      if (!hasGpuPixels && !hasCpuPixels) {
+      if (!hasGpuPixels && !cpuPixels) {
         return null;
       }
 
-      if (pixelPerfect || hasCpuPixels) {
+      if (pixelPerfect || cpuPixels) {
         coarseRect = { x: 0, y: 0, width: targetWidth, height: targetHeight };
       } else {
         const samples = this.getPuppetAlphaSamples(target, sampleCols, sampleRows);
@@ -7597,14 +7724,14 @@ void main() {
       const gl = this.gl;
       const pixels = new Uint8Array(coarseRect.width * coarseRect.height * 4);
 
-      if (hasCpuPixels) {
+      if (cpuPixels) {
         const readY = targetHeight - (coarseRect.y + coarseRect.height);
 
         for (let row = 0; row < coarseRect.height; row += 1) {
           const sourceStart = ((readY + row) * targetWidth + coarseRect.x) * 4;
           const destStart = row * coarseRect.width * 4;
           pixels.set(
-            target.cpuPixels.subarray(sourceStart, sourceStart + coarseRect.width * 4),
+            cpuPixels.subarray(sourceStart, sourceStart + coarseRect.width * 4),
             destStart,
           );
         }
@@ -9137,6 +9264,51 @@ void main() {
       return total;
     }
 
+    getRasterTargetCpuRawBytes(target) {
+      if (!target) {
+        return 0;
+      }
+
+      if (this.isSparseRasterTarget(target)) {
+        let total = 0;
+
+        target.tiles?.forEach?.((tile) => {
+          total += this.getRasterTargetCpuRawBytes(tile);
+        });
+
+        return total;
+      }
+
+      return Math.max(
+        0,
+        Math.round(Number(target.cpuRawBytes) || Number(target.cpuBytes) || Number(target.cpuPixels?.byteLength) || this.estimateRasterTargetBytes(target)),
+      );
+    }
+
+    getHistoryColdRasterTargetRawBytes() {
+      if (!this.rasterTargetsByLayerId?.size) {
+        return 0;
+      }
+
+      const currentLayerIds = this.getCurrentRasterTargetLayerIds();
+      const historyLayerIds = this.collectHistoryLayerIds(new Set());
+      let total = 0;
+
+      for (const [layerId, target] of this.rasterTargetsByLayerId.entries()) {
+        if (
+          currentLayerIds.has(layerId) ||
+          !historyLayerIds.has(layerId) ||
+          target?.state !== "CPU_COLD"
+        ) {
+          continue;
+        }
+
+        total += this.getRasterTargetCpuRawBytes(target);
+      }
+
+      return total;
+    }
+
     getRetainedRasterTargetLayerIds() {
       const retainedLayerIds = this.getCurrentRasterTargetLayerIds();
 
@@ -10437,6 +10609,8 @@ void main() {
         return null;
       }
 
+      const captureBeforeSnapshot = options.captureBeforeSnapshot !== false;
+      const captureAfterSnapshot = options.captureAfterSnapshot !== false;
       let target = this.rasterTargetsByLayerId.get(layer.id);
       const wasSparseTarget = this.isSparseRasterTarget(target);
 
@@ -10451,9 +10625,11 @@ void main() {
         return null;
       }
 
-      const beforeSnapshot = this.createRasterSnapshot(target, null, "layer-effects-rasterize-before");
+      const beforeSnapshot = captureBeforeSnapshot
+        ? this.createRasterSnapshot(target, null, "layer-effects-rasterize-before")
+        : null;
 
-      if (!beforeSnapshot?.texture) {
+      if (captureBeforeSnapshot && !beforeSnapshot?.texture) {
         return null;
       }
 
@@ -10488,12 +10664,15 @@ void main() {
           this.deleteRasterTargetObject(destinationTarget);
         }
 
-        this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
-          emit: false,
-          preferSparse: wasSparseTarget,
-          source: "layer-effects-rasterize-rollback",
-        });
-        this.deleteRasterSnapshot(beforeSnapshot);
+        if (beforeSnapshot) {
+          this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
+            emit: false,
+            preferSparse: wasSparseTarget,
+            source: "layer-effects-rasterize-rollback",
+          });
+          this.deleteRasterSnapshot(beforeSnapshot);
+        }
+
         return null;
       }
 
@@ -10505,15 +10684,20 @@ void main() {
       }
 
       const finalTarget = needsTargetSwap ? destinationTarget : target;
-      const afterSnapshot = this.createRasterSnapshot(finalTarget, null, "layer-effects-rasterize-after");
+      const afterSnapshot = captureAfterSnapshot
+        ? this.createRasterSnapshot(finalTarget, null, "layer-effects-rasterize-after")
+        : null;
 
-      if (!afterSnapshot?.texture) {
-        this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
-          emit: false,
-          preferSparse: wasSparseTarget,
-          source: "layer-effects-rasterize-rollback",
-        });
-        this.deleteRasterSnapshot(beforeSnapshot);
+      if (captureAfterSnapshot && !afterSnapshot?.texture) {
+        if (beforeSnapshot) {
+          this.restoreRasterSnapshot(layer.id, beforeSnapshot, {
+            emit: false,
+            preferSparse: wasSparseTarget,
+            source: "layer-effects-rasterize-rollback",
+          });
+          this.deleteRasterSnapshot(beforeSnapshot);
+        }
+
         return null;
       }
 
@@ -10529,8 +10713,8 @@ void main() {
           }) || finalTarget
         : finalTarget;
       const finalTargetRect = this.getRasterTargetDocumentRect(finalLiveTarget);
-      const beforeBytes = this.getRasterRectBytes(beforeSnapshot.rect);
-      const afterBytes = this.getRasterRectBytes(afterSnapshot.rect);
+      const beforeBytes = this.getRasterRectBytes(beforeSnapshot?.rect);
+      const afterBytes = this.getRasterRectBytes(afterSnapshot?.rect);
       const sourceBytes = this.estimateRasterTargetBytes(target);
       const targetBytes = this.estimateRasterTargetBytes(finalLiveTarget);
       const scratchBytes =

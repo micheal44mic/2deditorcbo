@@ -3531,10 +3531,18 @@ void main() {
         return null;
       }
 
-      const x0 = Math.min(...rects.map((rect) => rect.x));
-      const y0 = Math.min(...rects.map((rect) => rect.y));
-      const x1 = Math.max(...rects.map((rect) => rect.x + rect.width));
-      const y1 = Math.max(...rects.map((rect) => rect.y + rect.height));
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+
+      for (let i = 0; i < rects.length; i += 1) {
+        const rect = rects[i];
+        x0 = Math.min(x0, rect.x);
+        y0 = Math.min(y0, rect.y);
+        x1 = Math.max(x1, rect.x + rect.width);
+        y1 = Math.max(y1, rect.y + rect.height);
+      }
 
       return {
         height: y1 - y0,
@@ -4593,9 +4601,32 @@ void main() {
       this.deleteBrushTexture(snapshot.texture);
       gl.deleteTexture(snapshot.texture);
       snapshot.texture = null;
-      snapshot.bytes = snapshot.bytes || pixels.byteLength;
-      snapshot.cpuBytes = pixels.byteLength;
-      snapshot.cpuPixels = pixels;
+
+      const compression = window.CBO?.HistoryCompression;
+      let storedPixels = pixels;
+      let storedEncoding = null;
+      const rawByteLength = pixels.byteLength;
+
+      if (compression && typeof compression.compressRgba === "function") {
+        try {
+          const result = compression.compressRgba(pixels);
+
+          if (result && result.encoding && result.bytes instanceof Uint8Array) {
+            storedPixels = result.bytes;
+            storedEncoding = result.encoding;
+          }
+        } catch (error) {
+          console.warn?.("[CBO brush] Compressione RLE snapshot fallita, salvo raw.", error);
+          storedPixels = pixels;
+          storedEncoding = null;
+        }
+      }
+
+      snapshot.bytes = snapshot.bytes || rawByteLength;
+      snapshot.cpuBytes = storedPixels.byteLength;
+      snapshot.cpuPixels = storedPixels;
+      snapshot.cpuPixelsEncoding = storedEncoding;
+      snapshot.cpuRawBytes = rawByteLength;
       snapshot.state = "CPU_COLD";
 
       return true;
@@ -4618,6 +4649,25 @@ void main() {
         return false;
       }
 
+      const compression = window.CBO?.HistoryCompression;
+      let uploadPixels = snapshot.cpuPixels;
+
+      if (snapshot.cpuPixelsEncoding) {
+        if (!compression?.isCompressedEncoding?.(snapshot.cpuPixelsEncoding)) {
+          return false;
+        }
+
+        try {
+          uploadPixels = compression.decompressRgba(
+            snapshot.cpuPixels,
+            Number(snapshot.cpuRawBytes) || width * height * 4,
+          );
+        } catch (error) {
+          console.warn?.("[CBO brush] Decompressione RLE snapshot fallita.", error);
+          return false;
+        }
+      }
+
       const gl = this.gl;
       const texture = gl.createTexture();
 
@@ -4630,7 +4680,7 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, snapshot.cpuPixels);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, uploadPixels);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
       snapshot.texture = texture;
@@ -4654,6 +4704,8 @@ void main() {
 
       snapshot.cpuBytes = 0;
       snapshot.cpuPixels = null;
+      snapshot.cpuPixelsEncoding = null;
+      snapshot.cpuRawBytes = 0;
 
       return true;
     }
@@ -4722,6 +4774,8 @@ void main() {
 
       snapshot.cpuBytes = 0;
       snapshot.cpuPixels = null;
+      snapshot.cpuPixelsEncoding = null;
+      snapshot.cpuRawBytes = 0;
       snapshot.state = "DELETED";
     }
 

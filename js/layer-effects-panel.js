@@ -1136,7 +1136,6 @@ window.CBO = window.CBO || {};
 
   function createLayerEffectsRasterizeHistoryEntry(options = {}) {
     const {
-      afterSnapshot,
       afterPreferSparse = false,
       afterState,
       beforeSnapshot,
@@ -1146,6 +1145,7 @@ window.CBO = window.CBO || {};
       layerId,
       layerModel,
       renderer,
+      rasterizeEffects,
     } = options;
 
     if (!history || !layerModel || !renderer || !layerId || !beforeState || !afterState) {
@@ -1154,10 +1154,12 @@ window.CBO = window.CBO || {};
 
     const before = cloneValue(beforeState);
     const after = cloneValue(afterState);
+    const effectsForRedo = Array.isArray(rasterizeEffects)
+      ? cloneValue(rasterizeEffects)
+      : null;
 
     return {
       type: "custom",
-      afterSnapshot,
       afterActiveLayerId: after.activeLayerId,
       afterEntries: after.entries,
       beforeSnapshot,
@@ -1184,32 +1186,71 @@ window.CBO = window.CBO || {};
         return didRestorePixels;
       },
       redo() {
-        const didRestoreState = history.restoreLayerState(layerModel, after, {
-          source: "history-redo-layer-effects-rasterize",
+        const didRestoreBeforeState = history.restoreLayerState(layerModel, before, {
+          source: "history-redo-layer-effects-rasterize-prepare",
         });
 
-        if (!didRestoreState) {
+        if (!didRestoreBeforeState) {
           return false;
         }
 
-        const didRestorePixels = renderer.restoreRasterSnapshot?.(layerId, afterSnapshot, {
-          preferSparse: afterPreferSparse,
-          replaceSparse: afterPreferSparse,
-          source: "history-redo-layer-effects-rasterize",
+        const didRestoreBeforePixels = renderer.restoreRasterSnapshot?.(layerId, beforeSnapshot, {
+          preferSparse: beforePreferSparse,
+          replaceSparse: beforePreferSparse,
+          source: "history-redo-layer-effects-rasterize-prepare",
         }) !== false;
 
-        if (!didRestorePixels) {
+        if (!didRestoreBeforePixels) {
+          return false;
+        }
+
+        const redoLayer = layerModel.findEntryById?.(layerId);
+        const layerForRedo = effectsForRedo
+          ? { ...redoLayer, effects: cloneValue(effectsForRedo) }
+          : redoLayer;
+        const redoResult = renderer.rasterizeLayerEffects?.(layerForRedo, {
+          captureAfterSnapshot: false,
+          captureBeforeSnapshot: false,
+          emit: false,
+          source: "history-redo-layer-effects-rasterize",
+        });
+
+        if (!redoResult) {
+          return false;
+        }
+
+        renderer.deleteRasterSnapshot?.(redoResult.beforeSnapshot);
+        renderer.deleteRasterSnapshot?.(redoResult.afterSnapshot);
+
+        const didRestoreAfterState = history.restoreLayerState(layerModel, after, {
+          source: "history-redo-layer-effects-rasterize",
+        });
+
+        if (!didRestoreAfterState) {
           history.restoreLayerState(layerModel, before, {
             source: "history-redo-layer-effects-rasterize-rollback",
+          });
+          renderer.restoreRasterSnapshot?.(layerId, beforeSnapshot, {
+            preferSparse: beforePreferSparse,
+            replaceSparse: beforePreferSparse,
+            source: "history-redo-layer-effects-rasterize-rollback",
+          });
+          namespace.brushEngine?.requestDraw?.();
+          return false;
+        }
+
+        if (afterPreferSparse) {
+          renderer.sparsifyRasterizedImageLayer?.(layerId, {
+            emit: false,
+            source: "history-redo-layer-effects-rasterize-retile",
           });
         }
 
         namespace.brushEngine?.requestDraw?.();
-        return didRestorePixels;
+        return true;
       },
       destroy() {
         renderer.deleteRasterSnapshot?.(beforeSnapshot);
-        renderer.deleteRasterSnapshot?.(afterSnapshot);
       },
     };
   }
@@ -1233,6 +1274,7 @@ window.CBO = window.CBO || {};
       ? cloneValue(options.beforeState)
       : history?.getLayerSnapshot?.(layerModel) || null;
     const snapshots = renderer.rasterizeLayerEffects(layer, {
+      captureAfterSnapshot: false,
       emit: false,
       source: "layer-effects-rasterize",
     });
@@ -1242,6 +1284,7 @@ window.CBO = window.CBO || {};
     }
 
     const rasterizedImageLayer = layer.type === "image";
+    const rasterizeEffects = cloneValue(layer.effects);
     const rasterizedLayerPatch = {
       effects: getEffectsAfterRasterize(layer),
     };
@@ -1262,7 +1305,6 @@ window.CBO = window.CBO || {};
         source: "layer-effects-rasterize-rollback",
       });
       renderer.deleteRasterSnapshot?.(snapshots.beforeSnapshot);
-      renderer.deleteRasterSnapshot?.(snapshots.afterSnapshot);
       return false;
     }
 
@@ -1279,7 +1321,6 @@ window.CBO = window.CBO || {};
 
     const afterState = history?.getLayerSnapshot?.(layerModel) || null;
     const historyEntry = createLayerEffectsRasterizeHistoryEntry({
-      afterSnapshot: snapshots.afterSnapshot,
       afterPreferSparse: snapshots.afterPreferSparse,
       afterState,
       beforeSnapshot: snapshots.beforeSnapshot,
@@ -1289,13 +1330,13 @@ window.CBO = window.CBO || {};
       layerId: layer.id,
       layerModel,
       renderer,
+      rasterizeEffects,
     });
 
     if (historyEntry) {
       history.push(historyEntry);
     } else {
       renderer.deleteRasterSnapshot?.(snapshots.beforeSnapshot);
-      renderer.deleteRasterSnapshot?.(snapshots.afterSnapshot);
     }
 
     renderer.emitContentChange?.({

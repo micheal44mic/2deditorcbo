@@ -276,6 +276,9 @@
     const layerTargetBytes = Math.max(0, Math.round(
       Number(namespace.documentRenderer?.getHistoryColdRasterTargetBytes?.()) || 0,
     ));
+    const layerTargetRawBytes = Math.max(layerTargetBytes, Math.round(
+      Number(namespace.documentRenderer?.getHistoryColdRasterTargetRawBytes?.()) || layerTargetBytes,
+    ));
     const seenObjects = new WeakSet();
     const seenBuffers = new WeakSet();
     const seenBlobs = new WeakSet();
@@ -283,6 +286,21 @@
     let blobBytes = 0;
     let canvasBytes = 0;
     let imageBitmapBytes = 0;
+    let rawEquivalentBytes = 0;
+    let compressedSnapshotCount = 0;
+    let compressedSnapshotActualBytes = 0;
+    let compressedSnapshotEquivalentBytes = 0;
+
+    const isCompressedSnapshot = (value) => {
+      return Boolean(
+        value &&
+          value.cpuPixels instanceof Uint8Array &&
+          typeof value.cpuPixelsEncoding === "string" &&
+          value.cpuPixelsEncoding.length > 0 &&
+          Number.isFinite(value.cpuRawBytes) &&
+          value.cpuRawBytes > value.cpuPixels.byteLength
+      );
+    };
 
     const scan = (value) => {
       if (!value || typeof value !== "object") {
@@ -294,7 +312,9 @@
 
         if (buffer && !seenBuffers.has(buffer)) {
           seenBuffers.add(buffer);
-          rawBytes += value.byteLength || buffer.byteLength || 0;
+          const byteLength = value.byteLength || buffer.byteLength || 0;
+          rawBytes += byteLength;
+          rawEquivalentBytes += byteLength;
         }
 
         return;
@@ -303,7 +323,9 @@
       if (isArrayBuffer(value)) {
         if (!seenBuffers.has(value)) {
           seenBuffers.add(value);
-          rawBytes += value.byteLength || 0;
+          const byteLength = value.byteLength || 0;
+          rawBytes += byteLength;
+          rawEquivalentBytes += byteLength;
         }
 
         return;
@@ -347,6 +369,38 @@
 
       seenObjects.add(value);
 
+      if (isCompressedSnapshot(value)) {
+        const pixels = value.cpuPixels;
+        const buffer = pixels.buffer;
+
+        if (buffer && !seenBuffers.has(buffer)) {
+          seenBuffers.add(buffer);
+          const actual = pixels.byteLength;
+          const equivalent = Number(value.cpuRawBytes) || actual;
+          rawBytes += actual;
+          rawEquivalentBytes += equivalent;
+          compressedSnapshotCount += 1;
+          compressedSnapshotActualBytes += actual;
+          compressedSnapshotEquivalentBytes += equivalent;
+        }
+
+        Object.entries(value).forEach(([key, child]) => {
+          if (
+            typeof child === "function" ||
+            key === "cpuPixels" ||
+            key === "texture" ||
+            key === "framebuffer" ||
+            key === "gl"
+          ) {
+            return;
+          }
+
+          scan(child);
+        });
+
+        return;
+      }
+
       Object.entries(value).forEach(([key, child]) => {
         if (
           typeof child === "function" ||
@@ -364,13 +418,26 @@
     scan(history?.undoStack);
     scan(history?.redoStack);
 
+    const totalBytes = rawBytes + blobBytes + canvasBytes + imageBitmapBytes + layerTargetBytes;
+    const totalRawEquivalentBytes = rawEquivalentBytes + blobBytes + canvasBytes + imageBitmapBytes + layerTargetRawBytes;
+    const compressionRatio = compressedSnapshotActualBytes > 0
+      ? compressedSnapshotEquivalentBytes / compressedSnapshotActualBytes
+      : 1;
+
     return {
       blobBytes,
       canvasBytes,
+      compressedSnapshotActualBytes,
+      compressedSnapshotCount,
+      compressedSnapshotEquivalentBytes,
+      compressionRatio,
       imageBitmapBytes,
       layerTargetBytes,
+      layerTargetRawBytes,
       rawBytes,
-      totalBytes: rawBytes + blobBytes + canvasBytes + imageBitmapBytes + layerTargetBytes,
+      rawEquivalentBytes,
+      totalBytes,
+      totalRawEquivalentBytes,
     };
   }
 
@@ -1007,7 +1074,11 @@
       `Cache: ${formatMiB(groups.cache)} MiB`,
       `Scratch: ${formatMiB(groups.scratch)} MiB`,
       `History GPU: ${formatMiB(groups.historyGpu)} MiB`,
-      `History CPU: ${formatMiB(cpuHistory.totalBytes)} MiB`,
+      `History CPU: ${formatMiB(cpuHistory.totalBytes)} MiB${
+        cpuHistory.compressionRatio > 1.05 && cpuHistory.compressedSnapshotCount > 0
+          ? ` (raw ${formatMiB(cpuHistory.totalRawEquivalentBytes)} MiB, ${cpuHistory.compressionRatio.toFixed(1)}x, ${cpuHistory.compressedSnapshotCount} snap)`
+          : ""
+      }`,
       `Last trim: ${formatLastTrim()}`,
       `Warnings: ${warnings.length ? warnings.join(", ") : "none"}`,
     ];

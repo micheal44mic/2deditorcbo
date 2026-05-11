@@ -42,6 +42,13 @@ function loadDocumentRenderer(options = {}) {
     window,
   });
 
+  if (options.historyCompression === true) {
+    vm.runInContext(
+      fs.readFileSync(path.join(repoRoot, "js", "document", "document-history-compression.js"), "utf8"),
+      context,
+    );
+  }
+
   vm.runInContext(source, context);
 
   return {
@@ -195,6 +202,44 @@ test("pruneOrphanRasterTargets cools deleted undoable layer targets to CPU", () 
   assert.ok(glCalls.some((call) => call[0] === "readPixels" && call[1] === 8 && call[2] === 8));
   assert.ok(glCalls.some((call) => call[0] === "deleteTexture" && call[1] === historyTexture));
   assert.ok(glCalls.some((call) => call[0] === "deleteFramebuffer" && call[1] === historyFramebuffer));
+});
+
+test("dehydrateRasterTarget compresses cold layer targets when history compression is loaded", () => {
+  const { DocumentRenderer } = loadDocumentRenderer({ historyCompression: true });
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const glCalls = [];
+  const rawBytes = 16 * 16 * 4;
+  const target = {
+    framebuffer: {},
+    height: 16,
+    texture: {},
+    width: 16,
+  };
+
+  renderer.gl = {
+    bindFramebuffer: (...args) => glCalls.push(["bindFramebuffer", ...args]),
+    deleteFramebuffer: (framebuffer) => glCalls.push(["deleteFramebuffer", framebuffer]),
+    deleteTexture: (texture) => glCalls.push(["deleteTexture", texture]),
+    FRAMEBUFFER: "FRAMEBUFFER",
+    readPixels: (x, y, width, height, format, type, pixels) => {
+      pixels.fill(0);
+    },
+    RGBA: "RGBA",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+  };
+  renderer.deleteRasterFramebuffer = () => {};
+  renderer.deleteRasterTexture = () => {};
+
+  assert.equal(renderer.dehydrateRasterTarget(target), true);
+  assert.equal(target.state, "CPU_COLD");
+  assert.equal(target.cpuPixelsEncoding, "rle-rgba-v1");
+  assert.equal(target.cpuRawBytes, rawBytes);
+  assert.ok(target.cpuBytes < rawBytes);
+
+  const pixels = renderer.getRasterTargetCpuPixels(target);
+
+  assert.equal(pixels.byteLength, rawBytes);
+  assert.equal(pixels.every((value) => value === 0), true);
 });
 
 test("reconcileRasterTargetResourceOwnership hydrates restored cold history targets", () => {
@@ -1890,7 +1935,7 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
     "utf8",
   );
 
-  assert.match(source, /const PREVIEW_CACHE_MAX_SIZE = 4000/);
+  assert.match(source, /const PREVIEW_CACHE_MAX_SIZE = 2048/);
   assert.match(source, /createPreviewCache\(\)/);
   assert.match(source, /getPreviewCacheDimensions\(\)/);
   assert.match(source, /previewCacheMaxSize/);
