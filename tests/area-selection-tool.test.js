@@ -125,7 +125,8 @@ test("brush and fill constrain raster edits to an active area selection", () => 
   assert.match(brushSource, /getActiveAreaSelectionCoverageRects\(rect\)/);
   assert.match(brushSource, /namespace\.areaSelection\.getIntersectingRects\?\.\(rect\)/);
   assert.match(brushSource, /const selectionCoverageRects = this\.getActiveAreaSelectionCoverageRects\(strokeRect\)/);
-  assert.match(brushSource, /const hasAreaSelection = Array\.isArray\(selectionCoverageRects\)/);
+  assert.match(brushSource, /const hasSelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length > 0/);
+  assert.match(brushSource, /const hasEmptySelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length === 0/);
   assert.match(brushSource, /this\.getBoundsForDocumentRects\(selectionCoverageRects\)/);
   assert.match(brushSource, /filterTilePatchRectsToCoverage\(/);
   assert.match(brushSource, /ensureRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);

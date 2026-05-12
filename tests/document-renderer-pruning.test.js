@@ -382,6 +382,59 @@ test("pruneOrphanRasterTargets releases stale paint targets after history is cle
   assert.equal(renderer.texture, activeTexture);
 });
 
+test("clearLayer can release an active empty paint target as sparse", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const texture = {};
+  const framebuffer = {};
+  const deletedTargets = [];
+  const invalidations = [];
+  const emitted = [];
+
+  renderer.width = 4096;
+  renderer.height = 4096;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.paintLayerId = "paint-1";
+  renderer.texture = texture;
+  renderer.framebuffer = framebuffer;
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.rasterTargetsByLayerId = new Map([
+    ["paint-1", {
+      clearColor: [0, 0, 0, 0],
+      framebuffer,
+      height: 4096,
+      layerId: "paint-1",
+      texture,
+      width: 4096,
+    }],
+  ]);
+  renderer.ensureWritableRasterTarget = () => null;
+  renderer.deleteRasterTargetObject = (target) => deletedTargets.push(target);
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.invalidatePreviewCache = (source, detail) => invalidations.push({ detail, source });
+  renderer.emitContentChange = (detail) => emitted.push(detail);
+
+  assert.equal(renderer.clearLayer("paint-1", {
+    releaseRaster: true,
+    source: "unit-clear-empty-layer",
+  }), true);
+
+  const nextTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.equal(renderer.isSparseRasterTarget(nextTarget), true);
+  assert.equal(nextTarget.tiles.size, 0);
+  assert.equal(renderer.estimateRasterTargetBytes(nextTarget), 0);
+  assert.equal(renderer.texture, null);
+  assert.equal(renderer.framebuffer, null);
+  assert.equal(deletedTargets.length, 1);
+  assert.equal(deletedTargets[0].texture, texture);
+  assert.equal(invalidations[0].source, "unit-clear-empty-layer");
+  assert.equal(emitted[0].layerId, "paint-1");
+  assert.equal(emitted[0].source, "unit-clear-empty-layer");
+});
+
 test("raster snapshot rectangles clamp crop bounds safely", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -2033,8 +2086,16 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(source, /getDirtyRegionRectsFromOptions\(options = \{\}\)/);
   assert.match(source, /compactDirtyRegionRects\(rects = \[\], options = \{\}\)/);
   assert.match(source, /getPreviewDirtyRegionScissor\(rect, cacheWidth, cacheHeight, cacheScale\)/);
-  assert.match(source, /getPreviewDirtyRegionScissors\(rects, cacheWidth, cacheHeight, cacheScale\)/);
+  assert.match(source, /getPreviewDirtyRegionScissors\(rects, cacheWidth, cacheHeight, cacheScale, options = \{\}\)/);
   assert.match(source, /invalidatePreviewCache\(reason = "unknown", options = \{\}\)/);
+  assert.match(source, /forcedFullCause/);
+  assert.match(source, /preview-cache-not-ready/);
+  assert.match(source, /const debugRects = forcedFullCause === "preview-cache-not-ready"/);
+  assert.match(source, /no-dirty-rects/);
+  assert.match(source, /incomingDirtyRectsLength: dirtyRects\.length/);
+  assert.match(source, /preserveDirtyRects === true/);
+  assert.match(source, /mergeAdjacent: options\.mergeAdjacent/);
+  assert.match(source, /this\.previewDirtyCompactOptions/);
   assert.match(source, /this\.invalidatePreviewCache\(detail\.source \|\| "document-content-change", detail\)/);
   assert.match(source, /stackOnlySources/);
   assert.match(previewCacheBody, /const dirtyRects = this\.previewCacheReady && Array\.isArray\(this\.previewDirtyRects\)/);
@@ -2045,6 +2106,34 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(previewCacheBody, /gl\.scissor\(dirtyScissor\.x, dirtyScissor\.y, dirtyScissor\.width, dirtyScissor\.height\)/);
   assert.match(previewCacheBody, /this\.previewDirtyRects = \[\]/);
   assert.match(previewCacheBody, /this\.recordPreviewDirtyFrame\(\{/);
+});
+
+test("preview dirty regions can preserve adjacent tile rectangles", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const rects = [
+    { x: 0, y: 0, width: 100, height: 100 },
+    { x: 100, y: 0, width: 100, height: 100 },
+  ];
+
+  renderer.width = 1000;
+  renderer.height = 1000;
+  renderer.layerModel = { findEntryById: () => null };
+  renderer.previewCacheReady = true;
+  renderer.previewCacheDirty = false;
+  renderer.previewDirtyRects = [];
+  renderer.previewDirtyCompactOptions = null;
+
+  assert.equal(renderer.compactDirtyRegionRects(rects).length, 1);
+  assert.equal(renderer.compactDirtyRegionRects(rects, { mergeAdjacent: false }).length, 2);
+
+  renderer.invalidatePreviewCache("unit-tile-dirty", {
+    preserveDirtyRects: true,
+    rects,
+  });
+
+  assert.equal(renderer.previewDirtyRects.length, 2);
+  assert.equal(renderer.previewDirtyCompactOptions.mergeAdjacent, false);
 });
 
 test("preview cache dimensions cap large documents while preserving aspect", () => {

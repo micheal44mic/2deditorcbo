@@ -473,6 +473,27 @@ test("destroyEntry is idempotent", () => {
   assert.equal(destroyCount, 1);
 });
 
+test("clear drops pending layer state entries", async () => {
+  const DocumentHistory = loadDocumentHistory();
+  const history = new DocumentHistory();
+  const layerModel = {
+    activeLayerId: "paint-1",
+    entries: [{ id: "paint-1", type: "paint" }],
+    getEntries() {
+      return this.entries;
+    },
+  };
+  const beforeState = history.getLayerSnapshot(layerModel);
+
+  layerModel.entries = [{ id: "paint-2", type: "paint" }];
+  history.recordLayerStateChange(layerModel, beforeState, { source: "unit-pending-layer" });
+  history.clear();
+  await Promise.resolve();
+
+  assert.equal(history.undoStack.length, 0);
+  assert.equal(history.redoStack.length, 0);
+});
+
 test("beginGroup and endGroup keep nested continuous edits active until the final end", () => {
   const DocumentHistory = loadDocumentHistory();
   const history = new DocumentHistory();

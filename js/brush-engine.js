@@ -9,6 +9,10 @@ window.CBO = window.CBO || {};
   const STROKE_ALLOCATION_QUANTUM = 128;
   const STROKE_FINAL_PADDING = 6;
   const STROKE_SAMPLE_CLAMP_MIN_PADDING = 64;
+  const STROKE_PREVIEW_DIRTY_TILE_SIZE = 512;
+  const STROKE_PREVIEW_DIRTY_MAX_RECTS = 96;
+  const STROKE_PREVIEW_DIRTY_KEEP_CACHE_MAX_COVERAGE = 0.45;
+  const PREVIEW_DIRTY_DEBUG_EVENT = "cbo:preview-dirty-region-debug";
   const ERASER_EMPTY_LAYER_TOAST_MS = 800;
   const ERASER_EMPTY_LAYER_TOAST_THROTTLE_MS = 1600;
   const MAX_STAMPS_PER_FLUSH = 4096;
@@ -582,6 +586,9 @@ void main() {
       this.strokeTargetLayerId = null;
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
+      this.activeStrokeDirtyDebugFrame = 0;
+      this.strokePreviewDirtyRects = null;
+      this.lastStrokePreviewDirtyRects = null;
       this.documentRenderer = options.documentRenderer;
       this.strokeTexture = null;
       this.strokeFBO = null;
@@ -3428,13 +3435,15 @@ void main() {
 
       if (!this.activeStrokeBounds) {
         this.activeStrokeBounds = clampedBounds;
-        return;
+      } else {
+        this.activeStrokeBounds.minX = Math.min(this.activeStrokeBounds.minX, clampedBounds.minX);
+        this.activeStrokeBounds.minY = Math.min(this.activeStrokeBounds.minY, clampedBounds.minY);
+        this.activeStrokeBounds.maxX = Math.max(this.activeStrokeBounds.maxX, clampedBounds.maxX);
+        this.activeStrokeBounds.maxY = Math.max(this.activeStrokeBounds.maxY, clampedBounds.maxY);
       }
 
-      this.activeStrokeBounds.minX = Math.min(this.activeStrokeBounds.minX, clampedBounds.minX);
-      this.activeStrokeBounds.minY = Math.min(this.activeStrokeBounds.minY, clampedBounds.minY);
-      this.activeStrokeBounds.maxX = Math.max(this.activeStrokeBounds.maxX, clampedBounds.maxX);
-      this.activeStrokeBounds.maxY = Math.max(this.activeStrokeBounds.maxY, clampedBounds.maxY);
+      this.updateStrokePreviewDirtyRects();
+      this.queueActiveStrokeDirtyRegionDebug();
     }
 
     includeStrokeTilePatchRect(rect) {
@@ -3552,6 +3561,300 @@ void main() {
       };
     }
 
+    intersectDocumentRects(a, b) {
+      if (!a || !b) {
+        return null;
+      }
+
+      const x0 = Math.max(a.x, b.x);
+      const y0 = Math.max(a.y, b.y);
+      const x1 = Math.min(a.x + a.width, b.x + b.width);
+      const y1 = Math.min(a.y + a.height, b.y + b.height);
+
+      if (x1 <= x0 || y1 <= y0) {
+        return null;
+      }
+
+      return {
+        height: y1 - y0,
+        width: x1 - x0,
+        x: x0,
+        y: y0,
+      };
+    }
+
+    unionDocumentRects(a, b) {
+      if (!a) {
+        return b ? { ...b } : null;
+      }
+
+      if (!b) {
+        return { ...a };
+      }
+
+      const x0 = Math.min(a.x, b.x);
+      const y0 = Math.min(a.y, b.y);
+      const x1 = Math.max(a.x + a.width, b.x + b.width);
+      const y1 = Math.max(a.y + a.height, b.y + b.height);
+
+      return {
+        height: y1 - y0,
+        width: x1 - x0,
+        x: x0,
+        y: y0,
+      };
+    }
+
+    getPreviewDirtyTileSize() {
+      const configured = Number(this.options?.previewDirtyTileSize);
+
+      if (Number.isFinite(configured) && configured > 0) {
+        return Math.max(64, Math.round(configured));
+      }
+
+      const historyTileSize = Number(this.documentRenderer?.getRasterHistoryTileSize?.());
+
+      return Math.max(
+        128,
+        Math.round(Number.isFinite(historyTileSize) && historyTileSize > 0
+          ? historyTileSize * 2
+          : STROKE_PREVIEW_DIRTY_TILE_SIZE),
+      );
+    }
+
+    getPreviewDirtyTileRects(rect, tileSize = this.getPreviewDirtyTileSize()) {
+      if (!rect || rect.width <= 0 || rect.height <= 0 || !Number.isFinite(tileSize) || tileSize <= 0) {
+        return [];
+      }
+
+      const size = Math.max(1, Math.round(tileSize));
+      const edgeEpsilon = 1e-6;
+      const minTx = Math.floor(rect.x / size);
+      const maxTx = Math.floor((rect.x + rect.width - edgeEpsilon) / size);
+      const minTy = Math.floor(rect.y / size);
+      const maxTy = Math.floor((rect.y + rect.height - edgeEpsilon) / size);
+      const tileRects = [];
+
+      for (let ty = minTy; ty <= maxTy; ty += 1) {
+        for (let tx = minTx; tx <= maxTx; tx += 1) {
+          const tileRect = {
+            height: size,
+            width: size,
+            x: tx * size,
+            y: ty * size,
+          };
+          const patchRect = this.documentRenderer?.intersectRasterHistoryRects?.(rect, tileRect) ||
+            this.intersectDocumentRects(rect, tileRect);
+
+          if (!patchRect) {
+            continue;
+          }
+
+          tileRects.push({
+            patchRect: { ...patchRect },
+            rect: { ...patchRect },
+            tileRect,
+            tx,
+            ty,
+          });
+        }
+      }
+
+      return tileRects;
+    }
+
+    getTileBasedPreviewDirtyRects(sourceRects, effectiveStrokeRect) {
+      const rawRects = Array.isArray(sourceRects) && sourceRects.length > 0
+        ? sourceRects
+        : (effectiveStrokeRect ? [effectiveStrokeRect] : []);
+      const tileSize = this.getPreviewDirtyTileSize();
+      const dirtyTiles = new Map();
+
+      rawRects.forEach((item) => {
+        const rect = item?.patchRect || item?.rect || item;
+        const clippedRect = effectiveStrokeRect
+          ? this.documentRenderer?.intersectRasterHistoryRects?.(rect, effectiveStrokeRect) ||
+            this.intersectDocumentRects(rect, effectiveStrokeRect)
+          : rect;
+
+        if (!clippedRect || clippedRect.width <= 0 || clippedRect.height <= 0) {
+          return;
+        }
+
+        this.getPreviewDirtyTileRects(clippedRect, tileSize).forEach((tile) => {
+          const key = `${tile.tx}:${tile.ty}`;
+          const previous = dirtyTiles.get(key);
+          const nextRect = previous
+            ? this.documentRenderer?.unionRasterHistoryRects?.(previous.rect, tile.patchRect) ||
+              this.unionDocumentRects(previous.rect, tile.patchRect)
+            : tile.patchRect;
+
+          dirtyTiles.set(key, {
+            rect: { ...nextRect },
+            tx: tile.tx,
+            ty: tile.ty,
+          });
+        });
+      });
+
+      return Array.from(dirtyTiles.values())
+        .sort((first, second) => (first.ty - second.ty) || (first.tx - second.tx))
+        .map((tile) => ({ ...tile.rect }));
+    }
+
+    clonePreviewDirtyRects(rects) {
+      if (!Array.isArray(rects)) {
+        return [];
+      }
+
+      return rects
+        .filter((rect) => rect && rect.width > 0 && rect.height > 0)
+        .map((rect) => ({ ...rect }));
+    }
+
+    storeStrokePreviewDirtyRects(rects) {
+      const cloned = this.clonePreviewDirtyRects(rects);
+
+      if (cloned.length > 0) {
+        this.strokePreviewDirtyRects = cloned;
+        this.lastStrokePreviewDirtyRects = cloned.map((rect) => ({ ...rect }));
+      }
+
+      return cloned;
+    }
+
+    updateStrokePreviewDirtyRects(effectiveStrokeRect = null, tilePatchRects = null) {
+      const strokeRect = effectiveStrokeRect || this.getActiveStrokeRect();
+
+      if (!strokeRect) {
+        return [];
+      }
+
+      return this.storeStrokePreviewDirtyRects(
+        this.getActiveStrokePreviewDirtyRects(strokeRect, tilePatchRects),
+      );
+    }
+
+    getFallbackStrokePreviewDirtyRects(effectiveStrokeRect = null) {
+      const storedRects = this.clonePreviewDirtyRects(this.strokePreviewDirtyRects);
+
+      if (storedRects.length > 0) {
+        return storedRects;
+      }
+
+      const lastRects = this.clonePreviewDirtyRects(this.lastStrokePreviewDirtyRects);
+
+      if (lastRects.length > 0) {
+        return lastRects;
+      }
+
+      return effectiveStrokeRect && effectiveStrokeRect.width > 0 && effectiveStrokeRect.height > 0
+        ? [{ ...effectiveStrokeRect }]
+        : [];
+    }
+
+    getPreviewDirtyRectsCoverage(rects, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
+      const cloned = this.clonePreviewDirtyRects(rects);
+
+      if (!cloned.length) {
+        return 0;
+      }
+
+      const targetRect = {
+        height: Math.max(1, Math.round(target?.height || this.height || 1)),
+        width: Math.max(1, Math.round(target?.width || this.width || 1)),
+        x: Number.isFinite(target?.x) ? Math.round(target.x) : 0,
+        y: Number.isFinite(target?.y) ? Math.round(target.y) : 0,
+      };
+      const targetPixels = targetRect.width * targetRect.height;
+
+      if (targetPixels <= 0) {
+        return 0;
+      }
+
+      const dirtyPixels = cloned.reduce((sum, rect) => {
+        const clipped = this.documentRenderer?.intersectRasterHistoryRects?.(rect, targetRect) ||
+          this.intersectDocumentRects(rect, targetRect);
+
+        if (!clipped) {
+          return sum;
+        }
+
+        return sum + Math.max(0, Math.round(clipped.width || 0)) * Math.max(0, Math.round(clipped.height || 0));
+      }, 0);
+
+      return Math.min(1, Math.max(0, dirtyPixels / targetPixels));
+    }
+
+    shouldKeepPreviewCacheForDirtyBake(previewDirtyRects, memoryReport = null, target = null) {
+      const rects = this.clonePreviewDirtyRects(previewDirtyRects);
+
+      if (!rects.length || rects.length > STROKE_PREVIEW_DIRTY_MAX_RECTS) {
+        return false;
+      }
+
+      const dirtyCoverage = this.getPreviewDirtyRectsCoverage(
+        rects,
+        target || memoryReport?.canvasSize || this.getDocumentDrawTarget(this.strokeTargetLayerId || ""),
+      );
+
+      return dirtyCoverage > 0 && dirtyCoverage <= STROKE_PREVIEW_DIRTY_KEEP_CACHE_MAX_COVERAGE;
+    }
+
+    emitActiveStrokeDirtyRegionDebug() {
+      this.activeStrokeDirtyDebugFrame = 0;
+
+      if (!this.isDrawing) {
+        return;
+      }
+
+      const strokeRect = this.getActiveStrokeRect();
+      const rects = this.updateStrokePreviewDirtyRects(strokeRect);
+
+      if (namespace.debugPreviewDirtyRegions !== true || !strokeRect || rects.length === 0) {
+        return;
+      }
+
+      window.dispatchEvent(new CustomEvent(PREVIEW_DIRTY_DEBUG_EVENT, {
+        detail: {
+          generatedAt: Date.now(),
+          layerId: this.strokeTargetLayerId || "",
+          live: true,
+          mode: "partial-live",
+          reason: `${this.currentStrokeTool || "brush"}-live`,
+          rects,
+        },
+      }));
+    }
+
+    queueActiveStrokeDirtyRegionDebug() {
+      if (
+        namespace.debugPreviewDirtyRegions !== true ||
+        this.activeStrokeDirtyDebugFrame ||
+        this.isDisposed
+      ) {
+        return;
+      }
+
+      const requestFrame = window.requestAnimationFrame || ((callback) => window.setTimeout?.(callback, 16) || 0);
+
+      this.activeStrokeDirtyDebugFrame = requestFrame(() => this.emitActiveStrokeDirtyRegionDebug());
+    }
+
+    cancelActiveStrokeDirtyRegionDebug() {
+      if (!this.activeStrokeDirtyDebugFrame) {
+        return;
+      }
+
+      if (window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(this.activeStrokeDirtyDebugFrame);
+      } else {
+        window.clearTimeout?.(this.activeStrokeDirtyDebugFrame);
+      }
+
+      this.activeStrokeDirtyDebugFrame = 0;
+    }
+
     filterTilePatchRectsToCoverage(tilePatchRects, coverageRects) {
       if (!Array.isArray(tilePatchRects) || !Array.isArray(coverageRects) || coverageRects.length === 0) {
         return tilePatchRects;
@@ -3585,16 +3888,23 @@ void main() {
       const sourceRects = Array.isArray(tilePatchRects) && tilePatchRects.length > 0
         ? tilePatchRects
         : this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
-      const dirtyRects = Array.isArray(sourceRects)
-        ? sourceRects
-            .map((item) => item?.patchRect || item?.rect || item)
-            .filter((rect) => rect && rect.width > 0 && rect.height > 0)
-            .map((rect) => ({ ...rect }))
-        : [];
+      const dirtyRects = this.getTileBasedPreviewDirtyRects(sourceRects, effectiveStrokeRect);
 
       return dirtyRects.length > 0
         ? dirtyRects
         : (effectiveStrokeRect ? [{ ...effectiveStrokeRect }] : []);
+    }
+
+    warmPreviewCacheForStroke() {
+      if (
+        namespace.smudgeEngine?.isDragging ||
+        !this.documentRenderer?.updatePreviewCacheIfNeeded ||
+        (this.camera.zoom || 1) >= 8
+      ) {
+        return false;
+      }
+
+      return this.documentRenderer.updatePreviewCacheIfNeeded() === true;
     }
 
     getActiveStrokeRect() {
@@ -4228,8 +4538,17 @@ void main() {
       }
 
       const selectionCoverageRects = this.getActiveAreaSelectionCoverageRects(strokeRect);
-      const hasAreaSelection = Array.isArray(selectionCoverageRects);
-      const effectiveStrokeRect = hasAreaSelection
+      const hasSelectionCoverage = Array.isArray(selectionCoverageRects) && selectionCoverageRects.length > 0;
+      const hasEmptySelectionCoverage = Array.isArray(selectionCoverageRects) && selectionCoverageRects.length === 0;
+
+      if (hasEmptySelectionCoverage) {
+        this.clearStrokeLayer();
+        this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+        return;
+      }
+
+      const effectiveStrokeRect = hasSelectionCoverage
         ? this.getBoundsForDocumentRects(selectionCoverageRects)
         : strokeRect;
 
@@ -4242,14 +4561,19 @@ void main() {
 
       const documentTarget = this.getDocumentDrawTarget(layerId);
       const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, documentTarget);
-      const activeStrokeTilePatchRects = this.filterTilePatchRectsToCoverage(
-        this.getActiveStrokeTilePatchRects(effectiveStrokeRect),
-        selectionCoverageRects,
-      );
-      const previewDirtyRects = this.getActiveStrokePreviewDirtyRects(
+      const activeStrokeTilePatchRects = hasSelectionCoverage
+        ? this.filterTilePatchRectsToCoverage(
+            this.getActiveStrokeTilePatchRects(effectiveStrokeRect),
+            selectionCoverageRects,
+          )
+        : this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
+      const computedPreviewDirtyRects = this.updateStrokePreviewDirtyRects(
         effectiveStrokeRect,
         activeStrokeTilePatchRects,
       );
+      const previewDirtyRects = computedPreviewDirtyRects.length > 0
+        ? computedPreviewDirtyRects
+        : this.getFallbackStrokePreviewDirtyRects(effectiveStrokeRect);
       const paintTargets = isEraserStroke
         ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
             source: "brush-eraser-target",
@@ -4299,6 +4623,7 @@ void main() {
 
       this.recordStrokeMemory(memoryReport);
       this.compactStrokeLayerTargetForRect(strokeRect, documentTarget);
+      this.warmPreviewCacheForStroke();
       const bakeRect = this.strokeBufferRect || { ...strokeRect };
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
@@ -4320,7 +4645,7 @@ void main() {
         const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(paintTarget) || { x: 0, y: 0 };
         const localBakeX = Math.round(bakeRect.x - targetRect.x);
         const localBakeY = Math.round(bakeRect.y - targetRect.y);
-        const targetCoverageRects = hasAreaSelection
+        const targetCoverageRects = hasSelectionCoverage
           ? selectionCoverageRects
               .map((selectionRect) => this.documentRenderer?.intersectRasterHistoryRects?.(selectionRect, targetRect))
               .filter(Boolean)
@@ -4332,7 +4657,7 @@ void main() {
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, paintTarget.framebuffer);
         gl.viewport(localBakeX, paintTarget.height - (localBakeY + bakeRect.height), bakeRect.width, bakeRect.height);
-        if (hasAreaSelection) {
+        if (hasSelectionCoverage) {
           if (!targetCoverageRects?.length) {
             return;
           }
@@ -4353,7 +4678,7 @@ void main() {
         }
         this.documentRenderer?.markRasterTargetDirty?.(paintTarget);
       });
-      if (hasAreaSelection) {
+      if (hasSelectionCoverage) {
         gl.disable(gl.SCISSOR_TEST);
       }
       gl.bindVertexArray(null);
@@ -4463,7 +4788,13 @@ void main() {
       this.clearStrokeLayer();
       this.releaseStrokeLayerTarget();
       this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+      const keepPreviewCacheForDirtyBake = this.shouldKeepPreviewCacheForDirtyBake(
+        previewDirtyRects,
+        memoryReport,
+        documentTarget,
+      );
       this.documentRenderer?.evictRasterScratchCachesForPolicy?.(memoryReport, {
+        deletePreviewCache: !keepPreviewCacheForDirtyBake,
         source: "brush-bake",
       });
       this.documentRenderer?.compactInactivePaintTargets?.({
@@ -4472,6 +4803,8 @@ void main() {
       });
       this.documentRenderer?.invalidatePreviewCache?.("bake-stroke", {
         layerId,
+        maxDirtyRects: STROKE_PREVIEW_DIRTY_MAX_RECTS,
+        preserveDirtyRects: true,
         rects: previewDirtyRects,
       });
       this.requestDraw();
@@ -4812,6 +5145,7 @@ void main() {
     }
 
     resetStrokeRuntimeState() {
+      this.cancelActiveStrokeDirtyRegionDebug();
       this.resetStrokeProgress();
       this.strokeDynamicsState = null;
       this.strokeColorRandomState = null;
@@ -4823,6 +5157,8 @@ void main() {
       this.strokeGrainOffset = { x: 0, y: 0 };
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
+      this.strokePreviewDirtyRects = null;
+      this.lastStrokePreviewDirtyRects = null;
       this.strokeTargetLayerId = null;
       this.currentStrokeTool = this.activeStrokeTool || "brush";
     }
@@ -4869,6 +5205,8 @@ void main() {
       this.releaseStrokeLayerTarget();
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
+      this.strokePreviewDirtyRects = null;
+      this.lastStrokePreviewDirtyRects = null;
       this.strokeRandomState = { seed: this.strokeInitialSeed };
       this.initializeStrokeColorDynamics(this.strokeInitialSeed);
       this.initializeWetMixRandom(this.strokeInitialSeed);
@@ -4927,6 +5265,8 @@ void main() {
       this.clearAllLayers();
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
+      this.strokePreviewDirtyRects = null;
+      this.lastStrokePreviewDirtyRects = null;
 
       const firstSample = rawSamples[0];
       const startPoint = this.beginStrokeDynamics(firstSample);
@@ -5039,6 +5379,9 @@ void main() {
       this.releaseStrokeLayerTarget();
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
+      this.strokePreviewDirtyRects = null;
+      this.lastStrokePreviewDirtyRects = null;
+      this.warmPreviewCacheForStroke();
       this.currentStrokeTool = strokeTool;
       this.strokeTargetLayerId = strokeTarget?.layerId || null;
       const rawSample = this.createPointerSample(event);
@@ -5229,6 +5572,8 @@ void main() {
         cancelAnimationFrame(this.frameRequest);
         this.frameRequest = 0;
       }
+
+      this.cancelActiveStrokeDirtyRegionDebug();
 
       window.removeEventListener("resize", this.handleResize);
       window.removeEventListener("cbo:brush-settings-change", this.handleBrushSettingsChange);

@@ -623,6 +623,7 @@
     clear() {
       this.clearStack(this.undoStack);
       this.clearStack(this.redoStack);
+      this.pendingLayerStates = new WeakMap();
       this.emitChange("clear");
     }
 

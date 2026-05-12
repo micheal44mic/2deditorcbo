@@ -7,6 +7,7 @@
   const PREVIEW_DIRTY_MAX_RECTS = 96;
   const PREVIEW_DIRTY_MERGE_WASTE_RATIO = 1.18;
   const PREVIEW_DIRTY_FULL_COVERAGE_RATIO = 0.92;
+  const PREVIEW_DIRTY_DEBUG_EVENT = "cbo:preview-dirty-region-debug";
   const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
   const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
   const RASTER_WARP_MESH_COLS = 64;
@@ -1195,6 +1196,7 @@ void main() {
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
+      this.previewDirtyCompactOptions = null;
       this.previewLastDirtyMode = "full";
       this.previewLastDirtyRect = null;
       this.previewDirtyStats = this.createPreviewDirtyStats();
@@ -4393,6 +4395,7 @@ void main() {
       this.previewMipLevels = levels;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
+      this.previewDirtyCompactOptions = null;
       this.previewLastDirtyMode = "full";
       this.previewLastDirtyRect = null;
       this.previewCacheReady = false;
@@ -4458,6 +4461,7 @@ void main() {
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
+      this.previewDirtyCompactOptions = null;
       this.previewLastDirtyMode = "full";
       this.previewLastDirtyRect = null;
       this.previewCacheReady = false;
@@ -4604,6 +4608,13 @@ void main() {
 
     compactDirtyRegionRects(rects = [], options = {}) {
       const maxRects = Math.max(1, Math.round(Number(options.maxRects) || PREVIEW_DIRTY_MAX_RECTS));
+      const mergeWasteRatio = Math.max(
+        1,
+        Number.isFinite(Number(options.mergeWasteRatio))
+          ? Number(options.mergeWasteRatio)
+          : PREVIEW_DIRTY_MERGE_WASTE_RATIO,
+      );
+      const mergeAdjacent = options.mergeAdjacent !== false;
       const normalizedRects = rects
         .map((rect) => (
           options.skipNormalize === true
@@ -4612,12 +4623,22 @@ void main() {
         ))
         .filter(Boolean);
       const compacted = [];
+      const overlaps = (a, b) => (
+        a.x < b.x + b.width &&
+        a.x + a.width > b.x &&
+        a.y < b.y + b.height &&
+        a.y + a.height > b.y
+      );
       const canMerge = (a, b) => {
+        if (!mergeAdjacent && !overlaps(a, b)) {
+          return false;
+        }
+
         const merged = this.unionRasterHistoryRects(a, b);
         const mergedArea = this.getDirtyRegionRectArea(merged);
         const sourceArea = this.getDirtyRegionRectArea(a) + this.getDirtyRegionRectArea(b);
 
-        return mergedArea <= sourceArea * PREVIEW_DIRTY_MERGE_WASTE_RATIO;
+        return mergedArea <= sourceArea * mergeWasteRatio;
       };
 
       normalizedRects.forEach((rect) => {
@@ -4784,14 +4805,16 @@ void main() {
       };
     }
 
-    getPreviewDirtyRegionScissors(rects, cacheWidth, cacheHeight, cacheScale) {
+    getPreviewDirtyRegionScissors(rects, cacheWidth, cacheHeight, cacheScale, options = {}) {
       const cachePixels = Math.max(1, Math.round(cacheWidth || 1) * Math.round(cacheHeight || 1));
       const scissors = this.compactDirtyRegionRects(
         (Array.isArray(rects) ? rects : [])
           .map((rect) => this.getPreviewDirtyRegionScissor(rect, cacheWidth, cacheHeight, cacheScale))
           .filter(Boolean),
         {
-          maxRects: PREVIEW_DIRTY_MAX_RECTS,
+          maxRects: options.maxRects || PREVIEW_DIRTY_MAX_RECTS,
+          mergeAdjacent: options.mergeAdjacent,
+          mergeWasteRatio: options.mergeWasteRatio,
           skipNormalize: true,
         },
       );
@@ -4804,6 +4827,19 @@ void main() {
       return scissors;
     }
 
+    emitPreviewDirtyRegionDebug(detail = {}) {
+      if (namespace.debugPreviewDirtyRegions !== true) {
+        return;
+      }
+
+      window.dispatchEvent(new CustomEvent(PREVIEW_DIRTY_DEBUG_EVENT, {
+        detail: {
+          generatedAt: Date.now(),
+          ...detail,
+        },
+      }));
+    }
+
     invalidatePreviewCache(reason = "unknown", options = {}) {
       const hadFullInvalidation = this.previewCacheDirty && this.previewDirtyRects === null;
 
@@ -4813,20 +4849,76 @@ void main() {
       const dirtyRects = this.getDirtyRegionRectsFromOptions(options);
 
       if (!dirtyRects.length || !this.previewCacheReady) {
+        const forcedFullCause = !dirtyRects.length
+          ? "no-dirty-rects"
+          : "preview-cache-not-ready";
+        const debugRects = forcedFullCause === "preview-cache-not-ready"
+          ? dirtyRects.map((rect) => ({ ...rect }))
+          : [];
+
         this.previewDirtyRects = null;
+        this.previewDirtyCompactOptions = null;
+        this.emitPreviewDirtyRegionDebug({
+          layerId: options.layerId || "",
+          meta: {
+            forcedFullCause,
+            incomingDirtyRectsLength: dirtyRects.length,
+            incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
+            previewCacheDirty: this.previewCacheDirty,
+            previewCacheReady: this.previewCacheReady,
+          },
+          mode: "full",
+          reason,
+          rects: debugRects,
+        });
         return;
       }
 
       if (hadFullInvalidation) {
+        this.emitPreviewDirtyRegionDebug({
+          layerId: options.layerId || "",
+          meta: {
+            forcedFullCause: "full-invalidation-pending",
+            incomingDirtyRectsLength: dirtyRects.length,
+            incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
+            previewCacheDirty: this.previewCacheDirty,
+            previewCacheReady: this.previewCacheReady,
+          },
+          mode: "full-pending",
+          reason,
+          rects: dirtyRects.map((rect) => ({ ...rect })),
+        });
         return;
       }
 
+      const previousCompactOptions = this.previewDirtyCompactOptions || {};
+      const nextCompactOptions = {
+        maxRects: Math.max(
+          1,
+          Math.round(Number(options.maxDirtyRects || previousCompactOptions.maxRects || PREVIEW_DIRTY_MAX_RECTS)),
+        ),
+        mergeAdjacent: previousCompactOptions.mergeAdjacent === false ||
+          options.preserveDirtyRects === true ||
+          options.mergeAdjacentDirtyRects === false
+            ? false
+            : true,
+        mergeWasteRatio: Number.isFinite(Number(options.dirtyMergeWasteRatio))
+          ? Number(options.dirtyMergeWasteRatio)
+          : previousCompactOptions.mergeWasteRatio,
+      };
       const nextDirtyRects = this.compactDirtyRegionRects([
         ...(Array.isArray(this.previewDirtyRects) ? this.previewDirtyRects : []),
         ...dirtyRects,
-      ]);
+      ], nextCompactOptions);
 
+      this.previewDirtyCompactOptions = nextCompactOptions;
       this.previewDirtyRects = nextDirtyRects.length > 0 ? nextDirtyRects : null;
+      this.emitPreviewDirtyRegionDebug({
+        layerId: options.layerId || "",
+        mode: "partial",
+        reason,
+        rects: nextDirtyRects.map((rect) => ({ ...rect })),
+      });
     }
 
     getLayerOpacity(layerId, layers = this.getRenderableLayers()) {
@@ -7020,7 +7112,35 @@ void main() {
         return false;
       }
 
-      this.clearTarget(target);
+      if (
+        options.releaseRaster === true &&
+        layerId !== "background" &&
+        this.isPaintRasterLayer(layerId, target)
+      ) {
+        const sparseTarget = this.createSparseRasterTarget(layerId, {
+          clearColor: target.clearColor,
+          tileSize: target.sparseTileSize || target.tileSize,
+        });
+        const previousTarget = this.rasterTargetsByLayerId.get(layerId);
+
+        this.rasterTargetsByLayerId.set(layerId, sparseTarget);
+
+        if (layerId === this.paintLayerId || previousTarget?.texture === this.texture) {
+          this.paintLayerId = layerId;
+          this.texture = null;
+          this.framebuffer = null;
+        }
+
+        if (previousTarget && previousTarget !== sparseTarget) {
+          this.deleteRasterTargetObject(previousTarget);
+        }
+
+        this.deletePuppetMeshResource(layerId);
+        this.invalidatePreviewCache(options.source || "clear-layer-release-raster", { layerId });
+      } else {
+        this.clearTarget(target);
+      }
+
       if (options.emit !== false) {
         this.emitContentChange({ layerId, source: options.source || "clear-layer" });
       }
@@ -10243,11 +10363,12 @@ void main() {
         0.0001,
         Number(this.previewCacheScale) || Math.min(cacheWidth / documentWidth, cacheHeight / documentHeight),
       );
+      const dirtyCompactOptions = this.previewDirtyCompactOptions || {};
       const dirtyRects = this.previewCacheReady && Array.isArray(this.previewDirtyRects) && this.previewDirtyRects.length > 0
-        ? this.compactDirtyRegionRects(this.previewDirtyRects)
+        ? this.compactDirtyRegionRects(this.previewDirtyRects, dirtyCompactOptions)
         : null;
       const dirtyScissors = dirtyRects
-        ? this.getPreviewDirtyRegionScissors(dirtyRects, cacheWidth, cacheHeight, cacheScale)
+        ? this.getPreviewDirtyRegionScissors(dirtyRects, cacheWidth, cacheHeight, cacheScale, dirtyCompactOptions)
         : null;
       const dirtyRect = dirtyScissors
         ? this.unionDirtyRegionRects(dirtyRects)
@@ -10559,6 +10680,7 @@ void main() {
 
       this.previewCacheDirty = false;
       this.previewDirtyRects = [];
+      this.previewDirtyCompactOptions = null;
       this.recordPreviewDirtyFrame({
         cacheHeight,
         cacheScale,

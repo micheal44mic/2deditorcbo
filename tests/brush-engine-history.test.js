@@ -69,6 +69,19 @@ test("brush stroke history prefers tile-memento before and after snapshots", () 
   assert.match(source, /includeStrokeTilePatchRect\(rect\)/);
   assert.match(source, /getActiveStrokeTilePatchRects\(clipRect = null\)/);
   assert.match(source, /getActiveStrokePreviewDirtyRects\(effectiveStrokeRect, tilePatchRects = null\)/);
+  assert.match(source, /getTileBasedPreviewDirtyRects\(sourceRects, effectiveStrokeRect\)/);
+  assert.match(source, /getPreviewDirtyTileRects\(rect, tileSize = this\.getPreviewDirtyTileSize\(\)\)/);
+  assert.match(source, /strokePreviewDirtyRects/);
+  assert.match(source, /lastStrokePreviewDirtyRects/);
+  assert.match(source, /updateStrokePreviewDirtyRects\(effectiveStrokeRect = null, tilePatchRects = null\)/);
+  assert.match(source, /getFallbackStrokePreviewDirtyRects\(effectiveStrokeRect = null\)/);
+  assert.match(source, /warmPreviewCacheForStroke\(\)/);
+  assert.match(source, /this\.documentRenderer\.updatePreviewCacheIfNeeded\(\) === true/);
+  assert.match(source, /queueActiveStrokeDirtyRegionDebug\(\)/);
+  assert.match(source, /emitActiveStrokeDirtyRegionDebug\(\)/);
+  assert.match(source, /const PREVIEW_DIRTY_DEBUG_EVENT = "cbo:preview-dirty-region-debug"/);
+  assert.match(source, /live: true/);
+  assert.match(source, /mode: "partial-live"/);
   assert.match(source, /tilePatchRects: activeStrokeTilePatchRects/);
   assert.match(source, /historyMode = hasTileHistory[\s\S]*"tile-before-after"/);
   assert.match(source, /tileHistory[\s\S]*this\.createHistorySnapshot\(target, effectiveStrokeRect, "before-stroke"\)/);
@@ -95,7 +108,10 @@ test("brush stroke history records memory policy and disables redo for huge stro
   assert.match(source, /namespace\.rasterResourceManager\?\.recordStrokeMemory\?\.\(report\)/);
   assert.match(source, /historyMode === "gpu-before-no-redo"/);
   assert.match(source, /memoryPolicy: memoryReport/);
+  assert.match(source, /shouldKeepPreviewCacheForDirtyBake\(previewDirtyRects/);
+  assert.match(source, /STROKE_PREVIEW_DIRTY_KEEP_CACHE_MAX_COVERAGE = 0\.45/);
   assert.match(source, /this\.documentRenderer\?\.evictRasterScratchCachesForPolicy\?\.\(memoryReport,/);
+  assert.match(source, /deletePreviewCache: !keepPreviewCacheForDirtyBake/);
   assert.match(source, /source: "brush-bake"/);
   assert.match(source, /this\.documentRenderer\?\.deleteActiveStrokeScratchTarget\?\.\(\)/);
   assert.match(source, /this\.documentRenderer\?\.compactInactivePaintTargets\?\.\(/);
@@ -112,21 +128,134 @@ test("brush first paint stroke can defer full live target materialization", () =
   assert.match(source, /const existingTarget = this\.documentRenderer\?\.rasterTargetsByLayerId\?\.get\?\.\(activeId\)/);
   assert.match(source, /if \(!existingTarget \|\| isEmptySparseTarget\) \{\s*this\.showEmptyEraserLayerToast\(\);\s*return null;\s*\}/);
   assert.match(source, /const paintTargets = isEraserStroke/);
-  assert.match(source, /const activeStrokeTilePatchRects = this\.filterTilePatchRectsToCoverage\(/);
+  assert.match(source, /const hasSelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length > 0/);
+  assert.match(source, /const hasEmptySelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length === 0/);
+  assert.match(source, /const activeStrokeTilePatchRects = hasSelectionCoverage/);
   assert.match(source, /this\.getActiveStrokeTilePatchRects\(effectiveStrokeRect\)/);
-  assert.match(source, /const previewDirtyRects = this\.getActiveStrokePreviewDirtyRects\(/);
+  assert.match(source, /const computedPreviewDirtyRects = this\.updateStrokePreviewDirtyRects\(/);
+  assert.match(source, /const previewDirtyRects = computedPreviewDirtyRects\.length > 0/);
+  assert.match(source, /this\.getFallbackStrokePreviewDirtyRects\(effectiveStrokeRect\)/);
   assert.match(source, /selectionCoverageRects/);
   assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
   assert.match(source, /source: "brush-eraser-target"/);
   assert.match(source, /ensureRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
   assert.match(source, /source: "brush-stroke-target"/);
   assert.match(source, /tilePatchRects: activeStrokeTilePatchRects/);
+  assert.match(source, /preserveDirtyRects: true/);
+  assert.match(source, /maxDirtyRects: STROKE_PREVIEW_DIRTY_MAX_RECTS/);
   assert.match(source, /rects: previewDirtyRects/);
   assert.match(source, /const documentTarget = this\.getDocumentDrawTarget\(layerId\)/);
   assert.match(source, /const target = this\.getDocumentDrawTarget\(this\.strokeTargetLayerId \|\| ""\)/);
+  assert.match(source, /this\.warmPreviewCacheForStroke\(\)/);
   assert.match(source, /paintTargets\.forEach\(\(item\) =>/);
   assert.match(source, /const localBakeX = Math\.round\(bakeRect\.x - targetRect\.x\)/);
   assert.match(source, /gl\.viewport\(localBakeX, paintTarget\.height - \(localBakeY \+ bakeRect\.height\), bakeRect\.width, bakeRect\.height\)/);
+});
+
+test("brush preview dirty regions split long strokes into preview tiles", () => {
+  const { BrushEngine } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+  const longStrokeRect = { x: 0, y: 20, width: 1600, height: 40 };
+
+  engine.options = {};
+  engine.documentRenderer = {
+    getRasterHistoryTileSize: () => 256,
+    intersectRasterHistoryRects: (a, b) => engine.intersectDocumentRects(a, b),
+    unionRasterHistoryRects: (a, b) => engine.unionDocumentRects(a, b),
+  };
+
+  const dirtyRects = engine.getActiveStrokePreviewDirtyRects(longStrokeRect, [{
+    patchRect: longStrokeRect,
+  }]);
+
+  assert.equal(dirtyRects.length, 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(dirtyRects.map((rect) => rect.width))), [512, 512, 512, 64]);
+  assert.deepEqual(JSON.parse(JSON.stringify(dirtyRects.map((rect) => rect.height))), [40, 40, 40, 40]);
+  assert.deepEqual(JSON.parse(JSON.stringify(dirtyRects.map((rect) => rect.x))), [0, 512, 1024, 1536]);
+});
+
+test("brush emits live dirty region debug while a long stroke is drawing", () => {
+  const { BrushEngine, window } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+  const events = [];
+
+  window.CBO.debugPreviewDirtyRegions = true;
+  window.dispatchEvent = (event) => events.push(event.detail);
+  engine.activeStrokeDirtyDebugFrame = 0;
+  engine.activeStrokeBounds = { minX: 0, minY: 0, maxX: 1300, maxY: 80 };
+  engine.activeStrokeTilePatchRects = new Map();
+  engine.currentStrokeTool = "brush";
+  engine.documentRenderer = {
+    getRasterHistoryTileSize: () => 256,
+    getRasterHistoryTileRects: (rect) => engine.getPreviewDirtyTileRects(rect, 512),
+    intersectRasterHistoryRects: (a, b) => engine.intersectDocumentRects(a, b),
+    unionRasterHistoryRects: (a, b) => engine.unionDocumentRects(a, b),
+  };
+  engine.getDocumentDrawTarget = () => ({ height: 2000, width: 2000 });
+  engine.isDisposed = false;
+  engine.isDrawing = true;
+  engine.strokeTargetLayerId = "paint-main";
+
+  engine.includeStrokeTilePatchRect({ x: 0, y: 0, width: 1300, height: 80 });
+  engine.emitActiveStrokeDirtyRegionDebug();
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].live, true);
+  assert.equal(events[0].mode, "partial-live");
+  assert.equal(events[0].layerId, "paint-main");
+  assert.ok(events[0].rects.length > 1);
+  assert.equal(engine.strokePreviewDirtyRects.length, events[0].rects.length);
+  assert.equal(engine.lastStrokePreviewDirtyRects.length, events[0].rects.length);
+});
+
+test("brush bake dirty rect fallback uses the stroke accumulator before full bounds", () => {
+  const { BrushEngine } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+  const storedRect = { x: 10, y: 20, width: 30, height: 40 };
+  const fallbackRect = { x: 0, y: 0, width: 100, height: 100 };
+
+  engine.strokePreviewDirtyRects = [storedRect];
+  engine.lastStrokePreviewDirtyRects = null;
+
+  const storedFallback = engine.getFallbackStrokePreviewDirtyRects(fallbackRect);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(storedFallback)), [storedRect]);
+  assert.notEqual(storedFallback[0], storedRect);
+
+  engine.strokePreviewDirtyRects = null;
+  engine.lastStrokePreviewDirtyRects = null;
+
+  assert.deepEqual(JSON.parse(JSON.stringify(engine.getFallbackStrokePreviewDirtyRects(fallbackRect))), [fallbackRect]);
+});
+
+test("brush bake cache retention uses dirty tile coverage instead of stroke bounds", () => {
+  const { BrushEngine } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  engine.documentRenderer = {
+    intersectRasterHistoryRects: (a, b) => engine.intersectDocumentRects(a, b),
+  };
+  engine.getDocumentDrawTarget = () => ({ height: 4000, width: 4000 });
+
+  const longThinRects = [
+    { x: 0, y: 0, width: 512, height: 48 },
+    { x: 512, y: 1000, width: 512, height: 48 },
+    { x: 1024, y: 2000, width: 512, height: 48 },
+  ];
+  const hugeStrokeMemory = {
+    canvasSize: { height: 4000, width: 4000 },
+    coverage: 0.9,
+    policy: "huge",
+  };
+
+  assert.equal(engine.shouldKeepPreviewCacheForDirtyBake(longThinRects, hugeStrokeMemory), true);
+
+  const broadDirtyRects = [
+    { x: 0, y: 0, width: 4000, height: 1000 },
+    { x: 0, y: 1000, width: 4000, height: 1000 },
+  ];
+
+  assert.equal(engine.shouldKeepPreviewCacheForDirtyBake(broadDirtyRects, hugeStrokeMemory), false);
 });
 
 test("eraser refuses empty raster layers without allocating a target", () => {

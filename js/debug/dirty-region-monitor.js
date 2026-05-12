@@ -1,12 +1,20 @@
 (function registerDirtyRegionMonitor(namespace) {
+  const EVENT_NAME = "cbo:preview-dirty-region-debug";
+  const MONITOR_SCRIPT_URL = document.currentScript?.src || "";
   const OVERLAY_ID = "cbo-dirty-region-overlay";
   const OVERLAY_PANEL_ID = "cbo-dirty-region-panel";
   const DEFAULT_UPDATE_HZ = 4;
 
   const state = {
     lastText: "",
+    lastBakeDebugEvent: null,
+    lastCacheDebugEvent: null,
+    lastDirtyDebugEvent: null,
+    lastLiveDebugEvent: null,
     overlay: null,
+    overlayLoadPromise: null,
     overlayExpanded: false,
+    renderRafId: 0,
     running: false,
     updateHz: DEFAULT_UPDATE_HZ,
     updateTimer: 0,
@@ -40,6 +48,75 @@
     }
 
     return `${Math.round(rect.x)},${Math.round(rect.y)} ${Math.round(rect.width)}x${Math.round(rect.height)}`;
+  }
+
+  function formatAge(timestamp) {
+    const elapsedMs = Math.max(0, Date.now() - Math.max(0, Number(timestamp) || 0));
+
+    if (!timestamp) {
+      return "n/a";
+    }
+
+    if (elapsedMs < 1000) {
+      return "now";
+    }
+
+    if (elapsedMs < 60000) {
+      return `${Math.round(elapsedMs / 1000)}s ago`;
+    }
+
+    return `${Math.round(elapsedMs / 60000)}m ago`;
+  }
+
+  function getRectArea(rect) {
+    return Math.max(0, Number(rect?.width) || 0) * Math.max(0, Number(rect?.height) || 0);
+  }
+
+  function getRectListArea(rects) {
+    if (!Array.isArray(rects) || rects.length === 0) {
+      return 0;
+    }
+
+    const renderer = namespace.documentRenderer;
+
+    if (typeof renderer?.getDirtyRegionRectListArea === "function") {
+      return Math.max(0, Number(renderer.getDirtyRegionRectListArea(rects)) || 0);
+    }
+
+    return rects.reduce((total, rect) => total + getRectArea(rect), 0);
+  }
+
+  function unionRects(rects) {
+    if (!Array.isArray(rects) || rects.length === 0) {
+      return null;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    rects.forEach((rect) => {
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+
+      minX = Math.min(minX, Number(rect.x) || 0);
+      minY = Math.min(minY, Number(rect.y) || 0);
+      maxX = Math.max(maxX, (Number(rect.x) || 0) + (Number(rect.width) || 0));
+      maxY = Math.max(maxY, (Number(rect.y) || 0) + (Number(rect.height) || 0));
+    });
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+      return null;
+    }
+
+    return {
+      height: maxY - minY,
+      width: maxX - minX,
+      x: minX,
+      y: minY,
+    };
   }
 
   function getDocumentPixels(renderer) {
@@ -78,6 +155,12 @@
       },
       document: documentSize,
       generatedAt: new Date().toISOString(),
+      debug: {
+        bake: state.lastBakeDebugEvent,
+        cache: state.lastCacheDebugEvent,
+        last: state.lastDirtyDebugEvent,
+        live: state.lastLiveDebugEvent,
+      },
       hitRate: totalFrames > 0 ? partialFrames / totalFrames : 0,
       last: {
         coverage: lastFullPixels > 0 ? lastDrawnPixels / lastFullPixels : Number(stats.lastCoverage) || 1,
@@ -99,6 +182,42 @@
         totalFrames,
       },
       zoom: Number(namespace.brushEngine?.camera?.zoom) || 0,
+    };
+  }
+
+  function summarizeDirtyDebugEvent(detail = {}) {
+    const renderer = namespace.documentRenderer;
+    const documentSize = getDocumentPixels(renderer);
+    const cacheWidth = Math.max(1, Number(renderer?.previewCacheWidth) || documentSize.width || 1);
+    const cacheHeight = Math.max(1, Number(renderer?.previewCacheHeight) || documentSize.height || 1);
+    const cacheScale = Math.max(
+      0.0001,
+      Number(renderer?.previewCacheScale) || Math.min(cacheWidth / documentSize.width, cacheHeight / documentSize.height) || 1,
+    );
+    const rects = Array.isArray(detail.rects) ? detail.rects.filter(Boolean).map((rect) => ({ ...rect })) : [];
+    const meta = detail.meta && typeof detail.meta === "object" ? { ...detail.meta } : null;
+    const incomingDirtyRectsLength = Number(meta?.incomingDirtyRectsLength);
+    const hasRects = rects.length > 0;
+    const rectArea = getRectListArea(rects);
+    const cachePixels = Math.max(1, cacheWidth * cacheHeight);
+    const cacheRedrawPixels = Math.min(cachePixels, rectArea * cacheScale * cacheScale);
+
+    return {
+      ageLabel: formatAge(detail.generatedAt),
+      cacheCoverage: cacheRedrawPixels / cachePixels,
+      forcedFullCause: meta?.forcedFullCause || "",
+      generatedAt: Math.max(0, Number(detail.generatedAt) || Date.now()),
+      incomingDirtyRectsLength: Number.isFinite(incomingDirtyRectsLength) ? incomingDirtyRectsLength : null,
+      layerId: detail.layerId || "",
+      live: detail.live === true,
+      meta,
+      mode: detail.mode || "partial",
+      previewCacheReady: typeof meta?.previewCacheReady === "boolean" ? meta.previewCacheReady : null,
+      hasRects,
+      reason: detail.reason || "unknown",
+      rect: unionRects(rects),
+      rectCount: rects.length,
+      rectDocumentCoverage: documentSize.pixels > 0 ? rectArea / documentSize.pixels : 0,
     };
   }
 
@@ -278,7 +397,8 @@
     }
 
     const telemetry = collectDirtyRegionTelemetry();
-    const isPartial = telemetry.last.mode === "partial";
+    const debugMode = telemetry.debug.last?.mode || "";
+    const isPartial = telemetry.last.mode === "partial" || debugMode.includes("partial");
     const color = isPartial ? "rgba(118,190,255,.9)" : "rgba(255,224,112,.72)";
     const toggle = overlay.querySelector("[data-dirty-region-toggle]");
     const panel = overlay.querySelector("[data-dirty-region-panel]");
@@ -306,13 +426,25 @@
     syncOverlayChrome();
   }
 
+  function formatDebugEvent(event) {
+    if (!event) {
+      return "none";
+    }
+
+    const rectStatus = event.hasRects ? "" : " / no rects";
+    const causeStatus = event.forcedFullCause ? ` / ${event.forcedFullCause}` : "";
+
+    return `${event.mode} / ${event.reason}${causeStatus}${rectStatus} (${formatAge(event.generatedAt)})`;
+  }
+
   function renderOverlay() {
     const telemetry = collectDirtyRegionTelemetry();
     const overlay = ensureOverlay();
+    const live = telemetry.debug.live;
+    const bake = telemetry.debug.bake;
     const lines = [
       "CBO DIRTY REGIONS",
-      `Mode: ${telemetry.last.mode}`,
-      `Reason: ${telemetry.last.reason}`,
+      `Cache last: ${telemetry.last.mode} / ${telemetry.last.reason}`,
       `Zoom: ${telemetry.zoom ? telemetry.zoom.toFixed(3) : "n/a"}`,
       "",
       `Last rect: ${formatRect(telemetry.last.rect)}`,
@@ -320,6 +452,16 @@
       `Doc coverage: ${formatPercent(telemetry.last.rectDocumentCoverage)}`,
       `Cache redraw: ${formatPercent(telemetry.last.coverage)}`,
       `Saved last: ${formatPixels(telemetry.last.savedPixels)}`,
+      "",
+      `Live stroke: ${formatDebugEvent(live)}`,
+      `Live rects: ${live?.rectCount || 0}`,
+      `Live doc: ${formatPercent(live?.rectDocumentCoverage || 0)}`,
+      `Live cache est: ${formatPercent(live?.cacheCoverage || 0)}`,
+      "",
+      `Bake stroke: ${formatDebugEvent(bake)}`,
+      `Bake rects: ${bake?.rectCount || 0}`,
+      `Bake incoming: ${bake?.incomingDirtyRectsLength ?? "n/a"}`,
+      `Bake cache est: ${bake?.hasRects ? formatPercent(bake.cacheCoverage) : "no rects"}`,
       "",
       `Cache: ${telemetry.cache.width}x${telemetry.cache.height} @${telemetry.cache.scale.toFixed(3)}`,
       `Document: ${telemetry.document.width}x${telemetry.document.height}`,
@@ -341,6 +483,33 @@
     syncOverlayChrome(overlay);
   }
 
+  function queueRenderOverlay() {
+    if (!state.running || state.renderRafId) {
+      return;
+    }
+
+    state.renderRafId = window.requestAnimationFrame(() => {
+      state.renderRafId = 0;
+      renderOverlay();
+    });
+  }
+
+  function handleDirtyDebugEvent(event) {
+    const summary = summarizeDirtyDebugEvent(event.detail || {});
+
+    state.lastDirtyDebugEvent = summary;
+
+    if (summary.live) {
+      state.lastLiveDebugEvent = summary;
+    } else if (summary.reason === "bake-stroke") {
+      state.lastBakeDebugEvent = summary;
+    } else {
+      state.lastCacheDebugEvent = summary;
+    }
+
+    queueRenderOverlay();
+  }
+
   function showDirtyRegionOverlay(visible = true) {
     const overlay = ensureOverlay();
 
@@ -357,6 +526,7 @@
 
     state.running = true;
     state.updateHz = Math.max(1, Math.min(12, Number(options.updateHz) || DEFAULT_UPDATE_HZ));
+    window.addEventListener(EVENT_NAME, handleDirtyDebugEvent);
     showDirtyRegionOverlay(options.visible !== false);
     renderOverlay();
     state.updateTimer = window.setInterval(renderOverlay, Math.round(1000 / state.updateHz));
@@ -372,15 +542,115 @@
       state.updateTimer = 0;
     }
 
+    window.removeEventListener(EVENT_NAME, handleDirtyDebugEvent);
+    if (state.renderRafId) {
+      window.cancelAnimationFrame(state.renderRafId);
+      state.renderRafId = 0;
+    }
+
     showDirtyRegionOverlay(false);
   }
 
   function resetDirtyRegionStats() {
     const stats = namespace.documentRenderer?.resetPreviewDirtyStats?.() || null;
 
+    state.lastBakeDebugEvent = null;
+    state.lastCacheDebugEvent = null;
+    state.lastDirtyDebugEvent = null;
+    state.lastLiveDebugEvent = null;
     renderOverlay();
     return stats;
   }
+
+  function getLoadedDirtyRegionOverlayApi(fallbackApi) {
+    const api = namespace.dirtyRegionOverlay;
+
+    return api && api !== fallbackApi ? api : null;
+  }
+
+  function getDirtyRegionOverlayScriptUrl() {
+    const cacheBust = `dirty-overlay-fallback-${Date.now()}`;
+
+    try {
+      return new URL(`dirty-region-overlay.js?v=${cacheBust}`, MONITOR_SCRIPT_URL || window.location.href).href;
+    } catch (error) {
+      return `./js/debug/dirty-region-overlay.js?v=${cacheBust}`;
+    }
+  }
+
+  function loadDirtyRegionOverlayScript(fallbackApi) {
+    const existingApi = getLoadedDirtyRegionOverlayApi(fallbackApi);
+
+    if (existingApi) {
+      return Promise.resolve(existingApi);
+    }
+
+    if (state.overlayLoadPromise) {
+      return state.overlayLoadPromise;
+    }
+
+    state.overlayLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+
+      script.async = true;
+      script.src = getDirtyRegionOverlayScriptUrl();
+      script.onload = () => {
+        const api = getLoadedDirtyRegionOverlayApi(fallbackApi);
+
+        state.overlayLoadPromise = null;
+
+        if (api) {
+          resolve(api);
+        } else {
+          reject(new Error("Dirty region overlay script loaded but did not register CBO.dirtyRegionOverlay"));
+        }
+      };
+      script.onerror = () => {
+        state.overlayLoadPromise = null;
+        reject(new Error(`Unable to load dirty region overlay script: ${script.src}`));
+      };
+      document.head.append(script);
+    });
+
+    return state.overlayLoadPromise;
+  }
+
+  const fallbackDirtyRegionOverlay = Object.freeze({
+    clear() {
+      return getLoadedDirtyRegionOverlayApi(fallbackDirtyRegionOverlay)?.clear?.() || this.status();
+    },
+    getItems() {
+      return getLoadedDirtyRegionOverlayApi(fallbackDirtyRegionOverlay)?.getItems?.() || [];
+    },
+    start(options = {}) {
+      namespace.debugPreviewDirtyRegions = true;
+
+      return loadDirtyRegionOverlayScript(fallbackDirtyRegionOverlay)
+        .then((api) => api.start(options));
+    },
+    status() {
+      return getLoadedDirtyRegionOverlayApi(fallbackDirtyRegionOverlay)?.status?.() || {
+        enabled: namespace.debugPreviewDirtyRegions === true,
+        itemCount: 0,
+        labels: false,
+        loading: Boolean(state.overlayLoadPromise),
+        ttlMs: 0,
+      };
+    },
+    stop() {
+      const api = getLoadedDirtyRegionOverlayApi(fallbackDirtyRegionOverlay);
+
+      if (api?.stop) {
+        return api.stop();
+      }
+
+      namespace.debugPreviewDirtyRegions = false;
+      return this.status();
+    },
+    toggle(options = {}) {
+      return namespace.debugPreviewDirtyRegions === true ? this.stop() : this.start(options);
+    },
+  });
 
   namespace.collectDirtyRegionTelemetry = collectDirtyRegionTelemetry;
   namespace.showDirtyRegionOverlay = showDirtyRegionOverlay;
@@ -394,6 +664,14 @@
     start: startDirtyRegionMonitor,
     stop: stopDirtyRegionMonitor,
   };
+
+  if (!namespace.dirtyRegionOverlay) {
+    namespace.dirtyRegionOverlay = fallbackDirtyRegionOverlay;
+  }
+
+  if (!namespace.dirtyRegionsOverlay) {
+    namespace.dirtyRegionsOverlay = fallbackDirtyRegionOverlay;
+  }
 
   document.addEventListener("DOMContentLoaded", () => {
     window.setTimeout(() => {

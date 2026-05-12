@@ -33,3 +33,17 @@ test("layers panel blocks new raster layers when the layer memory cap is exceede
   assert.match(source, /if \(!allowNewRasterLayers\(\{[\s\S]*return;[\s\S]*\}/);
   assert.match(cssSource, /\.cbo-layer-limit-toast/);
 });
+
+test("layers panel releases raster memory when clearing the last paint layer", () => {
+  const source = readRepoFile("js", "layers-panel.js");
+
+  assert.match(source, /function clearLayerContents\(rows, options = \{\}\)/);
+  assert.match(source, /function releaseDeletedDocumentHistory\(source = "layers-panel-delete-all-content-layers"\)/);
+  assert.match(source, /renderer\?\.clearLayer\?\.?\(layerId, options\)/);
+  assert.match(source, /window\.CBO\.documentHistory\?\.clear\?\.\(\)/);
+  assert.match(source, /renderer\?\.pruneOrphanRasterTargets\?\.\(\)/);
+  assert.match(source, /releaseRaster: true/);
+  assert.match(source, /source: "layers-panel-delete-last-content-layer"/);
+  assert.match(source, /syncLayerModelFromDom\([\s\S]*isDeletingAllContent \? "delete-all-content-layers" : "delete"/);
+  assert.match(source, /isDeletingAllContent \? \{ history: false \} : \{\}/);
+});

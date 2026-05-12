@@ -496,7 +496,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return serialized;
   }
 
-  function syncLayerModelFromDom(source = "layers-panel") {
+  function syncLayerModelFromDom(source = "layers-panel", options = {}) {
     if (!layerModel) {
       return;
     }
@@ -510,10 +510,12 @@ window.CBO.initLayersPanel = function initLayersPanel() {
         .map(serializeLayerEntry);
       const activeLayerId = getLayerId(focusedLayer) || getLayerId(getFirstSelectedLayer());
 
-      layerModel.setEntries(entries, { source });
+      const syncOptions = { ...options, source };
+
+      layerModel.setEntries(entries, syncOptions);
 
       if (activeLayerId && layerModel.activeLayerId !== activeLayerId) {
-        layerModel.setActiveLayer(activeLayerId, { source });
+        layerModel.setActiveLayer(activeLayerId, syncOptions);
       }
     } finally {
       isSyncingLayerModelFromDom = false;
@@ -937,13 +939,22 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return rows.reduce((total, row) => total + estimateLayerRowRasterDuplicateBytes(row), 0);
   }
 
-  function clearLayerContents(rows) {
+  function clearLayerContents(rows, options = {}) {
     const renderer = window.CBO.documentRenderer;
     const layerIds = Array.from(new Set(rows.map(getLayerId).filter(Boolean)));
 
     layerIds.forEach((layerId) => {
-      renderer?.clearLayer?.(layerId);
+      renderer?.clearLayer?.(layerId, options);
     });
+  }
+
+  function releaseDeletedDocumentHistory(source = "layers-panel-delete-all-content-layers") {
+    const renderer = window.CBO.documentRenderer;
+
+    window.CBO.documentHistory?.clear?.();
+    renderer?.pruneOrphanRasterTargets?.();
+    renderer?.invalidatePreviewCache?.(source);
+    renderer?.requestDraw?.();
   }
 
   function selectOnlyLayer(row) {
@@ -1119,17 +1130,28 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       getLayerEntry(selectedContentRows[0]) === selectedEntries[0];
 
     if (isDirectLastPaintLayer) {
-      clearLayerContents(selectedContentRows);
+      clearLayerContents(selectedContentRows, {
+        releaseRaster: true,
+        source: "layers-panel-delete-last-content-layer",
+      });
+      releaseDeletedDocumentHistory("layers-panel-delete-last-content-layer");
       return;
     }
 
     selectedEntries.forEach((entry) => entry.remove());
     clearLayerSelection();
     updateLayerDepths();
-    syncLayerModelFromDom("delete");
+    syncLayerModelFromDom(
+      isDeletingAllContent ? "delete-all-content-layers" : "delete",
+      isDeletingAllContent ? { history: false } : {},
+    );
 
     if (isDeletingAllContent) {
-      layerModel?.ensureActivePaintLayer?.({ source: "delete-last-content-layer" });
+      layerModel?.ensureActivePaintLayer?.({
+        history: false,
+        source: "delete-last-content-layer",
+      });
+      releaseDeletedDocumentHistory("layers-panel-delete-all-content-layers");
     }
 
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
