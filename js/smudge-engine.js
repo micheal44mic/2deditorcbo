@@ -460,7 +460,9 @@ void main() {
     }
 
     getDocumentRect(target = null) {
-      return {
+      return namespace.getActiveDocumentArtboardRect?.({
+        layerId: target?.layerId || this.activeHistoryLayerId || this.documentRenderer?.layerModel?.activeLayerId || "",
+      }) || {
         x: 0,
         y: 0,
         width: Math.max(1, Math.round(this.documentRenderer?.width || target?.width || 1)),
@@ -525,13 +527,36 @@ void main() {
     }
 
     getActiveAreaSelectionCoverageRects(bounds) {
-      if (!namespace.areaSelection?.hasSelection?.()) {
+      if (!bounds) {
         return null;
       }
 
-      const rects = namespace.areaSelection.getIntersectingRects?.(bounds) || [];
+      const artboardRect = namespace.getActiveDocumentArtboardRect?.({
+        layerId: this.activeHistoryLayerId || this.strokeTarget?.layerId || this.documentRenderer?.layerModel?.activeLayerId || "",
+      }) || null;
+      const clippedBounds = artboardRect
+        ? this.intersectDocumentRects(bounds, artboardRect)
+        : bounds;
 
-      return rects.length > 0 ? rects : [];
+      if (!clippedBounds) {
+        return artboardRect ? [] : null;
+      }
+
+      if (!namespace.areaSelection?.hasSelection?.()) {
+        return artboardRect ? [clippedBounds] : null;
+      }
+
+      const rects = namespace.areaSelection.getIntersectingRects?.(clippedBounds) || [];
+
+      if (!artboardRect) {
+        return rects.length > 0 ? rects : [];
+      }
+
+      const clippedRects = rects
+        .map((rect) => this.intersectDocumentRects(rect, artboardRect))
+        .filter(Boolean);
+
+      return clippedRects.length > 0 ? clippedRects : [];
     }
 
     getBoundsForDocumentRects(rects) {
@@ -1793,10 +1818,10 @@ void main() {
       const documentRect = this.getDocumentRect(target);
 
       return (
-        point.docX >= 0 &&
-        point.docY >= 0 &&
-        point.docX <= documentRect.width &&
-        point.docY <= documentRect.height
+        point.docX >= documentRect.x &&
+        point.docY >= documentRect.y &&
+        point.docX <= documentRect.x + documentRect.width &&
+        point.docY <= documentRect.y + documentRect.height
       );
     }
 

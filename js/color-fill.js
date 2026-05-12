@@ -552,35 +552,50 @@
     };
   }
 
-  function getFillAnalysisRect(referenceSource, targetWidth, targetHeight, seedX, seedY) {
+  function isPointInsideRect(x, y, rect) {
+    return Boolean(
+      rect &&
+      Number.isFinite(x) &&
+      Number.isFinite(y) &&
+      x >= rect.x &&
+      y >= rect.y &&
+      x < rect.x + rect.width &&
+      y < rect.y + rect.height
+    );
+  }
+
+  function getActiveFillArtboardRect(layerId = "") {
+    return namespace.getActiveDocumentArtboardRect?.({ layerId }) || null;
+  }
+
+  function getFillAnalysisRect(referenceSource, targetWidth, targetHeight, seedX, seedY, clipRect = null) {
+    const fallbackRect = clipRect || {
+      height: targetHeight,
+      width: targetWidth,
+      x: 0,
+      y: 0,
+    };
+
     if (referenceSource?.sparse !== true || referenceSource.boundAnalysis !== true || !referenceSource.bounds) {
-      return {
-        height: targetHeight,
-        width: targetWidth,
-        x: 0,
-        y: 0,
-      };
+      return isPointInsideRect(seedX, seedY, fallbackRect) ? { ...fallbackRect } : null;
     }
 
     const padding = Math.max(1, Math.round(referenceSource.tileSize || FILL_EDGE_AA_RADIUS));
-    const rect = clampRectToTarget(
-      {
-        height: referenceSource.bounds.height + padding * 2,
-        width: referenceSource.bounds.width + padding * 2,
-        x: referenceSource.bounds.x - padding,
-        y: referenceSource.bounds.y - padding,
-      },
-      targetWidth,
-      targetHeight,
-    );
+    const sparseBoundsRect = {
+      height: referenceSource.bounds.height + padding * 2,
+      width: referenceSource.bounds.width + padding * 2,
+      x: referenceSource.bounds.x - padding,
+      y: referenceSource.bounds.y - padding,
+    };
+    const rect = clipRect
+      ? intersectRects(sparseBoundsRect, clipRect)
+      : clampRectToTarget(sparseBoundsRect, targetWidth, targetHeight);
 
     if (
+      !rect ||
       rect.width <= 0 ||
       rect.height <= 0 ||
-      seedX < rect.x ||
-      seedY < rect.y ||
-      seedX >= rect.x + rect.width ||
-      seedY >= rect.y + rect.height
+      !isPointInsideRect(seedX, seedY, rect)
     ) {
       return null;
     }
@@ -1204,10 +1219,17 @@
     const point = brushEngine.screenToDocumentSpace(clientX, clientY);
     const seedX = Math.floor(point.docX);
     const seedY = Math.floor(point.docY);
-    const width = Math.max(1, Math.round(renderer.width || writableLayer.existingTarget?.width || 1));
-    const height = Math.max(1, Math.round(renderer.height || writableLayer.existingTarget?.height || 1));
+    const activeArtboardRect = getActiveFillArtboardRect(writableLayer.layerId);
+    const fillBounds = activeArtboardRect || {
+      height: Math.max(1, Math.round(renderer.height || writableLayer.existingTarget?.height || 1)),
+      width: Math.max(1, Math.round(renderer.width || writableLayer.existingTarget?.width || 1)),
+      x: 0,
+      y: 0,
+    };
+    const width = Math.max(1, Math.round(fillBounds.width || 1));
+    const height = Math.max(1, Math.round(fillBounds.height || 1));
 
-    if (seedX < 0 || seedY < 0 || seedX >= width || seedY >= height) {
+    if (!isPointInsideRect(seedX, seedY, fillBounds)) {
       return false;
     }
 
@@ -1224,8 +1246,14 @@
       : selectionRect
         ? (docX, docY) => namespace.areaSelection.isPointInside?.(docX, docY) !== false
         : null;
+    const artboardContains = activeArtboardRect
+      ? (docX, docY) => isPointInsideRect(docX, docY, activeArtboardRect)
+      : null;
+    const clipContains = selectionContains && artboardContains
+      ? (docX, docY) => selectionContains(docX, docY) && artboardContains(docX, docY)
+      : selectionContains || artboardContains;
 
-    if (selectionContains && !selectionContains(seedX, seedY)) {
+    if (clipContains && !clipContains(seedX, seedY)) {
       return false;
     }
 
@@ -1241,7 +1269,7 @@
     const referenceSource = createReferencePixelSource(gl, referenceTarget, {
       boundAnalysis: useExplicitReference,
     });
-    const analysisRect = getFillAnalysisRect(referenceSource, width, height, seedX, seedY);
+    const analysisRect = getFillAnalysisRect(referenceSource, width, height, seedX, seedY, fillBounds);
 
     if (!analysisRect) {
       return false;
@@ -1258,7 +1286,7 @@
       tolerance,
       analysisRect.x,
       analysisRect.y,
-      { selectionContains },
+      { selectionContains: clipContains },
     );
 
     if (!fillResult) {
@@ -1288,6 +1316,10 @@
       dirtyRect = selectionRegion.intersectBounds?.(dirtyRect) || null;
     } else if (selectionRect) {
       dirtyRect = intersectRects(dirtyRect, selectionRect);
+    }
+
+    if (activeArtboardRect) {
+      dirtyRect = intersectRects(dirtyRect, activeArtboardRect);
     }
 
     if (!dirtyRect || dirtyRect.width <= 0 || dirtyRect.height <= 0) {
@@ -1334,7 +1366,7 @@
         analysisRect.x,
         analysisRect.y,
         analysisRect.width,
-        selectionContains,
+        clipContains,
       );
       writeDirtyPixelsToTarget(
         gl,

@@ -317,6 +317,10 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     throw new Error("DocumentLayerModel non caricato: impossibile inizializzare i layer documento.");
   }
 
+  if (!window.CBO.DocumentArtboardModel) {
+    throw new Error("DocumentArtboardModel non caricato: impossibile inizializzare gli artboard documento.");
+  }
+
   if (!window.CBO.DocumentHistory) {
     throw new Error("DocumentHistory non caricato: impossibile inizializzare la history documento.");
   }
@@ -413,6 +417,13 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     requestedWidth: documentSize.width,
     width: documentRenderer.width,
   };
+  window.CBO.resetDocumentArtboards?.({
+    artboards: options.artboards,
+    defaultSecondaryCount: 2,
+    documentHeight: documentRenderer.height,
+    documentWidth: documentRenderer.width,
+    source: "editor-canvas-init-artboards",
+  });
 
   try {
     window.CBO.imageRasterizer = new window.CBO.ImageRasterizer({

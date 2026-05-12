@@ -123,7 +123,8 @@ test("brush and fill constrain raster edits to an active area selection", () => 
   const smudgeSource = readRepoFile("js", "smudge-engine.js");
 
   assert.match(brushSource, /getActiveAreaSelectionCoverageRects\(rect\)/);
-  assert.match(brushSource, /namespace\.areaSelection\.getIntersectingRects\?\.\(rect\)/);
+  assert.match(brushSource, /namespace\.getActiveDocumentArtboardRect\?\.\(\{ layerId \}\)/);
+  assert.match(brushSource, /namespace\.areaSelection\.getIntersectingRects\?\.\(clippedRect\)/);
   assert.match(brushSource, /const selectionCoverageRects = this\.getActiveAreaSelectionCoverageRects\(strokeRect\)/);
   assert.match(brushSource, /const hasSelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length > 0/);
   assert.match(brushSource, /const hasEmptySelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length === 0/);
@@ -155,10 +156,13 @@ test("brush and fill constrain raster edits to an active area selection", () => 
   assert.match(brushSource, /targetCoverageRects\.forEach\(\(selectionTargetRect\) => \{/);
   assert.match(brushSource, /gl\.enable\(gl\.SCISSOR_TEST\)/);
   assert.match(smudgeSource, /getActiveAreaSelectionCoverageRects\(bounds\) \{/);
+  assert.match(smudgeSource, /namespace\.getActiveDocumentArtboardRect\?\.\(\{/);
   assert.match(smudgeSource, /namespace\.areaSelection\?\.hasSelection\?\.\(\)/);
-  assert.match(smudgeSource, /namespace\.areaSelection\.getIntersectingRects\?\.\(bounds\)/);
+  assert.match(smudgeSource, /namespace\.areaSelection\.getIntersectingRects\?\.\(clippedBounds\)/);
   assert.match(smudgeSource, /selectionCoverageRects\.forEach\(\(coverageRect\) => \{/);
   assert.match(fillSource, /namespace\.areaSelection\.getRegionSnapshot\?\.\(\)/);
+  assert.match(fillSource, /getActiveFillArtboardRect\(writableLayer\.layerId\)/);
+  assert.match(fillSource, /dirtyRect = intersectRects\(dirtyRect, activeArtboardRect\)/);
   assert.match(fillSource, /selectionRegion\.containsPoint\?\.\(docX, docY\) === true/);
   assert.match(fillSource, /dirtyRect = selectionRegion\.intersectBounds\?\.\(dirtyRect\) \|\| null/);
   assert.match(fillSource, /tilePatchRects: options\.tilePatchRects|tilePatchRects,/);
@@ -214,7 +218,7 @@ test("rect selection drag supports shift square and alt center modifiers", () =>
   assert.match(selectionSource, /const forceSquare = options\.forceSquare === true/);
   assert.match(selectionSource, /if \(fromCenter\) \{/);
   assert.match(selectionSource, /if \(forceSquare\) \{/);
-  assert.match(selectionSource, /Math\.min\([\s\S]*Math\.max\(radiusX, radiusY\),[\s\S]*startX,[\s\S]*width - startX,[\s\S]*startY,[\s\S]*height - startY/);
+  assert.match(selectionSource, /Math\.min\([\s\S]*Math\.max\(radiusX, radiusY\),[\s\S]*startX - minBoundX,[\s\S]*maxBoundX - startX,[\s\S]*startY - minBoundY,[\s\S]*maxBoundY - startY/);
   assert.match(selectionSource, /function getSelectionDragOptions\(event\) \{/);
   assert.match(selectionSource, /forceSquare: event\.shiftKey === true/);
   assert.match(selectionSource, /fromCenter: event\.altKey === true/);

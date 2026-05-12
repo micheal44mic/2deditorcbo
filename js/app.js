@@ -98,6 +98,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.CBO.initTopToolbar();
   window.CBO.initVerticalToolbar();
   window.CBO.initLayerEffectsPanel?.();
+  window.CBO.initArtboardPreview?.();
   window.CBO.initColorPicker();
   window.CBO.initColorDrop();
   window.CBO.initToolbar();

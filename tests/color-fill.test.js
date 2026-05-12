@@ -152,7 +152,8 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /function getReferenceTarget\(writeLayerId, fallbackTarget = null\)/);
   assert.match(source, /function createSparseReferencePixelSource\(gl, sparseTarget, options = \{\}\)/);
   assert.match(source, /function createReferencePixelSource\(gl, referenceTarget, options = \{\}\)/);
-  assert.match(source, /function getFillAnalysisRect\(referenceSource, targetWidth, targetHeight, seedX, seedY\)/);
+  assert.match(source, /function getFillAnalysisRect\(referenceSource, targetWidth, targetHeight, seedX, seedY, clipRect = null\)/);
+  assert.match(source, /function getActiveFillArtboardRect\(layerId = ""\)/);
   assert.match(source, /function getReferencePixelOffset\(referenceSource, documentX, documentY\)/);
   assert.match(source, /const referenceTarget = getReferenceTarget\(writableLayer\.layerId, writableLayer\.existingTarget\)/);
   assert.match(source, /const referenceFramebuffer = referenceTarget\.framebuffer/);

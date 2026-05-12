@@ -14,6 +14,7 @@
   const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
+  const ARTBOARD_LAYER_GROUP_PREFIX = "artboard-group-";
   const CURVE_CHANNELS = Object.freeze(["rgb", "r", "g", "b"]);
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
     fill: "#000000",
@@ -493,12 +494,7 @@
         .map((entry) => {
           if (entry.type === "group") {
             return this.createGroup({
-              id: entry.id,
-              name: entry.name,
-              visible: entry.visible,
-              locked: entry.locked,
-              opacity: entry.opacity,
-              effects: entry.effects,
+              ...entry,
               children: entry.children,
             });
           }
@@ -528,16 +524,44 @@
             return entry;
           })
           .filter(Boolean);
+      const backgroundLayer = this.createLayer({
+        ...backgroundEntry,
+        id: BACKGROUND_LAYER_ID,
+        name: "Background",
+        type: "background",
+        locked: true,
+      });
+      const strippedEntries = stripBackground(entries);
+      let didPlaceBackgroundInArtboard = false;
+      const placeBackgroundInArtboard = (sourceEntries) =>
+        sourceEntries.map((entry) => {
+          if (entry.type !== "group") {
+            return entry;
+          }
+
+          const children = Array.isArray(entry.children) ? entry.children : [];
+          const nextEntry = {
+            ...entry,
+            children: didPlaceBackgroundInArtboard ? children : placeBackgroundInArtboard(children),
+          };
+
+          if (entry.artboardGroup === true && !didPlaceBackgroundInArtboard) {
+            didPlaceBackgroundInArtboard = true;
+            nextEntry.children = [...children, backgroundLayer];
+          }
+
+          return nextEntry;
+        });
+
+      const artboardEntries = placeBackgroundInArtboard(strippedEntries);
+
+      if (didPlaceBackgroundInArtboard) {
+        return artboardEntries;
+      }
 
       return [
-        ...stripBackground(entries),
-        this.createLayer({
-          ...backgroundEntry,
-          id: BACKGROUND_LAYER_ID,
-          name: "Background",
-          type: "background",
-          locked: true,
-        }),
+        ...strippedEntries,
+        backgroundLayer,
       ];
     }
 
@@ -569,6 +593,130 @@
       return false;
     }
 
+    getArtboardIdFromGroup(entry) {
+      const artboardId = String(entry?.artboardId || "").trim();
+
+      if (artboardId) {
+        return artboardId;
+      }
+
+      const groupId = String(entry?.id || "").trim();
+
+      return groupId.startsWith(ARTBOARD_LAYER_GROUP_PREFIX)
+        ? groupId.slice(ARTBOARD_LAYER_GROUP_PREFIX.length)
+        : "";
+    }
+
+    isArtboardGroup(entry) {
+      return entry?.type === "group" && entry.artboardGroup === true;
+    }
+
+    findFirstArtboardGroup(entries = this.entries) {
+      for (const entry of entries) {
+        if (this.isArtboardGroup(entry)) {
+          return entry;
+        }
+
+        const childMatch = this.findFirstArtboardGroup(entry.children || []);
+
+        if (childMatch) {
+          return childMatch;
+        }
+      }
+
+      return null;
+    }
+
+    findArtboardGroupById(artboardId, entries = this.entries) {
+      const normalizedArtboardId = String(artboardId || "").trim();
+
+      if (!normalizedArtboardId) {
+        return null;
+      }
+
+      for (const entry of entries) {
+        if (this.isArtboardGroup(entry) && this.getArtboardIdFromGroup(entry) === normalizedArtboardId) {
+          return entry;
+        }
+
+        const childMatch = this.findArtboardGroupById(normalizedArtboardId, entry.children || []);
+
+        if (childMatch) {
+          return childMatch;
+        }
+      }
+
+      return null;
+    }
+
+    findEntryArtboardId(id, entries = this.entries, currentArtboardId = "") {
+      if (!id) {
+        return undefined;
+      }
+
+      for (const entry of entries) {
+        const nextArtboardId = this.isArtboardGroup(entry)
+          ? this.getArtboardIdFromGroup(entry) || currentArtboardId
+          : currentArtboardId;
+
+        if (entry.id === id) {
+          return nextArtboardId || null;
+        }
+
+        const childMatch = this.findEntryArtboardId(id, entry.children || [], nextArtboardId);
+
+        if (childMatch !== undefined) {
+          return childMatch;
+        }
+      }
+
+      return undefined;
+    }
+
+    getSelectedArtboardId(options = {}) {
+      const explicitArtboardId = String(options.artboardId || "").trim();
+
+      if (explicitArtboardId) {
+        return explicitArtboardId;
+      }
+
+      return String(
+        window.CBO?.getSelectedDocumentArtboardId?.() ||
+        window.CBO?.getSelectedPreviewArtboardId?.() ||
+        "",
+      ).trim();
+    }
+
+    resolveInsertionArtboardId(activeEntry = null, options = {}) {
+      const selectedArtboardId = this.getSelectedArtboardId(options);
+
+      if (selectedArtboardId) {
+        return selectedArtboardId;
+      }
+
+      const activeEntryArtboardId = activeEntry
+        ? this.findEntryArtboardId(activeEntry.id)
+        : undefined;
+
+      if (activeEntryArtboardId) {
+        return activeEntryArtboardId;
+      }
+
+      return this.getArtboardIdFromGroup(this.findFirstArtboardGroup()) || "";
+    }
+
+    insertAtTopOfArtboard(artboardId, entry) {
+      const artboardGroup = this.findArtboardGroupById(artboardId);
+
+      if (!artboardGroup || !entry) {
+        return false;
+      }
+
+      artboardGroup.children = Array.isArray(artboardGroup.children) ? artboardGroup.children : [];
+      artboardGroup.children.unshift(entry);
+      return true;
+    }
+
     insertAboveBottomSystemLayer(entry) {
       const backgroundIndex = this.entries.findIndex((layer) => layer.id === BACKGROUND_LAYER_ID);
       const insertIndex = backgroundIndex >= 0 ? backgroundIndex : this.entries.length;
@@ -587,8 +735,15 @@
 
     ensureActivePaintLayer(options = {}) {
       const activeEntry = this.findEntryById(this.activeLayerId);
+      const targetArtboardId = this.resolveInsertionArtboardId(activeEntry, options);
+      const activeEntryArtboardId = activeEntry
+        ? this.findEntryArtboardId(activeEntry.id)
+        : undefined;
 
-      if (activeEntry?.type === "paint") {
+      if (
+        activeEntry?.type === "paint" &&
+        (!targetArtboardId || activeEntryArtboardId === targetArtboardId)
+      ) {
         return this.cloneEntry(activeEntry);
       }
 
@@ -597,9 +752,21 @@
         name: this.getNextPaintLayerName(),
         type: "paint",
       });
-      const inserted = activeEntry
-        ? this.insertEntryAbove(activeEntry.id, paintLayer)
-        : this.insertAtTop(paintLayer);
+      let inserted = false;
+
+      if (activeEntry && (!targetArtboardId || activeEntryArtboardId === targetArtboardId)) {
+        inserted = this.insertEntryAbove(activeEntry.id, paintLayer);
+      }
+
+      if (!inserted && targetArtboardId) {
+        inserted = this.insertAtTopOfArtboard(targetArtboardId, paintLayer);
+      }
+
+      if (!inserted) {
+        inserted = activeEntry
+          ? this.insertEntryAbove(activeEntry.id, paintLayer)
+          : this.insertAtTop(paintLayer);
+      }
 
       if (!inserted) {
         this.insertAboveBottomSystemLayer(paintLayer);

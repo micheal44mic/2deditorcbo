@@ -570,6 +570,7 @@
       session: {
         activeLayerId: layerModel.activeLayerId || null,
         document: {
+          artboards: namespace.getDocumentArtboards?.() || [],
           height: Math.max(1, Math.round(renderer.height || namespace.documentSettings?.height || 1)),
           presetId: namespace.documentSettings?.presetId || "",
           requestedHeight: Math.max(1, Math.round(namespace.documentSettings?.requestedHeight || renderer.height || 1)),
@@ -826,6 +827,7 @@
 
     if (!canvas || !gl || !layerModel || !namespace.DocumentRenderer) {
       namespace.initEditorCanvas?.({
+        artboards: session.document.artboards || [],
         documentHeight: session.document.height,
         documentWidth: session.document.width,
         presetId: session.document.presetId,
@@ -896,6 +898,7 @@
         resetRendererForRestore(session);
       } else {
         namespace.initEditorCanvas?.({
+          artboards: session.document.artboards || [],
           documentHeight: session.document.height,
           documentWidth: session.document.width,
           presetId: session.document.presetId,
@@ -930,6 +933,13 @@
         requestedWidth: session.document.requestedWidth || session.document.width,
         width: session.document.width,
       };
+      namespace.resetDocumentArtboards?.({
+        artboards: session.document.artboards || [],
+        defaultSecondaryCount: 2,
+        documentHeight: session.document.height,
+        documentWidth: session.document.width,
+        source: "autosave-restore-artboards",
+      });
 
       window.dispatchEvent(new CustomEvent("cbo:document-autosave-restored", {
         detail: createSummary(session),

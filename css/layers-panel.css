@@ -289,6 +289,42 @@
   cursor: default;
 }
 
+.layer-artboard-row {
+  color: #edf0f6;
+  cursor: default;
+}
+
+.layer-artboard-row.artboard-active {
+  background: rgba(255, 209, 102, 0.14);
+  color: #ffe7a3;
+  box-shadow: inset 0 0 0 1px rgba(255, 209, 102, 0.34);
+}
+
+.layer-artboard-row.artboard-active::before {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: #ffd166;
+  content: "";
+}
+
+.layer-artboard-row.artboard-active:hover {
+  background: rgba(255, 209, 102, 0.2);
+  color: #fff2c8;
+}
+
+.layer-artboard-row .layer-actions {
+  display: none;
+}
+
+.layer-artboard-row .layer-file-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
 .layer-row.renaming {
   cursor: text;
 }

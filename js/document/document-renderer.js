@@ -2288,12 +2288,13 @@ void main() {
 
     getRasterHistoryTileBounds(tx, ty, options = {}) {
       const tileSize = this.getRasterHistoryTileSize(options);
+      const documentRect = this.getDocumentBoundsRect();
       const tileX = tx * tileSize;
       const tileY = ty * tileSize;
-      const x0 = Math.max(0, tileX);
-      const y0 = Math.max(0, tileY);
-      const x1 = Math.min(tileX + tileSize, this.width);
-      const y1 = Math.min(tileY + tileSize, this.height);
+      const x0 = Math.max(documentRect.x, tileX);
+      const y0 = Math.max(documentRect.y, tileY);
+      const x1 = Math.min(tileX + tileSize, documentRect.x + documentRect.width);
+      const y1 = Math.min(tileY + tileSize, documentRect.y + documentRect.height);
 
       if (x1 <= x0 || y1 <= y0) {
         return null;
@@ -7438,15 +7439,16 @@ void main() {
         return null;
       }
 
+      const documentRect = this.getDocumentBoundsRect();
       const pad = Number.isFinite(padding) ? Math.max(0, Math.floor(padding)) : 0;
       const rawX = Number.isFinite(rect.x) ? rect.x : 0;
       const rawY = Number.isFinite(rect.y) ? rect.y : 0;
       const rawWidth = Number.isFinite(rect.width) && rect.width > 0 ? rect.width : 1;
       const rawHeight = Number.isFinite(rect.height) && rect.height > 0 ? rect.height : 1;
-      const minX = Math.max(0, Math.floor(rawX - pad));
-      const minY = Math.max(0, Math.floor(rawY - pad));
-      const maxX = Math.min(this.width, Math.ceil(rawX + rawWidth + pad));
-      const maxY = Math.min(this.height, Math.ceil(rawY + rawHeight + pad));
+      const minX = Math.max(documentRect.x, Math.floor(rawX - pad));
+      const minY = Math.max(documentRect.y, Math.floor(rawY - pad));
+      const maxX = Math.min(documentRect.x + documentRect.width, Math.ceil(rawX + rawWidth + pad));
+      const maxY = Math.min(documentRect.y + documentRect.height, Math.ceil(rawY + rawHeight + pad));
 
       if (maxX <= minX || maxY <= minY) {
         return null;
@@ -10920,6 +10922,17 @@ void main() {
         width: Math.max(1, Math.round(this.width || 1)),
         x: 0,
         y: 0,
+      };
+    }
+
+    getDocumentBoundsRect() {
+      const artboardUnion = namespace.getDocumentArtboardUnionRect?.();
+
+      return artboardUnion || {
+        x: 0,
+        y: 0,
+        width: Math.max(1, Math.round(this.width || 1)),
+        height: Math.max(1, Math.round(this.height || 1)),
       };
     }
 

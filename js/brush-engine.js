@@ -1129,6 +1129,15 @@ void main() {
       };
     }
 
+    getActiveDocumentPaintRect(layerId = this.strokeTargetLayerId || "") {
+      return namespace.getActiveDocumentArtboardRect?.({ layerId }) || null;
+    }
+
+    getStrokeAllocationBounds(target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
+      return this.getActiveDocumentPaintRect(this.strokeTargetLayerId || target?.layerId || "") ||
+        this.getFullDocumentRect(target);
+    }
+
     getRasterRectBytes(rect) {
       if (!rect) {
         return 0;
@@ -1141,8 +1150,9 @@ void main() {
     }
 
     getRasterRectCoverage(rect, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
-      const canvasPixels = Math.max(1, Math.round(target?.width || 1)) *
-        Math.max(1, Math.round(target?.height || 1));
+      const paintRect = this.getActiveDocumentPaintRect(this.strokeTargetLayerId || target?.layerId || "");
+      const canvasPixels = Math.max(1, Math.round(paintRect?.width || target?.width || 1)) *
+        Math.max(1, Math.round(paintRect?.height || target?.height || 1));
       const rectPixels = Math.max(0, Math.round(rect?.width || 0)) *
         Math.max(0, Math.round(rect?.height || 0));
 
@@ -1528,14 +1538,15 @@ void main() {
 
       const quantum = STROKE_ALLOCATION_QUANTUM;
       const padding = Math.max(16, Math.ceil(this.getBrushSize()));
-      const minX = Math.max(0, Math.floor((rect.x - padding) / quantum) * quantum);
-      const minY = Math.max(0, Math.floor((rect.y - padding) / quantum) * quantum);
+      const bounds = this.getStrokeAllocationBounds(target);
+      const minX = Math.max(bounds.x, Math.floor((rect.x - padding) / quantum) * quantum);
+      const minY = Math.max(bounds.y, Math.floor((rect.y - padding) / quantum) * quantum);
       const maxX = Math.min(
-        target.width,
+        bounds.x + bounds.width,
         Math.ceil((rect.x + rect.width + padding) / quantum) * quantum,
       );
       const maxY = Math.min(
-        target.height,
+        bounds.y + bounds.height,
         Math.ceil((rect.y + rect.height + padding) / quantum) * quantum,
       );
 
@@ -1553,10 +1564,11 @@ void main() {
       }
 
       const padding = STROKE_FINAL_PADDING;
-      const minX = Math.max(0, Math.floor(rect.x - padding));
-      const minY = Math.max(0, Math.floor(rect.y - padding));
-      const maxX = Math.min(target.width, Math.ceil(rect.x + rect.width + padding));
-      const maxY = Math.min(target.height, Math.ceil(rect.y + rect.height + padding));
+      const bounds = this.getStrokeAllocationBounds(target);
+      const minX = Math.max(bounds.x, Math.floor(rect.x - padding));
+      const minY = Math.max(bounds.y, Math.floor(rect.y - padding));
+      const maxX = Math.min(bounds.x + bounds.width, Math.ceil(rect.x + rect.width + padding));
+      const maxY = Math.min(bounds.y + bounds.height, Math.ceil(rect.y + rect.height + padding));
 
       return {
         x: minX,
@@ -2431,13 +2443,15 @@ void main() {
 
     clampStrokeSamplePoint(x, y) {
       const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
+      const paintRect = this.getActiveDocumentPaintRect(this.strokeTargetLayerId || target.layerId || "") ||
+        this.getFullDocumentRect(target);
       const margin = Math.max(STROKE_SAMPLE_CLAMP_MIN_PADDING, Math.ceil(this.getBrushSize() * 2));
       const safeX = Number.isFinite(x) ? x : 0;
       const safeY = Number.isFinite(y) ? y : 0;
 
       return {
-        x: this.clamp(safeX, -margin, target.width + margin),
-        y: this.clamp(safeY, -margin, target.height + margin),
+        x: this.clamp(safeX, paintRect.x - margin, paintRect.x + paintRect.width + margin),
+        y: this.clamp(safeY, paintRect.y - margin, paintRect.y + paintRect.height + margin),
       };
     }
 
@@ -2459,12 +2473,14 @@ void main() {
 
     isDocumentPointInside(point) {
       const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
+      const paintRect = this.getActiveDocumentPaintRect(this.strokeTargetLayerId || target.layerId || "") ||
+        this.getFullDocumentRect(target);
 
       return (
-        point.docX >= 0 &&
-        point.docY >= 0 &&
-        point.docX <= target.width &&
-        point.docY <= target.height
+        point.docX >= paintRect.x &&
+        point.docY >= paintRect.y &&
+        point.docX <= paintRect.x + paintRect.width &&
+        point.docY <= paintRect.y + paintRect.height
       );
     }
 
@@ -3599,13 +3615,34 @@ void main() {
     }
 
     getActiveAreaSelectionCoverageRects(rect) {
-      if (!namespace.areaSelection?.hasSelection?.()) {
+      if (!rect) {
         return null;
       }
 
-      const rects = namespace.areaSelection.getIntersectingRects?.(rect) || [];
+      const artboardRect = this.getActiveDocumentPaintRect(this.strokeTargetLayerId || "");
+      const clippedRect = artboardRect
+        ? this.intersectDocumentRects(rect, artboardRect)
+        : rect;
 
-      return rects.length > 0 ? rects : [];
+      if (!clippedRect) {
+        return artboardRect ? [] : null;
+      }
+
+      if (!namespace.areaSelection?.hasSelection?.()) {
+        return artboardRect ? [clippedRect] : null;
+      }
+
+      const rects = namespace.areaSelection.getIntersectingRects?.(clippedRect) || [];
+
+      if (!artboardRect) {
+        return rects.length > 0 ? rects : [];
+      }
+
+      const clippedRects = rects
+        .map((selectionRect) => this.intersectDocumentRects(selectionRect, artboardRect))
+        .filter(Boolean);
+
+      return clippedRects.length > 0 ? clippedRects : [];
     }
 
     getActiveAreaSelectionMask(rect) {

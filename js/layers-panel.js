@@ -25,6 +25,11 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   let layerLongPressState = null;
   let isRenderingLayerModel = false;
   let isSyncingLayerModelFromDom = false;
+  let isEnsuringArtboardLayerGroups = false;
+  let selectedArtboardGroupId = "";
+  const expandedArtboardGroupIds = new Set();
+  const collapsedLayerGroupIds = new Set();
+  const ARTBOARD_LAYER_GROUP_PREFIX = "artboard-group-";
   const layerTouchLongPressDelay = 520;
   const layerTouchMoveTolerance = 10;
   const layerModel = window.CBO.documentLayerModel ||
@@ -55,11 +60,15 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   }
 
   function isLayerLocked(row) {
-    return row.classList.contains("locked");
+    return row?.dataset.artboardGroup === "true" || row.classList.contains("locked");
   }
 
   function isGroupRow(row) {
     return row.dataset.layerType === "group";
+  }
+
+  function isArtboardGroupRow(row) {
+    return row?.dataset.artboardGroup === "true";
   }
 
   function isBackgroundRow(row) {
@@ -326,9 +335,82 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     syncActiveLayerUi();
   }
 
+  function clearArtboardGroupActivation(options = {}) {
+    getLayerRows().forEach((row) => {
+      if (!isArtboardGroupRow(row)) {
+        return;
+      }
+
+      row.classList.remove("artboard-active");
+      row.removeAttribute("aria-current");
+    });
+
+    if (options.preserveSelectionState !== true) {
+      selectedArtboardGroupId = "";
+    }
+  }
+
+  function applyArtboardGroupActivationById(groupId, options = {}) {
+    const normalizedGroupId = String(groupId || "").trim();
+    const rows = getLayerRows();
+    const activeRow = normalizedGroupId
+      ? rows.find((row) => isArtboardGroupRow(row) && getLayerId(row) === normalizedGroupId)
+      : null;
+
+    rows.forEach((row) => {
+      setLayerSelected(row, false);
+      row.classList.remove("selection-focus");
+
+      if (isArtboardGroupRow(row)) {
+        const isActiveArtboard = row === activeRow;
+
+        row.classList.toggle("artboard-active", isActiveArtboard);
+        row.toggleAttribute("aria-current", isActiveArtboard);
+      }
+    });
+
+    if (!activeRow) {
+      if (options.preserveMissing !== true) {
+        selectedArtboardGroupId = "";
+      }
+
+      syncActiveLayerUi();
+      return null;
+    }
+
+    selectedArtboardGroupId = normalizedGroupId;
+    rangeAnchor = null;
+    focusedLayer = null;
+    activeRow.classList.add("selection-focus");
+    syncActiveLayerUi();
+
+    return activeRow;
+  }
+
+  function selectArtboardGroupRow(row, options = {}) {
+    if (!isArtboardGroupRow(row)) {
+      return null;
+    }
+
+    const activeRow = applyArtboardGroupActivationById(getLayerId(row));
+    const artboardId = getArtboardIdFromGroupId(getLayerId(row));
+
+    if (activeRow && options.emit !== false && artboardId) {
+      window.CBO.selectPreviewArtboard?.(artboardId, {
+        source: options.source || "layers-panel-artboard-row",
+      });
+    }
+
+    return activeRow;
+  }
+
   function clearLayerSelection() {
     getLayerRows().forEach((row) => setLayerSelected(row, false));
     getLayerRows().forEach((row) => row.classList.remove("selection-focus"));
+    clearArtboardGroupActivation();
+    window.CBO.clearPreviewArtboardSelection?.({
+      source: "layers-panel-clear-selection",
+    });
     rangeAnchor = null;
     focusedLayer = null;
     syncActiveLayerUi();
@@ -449,7 +531,169 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
 
     entry.classList.toggle("collapsed");
+    if (entry.classList.contains("collapsed")) {
+      collapsedLayerGroupIds.add(getLayerId(row));
+      expandedArtboardGroupIds.delete(getLayerId(row));
+    } else {
+      collapsedLayerGroupIds.delete(getLayerId(row));
+      if (isArtboardGroupRow(row)) {
+        expandedArtboardGroupIds.add(getLayerId(row));
+      }
+    }
     updateGroupToggle(row);
+  }
+
+  function getArtboardLayerGroupId(artboardId) {
+    return `${ARTBOARD_LAYER_GROUP_PREFIX}${String(artboardId || "active-document").trim() || "active-document"}`;
+  }
+
+  function getArtboardIdFromGroupId(groupId) {
+    const normalizedGroupId = String(groupId || "").trim();
+
+    return normalizedGroupId.startsWith(ARTBOARD_LAYER_GROUP_PREFIX)
+      ? normalizedGroupId.slice(ARTBOARD_LAYER_GROUP_PREFIX.length)
+      : "";
+  }
+
+  function getCurrentArtboardGroupId() {
+    if (selectedArtboardGroupId) {
+      return selectedArtboardGroupId;
+    }
+
+    const selectedArtboardId = window.CBO.getSelectedDocumentArtboardId?.() ||
+      window.CBO.getSelectedPreviewArtboardId?.() ||
+      "";
+
+    return selectedArtboardId ? getArtboardLayerGroupId(selectedArtboardId) : "";
+  }
+
+  function getCurrentArtboardLayerEntry() {
+    const groupId = getCurrentArtboardGroupId();
+    const row = groupId
+      ? getLayerRows().find((layerRow) => isArtboardGroupRow(layerRow) && getLayerId(layerRow) === groupId)
+      : null;
+
+    return row ? getLayerEntry(row) : null;
+  }
+
+  function expandArtboardLayerEntry(entry) {
+    const row = entry?.querySelector(":scope > [data-layer-row]");
+    const groupId = getLayerId(row);
+
+    if (!row || !isArtboardGroupRow(row)) {
+      return;
+    }
+
+    entry.classList.remove("collapsed");
+    collapsedLayerGroupIds.delete(groupId);
+    expandedArtboardGroupIds.add(groupId);
+    updateGroupToggle(row);
+  }
+
+  function isArtboardLayerGroup(entry) {
+    return entry?.type === "group" && entry.artboardGroup === true;
+  }
+
+  function getFallbackArtboardRecords() {
+    const renderer = window.CBO.documentRenderer;
+
+    if (!renderer) {
+      return [];
+    }
+
+    return [{
+      height: Math.max(1, Math.round(renderer.height || window.CBO.documentSettings?.height || 1)),
+      id: "active-document",
+      name: "Artboard 1",
+      width: Math.max(1, Math.round(renderer.width || window.CBO.documentSettings?.width || 1)),
+    }];
+  }
+
+  function getArtboardLayerRecords() {
+    const records = window.CBO.getDocumentArtboards?.() || window.CBO.getPreviewArtboards?.() || getFallbackArtboardRecords();
+
+    return records.map((artboard, index) => ({
+      height: Math.max(1, Math.round(Number(artboard?.height) || 1)),
+      id: String(artboard?.id || (index === 0 ? "active-document" : `preview-${index}`)),
+      name: String(artboard?.name || `Artboard ${index + 1}`),
+      width: Math.max(1, Math.round(Number(artboard?.width) || 1)),
+    }));
+  }
+
+  function createArtboardLayerGroup(artboard, children = [], existingGroup = null) {
+    return {
+      ...(existingGroup || {}),
+      artboardGroup: true,
+      artboardHeight: artboard.height,
+      artboardId: artboard.id,
+      artboardWidth: artboard.width,
+      children,
+      id: getArtboardLayerGroupId(artboard.id),
+      locked: existingGroup?.locked === true,
+      name: artboard.name,
+      type: "group",
+      visible: existingGroup?.visible !== false,
+    };
+  }
+
+  function ensureArtboardLayerGroups(source = "layers-panel-artboards") {
+    if (!layerModel || isEnsuringArtboardLayerGroups) {
+      return;
+    }
+
+    const artboards = getArtboardLayerRecords();
+
+    if (artboards.length === 0) {
+      return;
+    }
+
+    const artboardGroupIds = new Set(artboards.map((artboard) => getArtboardLayerGroupId(artboard.id)));
+
+    if (selectedArtboardGroupId && !artboardGroupIds.has(selectedArtboardGroupId)) {
+      selectedArtboardGroupId = "";
+    }
+
+    const entries = layerModel.getEntries?.() || [];
+    const existingGroupsByArtboardId = new Map();
+    const looseEntries = [];
+
+    entries.forEach((entry) => {
+      if (isArtboardLayerGroup(entry)) {
+        existingGroupsByArtboardId.set(entry.artboardId || entry.id, entry);
+        return;
+      }
+
+      looseEntries.push(entry);
+    });
+
+    const nextEntries = artboards.map((artboard, index) => {
+      const existingGroup = existingGroupsByArtboardId.get(artboard.id) ||
+        existingGroupsByArtboardId.get(getArtboardLayerGroupId(artboard.id)) ||
+        null;
+      const existingChildren = Array.isArray(existingGroup?.children) ? existingGroup.children : [];
+      const children = index === 0 && looseEntries.length > 0
+        ? [...looseEntries, ...existingChildren]
+        : existingChildren;
+
+      return createArtboardLayerGroup(artboard, children, existingGroup);
+    });
+
+    if (JSON.stringify(entries) === JSON.stringify(nextEntries)) {
+      return;
+    }
+
+    isEnsuringArtboardLayerGroups = true;
+
+    try {
+      layerModel.setEntries(nextEntries, {
+        history: false,
+        source,
+      });
+    } finally {
+      isEnsuringArtboardLayerGroups = false;
+    }
+
+    renderLayerModel();
   }
 
   function getInsertTarget(list) {
@@ -532,7 +776,15 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     if (activeEntry) {
       activeEntry.parentElement.insertBefore(entry, activeEntry);
     } else {
-      rootList.prepend(entry);
+      const activeArtboardEntry = getCurrentArtboardLayerEntry();
+      const activeArtboardChildren = activeArtboardEntry ? getLayerChildren(activeArtboardEntry) : null;
+
+      if (activeArtboardChildren) {
+        expandArtboardLayerEntry(activeArtboardEntry);
+        activeArtboardChildren.prepend(entry);
+      } else {
+        rootList.prepend(entry);
+      }
     }
 
     isSyncingLayerModelFromDom = true;
@@ -564,7 +816,16 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
   }
 
-  function getLayerIcon(type) {
+  function getLayerIcon(type, state = {}) {
+    if (state.artboardGroup === true) {
+      return `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-dice1-icon lucide-dice-1">
+          <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+          <path d="M12 12h.01" />
+        </svg>
+      `;
+    }
+
     if (type === "group") {
       return `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -702,23 +963,27 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const row = document.createElement("div");
     const layerId = id || layerModel?.createId(type) || `${type}-${Date.now().toString(36)}`;
 
-    entry.className = `layer-entry ${type === "group" ? "layer-group-entry" : ""}`;
+    entry.className = `layer-entry ${type === "group" ? "layer-group-entry" : ""} ${state.artboardGroup === true ? "layer-artboard-entry" : ""}`.trim();
     entry.dataset.layerEntry = "";
     entry.dataset.layerId = layerId;
     entry.dataset.layerType = type;
-    row.className = `layer-row ${type === "group" ? "layer-group-row" : ""}`;
+    row.className = `layer-row ${type === "group" ? "layer-group-row" : ""} ${state.artboardGroup === true ? "layer-artboard-row" : ""}`.trim();
     row.role = "option";
     row.tabIndex = 0;
     row.dataset.layerRow = "";
     row.dataset.layerId = layerId;
     row.dataset.layerType = type;
+    if (state.artboardGroup === true) {
+      row.dataset.artboardGroup = "true";
+      entry.dataset.artboardGroup = "true";
+    }
     row.innerHTML = `
       <div class="layer-info">
         ${getDisclosureControl(type)}
         <span class="layer-icon-stack">
           ${getClippingMaskIndicator()}
           <span class="layer-file-icon" aria-hidden="true">
-            ${getLayerIcon(type)}
+            ${getLayerIcon(type, state)}
           </span>
         </span>
         <span class="layer-name">${layerName}</span>
@@ -748,6 +1013,12 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       (entry.children || []).forEach((childEntry) => {
         children.append(createLayerEntryFromModel(childEntry));
       });
+      const shouldCollapse = entry.artboardGroup === true
+        ? !expandedArtboardGroupIds.has(entry.id)
+        : collapsedLayerGroupIds.has(entry.id);
+
+      layerEntry.classList.toggle("collapsed", shouldCollapse);
+      updateGroupToggle(layerEntry.querySelector(":scope > [data-layer-row]"));
     }
 
     return layerEntry;
@@ -766,8 +1037,13 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       const activeRow =
         layerModel?.activeLayerId &&
         getLayerRows().find((row) => getLayerId(row) === layerModel.activeLayerId);
+      const activeArtboardRow = selectedArtboardGroupId
+        ? applyArtboardGroupActivationById(selectedArtboardGroupId, { preserveMissing: true })
+        : null;
 
-      if (activeRow) {
+      if (activeArtboardRow) {
+        syncActiveLayerUi();
+      } else if (activeRow) {
         selectOnlyLayer(activeRow);
       } else {
         clearLayerSelection();
@@ -963,6 +1239,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
+    clearArtboardGroupActivation();
+    window.CBO.clearPreviewArtboardSelection?.({
+      source: "layers-panel-select-layer",
+    });
     getLayerRows().forEach((layerRow) => setLayerSelected(layerRow, false));
     setLayerBranchSelected(row, true);
     rangeAnchor = row;
@@ -975,6 +1255,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
+    clearArtboardGroupActivation();
+    window.CBO.clearPreviewArtboardSelection?.({
+      source: "layers-panel-toggle-layer",
+    });
     const shouldSelect = !row.classList.contains("selected");
 
     setLayerBranchSelected(row, shouldSelect);
@@ -997,6 +1281,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       getLayerRows().forEach((layerRow) => setLayerSelected(layerRow, false));
     }
 
+    clearArtboardGroupActivation();
+    window.CBO.clearPreviewArtboardSelection?.({
+      source: "layers-panel-range-select",
+    });
     rows.forEach((layerRow, index) => {
       if (index >= startIndex && index <= endIndex && !isLayerLocked(layerRow)) {
         setLayerBranchSelected(layerRow, true);
@@ -1269,6 +1557,31 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     updateLayerDepths();
     syncLayerModelFromDom("reorder");
     panel.closest(".drawer-content")?.dispatchEvent(new Event("scroll"));
+  }
+
+  function deleteSelectedArtboardGroup() {
+    const groupId = selectedArtboardGroupId;
+    const artboardId = getArtboardIdFromGroupId(groupId);
+
+    if (!artboardId) {
+      return false;
+    }
+
+    if (artboardId === "active-document") {
+      showLayerLimitToast("You can't delete Artboard 1 yet");
+      return true;
+    }
+
+    const didDelete = window.CBO.deletePreviewArtboard?.(artboardId, {
+      source: "layers-panel-delete-artboard",
+    }) === true;
+
+    if (didDelete) {
+      selectedArtboardGroupId = "";
+      clearArtboardGroupActivation();
+    }
+
+    return didDelete;
   }
 
   function isTouchLayerPointer(event) {
@@ -1571,18 +1884,35 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     positionLayerContextMenu(menu, event.clientX, event.clientY);
   }
 
+  function handleArtboardSelectionChange(event) {
+    const artboardId = event.detail?.artboardId || event.detail?.artboard?.id;
+    const groupId = getArtboardLayerGroupId(artboardId);
+
+    if (!artboardId) {
+      clearArtboardGroupActivation();
+      return;
+    }
+
+    selectedArtboardGroupId = groupId;
+    applyArtboardGroupActivationById(groupId, { preserveMissing: true });
+  }
+
   panel.innerHTML = `
     <div class="layers-list" role="listbox" aria-label="Layers" aria-multiselectable="true"></div>
   `;
 
   layerModel?.addEventListener?.("change", () => {
-    if (isRenderingLayerModel || isSyncingLayerModelFromDom) {
+    if (isRenderingLayerModel || isSyncingLayerModelFromDom || isEnsuringArtboardLayerGroups) {
       return;
     }
 
     renderLayerModel();
   });
 
+  window.addEventListener("cbo:editor-canvas-ready", () => ensureArtboardLayerGroups("editor-canvas-ready-artboards"));
+  window.addEventListener("cbo:document-artboards-change", () => ensureArtboardLayerGroups("document-artboard-layer-groups"));
+  window.addEventListener("cbo:artboard-preview-change", () => ensureArtboardLayerGroups("artboard-preview-layer-groups"));
+  window.addEventListener("cbo:artboard-selection-change", handleArtboardSelectionChange);
   renderLayerModel();
   window.addEventListener("cbo:color-fill-reference-change", syncReferenceLayerUi);
 
@@ -1596,6 +1926,11 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
 
     if (!isDeleteShortcut(event)) {
+      return;
+    }
+
+    if (selectedArtboardGroupId && deleteSelectedArtboardGroup()) {
+      event.preventDefault();
       return;
     }
 
@@ -1625,6 +1960,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const row = target.closest("[data-layer-row]");
 
     if (!row) {
+      return;
+    }
+
+    if (isArtboardGroupRow(row)) {
       return;
     }
 
@@ -1764,6 +2103,13 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
     if (toggleButton) {
       toggleGroup(row);
+      return;
+    }
+
+    if (isArtboardGroupRow(row)) {
+      selectArtboardGroupRow(row, {
+        source: "layers-panel-artboard-click",
+      });
       return;
     }
 

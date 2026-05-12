@@ -595,3 +595,49 @@ test("ensureActivePaintLayer without an active layer inserts above everything", 
   assert.equal(model.activeLayerId, paintLayer.id);
   assert.equal(history.undoStack.length, 1);
 });
+
+test("ensureActivePaintLayer inserts new paint into the selected artboard group", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory();
+  const model = new DocumentLayerModel();
+  const primaryTextLayer = model.createLayer({
+    id: "primary-text",
+    text: "Primary",
+    type: "vector-text",
+  });
+
+  window.CBO.documentHistory = history;
+  window.CBO.getSelectedDocumentArtboardId = () => "secondary";
+  model.setEntries([
+    {
+      artboardGroup: true,
+      artboardId: "active-document",
+      children: [primaryTextLayer],
+      id: "artboard-group-active-document",
+      name: "Artboard 1",
+      type: "group",
+    },
+    {
+      artboardGroup: true,
+      artboardId: "secondary",
+      children: [],
+      id: "artboard-group-secondary",
+      name: "Artboard 2",
+      type: "group",
+    },
+  ], { history: false, source: "seed" });
+  model.setActiveLayer(primaryTextLayer.id, { history: false, source: "seed" });
+
+  const paintLayer = model.ensureActivePaintLayer({ source: "brush-stroke" });
+  await waitForHistoryFlush();
+
+  const entries = model.getEntries();
+  const primaryGroup = entries.find((entry) => entry.artboardId === "active-document");
+  const secondaryGroup = entries.find((entry) => entry.artboardId === "secondary");
+
+  assert.equal(primaryGroup.children.some((entry) => entry.id === paintLayer.id), false);
+  assert.equal(secondaryGroup.children[0].id, paintLayer.id);
+  assert.equal(model.findEntryArtboardId(paintLayer.id), "secondary");
+  assert.equal(model.activeLayerId, paintLayer.id);
+  assert.equal(history.undoStack.length, 1);
+});

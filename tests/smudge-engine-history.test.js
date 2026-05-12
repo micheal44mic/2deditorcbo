@@ -82,8 +82,9 @@ test("smudge clips live dabs to the active area selection before tile work", () 
   const source = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
 
   assert.match(source, /getActiveAreaSelectionCoverageRects\(bounds\) \{/);
+  assert.match(source, /namespace\.getActiveDocumentArtboardRect\?\.\(\{/);
   assert.match(source, /namespace\.areaSelection\?\.hasSelection\?\.\(\)/);
-  assert.match(source, /namespace\.areaSelection\.getIntersectingRects\?\.\(bounds\)/);
+  assert.match(source, /namespace\.areaSelection\.getIntersectingRects\?\.\(clippedBounds\)/);
   assert.match(source, /clipBoundsToAreaSelection\(bounds\) \{/);
   assert.match(source, /this\.getBoundsForDocumentRects\(selectionCoverageRects\)/);
   assert.match(source, /let selectionCoverageRects = this\.getActiveAreaSelectionCoverageRects\(bounds\)/);

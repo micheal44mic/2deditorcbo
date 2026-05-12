@@ -110,15 +110,17 @@
   }
 
   function normalizeRectFromPoints(startPoint, endPoint, options = {}) {
-    const renderer = getRenderer();
-    const width = Math.max(1, Math.round(renderer?.width || 1));
-    const height = Math.max(1, Math.round(renderer?.height || 1));
+    const documentRect = getDocumentRect();
+    const minBoundX = documentRect.x;
+    const minBoundY = documentRect.y;
+    const maxBoundX = documentRect.x + documentRect.width;
+    const maxBoundY = documentRect.y + documentRect.height;
     const fromCenter = options.fromCenter === true;
     const forceSquare = options.forceSquare === true;
-    const startX = clamp(startPoint.docX, 0, width);
-    const startY = clamp(startPoint.docY, 0, height);
-    const endX = clamp(endPoint.docX, 0, width);
-    const endY = clamp(endPoint.docY, 0, height);
+    const startX = clamp(startPoint.docX, minBoundX, maxBoundX);
+    const startY = clamp(startPoint.docY, minBoundY, maxBoundY);
+    const endX = clamp(endPoint.docX, minBoundX, maxBoundX);
+    const endY = clamp(endPoint.docY, minBoundY, maxBoundY);
     let dx = endX - startX;
     let dy = endY - startY;
     let minX;
@@ -133,17 +135,17 @@
       if (forceSquare) {
         const radius = Math.min(
           Math.max(radiusX, radiusY),
-          startX,
-          width - startX,
-          startY,
-          height - startY,
+          startX - minBoundX,
+          maxBoundX - startX,
+          startY - minBoundY,
+          maxBoundY - startY,
         );
 
         radiusX = radius;
         radiusY = radius;
       } else {
-        radiusX = Math.min(radiusX, startX, width - startX);
-        radiusY = Math.min(radiusY, startY, height - startY);
+        radiusX = Math.min(radiusX, startX - minBoundX, maxBoundX - startX);
+        radiusY = Math.min(radiusY, startY - minBoundY, maxBoundY - startY);
       }
 
       minX = startX - radiusX;
@@ -153,8 +155,8 @@
     } else if (forceSquare) {
       const signX = dx < 0 ? -1 : 1;
       const signY = dy < 0 ? -1 : 1;
-      const maxWidth = signX > 0 ? width - startX : startX;
-      const maxHeight = signY > 0 ? height - startY : startY;
+      const maxWidth = signX > 0 ? maxBoundX - startX : startX - minBoundX;
+      const maxHeight = signY > 0 ? maxBoundY - startY : startY - minBoundY;
       const size = Math.min(Math.max(Math.abs(dx), Math.abs(dy)), maxWidth, maxHeight);
 
       dx = signX * size;
@@ -557,7 +559,9 @@
   function getDocumentRect() {
     const renderer = getRenderer();
 
-    return {
+    return namespace.getActiveDocumentArtboardRect?.({
+      layerId: namespace.documentLayerModel?.activeLayerId || "",
+    }) || {
       height: Math.max(1, Math.round(renderer?.height || 1)),
       width: Math.max(1, Math.round(renderer?.width || 1)),
       x: 0,
@@ -1224,20 +1228,24 @@
 
   function getDocumentScreenRect() {
     const brushEngine = getBrushEngine();
-    const renderer = getRenderer();
     const canvas = state.canvas;
     const camera = brushEngine?.camera;
     const dpr = Math.max(1, Number(brushEngine?.dpr) || window.devicePixelRatio || 1);
+    const documentRect = getDocumentRect();
 
-    if (!canvas || !camera || !renderer) {
+    if (!canvas || !camera || !documentRect) {
       return null;
     }
 
     return {
-      height: (Math.max(1, Math.round(renderer.height || 1)) * camera.zoom) / dpr,
-      left: (camera.x || 0) / dpr,
-      top: (camera.y || 0) / dpr,
-      width: (Math.max(1, Math.round(renderer.width || 1)) * camera.zoom) / dpr,
+      docHeight: documentRect.height,
+      docWidth: documentRect.width,
+      docX: documentRect.x,
+      docY: documentRect.y,
+      height: (documentRect.height * camera.zoom) / dpr,
+      left: ((camera.x || 0) + documentRect.x * camera.zoom) / dpr,
+      top: ((camera.y || 0) + documentRect.y * camera.zoom) / dpr,
+      width: (documentRect.width * camera.zoom) / dpr,
     };
   }
 
@@ -1278,15 +1286,16 @@
   }
 
   function getDocumentPointToScreenMapper(documentScreenRect) {
-    const renderer = getRenderer();
-    const documentWidth = Math.max(1, Math.round(renderer?.width || 1));
-    const documentHeight = Math.max(1, Math.round(renderer?.height || 1));
+    const documentWidth = Math.max(1, Math.round(documentScreenRect?.docWidth || 1));
+    const documentHeight = Math.max(1, Math.round(documentScreenRect?.docHeight || 1));
+    const documentX = Number(documentScreenRect?.docX) || 0;
+    const documentY = Number(documentScreenRect?.docY) || 0;
     const scaleX = documentScreenRect.width / documentWidth;
     const scaleY = documentScreenRect.height / documentHeight;
 
     return (docX, docY) => ({
-      x: documentScreenRect.left + docX * scaleX,
-      y: documentScreenRect.top + docY * scaleY,
+      x: documentScreenRect.left + (docX - documentX) * scaleX,
+      y: documentScreenRect.top + (docY - documentY) * scaleY,
     });
   }
 
