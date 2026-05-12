@@ -816,7 +816,24 @@ void main() {
 }
 `;
 
-  const LAYER_BLEND_FRAGMENT_SHADER_SOURCE = `#version 300 es
+  const LAYER_COMPOSITE_VERTEX_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aUnitCorner;
+
+uniform vec2 uViewportSize;
+
+out vec2 v_backdropUv;
+out vec2 v_viewportPixel;
+
+void main() {
+  v_viewportPixel = aUnitCorner * uViewportSize;
+  v_backdropUv = vec2(aUnitCorner.x, 1.0 - aUnitCorner.y);
+  gl_Position = vec4(aUnitCorner.x * 2.0 - 1.0, 1.0 - aUnitCorner.y * 2.0, 0.0, 1.0);
+}
+`;
+
+  const LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
 uniform sampler2D u_texture;
@@ -825,7 +842,9 @@ uniform sampler2D u_maskTexture;
 uniform sampler2D u_clipTexture;
 uniform float u_opacity;
 uniform int u_blendMode;
-uniform vec2 uBackdropSize;
+uniform vec2 uCameraPosition;
+uniform float uCameraZoom;
+uniform vec4 u_sourceRect;
 uniform float u_maskMode;
 uniform vec4 u_maskRect;
 uniform float u_maskRectMode;
@@ -837,12 +856,11 @@ uniform float u_clipMode;
 uniform float u_clipOpacity;
 uniform vec2 u_clipOrigin;
 uniform vec2 u_clipTextureSize;
-uniform vec2 u_drawOrigin;
 uniform float u_previewCutMode;
 uniform vec4 u_previewCutRect;
 
-in vec2 v_uv;
-in vec2 v_documentPixel;
+in vec2 v_backdropUv;
+in vec2 v_viewportPixel;
 
 out vec4 outColor;
 
@@ -885,10 +903,18 @@ vec3 applyBlendMode(vec3 baseColor, vec3 sourceColor, int blendMode) {
   return sourceColor;
 }
 
-void main() {
-  vec4 source = texture(u_texture, v_uv) * clamp(u_opacity, 0.0, 1.0);
+bool isInsideUnitRect(vec2 point) {
+  return point.x >= 0.0 && point.x <= 1.0 && point.y >= 0.0 && point.y <= 1.0;
+}
 
-  vec2 globalDocPixel = u_drawOrigin + v_documentPixel;
+void main() {
+  vec4 backdrop = texture(u_backdropTexture, v_backdropUv);
+  float safeZoom = max(abs(uCameraZoom), 0.000001);
+  vec2 globalDocPixel = (v_viewportPixel - uCameraPosition) / safeZoom;
+  vec2 sourceLocal = (globalDocPixel - u_sourceRect.xy) / max(u_sourceRect.zw, vec2(1.0));
+  bool insideSource = isInsideUnitRect(sourceLocal);
+  vec2 sourceUv = vec2(sourceLocal.x, 1.0 - sourceLocal.y);
+  vec4 source = insideSource ? texture(u_texture, sourceUv) * clamp(u_opacity, 0.0, 1.0) : vec4(0.0);
 
   if (u_previewCutMode > 0.5) {
     bool insideCutRect =
@@ -908,11 +934,11 @@ void main() {
     if (u_maskRectMode > 0.5) {
       vec2 local = (globalDocPixel - u_maskRect.xy) / max(u_maskRect.zw, vec2(1.0));
 
-      if (!any(lessThan(local, vec2(0.0))) && !any(greaterThan(local, vec2(1.0)))) {
+      if (isInsideUnitRect(local)) {
         eraseAlpha = clamp(texture(u_maskTexture, vec2(local.x, 1.0 - local.y)).a, 0.0, 1.0);
       }
-    } else {
-      eraseAlpha = clamp(texture(u_maskTexture, v_uv).a, 0.0, 1.0);
+    } else if (insideSource) {
+      eraseAlpha = clamp(texture(u_maskTexture, sourceUv).a, 0.0, 1.0);
     }
 
     if (u_maskClipMode > 0.5) {
@@ -955,15 +981,13 @@ void main() {
     );
     float clipAlpha = 0.0;
 
-    if (clipUv.x >= 0.0 && clipUv.x <= 1.0 && clipUv.y >= 0.0 && clipUv.y <= 1.0) {
+    if (isInsideUnitRect(clipUv)) {
       clipAlpha = texture(u_clipTexture, clipUv).a * clamp(u_clipOpacity, 0.0, 1.0);
     }
 
     source *= clipAlpha;
   }
 
-  vec2 backdropUv = gl_FragCoord.xy / max(uBackdropSize, vec2(1.0));
-  vec4 backdrop = texture(u_backdropTexture, backdropUv);
   float sourceAlpha = clamp(source.a, 0.0, 1.0);
   float backdropAlpha = clamp(backdrop.a, 0.0, 1.0);
 
@@ -1217,10 +1241,11 @@ void main() {
       this.thresholdProgramInfo = null;
       this.curvesProgramInfo = null;
       this.curvesLutTexture = null;
-      this.layerBlendProgramInfo = null;
-      this.layerBlendBackdropTexture = null;
-      this.layerBlendBackdropWidth = 0;
-      this.layerBlendBackdropHeight = 0;
+      this.layerCompositeProgramInfo = null;
+      this.layerCompositeScratchA = null;
+      this.layerCompositeScratchB = null;
+      this.layerCompositeWidth = 0;
+      this.layerCompositeHeight = 0;
       this.layerEffectScratchA = null;
       this.layerEffectScratchB = null;
       this.activeStrokeScratchTarget = null;
@@ -1407,9 +1432,11 @@ void main() {
       const policy = this.getRasterOperationPolicy(report);
       const hadPreviewCache = Boolean(this.previewTexture || this.previewFramebuffer);
       const hadEffectScratch = Boolean(this.layerEffectScratchA || this.layerEffectScratchB);
+      const hadCompositeScratch = Boolean(this.layerCompositeScratchA || this.layerCompositeScratchB);
       const hadActiveStrokeScratch = Boolean(this.activeStrokeScratchTarget);
       const deletePreviewCache = options.deletePreviewCache !== false;
       const deleteEffectScratch = options.deleteEffectScratch !== false;
+      const deleteCompositeScratch = options.deleteCompositeScratch !== false;
       const deleteActiveStrokeScratch = options.deleteActiveStrokeScratch !== false;
 
       if (deletePreviewCache && hadPreviewCache) {
@@ -1418,6 +1445,10 @@ void main() {
 
       if (deleteEffectScratch && hadEffectScratch) {
         this.deleteLayerEffectScratchTargets();
+      }
+
+      if (deleteCompositeScratch && hadCompositeScratch) {
+        this.deleteLayerCompositeTargets();
       }
 
       if (deleteActiveStrokeScratch && hadActiveStrokeScratch) {
@@ -1431,6 +1462,7 @@ void main() {
         reason: report?.reason || options.reason || "raster-policy",
         source: options.source || report?.source || report?.tool || "raster-policy",
         deletedActiveStrokeScratch: deleteActiveStrokeScratch && hadActiveStrokeScratch,
+        deletedCompositeScratch: deleteCompositeScratch && hadCompositeScratch,
         deletedEffectScratch: deleteEffectScratch && hadEffectScratch,
         deletedPreviewCache: deletePreviewCache && hadPreviewCache,
       };
@@ -3439,16 +3471,16 @@ void main() {
       };
     }
 
-    createLayerBlendProgramInfo() {
+    createLayerCompositeProgramInfo() {
       const gl = this.gl;
-      const vertexShader = this.compileShader(gl.VERTEX_SHADER, ARTBOARD_VERTEX_SHADER_SOURCE);
-      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, LAYER_BLEND_FRAGMENT_SHADER_SOURCE);
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, LAYER_COMPOSITE_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE);
       const program = gl.createProgram();
 
       if (!program) {
         gl.deleteShader(vertexShader);
         gl.deleteShader(fragmentShader);
-        throw new Error("Impossibile creare il programma blend layer WebGL2.");
+        throw new Error("Impossibile creare il programma compositing layer WebGL2.");
       }
 
       gl.attachShader(program, vertexShader);
@@ -3458,7 +3490,7 @@ void main() {
       gl.deleteShader(fragmentShader);
 
       if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma blend layer.";
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma compositing layer.";
 
         gl.deleteProgram(program);
         throw new Error(info);
@@ -3467,7 +3499,6 @@ void main() {
       return {
         program,
         uniforms: {
-          backdropSize: gl.getUniformLocation(program, "uBackdropSize"),
           backdropTexture: gl.getUniformLocation(program, "u_backdropTexture"),
           blendMode: gl.getUniformLocation(program, "u_blendMode"),
           cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
@@ -3477,8 +3508,6 @@ void main() {
           clipOrigin: gl.getUniformLocation(program, "u_clipOrigin"),
           clipTexture: gl.getUniformLocation(program, "u_clipTexture"),
           clipTextureSize: gl.getUniformLocation(program, "u_clipTextureSize"),
-          documentSize: gl.getUniformLocation(program, "uDocumentSize"),
-          drawOrigin: gl.getUniformLocation(program, "u_drawOrigin"),
           maskClipMode: gl.getUniformLocation(program, "u_maskClipMode"),
           maskClipRect: gl.getUniformLocation(program, "u_maskClipRect"),
           maskClipRectCount: gl.getUniformLocation(program, "u_maskClipRectCount"),
@@ -3490,6 +3519,7 @@ void main() {
           opacity: gl.getUniformLocation(program, "u_opacity"),
           previewCutMode: gl.getUniformLocation(program, "u_previewCutMode"),
           previewCutRect: gl.getUniformLocation(program, "u_previewCutRect"),
+          sourceRect: gl.getUniformLocation(program, "u_sourceRect"),
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
         },
@@ -3584,12 +3614,12 @@ void main() {
       return this.curvesProgramInfo;
     }
 
-    ensureLayerBlendProgramInfo() {
-      if (!this.layerBlendProgramInfo) {
-        this.layerBlendProgramInfo = this.createLayerBlendProgramInfo();
+    ensureLayerCompositeProgramInfo() {
+      if (!this.layerCompositeProgramInfo) {
+        this.layerCompositeProgramInfo = this.createLayerCompositeProgramInfo();
       }
 
-      return this.layerBlendProgramInfo;
+      return this.layerCompositeProgramInfo;
     }
 
     createTexturedQuadResource() {
@@ -5395,97 +5425,321 @@ void main() {
       return Array.isArray(layers) && layers.some((layer) => this.hasAdvancedLayerBlendMode(layer));
     }
 
-    ensureLayerBlendBackdropTexture(width, height) {
-      const gl = this.gl;
+    ensureLayerCompositeTargets(width, height) {
       const targetWidth = Math.max(1, Math.round(width || 1));
       const targetHeight = Math.max(1, Math.round(height || 1));
-      const needsTexture =
-        !this.layerBlendBackdropTexture ||
-        this.layerBlendBackdropWidth !== targetWidth ||
-        this.layerBlendBackdropHeight !== targetHeight;
+      const hasTargets =
+        this.layerCompositeScratchA?.texture &&
+        this.layerCompositeScratchA?.framebuffer &&
+        this.layerCompositeScratchB?.texture &&
+        this.layerCompositeScratchB?.framebuffer &&
+        this.layerCompositeWidth === targetWidth &&
+        this.layerCompositeHeight === targetHeight;
 
-      if (!needsTexture) {
-        this.markRasterResourceUsed(this.layerBlendBackdropTexture);
-        return this.layerBlendBackdropTexture;
+      if (hasTargets) {
+        this.markRasterResourceUsed(this.layerCompositeScratchA.texture);
+        this.markRasterResourceUsed(this.layerCompositeScratchB.texture);
+        return [this.layerCompositeScratchA, this.layerCompositeScratchB];
       }
 
-      if (this.layerBlendBackdropTexture) {
-        this.deleteRasterTexture(this.layerBlendBackdropTexture);
-        gl.deleteTexture(this.layerBlendBackdropTexture);
+      this.deleteLayerCompositeTargets();
+
+      this.layerCompositeScratchA = this.createLayerEffectScratchTarget(targetWidth, targetHeight, {
+        kind: "compositeScratch",
+        label: "layer composite ping",
+        ownerId: "layer-composite-ping",
+        reason: "create-layer-composite-target",
+      });
+      this.layerCompositeScratchB = this.createLayerEffectScratchTarget(targetWidth, targetHeight, {
+        kind: "compositeScratch",
+        label: "layer composite pong",
+        ownerId: "layer-composite-pong",
+        reason: "create-layer-composite-target",
+      });
+      this.layerCompositeWidth = targetWidth;
+      this.layerCompositeHeight = targetHeight;
+
+      return [this.layerCompositeScratchA, this.layerCompositeScratchB];
+    }
+
+    deleteLayerCompositeTargets() {
+      this.deleteLayerEffectTarget(this.layerCompositeScratchA);
+      this.deleteLayerEffectTarget(this.layerCompositeScratchB);
+      this.layerCompositeScratchA = null;
+      this.layerCompositeScratchB = null;
+      this.layerCompositeWidth = 0;
+      this.layerCompositeHeight = 0;
+    }
+
+    deleteLayerCompositeResources() {
+      const gl = this.gl;
+
+      if (this.layerCompositeProgramInfo?.program) {
+        gl.deleteProgram(this.layerCompositeProgramInfo.program);
+        this.layerCompositeProgramInfo = null;
       }
 
-      const texture = gl.createTexture();
+      this.deleteLayerCompositeTargets();
+    }
 
-      if (!texture) {
-        throw new Error("Impossibile creare la texture backdrop per i blend mode.");
+    beginLayerComposite(width, height) {
+      const [read, write] = this.ensureLayerCompositeTargets(width, height);
+      const gl = this.gl;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, read.framebuffer);
+      gl.viewport(0, 0, read.width, read.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      return {
+        height: read.height,
+        read,
+        width: read.width,
+        write,
+      };
+    }
+
+    swapLayerComposite(compositeState) {
+      return {
+        ...compositeState,
+        read: compositeState.write,
+        write: compositeState.read,
+      };
+    }
+
+    setLayerCompositeMaskClipUniforms(uniforms, clipRect = null, clipRects = null) {
+      const gl = this.gl;
+      const rects = Array.isArray(clipRects)
+        ? clipRects.slice(0, 32)
+        : [];
+
+      if (rects.length > 0) {
+        const values = new Float32Array(32 * 4);
+
+        rects.forEach((rect, index) => {
+          values[index * 4] = rect.x;
+          values[index * 4 + 1] = rect.y;
+          values[index * 4 + 2] = rect.width;
+          values[index * 4 + 3] = rect.height;
+        });
+
+        gl.uniform1f(uniforms.maskClipMode, 1.0);
+        gl.uniform4f(uniforms.maskClipRect, 0, 0, 0, 0);
+        gl.uniform1i(uniforms.maskClipRectCount, rects.length);
+        gl.uniform4fv(uniforms.maskClipRects, values);
+        return;
       }
 
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        targetWidth,
-        targetHeight,
-        0,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        null,
-      );
+      if (clipRect) {
+        gl.uniform1f(uniforms.maskClipMode, 1.0);
+        gl.uniform4f(uniforms.maskClipRect, clipRect.x, clipRect.y, clipRect.width, clipRect.height);
+        gl.uniform1i(uniforms.maskClipRectCount, 0);
+        return;
+      }
+
+      gl.uniform1f(uniforms.maskClipMode, 0.0);
+      gl.uniform4f(uniforms.maskClipRect, 0, 0, 0, 0);
+      gl.uniform1i(uniforms.maskClipRectCount, 0);
+    }
+
+    drawLayerCompositeTexture(options = {}) {
+      const sourceTexture = options.texture;
+      const backdropTexture = options.backdropTexture;
+
+      if (!sourceTexture || !backdropTexture || !options.framebuffer) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureLayerCompositeProgramInfo();
+      const viewportWidth = Math.max(1, Math.round(options.viewportWidth || 1));
+      const viewportHeight = Math.max(1, Math.round(options.viewportHeight || 1));
+      const camera = options.camera || { x: 0, y: 0, zoom: 1 };
+      const rect = options.rect || {
+        x: 0,
+        y: 0,
+        width: Math.max(1, Math.round(options.documentWidth || this.width || 1)),
+        height: Math.max(1, Math.round(options.documentHeight || this.height || 1)),
+      };
+      const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
+      const blendModeId = Math.max(0, Math.round(Number(options.blendModeId) || 0));
+      const clipBase = options.clipBase || null;
+      const maskTexture = options.maskTexture || null;
+      const maskRect = options.maskRect || null;
+      const previewCutRect = options.previewCutRect || null;
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("layer-composite.draw", {
+        blendModeId,
+        hasClipBase: Boolean(clipBase?.target?.texture),
+        hasMask: Boolean(maskTexture),
+        sourceHeight: Math.max(1, Math.round(rect.height || 1)),
+        sourceWidth: Math.max(1, Math.round(rect.width || 1)),
+        viewportHeight,
+        viewportWidth,
+      }) : null;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer);
+      gl.viewport(0, 0, viewportWidth, viewportHeight);
+      gl.disable(gl.BLEND);
+      gl.useProgram(program);
+      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+      gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
+      gl.uniform4f(uniforms.sourceRect, rect.x, rect.y, rect.width, rect.height);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1i(uniforms.maskTexture, 1);
+      gl.uniform1i(uniforms.clipTexture, 2);
+      gl.uniform1i(uniforms.backdropTexture, 3);
+      gl.uniform1f(uniforms.opacity, opacity);
+      gl.uniform1i(uniforms.blendMode, blendModeId);
+
+      if (maskTexture) {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, maskTexture);
+        gl.uniform1f(uniforms.maskMode, 1.0);
+
+        if (maskRect) {
+          gl.uniform1f(uniforms.maskRectMode, 1.0);
+          gl.uniform4f(uniforms.maskRect, maskRect.x, maskRect.y, maskRect.width, maskRect.height);
+        } else {
+          gl.uniform1f(uniforms.maskRectMode, 0.0);
+          gl.uniform4f(uniforms.maskRect, 0, 0, rect.width, rect.height);
+        }
+
+        this.setLayerCompositeMaskClipUniforms(uniforms, options.maskClipRect, options.maskClipRects);
+      } else {
+        gl.uniform1f(uniforms.maskMode, 0.0);
+        gl.uniform1f(uniforms.maskRectMode, 0.0);
+        gl.uniform4f(uniforms.maskRect, 0, 0, rect.width, rect.height);
+        this.setLayerCompositeMaskClipUniforms(uniforms);
+      }
+
+      if (clipBase?.target?.texture) {
+        const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
+          ? Math.min(1, Math.max(0, clipBase.layer.opacity))
+          : 1;
+
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
+        gl.uniform1f(uniforms.clipMode, 1.0);
+        gl.uniform1f(uniforms.clipOpacity, clipOpacity);
+        gl.uniform2f(
+          uniforms.clipOrigin,
+          Number.isFinite(clipBase.target.x) ? clipBase.target.x : 0,
+          Number.isFinite(clipBase.target.y) ? clipBase.target.y : 0,
+        );
+        gl.uniform2f(
+          uniforms.clipTextureSize,
+          clipBase.target.width || this.width,
+          clipBase.target.height || this.height,
+        );
+      } else {
+        gl.uniform1f(uniforms.clipMode, 0.0);
+        gl.uniform1f(uniforms.clipOpacity, 1.0);
+        gl.uniform2f(uniforms.clipOrigin, 0, 0);
+        gl.uniform2f(uniforms.clipTextureSize, this.width, this.height);
+      }
+
+      if (previewCutRect) {
+        gl.uniform1f(uniforms.previewCutMode, 1.0);
+        gl.uniform4f(
+          uniforms.previewCutRect,
+          previewCutRect.x,
+          previewCutRect.y,
+          previewCutRect.width,
+          previewCutRect.height,
+        );
+      } else {
+        gl.uniform1f(uniforms.previewCutMode, 0.0);
+        gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
+      }
+
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, backdropTexture);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      this.layerBlendBackdropTexture = texture;
-      this.layerBlendBackdropWidth = targetWidth;
-      this.layerBlendBackdropHeight = targetHeight;
+      if (maskTexture) {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
 
-      this.registerRasterTexture(texture, {
-        height: targetHeight,
-        kind: "backdrop",
-        label: "layer blend backdrop",
-        ownerId: "layer-blend-backdrop",
-        ownerType: "scratch",
-        purgeable: true,
-        reason: "ensure-layer-blend-backdrop-texture",
-        width: targetWidth,
-      });
-
-      return texture;
-    }
-
-    copyCurrentFramebufferToLayerBlendBackdrop(width, height) {
-      const gl = this.gl;
-      const targetWidth = Math.max(1, Math.round(width || 1));
-      const targetHeight = Math.max(1, Math.round(height || 1));
-      const texture = this.ensureLayerBlendBackdropTexture(targetWidth, targetHeight);
+      if (clipBase?.target?.texture) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
 
       gl.activeTexture(gl.TEXTURE3);
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, targetWidth, targetHeight);
+      gl.bindTexture(gl.TEXTURE_2D, null);
       gl.activeTexture(gl.TEXTURE0);
+      gl.useProgram(null);
 
-      return texture;
+      trace?.end();
+
+      return true;
     }
 
-    deleteLayerBlendResources() {
+    drawScreenTexture(texture, options = {}) {
+      if (!texture || !this.programInfo || !this.quad?.vao) {
+        return false;
+      }
+
       const gl = this.gl;
+      const { program, uniforms } = this.programInfo;
+      const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
+      const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
+      const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
 
-      if (this.layerBlendProgramInfo?.program) {
-        gl.deleteProgram(this.layerBlendProgramInfo.program);
-        this.layerBlendProgramInfo = null;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
+      gl.viewport(0, 0, viewportWidth, viewportHeight);
+
+      if (options.blend === false) {
+        gl.disable(gl.BLEND);
+      } else {
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       }
 
-      if (this.layerBlendBackdropTexture) {
-        this.deleteRasterTexture(this.layerBlendBackdropTexture);
-        gl.deleteTexture(this.layerBlendBackdropTexture);
-        this.layerBlendBackdropTexture = null;
-      }
+      gl.useProgram(program);
+      gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.documentSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.cameraPosition, 0, 0);
+      gl.uniform1f(uniforms.cameraZoom, 1);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1i(uniforms.maskTexture, 1);
+      gl.uniform1i(uniforms.clipTexture, 2);
+      gl.uniform1i(uniforms.selectionClipTexture, 3);
+      gl.uniform1f(uniforms.maskMode, 0.0);
+      gl.uniform1f(uniforms.maskRectMode, 0.0);
+      gl.uniform4f(uniforms.maskRect, 0, 0, viewportWidth, viewportHeight);
+      gl.uniform1f(uniforms.maskClipMode, 0.0);
+      gl.uniform4f(uniforms.maskClipRect, 0, 0, 0, 0);
+      gl.uniform1i(uniforms.maskClipRectCount, 0);
+      gl.uniform1f(uniforms.clipMode, 0.0);
+      gl.uniform1f(uniforms.clipOpacity, 1.0);
+      gl.uniform2f(uniforms.clipOrigin, 0, 0);
+      gl.uniform2f(uniforms.clipTextureSize, viewportWidth, viewportHeight);
+      gl.uniform2f(uniforms.drawOrigin, 0, 0);
+      gl.uniform1f(uniforms.previewCutMode, 0.0);
+      gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
+      gl.uniform1f(uniforms.selectionClipMode, 0.0);
+      gl.uniform4f(uniforms.selectionClipRect, 0, 0, 0, 0);
+      gl.uniform1f(uniforms.gridMode, 0.0);
+      gl.uniform1f(uniforms.opacity, opacity);
 
-      this.layerBlendBackdropWidth = 0;
-      this.layerBlendBackdropHeight = 0;
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.useProgram(null);
+
+      return true;
     }
 
     createLayerEffectScratchTarget(width = this.width, height = this.height, resourceMetadata = {}) {
@@ -10831,13 +11085,14 @@ void main() {
         : null;
       const { program, uniforms } = this.programInfo;
       const flatCamera = { x: 0, y: 0, zoom: cacheScale };
+      let previewCompositeState = null;
       const setDocumentProjection = (projectionWidth, projectionHeight, cameraX, cameraY, cameraZoom = cacheScale) => {
         gl.uniform2f(uniforms.documentSize, projectionWidth, projectionHeight);
         gl.uniform2f(uniforms.cameraPosition, cameraX, cameraY);
         gl.uniform1f(uniforms.cameraZoom, cameraZoom);
       };
       const bindArtboardProgram = () => {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, previewCompositeState?.read?.framebuffer || this.previewFramebuffer);
         gl.viewport(0, 0, cacheWidth, cacheHeight);
         gl.useProgram(program);
         gl.uniform2f(uniforms.viewportSize, cacheWidth, cacheHeight);
@@ -10923,78 +11178,33 @@ void main() {
           return;
         }
 
-        const backdropTexture = this.copyCurrentFramebufferToLayerBlendBackdrop(cacheWidth, cacheHeight);
-        const { program: blendProgram, uniforms: blendUniforms } = this.ensureLayerBlendProgramInfo();
+        if (!previewCompositeState?.read?.texture || !previewCompositeState?.write?.framebuffer) {
+          drawTexture(texture, opacity, rect, clipBase);
+          return;
+        }
 
-        gl.disable(gl.BLEND);
-        gl.useProgram(blendProgram);
-        gl.uniform2f(blendUniforms.viewportSize, cacheWidth, cacheHeight);
-        if (rect) {
-          gl.uniform2f(blendUniforms.documentSize, rect.width, rect.height);
-          gl.uniform2f(blendUniforms.cameraPosition, rect.x * cacheScale, rect.y * cacheScale);
-          gl.uniform2f(blendUniforms.drawOrigin, rect.x, rect.y);
-        } else {
-          gl.uniform2f(blendUniforms.documentSize, documentWidth, documentHeight);
-          gl.uniform2f(blendUniforms.cameraPosition, 0, 0);
-          gl.uniform2f(blendUniforms.drawOrigin, 0, 0);
-        }
-        gl.uniform1f(blendUniforms.cameraZoom, cacheScale);
-        gl.uniform1i(blendUniforms.texture, 0);
-        gl.uniform1i(blendUniforms.backdropTexture, 3);
-        gl.uniform1i(blendUniforms.maskTexture, 1);
-        gl.uniform1i(blendUniforms.clipTexture, 2);
-        gl.uniform1f(blendUniforms.opacity, opacity);
-        gl.uniform1i(blendUniforms.blendMode, blendModeId);
-        gl.uniform2f(blendUniforms.backdropSize, cacheWidth, cacheHeight);
-        gl.uniform1f(blendUniforms.maskMode, 0.0);
-        gl.uniform1f(blendUniforms.maskRectMode, 0.0);
-        gl.uniform4f(blendUniforms.maskRect, 0, 0, documentWidth, documentHeight);
-        gl.uniform1f(blendUniforms.maskClipMode, 0.0);
-        gl.uniform4f(blendUniforms.maskClipRect, 0, 0, 0, 0);
-        gl.uniform1i(blendUniforms.maskClipRectCount, 0);
-        if (clipBase?.target?.texture) {
-          const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
-            ? Math.min(1, Math.max(0, clipBase.layer.opacity))
-            : 1;
-
-          gl.activeTexture(gl.TEXTURE2);
-          gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
-          gl.uniform1f(blendUniforms.clipMode, 1.0);
-          gl.uniform1f(blendUniforms.clipOpacity, clipOpacity);
-          gl.uniform2f(
-            blendUniforms.clipOrigin,
-            Number.isFinite(clipBase.target.x) ? clipBase.target.x : 0,
-            Number.isFinite(clipBase.target.y) ? clipBase.target.y : 0,
-          );
-          gl.uniform2f(
-            blendUniforms.clipTextureSize,
-            clipBase.target.width || documentWidth,
-            clipBase.target.height || documentHeight,
-          );
-        } else {
-          gl.uniform1f(blendUniforms.clipMode, 0.0);
-          gl.uniform1f(blendUniforms.clipOpacity, 1.0);
-          gl.uniform2f(blendUniforms.clipOrigin, 0, 0);
-          gl.uniform2f(blendUniforms.clipTextureSize, documentWidth, documentHeight);
-        }
-        gl.uniform1f(blendUniforms.previewCutMode, 0.0);
-        gl.uniform4f(blendUniforms.previewCutRect, 0, 0, 0, 0);
-        gl.bindVertexArray(this.quad.vao);
-        gl.activeTexture(gl.TEXTURE3);
-        gl.bindTexture(gl.TEXTURE_2D, backdropTexture);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-        if (clipBase?.target?.texture) {
-          gl.activeTexture(gl.TEXTURE2);
-          gl.bindTexture(gl.TEXTURE_2D, null);
-        }
-        gl.activeTexture(gl.TEXTURE0);
+        this.drawLayerCompositeTexture({
+          backdropTexture: previewCompositeState.read.texture,
+          blendModeId,
+          camera: flatCamera,
+          clipBase,
+          documentHeight,
+          documentWidth,
+          framebuffer: previewCompositeState.write.framebuffer,
+          opacity,
+          rect,
+          texture,
+          viewportHeight: cacheHeight,
+          viewportWidth: cacheWidth,
+        });
+        previewCompositeState = this.swapLayerComposite(previewCompositeState);
         bindArtboardProgram();
       };
 
       const orderedPreviewLayers = this.getOrderedLayersBottomToTop();
+      const previewNeedsLayerComposite = orderedPreviewLayers.some((layer) =>
+        layer?.visible !== false && this.hasAdvancedLayerBlendMode(layer)
+      );
       const isValidClipBaseLayer = (layer) => Boolean(
         layer &&
         layer.type !== "group" &&
@@ -11015,9 +11225,6 @@ void main() {
       });
 
       const drawPreviewCachePass = (dirtyScissor = null) => {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
-        gl.viewport(0, 0, cacheWidth, cacheHeight);
-
         if (dirtyScissor) {
           gl.enable(gl.SCISSOR_TEST);
           gl.scissor(dirtyScissor.x, dirtyScissor.y, dirtyScissor.width, dirtyScissor.height);
@@ -11025,8 +11232,16 @@ void main() {
           gl.disable(gl.SCISSOR_TEST);
         }
 
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        if (previewNeedsLayerComposite) {
+          previewCompositeState = this.beginLayerComposite(cacheWidth, cacheHeight);
+        } else {
+          previewCompositeState = null;
+          gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
+          gl.viewport(0, 0, cacheWidth, cacheHeight);
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+        }
+
         gl.enable(gl.BLEND);
         gl.blendEquation(gl.FUNC_ADD);
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -11117,6 +11332,16 @@ void main() {
         gl.bindVertexArray(null);
         gl.bindTexture(gl.TEXTURE_2D, null);
         gl.useProgram(null);
+
+        if (previewCompositeState?.read?.texture) {
+          this.drawScreenTexture(previewCompositeState.read.texture, {
+            blend: false,
+            framebuffer: this.previewFramebuffer,
+            viewportHeight: cacheHeight,
+            viewportWidth: cacheWidth,
+          });
+          previewCompositeState = null;
+        }
 
         if (dirtyScissor) {
           gl.disable(gl.SCISSOR_TEST);
@@ -12249,6 +12474,8 @@ void main() {
       let currentMaskClipRect = null;
       let currentMaskClipRects = null;
       let currentPreviewCutRect = null;
+      let canvasCompositeState = null;
+      let preserveCompositeOutsideScissor = false;
       const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
         gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
         gl.uniform2f(uniforms.cameraPosition, cameraX, cameraY);
@@ -12304,7 +12531,11 @@ void main() {
           }
 
           gl.scissor(scissor.x, scissor.y, scissor.width, scissor.height);
+          const previousPreserveCompositeOutsideScissor = preserveCompositeOutsideScissor;
+
+          preserveCompositeOutsideScissor = Boolean(canvasCompositeState);
           callback();
+          preserveCompositeOutsideScissor = previousPreserveCompositeOutsideScissor;
         });
         gl.disable(gl.SCISSOR_TEST);
       };
@@ -12410,133 +12641,46 @@ void main() {
           return;
         }
 
-        const backdropTexture = this.copyCurrentFramebufferToLayerBlendBackdrop(viewportWidth, viewportHeight);
-        const { program: blendProgram, uniforms: blendUniforms } = this.ensureLayerBlendProgramInfo();
-
-        if (rect) {
-          setDocumentProjection(
-            rect.width,
-            rect.height,
-            (camera.x || 0) + rect.x * (camera.zoom || 1),
-            (camera.y || 0) + rect.y * (camera.zoom || 1),
-          );
-        } else {
-          setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
+        if (!canvasCompositeState?.read?.texture || !canvasCompositeState?.write?.framebuffer) {
+          drawTexture(texture, opacity, rect, clipBase);
+          return;
         }
 
-        gl.disable(gl.BLEND);
-        gl.useProgram(blendProgram);
-        gl.uniform2f(blendUniforms.viewportSize, viewportWidth, viewportHeight);
-        if (rect) {
-          gl.uniform2f(blendUniforms.documentSize, rect.width, rect.height);
-          gl.uniform2f(
-            blendUniforms.cameraPosition,
-            (camera.x || 0) + rect.x * (camera.zoom || 1),
-            (camera.y || 0) + rect.y * (camera.zoom || 1),
-          );
-          gl.uniform2f(blendUniforms.drawOrigin, rect.x, rect.y);
-        } else {
-          gl.uniform2f(blendUniforms.documentSize, target.width, target.height);
-          gl.uniform2f(blendUniforms.cameraPosition, camera.x || 0, camera.y || 0);
-          gl.uniform2f(blendUniforms.drawOrigin, 0, 0);
-        }
-        gl.uniform1f(blendUniforms.cameraZoom, camera.zoom || 1);
-        gl.uniform1i(blendUniforms.texture, 0);
-        gl.uniform1i(blendUniforms.backdropTexture, 3);
-        gl.uniform1i(blendUniforms.maskTexture, 1);
-        gl.uniform1i(blendUniforms.clipTexture, 2);
-        gl.uniform1f(blendUniforms.opacity, opacity);
-        gl.uniform1i(blendUniforms.blendMode, blendModeId);
-        gl.uniform2f(blendUniforms.backdropSize, viewportWidth, viewportHeight);
-
-        if (currentMaskTexture) {
-          gl.activeTexture(gl.TEXTURE1);
-          gl.bindTexture(gl.TEXTURE_2D, currentMaskTexture);
-          gl.uniform1f(blendUniforms.maskMode, 1.0);
-          if (currentMaskRect) {
-            gl.uniform1f(blendUniforms.maskRectMode, 1.0);
-            gl.uniform4f(
-              blendUniforms.maskRect,
-              currentMaskRect.x,
-              currentMaskRect.y,
-              currentMaskRect.width,
-              currentMaskRect.height,
-            );
-          } else {
-            gl.uniform1f(blendUniforms.maskRectMode, 0.0);
-            gl.uniform4f(blendUniforms.maskRect, 0, 0, target.width, target.height);
-          }
-          setMaskClipUniforms(blendUniforms, currentMaskClipRect, currentMaskClipRects);
-        } else {
-          gl.uniform1f(blendUniforms.maskMode, 0.0);
-          gl.uniform1f(blendUniforms.maskRectMode, 0.0);
-          gl.uniform4f(blendUniforms.maskRect, 0, 0, target.width, target.height);
-          setMaskClipUniforms(blendUniforms);
+        if (preserveCompositeOutsideScissor) {
+          gl.disable(gl.SCISSOR_TEST);
+          this.drawScreenTexture(canvasCompositeState.read.texture, {
+            blend: false,
+            framebuffer: canvasCompositeState.write.framebuffer,
+            viewportHeight,
+            viewportWidth,
+          });
+          gl.enable(gl.SCISSOR_TEST);
         }
 
-        if (clipBase?.target?.texture) {
-          const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
-            ? Math.min(1, Math.max(0, clipBase.layer.opacity))
-            : 1;
-
-          gl.activeTexture(gl.TEXTURE2);
-          gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
-          gl.uniform1f(blendUniforms.clipMode, 1.0);
-          gl.uniform1f(blendUniforms.clipOpacity, clipOpacity);
-          gl.uniform2f(
-            blendUniforms.clipOrigin,
-            Number.isFinite(clipBase.target.x) ? clipBase.target.x : 0,
-            Number.isFinite(clipBase.target.y) ? clipBase.target.y : 0,
-          );
-          gl.uniform2f(
-            blendUniforms.clipTextureSize,
-            clipBase.target.width || target.width,
-            clipBase.target.height || target.height,
-          );
-        } else {
-          gl.uniform1f(blendUniforms.clipMode, 0.0);
-          gl.uniform1f(blendUniforms.clipOpacity, 1.0);
-          gl.uniform2f(blendUniforms.clipOrigin, 0, 0);
-          gl.uniform2f(blendUniforms.clipTextureSize, target.width, target.height);
-        }
-
-        if (currentPreviewCutRect) {
-          gl.uniform1f(blendUniforms.previewCutMode, 1.0);
-          gl.uniform4f(
-            blendUniforms.previewCutRect,
-            currentPreviewCutRect.x,
-            currentPreviewCutRect.y,
-            currentPreviewCutRect.width,
-            currentPreviewCutRect.height,
-          );
-        } else {
-          gl.uniform1f(blendUniforms.previewCutMode, 0.0);
-          gl.uniform4f(blendUniforms.previewCutRect, 0, 0, 0, 0);
-        }
-
-        gl.bindVertexArray(this.quad.vao);
-        gl.activeTexture(gl.TEXTURE3);
-        gl.bindTexture(gl.TEXTURE_2D, backdropTexture);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-
-        if (currentMaskTexture) {
-          gl.activeTexture(gl.TEXTURE1);
-          gl.bindTexture(gl.TEXTURE_2D, null);
-        }
-
-        if (clipBase?.target?.texture) {
-          gl.activeTexture(gl.TEXTURE2);
-          gl.bindTexture(gl.TEXTURE_2D, null);
-        }
-
-        gl.activeTexture(gl.TEXTURE0);
+        this.drawLayerCompositeTexture({
+          backdropTexture: canvasCompositeState.read.texture,
+          blendModeId,
+          camera,
+          clipBase,
+          documentHeight: target.height,
+          documentWidth: target.width,
+          framebuffer: canvasCompositeState.write.framebuffer,
+          maskClipRect: currentMaskClipRect,
+          maskClipRects: currentMaskClipRects,
+          maskRect: currentMaskRect,
+          maskTexture: currentMaskTexture,
+          opacity,
+          previewCutRect: currentPreviewCutRect,
+          rect,
+          texture,
+          viewportHeight,
+          viewportWidth,
+        });
+        canvasCompositeState = this.swapLayerComposite(canvasCompositeState);
         bindArtboardProgram();
       };
       const bindArtboardProgram = () => {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, canvasCompositeState?.read?.framebuffer || null);
         gl.viewport(0, 0, viewportWidth, viewportHeight);
         gl.useProgram(program);
         gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
@@ -12585,6 +12729,7 @@ void main() {
         const drawOptions = {
           camera,
           edgeFeatherPixels: rasterTransformPreview.edgeFeatherPixels,
+          framebuffer: canvasCompositeState?.read?.framebuffer || null,
           opacity: rasterTransformPreview.opacity * layerOpacity,
           textureFilter: gl.LINEAR,
           viewportHeight,
@@ -12609,6 +12754,9 @@ void main() {
         ? this.updatePreviewCacheIfNeeded()
         : false;
       const usePreviewCache = canUsePreviewCache && didUpdatePreviewCache && this.previewCacheReady;
+      const canvasNeedsLayerComposite = !usePreviewCache && orderedLayers.some((layer) =>
+        layer?.visible !== false && this.hasAdvancedLayerBlendMode(layer)
+      );
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
@@ -12640,6 +12788,11 @@ void main() {
           didDrawActiveStroke = true;
         }
       } else {
+        if (canvasNeedsLayerComposite) {
+          canvasCompositeState = this.beginLayerComposite(viewportWidth, viewportHeight);
+          bindArtboardProgram();
+        }
+
         let currentClipBase = null;
 
         for (const layer of orderedLayers) {
@@ -12862,6 +13015,17 @@ void main() {
         }
       }
 
+      if (canvasCompositeState?.read?.texture) {
+        this.drawScreenTexture(canvasCompositeState.read.texture, {
+          blend: true,
+          framebuffer: null,
+          viewportHeight,
+          viewportWidth,
+        });
+        canvasCompositeState = null;
+        bindArtboardProgram();
+      }
+
       // Pass 2: griglia pixel sopra tutto. Lo shader la attiva solo a zoom alto.
       setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
       gl.uniform1f(uniforms.gridMode, 1.0);
@@ -12901,7 +13065,7 @@ void main() {
       this.deleteCurvesResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteActiveStrokeSelectionClipTexture();
-      this.deleteLayerBlendResources();
+      this.deleteLayerCompositeResources();
       this.deletePreviewCache();
 
       if (this.quad) {

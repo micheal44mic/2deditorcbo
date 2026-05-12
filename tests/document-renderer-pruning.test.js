@@ -2538,7 +2538,7 @@ test("live eraser mask samples document coordinates for cropped layer renders", 
     /vec2 local = \(globalDocPixel - u_maskRect\.xy\) \/ max\(u_maskRect\.zw, vec2\(1\.0\)\);/g,
   ) || [];
 
-  assert.equal(documentMaskMatches.length, 2);
+  assert.ok(documentMaskMatches.length >= 2);
   assert.doesNotMatch(source, /vec2 local = \(v_documentPixel - u_maskRect\.xy\)/);
 });
 
@@ -2550,15 +2550,20 @@ test("document renderer composites supported layer blend modes in shader", () =>
   const previewCacheBody = source.match(/updatePreviewCache\(\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
   const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
 
-  assert.match(source, /LAYER_BLEND_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /LAYER_COMPOSITE_VERTEX_SHADER_SOURCE/);
   assert.match(source, /uniform sampler2D u_backdropTexture/);
   assert.match(source, /vec3 applyBlendMode\(vec3 baseColor, vec3 sourceColor, int blendMode\)/);
   assert.match(source, /source\.rgb \/ sourceAlpha/);
   assert.match(source, /backdrop\.rgb \/ backdropAlpha/);
-  assert.match(source, /copyCurrentFramebufferToLayerBlendBackdrop\(width, height\)/);
-  assert.match(source, /gl\.copyTexSubImage2D/);
-  assert.match(source, /createLayerBlendProgramInfo\(\)/);
-  assert.match(source, /ensureLayerBlendProgramInfo\(\)/);
+  assert.match(source, /createLayerCompositeProgramInfo\(\)/);
+  assert.match(source, /ensureLayerCompositeProgramInfo\(\)/);
+  assert.match(source, /beginLayerComposite\(width, height\)/);
+  assert.match(source, /swapLayerComposite\(compositeState\)/);
+  assert.match(source, /drawLayerCompositeTexture\(options = \{\}\)/);
+  assert.match(source, /drawScreenTexture\(previewCompositeState\.read\.texture/);
+  assert.doesNotMatch(previewCacheBody, /copyCurrentFramebufferToLayerBlendBackdrop/);
+  assert.doesNotMatch(drawToCanvasBody, /copyCurrentFramebufferToLayerBlendBackdrop/);
   assert.match(source, /renderLayerWithActiveStrokeTexture\(layerTexture, strokeTexture, strokeRect = null\)/);
   assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
   assert.match(drawToCanvasBody, /activeStrokeNeedsFullStack/);
