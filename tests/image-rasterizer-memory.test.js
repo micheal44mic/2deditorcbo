@@ -11,6 +11,10 @@ const editorCanvasSource = fs.readFileSync(
   path.join(__dirname, "..", "js", "editor-canvas.js"),
   "utf8",
 );
+const rendererSource = fs.readFileSync(
+  path.join(__dirname, "..", "js", "document", "document-renderer.js"),
+  "utf8",
+);
 
 test("image rasterizer caps imported images before WebGL texture upload", () => {
   assert.match(source, /IMPORT_MEMORY_POLICY/);
@@ -52,4 +56,21 @@ test("uploaded image placement fits and centers inside the active document canva
   assert.match(source, /Math\.round\(\(targetWidth - destinationWidth\) \* 0\.5\)/);
   assert.match(source, /Math\.round\(\(targetHeight - destinationHeight\) \* 0\.5\)/);
   assert.match(source, /gl\.uniform4f\(uniforms\.destinationRect, x, y, destinationWidth, destinationHeight\)/);
+});
+
+test("uploaded image placement reports dirty bounds instead of forcing a full preview redraw", () => {
+  assert.match(source, /return this\.placeRasterImage\(decodedImage\.source,/);
+  assert.match(source, /const destinationRect = \{/);
+  assert.match(source, /rect: destinationRect/);
+  assert.match(source, /return \{\s*destinationRect,/);
+  assert.match(editorCanvasSource, /const placement = await rasterizer\.placeBlob\(detail\.blob, \{ layerId: imageLayer\.id \}\)/);
+  assert.match(editorCanvasSource, /imageBounds: placement\.destinationRect/);
+  assert.match(editorCanvasSource, /invalidate: false/);
+  assert.match(rendererSource, /const nonVisualSources = new Set\(\[/);
+  assert.match(rendererSource, /changeType !== "active-layer"/);
+  assert.match(rendererSource, /"active-layer"/);
+  assert.match(rendererSource, /"image-rasterize"/);
+  assert.match(rendererSource, /"image-upload"/);
+  assert.match(rendererSource, /"raster-transform"/);
+  assert.match(rendererSource, /changeType !== "active-layer" && !nonVisualSources\.has\(source\)/);
 });

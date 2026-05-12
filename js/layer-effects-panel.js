@@ -1341,6 +1341,10 @@ window.CBO = window.CBO || {};
 
     renderer.emitContentChange?.({
       layerId: layer.id,
+      maxDirtyRects: 96,
+      preserveDirtyRects: Array.isArray(snapshots.previewDirtyRects) && snapshots.previewDirtyRects.length > 0,
+      rect: snapshots.previewDirtyRects?.length ? null : snapshots.targetRect || null,
+      rects: snapshots.previewDirtyRects || null,
       source: "layer-effects-rasterize",
     });
     renderer.requestDraw?.();

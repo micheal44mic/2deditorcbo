@@ -430,7 +430,7 @@ void main() {
       const decodedImage = await this.decodeImageBlob(blob, options);
 
       try {
-        this.placeRasterImage(decodedImage.source, {
+        return this.placeRasterImage(decodedImage.source, {
           ...options,
           importMemoryReport: decodedImage.memoryReport,
         });
@@ -802,6 +802,14 @@ void main() {
         : (Number.isFinite(target.drawY)
             ? target.drawY
             : (target.cropped ? 0 : Math.round((targetHeight - destinationHeight) * 0.5)));
+      const targetX = Math.round(Number(target.x ?? target.originX) || 0);
+      const targetY = Math.round(Number(target.y ?? target.originY) || 0);
+      const destinationRect = {
+        x: targetX + Math.round(Number(x) || 0),
+        y: targetY + Math.round(Number(y) || 0),
+        width: destinationWidth,
+        height: destinationHeight,
+      };
       const memoryReport = this.finalizeImportMemoryReport(options.importMemoryReport, {
         drawX: x,
         drawY: y,
@@ -813,8 +821,8 @@ void main() {
         source: options.source || "image-rasterizer",
         targetHeight,
         targetWidth,
-        targetX: target.x ?? target.originX ?? 0,
-        targetY: target.y ?? target.originY ?? 0,
+        targetX,
+        targetY,
       });
       const texture = this.createRasterImageTexture(source);
       const { program, uniforms } = this.programInfo;
@@ -849,11 +857,21 @@ void main() {
       if (options.emit !== false) {
         window.dispatchEvent(new CustomEvent("cbo:document-content-change", {
           detail: {
+            destinationRect,
             layerId: target.layerId || null,
+            rect: destinationRect,
             source: options.source || "image-rasterizer",
           },
         }));
       }
+
+      return {
+        destinationRect,
+        layerId: target.layerId || options.layerId || "",
+        memoryReport,
+        sourceRect: memoryReport.sourceRect,
+        targetRect: memoryReport.targetRect,
+      };
     }
 
     dispose() {

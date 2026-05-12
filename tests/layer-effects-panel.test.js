@@ -45,7 +45,7 @@ test("layer effects panel is loaded after the vertical toolbar", () => {
   assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layer-effects-panel\.css" \/>/);
   assert.match(
     indexSource,
-    /<script src="\.\/js\/vertical-toolbar\.js"><\/script>\s*<script src="\.\/js\/layer-effects-panel\.js"><\/script>/,
+    /<script src="\.\/js\/vertical-toolbar\.js"><\/script>\s*<script src="\.\/js\/layer-effects-panel\.js(?:\?v=[^"]+)?"><\/script>/,
   );
   assert.match(appSource, /window\.CBO\.initVerticalToolbar\(\);\s*window\.CBO\.initLayerEffectsPanel\?\.\(\);/);
   assert.match(cssSource, /\.layer-effects-popover[\s\S]*?overflow: hidden;/);
@@ -197,6 +197,8 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /namespace\.setLayerCurves/);
   assert.match(source, /namespace\.rasterizeActiveLayerEffects/);
   assert.match(source, /renderer\.rasterizeLayerEffects\(layer,/);
+  assert.match(source, /rects: snapshots\.previewDirtyRects \|\| null/);
+  assert.match(source, /preserveDirtyRects: Array\.isArray\(snapshots\.previewDirtyRects\)/);
   assert.match(source, /function restorePreviewSession\(\)/);
   assert.match(source, /function showEffectPicker\(options = \{\}\)/);
   assert.match(source, /function filterEffectMenu\(\)/);
@@ -681,6 +683,7 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
   const namespace = loadLayerEffectsNamespace();
   const calls = [];
   const beforeSnapshot = { framebuffer: {}, texture: {} };
+  const targetRect = { height: 80, width: 120, x: 12, y: 24 };
   const beforeState = {
     activeLayerId: "paint-main",
     entries: [{ id: "paint-main", type: "paint" }],
@@ -730,13 +733,14 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
   };
   const renderer = {
     emitContentChange(detail = {}) {
-      calls.push(`content:${detail.source}:${detail.layerId}`);
+      calls.push(`content:${detail.source}:${detail.layerId}:${detail.rect?.width || 0}`);
     },
     rasterizeLayerEffects(inputLayer, options = {}) {
       calls.push(`bake:${inputLayer.id}:${inputLayer.effects.map((effect) => effect.type).join(",")}:${options.emit}:${options.captureAfterSnapshot}`);
       return {
         beforeSnapshot,
         layerId: inputLayer.id,
+        targetRect,
       };
     },
     requestDraw() {
@@ -759,7 +763,7 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
     "update:paint-main:1:layer-effects-rasterize:false",
     "snapshot:1",
     "push:layer-effects-rasterize",
-    "content:layer-effects-rasterize:paint-main",
+    "content:layer-effects-rasterize:paint-main:120",
     "draw",
   ]);
 });

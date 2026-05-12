@@ -55,6 +55,12 @@ test("document renderer supports raster transform preview and history commit", (
   assert.match(source, /finalizeRasterEditHistoryEntry\(layerId,/);
   assert.match(source, /beginRasterTileHistory\(layerId, dirtyRect,/);
   assert.match(source, /commitRasterTileHistory\(tileHistory,/);
+  assert.match(source, /getTileBasedPreviewDirtyRects\(rects = \[\], options = \{\}\)/);
+  assert.match(source, /\[sourceRect, destDirtyRect \|\| destRect\]/);
+  assert.match(source, /\[currentTargetRect, nextRect\]/);
+  assert.match(source, /rects: previewDirtyRects/);
+  assert.match(source, /preserveDirtyRects: true/);
+  assert.match(source, /"raster-transform",/);
   assert.match(source, /namespace\.documentHistory/);
   assert.doesNotMatch(source, /window\.CBO\.history/);
 });

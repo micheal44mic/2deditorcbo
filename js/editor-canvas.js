@@ -270,7 +270,22 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
   layerModel.setActiveLayer(imageLayer.id, { source: "image-upload" });
 
   try {
-    await rasterizer.placeBlob(detail.blob, { layerId: imageLayer.id });
+    const placement = await rasterizer.placeBlob(detail.blob, { layerId: imageLayer.id });
+
+    if (placement?.destinationRect && layerModel.updateLayer) {
+      layerModel.updateLayer(imageLayer.id, {
+        imageAsset: {
+          importedAt: new Date().toISOString(),
+          name: detail.name || "Image",
+          sourceRect: placement.sourceRect || null,
+        },
+        imageBounds: placement.destinationRect,
+      }, {
+        emit: false,
+        history: false,
+        source: "image-upload-metadata",
+      });
+    }
   } catch (error) {
     const remainingEntries = layerModel.getEntries().filter((entry) => entry.id !== imageLayer.id);
 
@@ -439,6 +454,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
 
         renderer.replaceRasterTarget(options.layerId, target, {
           emit: false,
+          invalidate: false,
           source: options.source || "image-placement-target",
         });
 

@@ -515,6 +515,36 @@ test("setActiveLayer does not record selection-only changes by default", async (
   assert.equal(model.activeLayerId, "paint-extra");
 });
 
+test("setActiveLayer skips unchanged selections and marks active-only changes", () => {
+  const { DocumentLayerModel } = loadDocumentModules();
+  const model = new DocumentLayerModel();
+  const paintLayer = model.createLayer({
+    id: "paint-extra",
+    name: "Paint Extra",
+    type: "paint",
+  });
+  const changes = [];
+
+  model.setEntries([paintLayer, ...model.getEntries()], { history: false, source: "seed" });
+  model.addEventListener("change", (event) => {
+    changes.push({
+      activeLayerId: event.detail.activeLayerId,
+      changeType: event.detail.changeType,
+      previousActiveLayerId: event.detail.previousActiveLayerId,
+      source: event.detail.source,
+    });
+  });
+
+  assert.equal(model.setActiveLayer("paint-extra", { source: "selection-tool" }), true);
+  assert.equal(model.setActiveLayer("paint-extra", { source: "selection-tool" }), false);
+  assert.deepEqual(changes, [{
+    activeLayerId: "paint-extra",
+    changeType: "active-layer",
+    previousActiveLayerId: "paint-main",
+    source: "selection-tool",
+  }]);
+});
+
 test("ensureActivePaintLayer records automatic paint layer creation", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory();

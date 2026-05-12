@@ -19,10 +19,15 @@ test("dirty region monitor exposes a separate debug menu and telemetry", () => {
   assert.match(source, /textContent = "Dirty"/);
   assert.match(source, /CBO DIRTY REGIONS/);
   assert.match(source, /collectDirtyRegionTelemetry/);
+  assert.match(source, /getPendingDirtyTelemetry/);
+  assert.match(source, /renderer\?\.previewCacheDirty/);
+  assert.match(source, /renderer\.previewDirtyRects/);
   assert.match(source, /debug: \{/);
   assert.match(source, /previewLastDirtyMode/);
   assert.match(source, /getPreviewDirtyStats/);
-  assert.match(source, /Cache last:/);
+  assert.match(source, /Cache \$\{telemetry\.last\.pending \? "pending" : "last"\}:/);
+  assert.match(source, /pending: true/);
+  assert.match(source, /pending: false/);
   assert.match(source, /Live stroke:/);
   assert.match(source, /Bake stroke:/);
   assert.match(source, /hasRects/);

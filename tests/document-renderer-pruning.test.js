@@ -2084,6 +2084,8 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(source, /recordPreviewDirtyFrame\(options = \{\}\)/);
   assert.match(source, /getPreviewDirtyStats\(\)/);
   assert.match(source, /getDirtyRegionRectsFromOptions\(options = \{\}\)/);
+  assert.match(source, /getPreviewDirtyTileSize\(options = \{\}\)/);
+  assert.match(source, /getTileBasedPreviewDirtyRects\(rects = \[\], options = \{\}\)/);
   assert.match(source, /compactDirtyRegionRects\(rects = \[\], options = \{\}\)/);
   assert.match(source, /getPreviewDirtyRegionScissor\(rect, cacheWidth, cacheHeight, cacheScale\)/);
   assert.match(source, /getPreviewDirtyRegionScissors\(rects, cacheWidth, cacheHeight, cacheScale, options = \{\}\)/);
@@ -2134,6 +2136,23 @@ test("preview dirty regions can preserve adjacent tile rectangles", () => {
 
   assert.equal(renderer.previewDirtyRects.length, 2);
   assert.equal(renderer.previewDirtyCompactOptions.mergeAdjacent, false);
+});
+
+test("preview dirty tiles split separated transform bounds without unioning empty space", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 2000;
+  renderer.height = 2000;
+
+  const rects = renderer.getTileBasedPreviewDirtyRects([
+    { x: 10, y: 10, width: 1500, height: 40 },
+    { x: 10, y: 600, width: 1500, height: 40 },
+  ], { previewDirtyTileSize: 512 });
+
+  assert.equal(rects.length, 6);
+  assert.equal(rects.some((rect) => rect.height > 512), false);
+  assert.equal(rects.some((rect) => rect.width >= 1500), false);
 });
 
 test("preview cache dimensions cap large documents while preserving aspect", () => {
@@ -2328,6 +2347,11 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /this\.deleteActiveStrokeScratchTarget\(\)/);
   assert.match(source, /this\.evictRasterScratchCachesForPolicy\(recorded\)/);
   assert.match(source, /operationType: "layer-effects-rasterize"/);
+  assert.match(source, /const previewDirtyRects = this\.getTileBasedPreviewDirtyRects\(/);
+  assert.match(source, /\[targetRect, renderRect\]/);
+  assert.match(source, /rects: previewDirtyRects/);
+  assert.match(source, /previewDirtyRects: previewDirtyRects\.map\(\(rect\) => \(\{ \.\.\.rect \}\)\)/);
+  assert.match(source, /targetRect: finalTargetRect \? \{ \.\.\.finalTargetRect \} : null/);
   assert.match(source, /scratchBytes\s*=\s*\n\s*this\.estimateRasterTargetBytes\(this\.layerEffectScratchA\)/);
   assert.match(source, /sourceTexture: layerTexture/);
   assert.doesNotMatch(source, /this\.hasPuppetLayerTransform\(layer\) \? 0 : this\.getLayerEffectPadding\(layer\)/);
@@ -2366,6 +2390,8 @@ test("puppet rasterize commits the deformed mesh through snapshots", () => {
   assert.match(rendererSource, /operationType: "puppet-rasterize"/);
   assert.match(rendererSource, /tool: "puppet"/);
   assert.match(rendererSource, /this\.replaceRasterTarget\(layer\.id, destinationTarget,/);
+  assert.match(rendererSource, /rect: destinationRect,/);
+  assert.match(rendererSource, /targetRect: destinationRect \? \{ \.\.\.destinationRect \} : null/);
   assert.match(rendererSource, /sourceTexture: sourceSnapshot\.texture/);
   assert.match(puppetToolSource, /this\.isActive\(\) && nextTool !== PUPPET_TOOL_MODE/);
   assert.match(puppetToolSource, /this\.rasterizeActivePuppetLayer\(\)/);
@@ -2391,4 +2417,98 @@ test("puppet pin creation is blocked outside visible alpha", () => {
   assert.match(puppetToolSource, /canCreatePinAtRestPoint\(layer, restPoint\)/);
   assert.match(puppetToolSource, /getRasterAlphaAtPoint\(\s*layer\.id,\s*restPoint\.x,\s*restPoint\.y,\s*\) > PUPPET_OVERLAY_ALPHA_THRESHOLD/);
   assert.match(puppetToolSource, /if \(!this\.canCreatePinAtRestPoint\(layer, restPoint\)\) \{\s*return;\s*\}/);
+});
+
+test("replaceRasterTarget can preserve preview cache and forward dirty bounds", () => {
+  const rendererSource = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(rendererSource, /if \(options\.invalidate !== false\) \{/);
+  assert.match(rendererSource, /this\.invalidatePreviewCache\(options\.source \|\| "replace-raster-target", \{/);
+  assert.match(rendererSource, /rect: options\.rect \|\| null/);
+  assert.match(rendererSource, /rects: options\.rects \|\| null/);
+  assert.match(rendererSource, /this\.emitContentChange\(\{\s*layerId,\s*rect: options\.rect \|\| null,/);
+});
+
+test("silent raster materialization preserves preview cache", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const replaceCalls = [];
+  const sparseTile = {
+    framebuffer: { id: "tile-fb" },
+    height: 128,
+    texture: { id: "tile-texture" },
+    width: 128,
+    x: 64,
+    y: 80,
+  };
+  const sparseTarget = {
+    clearColor: [0, 0, 0, 0],
+    sparse: true,
+    tileSize: 256,
+    tiles: new Map([["0:0", sparseTile]]),
+  };
+  const croppedTarget = {
+    clearColor: [0, 0, 0, 0],
+    cropped: true,
+    framebuffer: { id: "cropped-fb" },
+    height: 128,
+    texture: { id: "cropped-texture" },
+    width: 128,
+    x: 64,
+    y: 80,
+  };
+
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", croppedTarget]]);
+  renderer.createRasterTargetForDocumentRect = (layerId, rect) => ({
+    cropped: true,
+    framebuffer: { id: `full-from-sparse-${rect.x}-${rect.y}` },
+    height: rect.height,
+    texture: { id: `full-from-sparse-texture-${rect.x}-${rect.y}` },
+    width: rect.width,
+    x: rect.x,
+    y: rect.y,
+  });
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: "full-fb" },
+    height: options.height,
+    texture: { id: "full-texture" },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = () => true;
+  renderer.deleteRasterTargetObject = () => {};
+  renderer.drawTexturedQuad = () => true;
+  renderer.getRasterResourceManager = () => null;
+  renderer.markRasterTargetDirty = () => {};
+  renderer.replaceRasterTarget = (layerId, target, options = {}) => {
+    replaceCalls.push({ layerId, options, target });
+    return true;
+  };
+
+  assert.ok(renderer.materializeSparseRasterTarget("paint-1", sparseTarget, {
+    emit: false,
+    source: "unit-sparse-materialize",
+  }));
+  assert.equal(replaceCalls.at(-1).options.invalidate, false);
+
+  assert.ok(renderer.materializeRasterTarget("paint-1", {
+    emit: false,
+    source: "unit-cropped-materialize",
+  }));
+  assert.equal(replaceCalls.at(-1).options.invalidate, false);
+
+  assert.ok(renderer.materializeRasterTarget("paint-1", {
+    emit: false,
+    invalidate: true,
+    source: "unit-cropped-materialize-force",
+  }));
+  assert.equal(replaceCalls.at(-1).options.invalidate, true);
 });

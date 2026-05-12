@@ -130,10 +130,64 @@
     };
   }
 
+  function getCacheTelemetry(renderer, stats, documentSize) {
+    return {
+      height: Math.max(0, Number(stats.lastCacheHeight) || Number(renderer?.previewCacheHeight) || 0),
+      scale: Math.max(0, Number(stats.lastCacheScale) || Number(renderer?.previewCacheScale) || 0),
+      width: Math.max(0, Number(stats.lastCacheWidth) || Number(renderer?.previewCacheWidth) || 0),
+    };
+  }
+
+  function getPendingDirtyTelemetry(renderer, documentSize, cache) {
+    if (!renderer?.previewCacheDirty) {
+      return null;
+    }
+
+    const cacheWidth = Math.max(1, Math.round(Number(cache.width) || Number(renderer.previewCacheWidth) || documentSize.width || 1));
+    const cacheHeight = Math.max(1, Math.round(Number(cache.height) || Number(renderer.previewCacheHeight) || documentSize.height || 1));
+    const cacheScale = Math.max(
+      0.0001,
+      Number(cache.scale) || Number(renderer.previewCacheScale) || Math.min(cacheWidth / documentSize.width, cacheHeight / documentSize.height) || 1,
+    );
+    const cachePixels = Math.max(1, cacheWidth * cacheHeight);
+    const dirtyRects = Array.isArray(renderer.previewDirtyRects)
+      ? renderer.previewDirtyRects.filter(Boolean).map((rect) => ({ ...rect }))
+      : [];
+    const dirtyScissors = dirtyRects.length > 0 && typeof renderer.getPreviewDirtyRegionScissors === "function"
+      ? renderer.getPreviewDirtyRegionScissors(
+          dirtyRects,
+          cacheWidth,
+          cacheHeight,
+          cacheScale,
+          renderer.previewDirtyCompactOptions || {},
+        )
+      : null;
+    const isPartial = Array.isArray(dirtyScissors) && dirtyScissors.length > 0;
+    const drawnPixels = isPartial
+      ? Math.min(cachePixels, getRectListArea(dirtyScissors))
+      : cachePixels;
+    const rect = dirtyRects.length > 0 ? unionRects(dirtyRects) : null;
+    const rectPixels = rect ? getRectArea(rect) : 0;
+
+    return {
+      coverage: drawnPixels / cachePixels,
+      mode: isPartial ? "partial" : "full",
+      pending: true,
+      reason: renderer.previewCacheReason || "pending",
+      rect: rect ? { ...rect } : null,
+      rectCount: dirtyRects.length,
+      rectDocumentCoverage: documentSize.pixels > 0 ? rectPixels / documentSize.pixels : 0,
+      savedPixels: Math.max(0, cachePixels - drawnPixels),
+      scissorCount: isPartial ? dirtyScissors.length : 0,
+    };
+  }
+
   function collectDirtyRegionTelemetry() {
     const renderer = namespace.documentRenderer;
     const stats = renderer?.getPreviewDirtyStats?.() || renderer?.previewDirtyStats || {};
     const documentSize = getDocumentPixels(renderer);
+    const cache = getCacheTelemetry(renderer, stats, documentSize);
+    const pendingLast = getPendingDirtyTelemetry(renderer, documentSize, cache);
     const lastRect = renderer?.previewLastDirtyRect || stats.lastRect || null;
     const lastRectPixels = lastRect
       ? Math.max(0, Math.round(lastRect.width || 0) * Math.round(lastRect.height || 0))
@@ -148,11 +202,7 @@
     const totalSavedPixels = Math.max(0, Number(stats.totalSavedPixels) || 0);
 
     return {
-      cache: {
-        height: Math.max(0, Number(stats.lastCacheHeight) || Number(renderer?.previewCacheHeight) || 0),
-        scale: Math.max(0, Number(stats.lastCacheScale) || Number(renderer?.previewCacheScale) || 0),
-        width: Math.max(0, Number(stats.lastCacheWidth) || Number(renderer?.previewCacheWidth) || 0),
-      },
+      cache,
       document: documentSize,
       generatedAt: new Date().toISOString(),
       debug: {
@@ -162,9 +212,10 @@
         live: state.lastLiveDebugEvent,
       },
       hitRate: totalFrames > 0 ? partialFrames / totalFrames : 0,
-      last: {
+      last: pendingLast || {
         coverage: lastFullPixels > 0 ? lastDrawnPixels / lastFullPixels : Number(stats.lastCoverage) || 1,
         mode: renderer?.previewLastDirtyMode || stats.lastMode || "n/a",
+        pending: false,
         reason: stats.lastReason || renderer?.previewCacheReason || "unknown",
         rect: lastRect ? { ...lastRect } : null,
         rectCount: Math.max(0, Number(stats.lastRectCount) || 0),
@@ -444,7 +495,7 @@
     const bake = telemetry.debug.bake;
     const lines = [
       "CBO DIRTY REGIONS",
-      `Cache last: ${telemetry.last.mode} / ${telemetry.last.reason}`,
+      `Cache ${telemetry.last.pending ? "pending" : "last"}: ${telemetry.last.mode} / ${telemetry.last.reason}`,
       `Zoom: ${telemetry.zoom ? telemetry.zoom.toFixed(3) : "n/a"}`,
       "",
       `Last rect: ${formatRect(telemetry.last.rect)}`,

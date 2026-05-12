@@ -692,10 +692,21 @@
         ? this.captureHistoryState(options)
         : null;
       const entry = this.findEntryById(id);
+      const previousActiveLayerId = this.activeLayerId || null;
+      const nextActiveLayerId = this.canActivateEntry(entry) ? entry.id : null;
 
-      this.activeLayerId = this.canActivateEntry(entry) ? entry.id : null;
-      this.emitChange(options.source || "active-layer");
+      if (nextActiveLayerId === previousActiveLayerId && options.forceEmit !== true) {
+        return false;
+      }
+
+      this.activeLayerId = nextActiveLayerId;
+      this.emitChange(options.source || "active-layer", {
+        changeType: "active-layer",
+        previousActiveLayerId,
+      });
       this.recordHistoryStateChange(beforeState, options);
+
+      return true;
     }
 
     updateLayer(id, patch, options = {}) {
@@ -726,7 +737,9 @@
         }
       }
 
-      this.emitChange(options.source || "update-layer");
+      if (options.emit !== false) {
+        this.emitChange(options.source || "update-layer");
+      }
       this.recordHistoryStateChange(beforeState, options);
 
       return true;
@@ -836,9 +849,10 @@
         .reverse();
     }
 
-    emitChange(source) {
+    emitChange(source, extraDetail = {}) {
       const detail = {
         activeLayerId: this.activeLayerId,
+        ...extraDetail,
         entries: this.getEntries(),
         source,
       };

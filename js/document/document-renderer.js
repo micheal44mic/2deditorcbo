@@ -4590,6 +4590,51 @@ void main() {
       return normalizedRects;
     }
 
+    getPreviewDirtyTileSize(options = {}) {
+      const configured = Number(options.previewDirtyTileSize ?? options.tileSize);
+
+      if (Number.isFinite(configured) && configured > 0) {
+        return Math.max(64, Math.round(configured));
+      }
+
+      return Math.max(128, this.getRasterHistoryTileSize(options) * 2);
+    }
+
+    getTileBasedPreviewDirtyRects(rects = [], options = {}) {
+      const sourceRects = (Array.isArray(rects) ? rects : [rects])
+        .map((rect) => this.normalizeDirtyRegionRect(rect))
+        .filter(Boolean);
+      const tileSize = this.getPreviewDirtyTileSize(options);
+      const dirtyTiles = new Map();
+
+      sourceRects.forEach((rect) => {
+        this.getRasterHistoryTileRects(rect, { tileSize }).forEach((tile) => {
+          const patchRect = tile.patchRect || tile.rect;
+
+          if (!patchRect) {
+            return;
+          }
+
+          const key = `${tile.tx}:${tile.ty}`;
+          const previous = dirtyTiles.get(key);
+          const nextRect = previous
+            ? this.unionRasterHistoryRects(previous, patchRect)
+            : patchRect;
+
+          dirtyTiles.set(key, { ...nextRect });
+        });
+      });
+
+      return Array.from(dirtyTiles.entries())
+        .sort(([firstKey], [secondKey]) => {
+          const [firstTx, firstTy] = firstKey.split(":").map((value) => Number(value));
+          const [secondTx, secondTy] = secondKey.split(":").map((value) => Number(value));
+
+          return (firstTy - secondTy) || (firstTx - secondTx);
+        })
+        .map(([, rect]) => ({ ...rect }));
+    }
+
     unionDirtyRegionRects(rects = []) {
       return rects.reduce((result, rect) => this.unionRasterHistoryRects(result, rect), null);
     }
@@ -8011,11 +8056,19 @@ void main() {
       }
 
       this.deletePuppetMeshResource(layerId);
-      this.invalidatePreviewCache(options.source || "replace-raster-target");
+      if (options.invalidate !== false) {
+        this.invalidatePreviewCache(options.source || "replace-raster-target", {
+          layerId,
+          rect: options.rect || null,
+          rects: options.rects || null,
+        });
+      }
 
       if (options.emit !== false) {
         this.emitContentChange({
           layerId,
+          rect: options.rect || null,
+          rects: options.rects || null,
           source: options.source || "replace-raster-target",
         });
       }
@@ -8072,8 +8125,13 @@ void main() {
         return null;
       }
 
+      const shouldInvalidate = options.invalidate !== undefined
+        ? options.invalidate
+        : options.emit !== false;
+
       if (!this.replaceRasterTarget(layerId, fullTarget, {
         emit: options.emit,
+        invalidate: shouldInvalidate,
         source: options.source || "materialize-sparse-raster-target",
       })) {
         this.deleteRasterTargetObject(fullTarget);
@@ -8183,11 +8241,21 @@ void main() {
 
       this.deleteRasterTargetObject(sourceTarget);
       this.deletePuppetMeshResource(layerId);
-      this.invalidatePreviewCache(source);
+      const shouldInvalidate = options.invalidate !== undefined
+        ? options.invalidate
+        : options.emit !== false;
+
+      if (shouldInvalidate) {
+        this.invalidatePreviewCache(source, {
+          layerId,
+          rect: sourceRect,
+        });
+      }
 
       if (options.emit !== false) {
         this.emitContentChange({
           layerId,
+          rect: sourceRect,
           source,
         });
       }
@@ -8290,8 +8358,13 @@ void main() {
         stackTag: options.stackTag || "",
         tool: options.tool || options.source || "materializeRasterTarget",
       });
+      const shouldInvalidate = options.invalidate !== undefined
+        ? options.invalidate
+        : options.emit !== false;
+
       this.replaceRasterTarget(layerId, fullTarget, {
         emit: options.emit,
+        invalidate: shouldInvalidate,
         source: options.source || "materialize-raster-target",
       });
 
@@ -9467,11 +9540,17 @@ void main() {
       }
 
       const currentTargetRect = this.getRasterTargetDocumentRect(target);
+      const previewDirtyRects = this.getTileBasedPreviewDirtyRects(
+        [currentTargetRect, nextRect],
+        { previewDirtyTileSize: options.previewDirtyTileSize },
+      );
       const sourceBytes = this.estimateRasterTargetBytes(target);
       const scratchBytes = this.estimateRasterSnapshotBytes(sourceSnapshot);
 
       this.replaceRasterTarget(layerId, nextTarget, {
         emit: false,
+        invalidate: false,
+        rects: previewDirtyRects,
         source,
       });
 
@@ -9545,7 +9624,13 @@ void main() {
       }
 
       this.clearRasterTransformPreview(layerId);
-      this.emitContentChange({ layerId, source });
+      this.emitContentChange({
+        layerId,
+        maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
+        preserveDirtyRects: true,
+        rects: previewDirtyRects,
+        source,
+      });
       this.requestDraw();
 
       return true;
@@ -9599,6 +9684,10 @@ void main() {
         bounds.getUnionRect(sourceRect, destDirtyRect || destRect),
         target?.width,
         target?.height,
+      );
+      const previewDirtyRects = this.getTileBasedPreviewDirtyRects(
+        [sourceRect, destDirtyRect || destRect],
+        { previewDirtyTileSize: options.previewDirtyTileSize },
       );
 
       if (!target?.framebuffer || !sourceSnapshot?.texture || !sourceRect || !dirtyRect) {
@@ -9709,7 +9798,13 @@ void main() {
         }
 
         this.clearRasterTransformPreview(layerId);
-        this.emitContentChange({ layerId, source });
+        this.emitContentChange({
+          layerId,
+          maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
+          preserveDirtyRects: true,
+          rects: previewDirtyRects,
+          source,
+        });
         this.requestDraw();
 
         return true;
@@ -9787,7 +9882,13 @@ void main() {
       }
 
       this.clearRasterTransformPreview(layerId);
-      this.emitContentChange({ layerId, source });
+      this.emitContentChange({
+        layerId,
+        maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
+        preserveDirtyRects: true,
+        rects: previewDirtyRects,
+        source,
+      });
       this.requestDraw();
 
       return true;
@@ -9825,8 +9926,23 @@ void main() {
       }));
     }
 
-    handleLayerModelChange() {
-      this.invalidatePreviewCache("layers-change");
+    handleLayerModelChange(event) {
+      const source = event?.detail?.source || "layers-change";
+      const changeType = event?.detail?.changeType || "";
+      const nonVisualSources = new Set([
+        "active-layer",
+        "image-rasterize",
+        "image-upload",
+        "image-upload-error",
+        "image-upload-metadata",
+        "layer-effects-rasterize",
+        "raster-transform",
+      ]);
+
+      if (changeType !== "active-layer" && !nonVisualSources.has(source)) {
+        this.invalidatePreviewCache("layers-change");
+      }
+
       this.pruneOrphanRasterTargets();
     }
 
@@ -11412,6 +11528,7 @@ void main() {
 
       if (needsTargetSwap && !this.replaceRasterTarget(layer.id, destinationTarget, {
         emit: false,
+        rect: destinationRect,
         source: options.source || "puppet-rasterize",
       })) {
         this.deleteRasterTargetObject(destinationTarget);
@@ -11464,6 +11581,7 @@ void main() {
       if (options.emit !== false) {
         this.emitContentChange({
           layerId: layer.id,
+          rect: destinationRect ? { ...destinationRect } : null,
           source: options.source || "puppet-rasterize",
         });
       }
@@ -11475,6 +11593,7 @@ void main() {
         beforeSnapshot: sourceSnapshot,
         layerId: layer.id,
         memoryPolicy,
+        targetRect: destinationRect ? { ...destinationRect } : null,
       };
     }
 
@@ -11513,6 +11632,10 @@ void main() {
       const renderTexture = renderResult?.texture;
       const targetRect = this.getRasterTargetDocumentRect(target);
       const renderRect = renderResult?.rect || targetRect;
+      const previewDirtyRects = this.getTileBasedPreviewDirtyRects(
+        [targetRect, renderRect],
+        { previewDirtyTileSize: options.previewDirtyTileSize },
+      );
       const needsTargetSwap = renderRect && !this.areDocumentRectsEqual(renderRect, targetRect);
       const destinationTarget = needsTargetSwap
         ? this.createRasterTargetForRect(renderRect)
@@ -11555,6 +11678,8 @@ void main() {
       if (needsTargetSwap) {
         this.replaceRasterTarget(layer.id, destinationTarget, {
           emit: false,
+          invalidate: false,
+          rects: previewDirtyRects,
           source: options.source || "layer-effects-rasterize",
         });
       }
@@ -11627,7 +11752,9 @@ void main() {
       if (options.emit !== false) {
         this.emitContentChange({
           layerId: layer.id,
-          rect: finalTargetRect ? { ...finalTargetRect } : null,
+          maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
+          preserveDirtyRects: true,
+          rects: previewDirtyRects,
           source: options.source || "layer-effects-rasterize",
         });
       }
@@ -11639,6 +11766,8 @@ void main() {
         beforeSnapshot,
         layerId: layer.id,
         memoryPolicy,
+        previewDirtyRects: previewDirtyRects.map((rect) => ({ ...rect })),
+        targetRect: finalTargetRect ? { ...finalTargetRect } : null,
       };
     }
 
