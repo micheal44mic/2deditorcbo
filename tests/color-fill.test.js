@@ -174,6 +174,8 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /renderer\.createRasterSnapshot\?\.\(layerId, dirtyRect, "color-fill-before"\)/);
   assert.match(source, /recordColorFillMemory\(renderer,/);
   assert.match(source, /operationType: "color-fill"/);
+  assert.match(source, /renderer\.commitVisualDirtyChange\(\{/);
+  assert.match(source, /usePreviewDirtyTiles: true/);
   assert.match(source, /let afterSnapshot = null/);
   assert.match(source, /const captureRedoSnapshot = \(\) => \{/);
   assert.match(source, /afterSnapshot = renderer\.createRasterSnapshot\?\.\(layerId, dirtyRect, "color-fill-after"\)/);

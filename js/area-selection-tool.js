@@ -2443,8 +2443,17 @@
 
     pushPasteHistory(layerId, dirtyRect, tileHistory, beforeSnapshot, layerState);
     clear({ source: "area-selection-paste" });
-    renderer.invalidatePreviewCache?.("area-selection-paste", { layerId, rect: dirtyRect });
-    renderer.emitContentChange?.({ layerId, rect: dirtyRect, source: "area-selection-paste" });
+    if (typeof renderer.commitVisualDirtyChange === "function") {
+      renderer.commitVisualDirtyChange({
+        layerId,
+        rect: dirtyRect,
+        source: "area-selection-paste",
+        usePreviewDirtyTiles: true,
+      });
+    } else {
+      renderer.invalidatePreviewCache?.("area-selection-paste", { layerId, rect: dirtyRect });
+      renderer.emitContentChange?.({ layerId, rect: dirtyRect, source: "area-selection-paste" });
+    }
     renderer.requestDraw?.();
 
     return true;
@@ -2596,8 +2605,17 @@
     }
 
     pushDeleteHistory(layerId, rect, tileHistory, beforeSnapshot);
-    renderer.invalidatePreviewCache?.("area-selection-delete", { layerId, rect });
-    renderer.emitContentChange?.({ layerId, rect, source: "area-selection-delete" });
+    if (typeof renderer.commitVisualDirtyChange === "function") {
+      renderer.commitVisualDirtyChange({
+        layerId,
+        rect,
+        source: "area-selection-delete",
+        usePreviewDirtyTiles: true,
+      });
+    } else {
+      renderer.invalidatePreviewCache?.("area-selection-delete", { layerId, rect });
+      renderer.emitContentChange?.({ layerId, rect, source: "area-selection-delete" });
+    }
     renderer.requestDraw?.();
 
     return true;

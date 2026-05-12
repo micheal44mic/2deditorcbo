@@ -430,9 +430,11 @@ test("clearLayer can release an active empty paint target as sparse", () => {
   assert.equal(renderer.framebuffer, null);
   assert.equal(deletedTargets.length, 1);
   assert.equal(deletedTargets[0].texture, texture);
-  assert.equal(invalidations[0].source, "unit-clear-empty-layer");
+  assert.equal(invalidations.length, 0);
   assert.equal(emitted[0].layerId, "paint-1");
   assert.equal(emitted[0].source, "unit-clear-empty-layer");
+  assert.equal(emitted[0].preserveDirtyRects, true);
+  assert.equal(Array.isArray(emitted[0].rects), true);
 });
 
 test("raster snapshot rectangles clamp crop bounds safely", () => {
@@ -2086,6 +2088,8 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(source, /getDirtyRegionRectsFromOptions\(options = \{\}\)/);
   assert.match(source, /getPreviewDirtyTileSize\(options = \{\}\)/);
   assert.match(source, /getTileBasedPreviewDirtyRects\(rects = \[\], options = \{\}\)/);
+  assert.match(source, /createVisualDirtyChange\(options = \{\}\)/);
+  assert.match(source, /commitVisualDirtyChange\(options = \{\}\)/);
   assert.match(source, /compactDirtyRegionRects\(rects = \[\], options = \{\}\)/);
   assert.match(source, /getPreviewDirtyRegionScissor\(rect, cacheWidth, cacheHeight, cacheScale\)/);
   assert.match(source, /getPreviewDirtyRegionScissors\(rects, cacheWidth, cacheHeight, cacheScale, options = \{\}\)/);
@@ -2153,6 +2157,47 @@ test("preview dirty tiles split separated transform bounds without unioning empt
   assert.equal(rects.length, 6);
   assert.equal(rects.some((rect) => rect.height > 512), false);
   assert.equal(rects.some((rect) => rect.width >= 1500), false);
+});
+
+test("visual dirty changes normalize operations into one dirty payload", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const emitted = [];
+  const invalidated = [];
+
+  renderer.width = 2000;
+  renderer.height = 2000;
+  renderer.emitContentChange = (detail) => emitted.push(detail);
+  renderer.invalidatePreviewCache = (source, detail) => invalidated.push({ detail, source });
+
+  const detail = renderer.createVisualDirtyChange({
+    layerId: "paint-main",
+    source: "unit-visual-change",
+    sourceRect: { x: 10, y: 10, width: 1500, height: 40 },
+    targetRect: { x: 10, y: 600, width: 1500, height: 40 },
+    usePreviewDirtyTiles: true,
+  });
+
+  assert.equal(detail.source, "unit-visual-change");
+  assert.equal(detail.layerId, "paint-main");
+  assert.equal(detail.preserveDirtyRects, true);
+  assert.equal(detail.rect, null);
+  assert.equal(detail.rects.length, 6);
+
+  renderer.commitVisualDirtyChange({
+    emit: false,
+    layerId: "paint-main",
+    rect: { x: 0, y: 0, width: 100, height: 100 },
+    source: "unit-invalidate-only",
+  });
+  renderer.commitVisualDirtyChange({
+    layerId: "paint-main",
+    rect: { x: 0, y: 0, width: 100, height: 100 },
+    source: "unit-emit",
+  });
+
+  assert.equal(invalidated[0].source, "unit-invalidate-only");
+  assert.equal(emitted[0].source, "unit-emit");
 });
 
 test("preview cache dimensions cap large documents while preserving aspect", () => {
@@ -2425,11 +2470,11 @@ test("replaceRasterTarget can preserve preview cache and forward dirty bounds", 
     "utf8",
   );
 
-  assert.match(rendererSource, /if \(options\.invalidate !== false\) \{/);
-  assert.match(rendererSource, /this\.invalidatePreviewCache\(options\.source \|\| "replace-raster-target", \{/);
+  assert.match(rendererSource, /if \(options\.invalidate !== false \|\| options\.emit !== false\) \{/);
+  assert.match(rendererSource, /this\.commitVisualDirtyChange\(\{/);
   assert.match(rendererSource, /rect: options\.rect \|\| null/);
   assert.match(rendererSource, /rects: options\.rects \|\| null/);
-  assert.match(rendererSource, /this\.emitContentChange\(\{\s*layerId,\s*rect: options\.rect \|\| null,/);
+  assert.match(rendererSource, /source: options\.source \|\| "replace-raster-target"/);
 });
 
 test("silent raster materialization preserves preview cache", () => {

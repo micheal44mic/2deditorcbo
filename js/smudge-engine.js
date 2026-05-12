@@ -1482,6 +1482,14 @@ void main() {
     emitContentChange(layerId, source, rect = null) {
       const detail = rect ? { layerId, rect, source } : { layerId, source };
 
+      if (typeof this.documentRenderer?.commitVisualDirtyChange === "function") {
+        this.documentRenderer.commitVisualDirtyChange({
+          ...detail,
+          usePreviewDirtyTiles: Boolean(rect),
+        });
+        return;
+      }
+
       if (typeof this.documentRenderer?.emitContentChange === "function") {
         this.documentRenderer.emitContentChange(detail);
         return;
@@ -2476,10 +2484,20 @@ void main() {
         excludeLayerId: layerId,
         source: "smudge-compact-inactive",
       });
-      this.documentRenderer?.invalidatePreviewCache?.("smudge-stroke", {
-        layerId,
-        rect: smudgeRect,
-      });
+      if (typeof this.documentRenderer?.commitVisualDirtyChange === "function") {
+        this.documentRenderer.commitVisualDirtyChange({
+          emit: false,
+          layerId,
+          rect: smudgeRect,
+          source: "smudge-stroke",
+          usePreviewDirtyTiles: true,
+        });
+      } else {
+        this.documentRenderer?.invalidatePreviewCache?.("smudge-stroke", {
+          layerId,
+          rect: smudgeRect,
+        });
+      }
       this.debugSmudgeRaster(smudgeRect, finalTarget, layerId, debugInfo);
       this.releaseScratchTarget();
       this.activeSmudgeBounds = null;

@@ -1829,14 +1829,14 @@ void main() {
 
       this.deletePuppetMeshResource(layerId);
 
-      if (options.invalidate !== false) {
-        this.invalidatePreviewCache(options.source || "install-raster-target");
-      }
-
-      if (options.emit !== false) {
-        this.emitContentChange({
+      if (options.invalidate !== false || options.emit !== false) {
+        this.commitVisualDirtyChange({
+          emit: options.emit,
+          invalidate: options.invalidate,
           layerId,
+          rect: this.getRasterTargetDocumentRect(nextTarget),
           source: options.source || "install-raster-target",
+          usePreviewDirtyTiles: true,
         });
       }
 
@@ -2794,8 +2794,9 @@ void main() {
       }
 
       if (options.emit !== false) {
-        this.emitContentChange({
+        this.commitVisualDirtyChange({
           layerId: entry.layerId,
+          preserveDirtyRects: true,
           rects: Array.isArray(entry.projectionInvalidation)
             ? entry.projectionInvalidation.map((rect) => ({ ...rect }))
             : (entry.rect ? [{ ...entry.rect }] : []),
@@ -4633,6 +4634,90 @@ void main() {
           return (firstTy - secondTy) || (firstTx - secondTx);
         })
         .map(([, rect]) => ({ ...rect }));
+    }
+
+    createVisualDirtyChange(options = {}) {
+      const source = options.source || "visual-change";
+      const rawRects = [];
+      const pushRect = (rect) => {
+        if (rect) {
+          rawRects.push(rect);
+        }
+      };
+      const pushRects = (rects) => {
+        if (Array.isArray(rects)) {
+          rects.forEach(pushRect);
+        }
+      };
+
+      pushRect(options.rect);
+      pushRects(options.rects);
+      pushRects(options.tilePatchRects);
+      pushRects(options.projectionInvalidation);
+      pushRects(options.visualRects);
+      pushRect(options.sourceRect);
+      pushRect(options.targetRect);
+      pushRect(options.beforeRect);
+      pushRect(options.afterRect);
+      pushRect(options.previousRect);
+      pushRect(options.nextRect);
+
+      const normalizedRects = rawRects
+        .map((rect) => this.normalizeDirtyRegionRect(rect))
+        .filter(Boolean);
+      const shouldTileDirtyRects = options.tileDirty === true || options.usePreviewDirtyTiles === true;
+      const dirtyRects = shouldTileDirtyRects
+        ? this.getTileBasedPreviewDirtyRects(normalizedRects, options)
+        : normalizedRects.map((rect) => ({ ...rect }));
+      const preserveDirtyRects = options.preserveDirtyRects === true ||
+        shouldTileDirtyRects ||
+        Array.isArray(options.tilePatchRects);
+      const detail = {
+        layerId: options.layerId || "",
+        maxDirtyRects: Math.max(
+          1,
+          Math.round(Number(options.maxDirtyRects) || PREVIEW_DIRTY_MAX_RECTS),
+        ),
+        preserveDirtyRects,
+        source,
+      };
+
+      if (Number.isFinite(Number(options.dirtyMergeWasteRatio))) {
+        detail.dirtyMergeWasteRatio = Number(options.dirtyMergeWasteRatio);
+      }
+
+      if (options.mergeAdjacentDirtyRects === false) {
+        detail.mergeAdjacentDirtyRects = false;
+      }
+
+      if (dirtyRects.length === 1 && preserveDirtyRects !== true) {
+        detail.rect = { ...dirtyRects[0] };
+        detail.rects = null;
+      } else {
+        detail.rect = null;
+        detail.rects = dirtyRects.length > 0
+          ? dirtyRects.map((rect) => ({ ...rect }))
+          : null;
+      }
+
+      return detail;
+    }
+
+    commitVisualDirtyChange(options = {}) {
+      const detail = this.createVisualDirtyChange(options);
+      const shouldEmit = options.emit !== false;
+
+      if (shouldEmit) {
+        this.emitContentChange(detail);
+      } else if (options.invalidate !== false) {
+        this.invalidatePreviewCache(detail.source, detail);
+      }
+
+      if (options.requestDraw === true) {
+        this.requestDraw();
+      }
+
+      return detail;
     }
 
     unionDirtyRegionRects(rects = []) {
@@ -7162,6 +7247,7 @@ void main() {
         layerId !== "background" &&
         this.isPaintRasterLayer(layerId, target)
       ) {
+        const targetRect = this.getRasterTargetDocumentRect(target);
         const sparseTarget = this.createSparseRasterTarget(layerId, {
           clearColor: target.clearColor,
           tileSize: target.sparseTileSize || target.tileSize,
@@ -7181,13 +7267,25 @@ void main() {
         }
 
         this.deletePuppetMeshResource(layerId);
-        this.invalidatePreviewCache(options.source || "clear-layer-release-raster", { layerId });
+        this.commitVisualDirtyChange({
+          emit: options.emit,
+          layerId,
+          rect: targetRect,
+          source: options.source || "clear-layer-release-raster",
+          usePreviewDirtyTiles: true,
+        });
       } else {
-        this.clearTarget(target);
-      }
+        const targetRect = this.getRasterTargetDocumentRect(target);
 
-      if (options.emit !== false) {
-        this.emitContentChange({ layerId, source: options.source || "clear-layer" });
+        this.clearTarget(target);
+        if (options.emit !== false) {
+          this.commitVisualDirtyChange({
+            layerId,
+            rect: targetRect,
+            source: options.source || "clear-layer",
+            usePreviewDirtyTiles: true,
+          });
+        }
       }
 
       return true;
@@ -7752,10 +7850,11 @@ void main() {
       sparseTarget.version = (sparseTarget.version || 0) + 1;
 
       if (options.emit !== false) {
-        this.emitContentChange({
+        this.commitVisualDirtyChange({
           layerId,
           rect: snapshot.rect ? { ...snapshot.rect } : null,
           source: options.source || "raster-snapshot-sparse-restore",
+          usePreviewDirtyTiles: true,
         });
       }
 
@@ -7805,18 +7904,13 @@ void main() {
       }
 
       this.deletePuppetMeshResource(layerId);
-      this.invalidatePreviewCache(source, {
+      this.commitVisualDirtyChange({
+        emit: options.emit,
         layerId,
         rect: snapshot.rect,
+        source,
+        usePreviewDirtyTiles: true,
       });
-
-      if (options.emit !== false) {
-        this.emitContentChange({
-          layerId,
-          rect: snapshot.rect ? { ...snapshot.rect } : null,
-          source,
-        });
-      }
 
       this.requestDraw();
       return true;
@@ -7936,10 +8030,11 @@ void main() {
       this.markRasterTargetDirty(target);
 
       if (options.emit !== false) {
-        this.emitContentChange({
+        this.commitVisualDirtyChange({
           layerId,
           rect: snapshot.rect ? { ...snapshot.rect } : null,
           source: options.source || "raster-snapshot-restore",
+          usePreviewDirtyTiles: true,
         });
       }
 
@@ -8056,20 +8151,20 @@ void main() {
       }
 
       this.deletePuppetMeshResource(layerId);
-      if (options.invalidate !== false) {
-        this.invalidatePreviewCache(options.source || "replace-raster-target", {
+      if (options.invalidate !== false || options.emit !== false) {
+        this.commitVisualDirtyChange({
+          dirtyMergeWasteRatio: options.dirtyMergeWasteRatio,
+          emit: options.emit,
+          invalidate: options.invalidate,
           layerId,
-          rect: options.rect || null,
-          rects: options.rects || null,
-        });
-      }
-
-      if (options.emit !== false) {
-        this.emitContentChange({
-          layerId,
+          maxDirtyRects: options.maxDirtyRects,
+          mergeAdjacentDirtyRects: options.mergeAdjacentDirtyRects,
+          preserveDirtyRects: options.preserveDirtyRects,
           rect: options.rect || null,
           rects: options.rects || null,
           source: options.source || "replace-raster-target",
+          tileDirty: options.tileDirty,
+          usePreviewDirtyTiles: options.usePreviewDirtyTiles,
         });
       }
 
@@ -8245,18 +8340,14 @@ void main() {
         ? options.invalidate
         : options.emit !== false;
 
-      if (shouldInvalidate) {
-        this.invalidatePreviewCache(source, {
-          layerId,
-          rect: sourceRect,
-        });
-      }
-
-      if (options.emit !== false) {
-        this.emitContentChange({
+      if (shouldInvalidate || options.emit !== false) {
+        this.commitVisualDirtyChange({
+          emit: options.emit,
+          invalidate: shouldInvalidate,
           layerId,
           rect: sourceRect,
           source,
+          usePreviewDirtyTiles: true,
         });
       }
 
@@ -9055,14 +9146,13 @@ void main() {
       }
 
       this.deletePuppetMeshResource(destinationLayerId);
-      this.invalidatePreviewCache(options.source || "duplicate-sparse-raster-target");
-
-      if (options.emit !== false) {
-        this.emitContentChange({
-          layerId: destinationLayerId,
-          source: options.source || "duplicate-sparse-raster-target",
-        });
-      }
+      this.commitVisualDirtyChange({
+        emit: options.emit,
+        layerId: destinationLayerId,
+        rect: this.getRasterTargetDocumentRect(destinationTarget),
+        source: options.source || "duplicate-sparse-raster-target",
+        usePreviewDirtyTiles: true,
+      });
 
       return true;
     }
@@ -9624,7 +9714,7 @@ void main() {
       }
 
       this.clearRasterTransformPreview(layerId);
-      this.emitContentChange({
+      this.commitVisualDirtyChange({
         layerId,
         maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
         preserveDirtyRects: true,
@@ -9798,7 +9888,7 @@ void main() {
         }
 
         this.clearRasterTransformPreview(layerId);
-        this.emitContentChange({
+        this.commitVisualDirtyChange({
           layerId,
           maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
           preserveDirtyRects: true,
@@ -9882,7 +9972,7 @@ void main() {
       }
 
       this.clearRasterTransformPreview(layerId);
-      this.emitContentChange({
+      this.commitVisualDirtyChange({
         layerId,
         maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
         preserveDirtyRects: true,
@@ -9909,12 +9999,19 @@ void main() {
         return false;
       }
 
+      const targetRect = this.getRasterTargetDocumentRect(target);
+
       this.deleteRasterTargetObject(target);
       this.rasterTargetsByLayerId.delete(layerId);
       this.deletePuppetMeshResource(layerId);
 
       if (options.emit !== false) {
-        this.emitContentChange({ layerId, source: options.source || "delete-raster-target" });
+        this.commitVisualDirtyChange({
+          layerId,
+          rect: targetRect,
+          source: options.source || "delete-raster-target",
+          usePreviewDirtyTiles: true,
+        });
       }
 
       return true;
@@ -11579,10 +11676,12 @@ void main() {
       this.deletePuppetMeshResource(layer.id);
 
       if (options.emit !== false) {
-        this.emitContentChange({
+        this.commitVisualDirtyChange({
           layerId: layer.id,
-          rect: destinationRect ? { ...destinationRect } : null,
+          sourceRect: targetRect,
           source: options.source || "puppet-rasterize",
+          targetRect: destinationRect,
+          usePreviewDirtyTiles: true,
         });
       }
 
@@ -11750,7 +11849,7 @@ void main() {
       });
 
       if (options.emit !== false) {
-        this.emitContentChange({
+        this.commitVisualDirtyChange({
           layerId: layer.id,
           maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
           preserveDirtyRects: true,

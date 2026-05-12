@@ -4801,12 +4801,23 @@ void main() {
         excludeLayerId: layerId,
         source: "brush-bake-compact-inactive",
       });
-      this.documentRenderer?.invalidatePreviewCache?.("bake-stroke", {
-        layerId,
-        maxDirtyRects: STROKE_PREVIEW_DIRTY_MAX_RECTS,
-        preserveDirtyRects: true,
-        rects: previewDirtyRects,
-      });
+      if (typeof this.documentRenderer?.commitVisualDirtyChange === "function") {
+        this.documentRenderer.commitVisualDirtyChange({
+          emit: false,
+          layerId,
+          maxDirtyRects: STROKE_PREVIEW_DIRTY_MAX_RECTS,
+          preserveDirtyRects: true,
+          rects: previewDirtyRects,
+          source: "bake-stroke",
+        });
+      } else {
+        this.documentRenderer?.invalidatePreviewCache?.("bake-stroke", {
+          layerId,
+          maxDirtyRects: STROKE_PREVIEW_DIRTY_MAX_RECTS,
+          preserveDirtyRects: true,
+          rects: previewDirtyRects,
+        });
+      }
       this.requestDraw();
     }
 

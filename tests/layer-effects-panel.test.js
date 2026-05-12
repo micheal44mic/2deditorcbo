@@ -199,6 +199,7 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /renderer\.rasterizeLayerEffects\(layer,/);
   assert.match(source, /rects: snapshots\.previewDirtyRects \|\| null/);
   assert.match(source, /preserveDirtyRects: Array\.isArray\(snapshots\.previewDirtyRects\)/);
+  assert.match(source, /renderer\.commitVisualDirtyChange\(\{/);
   assert.match(source, /function restorePreviewSession\(\)/);
   assert.match(source, /function showEffectPicker\(options = \{\}\)/);
   assert.match(source, /function filterEffectMenu\(\)/);
