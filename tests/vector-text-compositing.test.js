@@ -175,7 +175,11 @@ test("vector text renderer caches visual text into the matching WebGL layer targ
   assert.match(source, /const placement = this\.getRasterBoxPlacement\(target, rasterBox\)/);
   assert.match(source, /x: placement\.x/);
   assert.match(source, /y: placement\.y/);
-  assert.match(source, /renderer\.invalidatePreviewCache\?\.\("vector-text-cache"\)/);
+  assert.match(source, /commitTextRasterDirty\(layerId, source = "vector-text-cache", rects = \[\]\)/);
+  assert.match(source, /renderer\.commitVisualDirtyChange\(\{/);
+  assert.match(source, /usePreviewDirtyTiles: true/);
+  assert.match(source, /this\.commitTextRasterDirty\(layer\.id, "vector-text-cache", \[previousRasterBox, rasterBox\]\)/);
+  assert.match(source, /invalidate: false/);
   assert.doesNotMatch(source, /type:\s*"paint"[\s\S]{0,120}vector-text-cache/);
 });
 

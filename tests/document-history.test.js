@@ -158,7 +158,7 @@ test("raster history accepts a zero GPU hot budget", () => {
   assert.equal(history.getRasterHistoryGpuHotBudgetMiB(), 0);
 });
 
-test("raster history cools old GPU snapshots without dropping logical undo budget", () => {
+test("raster history cools old GPU snapshots without dropping logical undo budget", async () => {
   const DocumentHistory = loadDocumentHistory();
   const mib = 1024 * 1024;
   const cooled = [];
@@ -198,12 +198,50 @@ test("raster history cools old GPU snapshots without dropping logical undo budge
     redo: () => true,
     undo: () => true,
   });
+  await Promise.resolve();
 
   assert.equal(history.getRasterHistoryBytes(), 3 * mib);
   assert.equal(history.getRasterHistoryGpuHotBytes(), 2 * mib);
   assert.equal(history.getRasterHistoryCpuColdBytes(), mib);
   assert.deepEqual(cooled, ["snapshot-1"]);
   assert.equal(history.lastRasterGpuHotPrune.cooled.length, 1);
+});
+
+test("push defers GPU hot pruning outside the history push call", async () => {
+  const DocumentHistory = loadDocumentHistory();
+  const mib = 1024 * 1024;
+  const cooled = [];
+  const history = new DocumentHistory({
+    maxEntries: 40,
+    maxRasterHistoryBytes: 10 * mib,
+    maxRasterHistoryGpuHotBytes: 0,
+    minRasterHistoryGpuHotEntries: 0,
+  });
+
+  history.push({
+    before: {
+      bytes: mib,
+      state: "GPU_HOT",
+      texture: {},
+      dehydrateGpu() {
+        cooled.push("snapshot-1");
+        this.state = "CPU_COLD";
+        this.texture = null;
+        return true;
+      },
+    },
+    redo: () => true,
+    undo: () => true,
+  });
+
+  assert.deepEqual(cooled, []);
+  assert.equal(Boolean(history.pendingRasterGpuHotPrune), true);
+
+  await Promise.resolve();
+
+  assert.deepEqual(cooled, ["snapshot-1"]);
+  assert.equal(history.pendingRasterGpuHotPrune, null);
+  assert.equal(history.lastRasterGpuHotPrune.deferred, true);
 });
 
 test("raster history can force-cool protected recent GPU snapshots during memory pressure", () => {
@@ -257,6 +295,52 @@ test("raster history can force-cool protected recent GPU snapshots during memory
   assert.equal(history.getRasterHistoryBytes(), 2 * mib);
   assert.equal(history.getRasterHistoryGpuHotBytes(), 0);
   assert.equal(history.getRasterHistoryCpuColdBytes(), 2 * mib);
+});
+
+test("GPU hot pruning does not cool shared snapshot objects twice", () => {
+  const DocumentHistory = loadDocumentHistory();
+  const mib = 1024 * 1024;
+  let coolCount = 0;
+  const sharedSnapshot = {
+    bytes: mib,
+    id: "shared-snapshot",
+    rect: { width: 512, height: 512 },
+    state: "GPU_HOT",
+    texture: {},
+    dehydrateGpu() {
+      coolCount += 1;
+      this.cpuBytes = this.bytes;
+      this.state = "CPU_COLD";
+      this.texture = null;
+      return true;
+    },
+  };
+  const history = new DocumentHistory({
+    maxEntries: 40,
+    maxRasterHistoryBytes: 10 * mib,
+    maxRasterHistoryGpuHotBytes: 10 * mib,
+    minRasterHistoryGpuHotEntries: 0,
+  });
+
+  history.push({
+    before: sharedSnapshot,
+    redo: () => true,
+    undo: () => true,
+  });
+  history.push({
+    before: sharedSnapshot,
+    redo: () => true,
+    undo: () => true,
+  });
+
+  const result = history.pruneRasterHistoryGpuHotBudget({
+    minProtectedEntries: 0,
+    targetGpuHotBytes: 0,
+  });
+
+  assert.equal(coolCount, 1);
+  assert.equal(result.cooled.length, 1);
+  assert.equal(history.getRasterHistoryGpuHotBytes(), 0);
 });
 
 test("raster history budget destroys the oldest raster entries by byte size", () => {

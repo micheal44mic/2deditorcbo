@@ -116,6 +116,9 @@ test("brush stroke history records memory policy and disables redo for huge stro
   assert.match(source, /this\.documentRenderer\?\.deleteActiveStrokeScratchTarget\?\.\(\)/);
   assert.match(source, /this\.documentRenderer\?\.compactInactivePaintTargets\?\.\(/);
   assert.match(source, /source: "brush-bake-compact-inactive"/);
+  assert.match(source, /queueStrokeTargetPrewarm\(\)/);
+  assert.match(source, /prewarmStrokePaintTargets\(maxNewTiles = STROKE_TARGET_PREWARM_MAX_TILES\)/);
+  assert.match(source, /prewarmRasterTargetsForPaintRect\(layerId, effectiveStrokeRect/);
 });
 
 test("brush first paint stroke can defer full live target materialization", () => {
@@ -172,6 +175,47 @@ test("brush preview dirty regions split long strokes into preview tiles", () => 
   assert.deepEqual(JSON.parse(JSON.stringify(dirtyRects.map((rect) => rect.width))), [512, 512, 512, 64]);
   assert.deepEqual(JSON.parse(JSON.stringify(dirtyRects.map((rect) => rect.height))), [40, 40, 40, 40]);
   assert.deepEqual(JSON.parse(JSON.stringify(dirtyRects.map((rect) => rect.x))), [0, 512, 1024, 1536]);
+});
+
+test("brush flush scissor is bounded to the current stamp batch", () => {
+  const { BrushEngine } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  engine.brushState = {
+    minSizeRatio: 1,
+    size: 100,
+  };
+  engine.shapeTexture = null;
+  engine.shapeTextureReady = false;
+
+  const dirtyRect = engine.getStampBufferDirtyRect([
+    { pressure: 1, sizeScale: 1, x: 100, y: 100 },
+    { pressure: 1, sizeScale: 1, x: 250, y: 80 },
+  ], {
+    height: 300,
+    width: 400,
+    x: 0,
+    y: 0,
+  });
+  const scissor = engine.getStrokeBufferScissor(dirtyRect, {
+    height: 300,
+    width: 400,
+    x: 0,
+    y: 0,
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(dirtyRect)), {
+    height: 124,
+    width: 254,
+    x: 48,
+    y: 28,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(scissor)), {
+    height: 124,
+    width: 254,
+    x: 48,
+    y: 148,
+  });
 });
 
 test("brush emits live dirty region debug while a long stroke is drawing", () => {
@@ -331,7 +375,7 @@ test("brush stroke history batches tile captures until the idle commit", () => {
   let cooled = false;
 
   window.CBO.documentHistory = {
-    pruneRasterHistoryGpuHotBudget(options) {
+    scheduleRasterHistoryGpuHotPrune(options) {
       cooled = options.targetGpuHotBytes === 0 && options.minProtectedEntries === 0;
       return {};
     },

@@ -1974,15 +1974,34 @@ void main() {
       }
 
       const tileTargets = [];
+      const maxNewTiles = Number.isFinite(Number(options.maxNewTiles))
+        ? Math.max(0, Math.round(Number(options.maxNewTiles)))
+        : Infinity;
+      let newTileCount = 0;
 
       for (const tile of this.getSparseRasterTileRects(requiredRect, {
         patchRects: options.patchRects,
         tileSize: sparseTarget.tileSize,
         tilePatchRects: options.tilePatchRects,
       })) {
+        const key = this.getSparseTileKey(tile.tx, tile.ty);
+        const hadTile = sparseTarget.tiles.has(key);
+
+        if (!hadTile && newTileCount >= maxNewTiles) {
+          continue;
+        }
+
         const tileTarget = this.ensureSparseRasterTileTarget(layerId, sparseTarget, tile, options);
 
         if (tileTarget) {
+          if (!hadTile && this.isTransparentRasterClearColor(sparseTarget.clearColor)) {
+            tileTarget.freshEmptyPaintTile = true;
+          }
+
+          if (!hadTile) {
+            newTileCount += 1;
+          }
+
           tileTargets.push({
             patchRect: tile.patchRect ? { ...tile.patchRect } : { ...tile.rect },
             rect: tile.rect ? { ...tile.rect } : { ...tile.patchRect },
@@ -2196,6 +2215,32 @@ void main() {
 
     estimateRasterSnapshotBytes(snapshot) {
       return this.getRasterRectBytes(snapshot?.rect || snapshot?.targetRect);
+    }
+
+    isTransparentRasterClearColor(clearColor) {
+      const color = Array.isArray(clearColor) ? clearColor : [0, 0, 0, 0];
+      const alpha = Number(color[3]);
+
+      return !Number.isFinite(alpha) || alpha <= 0;
+    }
+
+    createEmptyRasterSnapshot(layerId, rect, label = "empty raster snapshot") {
+      const docRect = this.getClampedDocumentRect(rect);
+
+      if (!layerId || !docRect) {
+        return null;
+      }
+
+      return {
+        bytes: 0,
+        empty: true,
+        id: `empty-raster-snapshot-${this.rasterTargetIdSequence++}`,
+        label,
+        layerId,
+        rect: { ...docRect },
+        state: "EMPTY",
+        targetRect: { ...docRect },
+      };
     }
 
     getRasterHistoryTileSize(options = {}) {
@@ -2477,6 +2522,39 @@ void main() {
       const layerId = delta.layerId || capture.layerId;
       const unionRect = this.unionRasterHistoryRects(delta.rect, nextRect);
       const previousBefore = delta.before;
+
+      if (previousBefore?.empty === true) {
+        const nextBefore = this.createEmptyRasterSnapshot(
+          layerId,
+          unionRect,
+          `${label}-before-tile-${delta.tx}-${delta.ty}-expanded`,
+        );
+
+        if (!nextBefore) {
+          return false;
+        }
+
+        this.deleteRasterSnapshot(previousBefore);
+        this.deleteRasterSnapshot(delta.after);
+        delta.after = null;
+        delta.before = nextBefore;
+        delta.rect = nextBefore.rect ? { ...nextBefore.rect } : { ...unionRect };
+
+        this.emitRasterHistoryTileDebug({
+          bytes: nextBefore.bytes,
+          layerId,
+          patchRect: delta.rect,
+          phase: "before-expand-empty",
+          source: label,
+          tileRect: delta.tileRect,
+          tileSize: capture.tileSize,
+          tx: delta.tx,
+          ty: delta.ty,
+        });
+
+        return true;
+      }
+
       const nextBefore = this.createRasterSnapshot(
         layerId,
         unionRect,
@@ -2511,6 +2589,22 @@ void main() {
       });
 
       return true;
+    }
+
+    createRasterTileHistoryBeforeSnapshot(layerId, tile, label = "raster-tile-history") {
+      const target = this.rasterTargetsByLayerId.get(layerId) || this.getRasterTarget(layerId);
+      const snapshotLabel = `${label}-before-tile-${tile.tx}-${tile.ty}`;
+
+      if (this.isSparseRasterTarget(target)) {
+        const tileTarget = this.getSparseRasterTile(target, tile.tx, tile.ty);
+
+        if (tileTarget?.freshEmptyPaintTile === true && this.isTransparentRasterClearColor(target.clearColor)) {
+          tileTarget.freshEmptyPaintTile = false;
+          return this.createEmptyRasterSnapshot(layerId, tile.rect, snapshotLabel);
+        }
+      }
+
+      return this.createRasterSnapshot(layerId, tile.rect, snapshotLabel);
     }
 
     extendRasterTileHistory(capture, dirtyRect, options = {}) {
@@ -2548,9 +2642,9 @@ void main() {
           continue;
         }
 
-        const before = this.createRasterSnapshot(layerId, tile.rect, `${label}-before-tile-${tile.tx}-${tile.ty}`);
+        const before = this.createRasterTileHistoryBeforeSnapshot(layerId, tile, label);
 
-        if (!before?.texture && !before?.cpuPixels) {
+        if (before?.empty !== true && !before?.texture && !before?.cpuPixels) {
           return false;
         }
 
@@ -2651,7 +2745,7 @@ void main() {
     }
 
     hasRasterTileHistorySnapshot(snapshot) {
-      return Boolean(snapshot && (snapshot.texture || snapshot.framebuffer || snapshot.cpuPixels));
+      return Boolean(snapshot && (snapshot.empty === true || snapshot.texture || snapshot.framebuffer || snapshot.cpuPixels));
     }
 
     captureRasterTileHistoryAfterSnapshots(entry, options = {}) {
@@ -4704,6 +4798,13 @@ void main() {
     }
 
     commitVisualDirtyChange(options = {}) {
+      if (namespace.PerfTrace?.enabled) {
+        namespace.PerfTrace.mark("dirty.commit", {
+          layerId: options.layerId || "",
+          rectCount: Array.isArray(options.rects) ? options.rects.length : (options.rect ? 1 : 0),
+          source: options.source || "visual-dirty",
+        });
+      }
       const detail = this.createVisualDirtyChange(options);
       const shouldEmit = options.emit !== false;
 
@@ -4971,6 +5072,14 @@ void main() {
     }
 
     invalidatePreviewCache(reason = "unknown", options = {}) {
+      if (namespace.PerfTrace?.enabled) {
+        namespace.PerfTrace.mark("preview.invalidate", {
+          layerId: options.layerId || "",
+          ready: this.previewCacheReady,
+          reason,
+          rectCount: Array.isArray(options.rects) ? options.rects.length : (options.rect ? 1 : 0),
+        });
+      }
       const hadFullInvalidation = this.previewCacheDirty && this.previewDirtyRects === null;
 
       this.previewCacheDirty = true;
@@ -7202,9 +7311,16 @@ void main() {
       };
     }
 
-    markRasterTargetDirty(target) {
+    markRasterTargetDirty(targetOrPaintTarget) {
+      const target = targetOrPaintTarget?.target || targetOrPaintTarget;
+
       if (target) {
         target.version = (target.version || 0) + 1;
+        target.freshEmptyPaintTile = false;
+      }
+
+      if (targetOrPaintTarget && targetOrPaintTarget !== target) {
+        targetOrPaintTarget.version = (targetOrPaintTarget.version || 0) + 1;
       }
     }
 
@@ -7808,6 +7924,10 @@ void main() {
         return false;
       }
 
+      if (snapshot.empty === true) {
+        return this.restoreEmptyRasterSnapshotToSparseTarget(layerId, sparseTarget, snapshot, options);
+      }
+
       if ((!snapshot.texture || !snapshot.framebuffer) && !this.hydrateRasterSnapshot(snapshot)) {
         return false;
       }
@@ -7916,9 +8036,94 @@ void main() {
       return true;
     }
 
+    restoreEmptyRasterSnapshotToSparseTarget(layerId, sparseTarget, snapshot, options = {}) {
+      if (!layerId || !this.isSparseRasterTarget(sparseTarget) || !snapshot?.rect) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const touchedTileKeys = [];
+      let didTouchExistingTile = false;
+
+      for (const tile of this.getSparseRasterTileRects(snapshot.rect, { tileSize: sparseTarget.tileSize })) {
+        const tileKey = this.getSparseTileKey(tile.tx, tile.ty);
+        const tileTarget = sparseTarget.tiles.get(tileKey);
+        const patchRect = this.intersectRasterHistoryRects(tile.tileRect || tile.rect, snapshot.rect);
+
+        if (!tileTarget || !patchRect) {
+          continue;
+        }
+
+        didTouchExistingTile = true;
+
+        if (this.containsRasterHistoryRect(patchRect, tile.tileRect || tile.rect)) {
+          this.deleteRasterTargetObject(tileTarget);
+          sparseTarget.tiles.delete(tileKey);
+          touchedTileKeys.push(tileKey);
+          continue;
+        }
+
+        const mappedRect = this.getRasterTargetLocalRect(tileTarget, patchRect);
+        const clearRect = mappedRect?.localRect;
+
+        if (!tileTarget.framebuffer || !clearRect) {
+          continue;
+        }
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, tileTarget.framebuffer);
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(clearRect.x, tileTarget.height - (clearRect.y + clearRect.height), clearRect.width, clearRect.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.disable(gl.SCISSOR_TEST);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        this.markRasterTargetDirty(tileTarget);
+        touchedTileKeys.push(tileKey);
+      }
+
+      if (didTouchExistingTile) {
+        this.pruneTransparentSparseRasterTiles(layerId, sparseTarget, touchedTileKeys);
+        sparseTarget.version = (sparseTarget.version || 0) + 1;
+      }
+
+      if (options.emit !== false) {
+        this.commitVisualDirtyChange({
+          layerId,
+          rect: snapshot.rect ? { ...snapshot.rect } : null,
+          source: options.source || "empty-raster-snapshot-sparse-restore",
+          usePreviewDirtyTiles: true,
+        });
+      }
+
+      this.requestDraw();
+      return true;
+    }
+
     restoreRasterSnapshot(layerId, snapshot, options = {}) {
       if (!layerId || !snapshot) {
         return false;
+      }
+
+      if (snapshot.empty === true) {
+        const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+
+        if (this.isSparseRasterTarget(existingTarget)) {
+          return this.restoreEmptyRasterSnapshotToSparseTarget(layerId, existingTarget, snapshot, options);
+        }
+
+        const didClear = this.clearRasterRect(layerId, snapshot.rect);
+
+        if (options.emit !== false) {
+          this.commitVisualDirtyChange({
+            layerId,
+            rect: snapshot.rect ? { ...snapshot.rect } : null,
+            source: options.source || "empty-raster-snapshot-restore",
+            usePreviewDirtyTiles: true,
+          });
+        }
+
+        this.requestDraw();
+        return didClear || !existingTarget;
       }
 
       if ((!snapshot.texture || !snapshot.framebuffer) && !this.hydrateRasterSnapshot(snapshot)) {
@@ -8929,6 +9134,24 @@ void main() {
       return target ? [{ target }] : [];
     }
 
+    prewarmRasterTargetsForPaintRect(layerId, rect, options = {}) {
+      const existingTarget = this.rasterTargetsByLayerId.get(layerId);
+
+      if (existingTarget && !this.isSparseRasterTarget(existingTarget)) {
+        return [];
+      }
+
+      const sparseResult = this.ensureSparseRasterTargetForPaintRect(layerId, rect, {
+        ...options,
+        maxNewTiles: Number.isFinite(Number(options.maxNewTiles))
+          ? Math.max(0, Math.round(Number(options.maxNewTiles)))
+          : 2,
+        source: options.source || "paint-target-prewarm",
+      });
+
+      return Array.isArray(sparseResult?.targets) ? sparseResult.targets : [];
+    }
+
     getRasterTargetsForPaintRect(layerId, rect, options = {}) {
       let existingTarget = this.ensureWritableRasterTarget(layerId, {
         source: options.source || "paint-copy-on-write-detach",
@@ -9736,6 +9959,13 @@ void main() {
         transformMode = "free",
         warpControlPoints,
       } = options;
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("transform.commit", {
+        layerId,
+        mode: transformMode,
+        source,
+      }) : null;
+
+      try {
       let target = this.ensureWritableRasterTarget(layerId, {
         source: `${source}-copy-on-write-detach`,
       }) || this.rasterTargetsByLayerId.get(layerId);
@@ -9982,6 +10212,13 @@ void main() {
       this.requestDraw();
 
       return true;
+      } finally {
+        trace?.end({
+          layerId,
+          mode: transformMode,
+          source,
+        });
+      }
     }
 
     deleteRasterTarget(layerId, options = {}) {
@@ -10563,6 +10800,12 @@ void main() {
     }
 
     updatePreviewCache() {
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("preview-cache.update", {
+        dirty: this.previewCacheDirty,
+        reason: this.previewCacheReason || "unknown",
+      }) : null;
+
+      try {
       if (!this.previewTexture || !this.previewFramebuffer || !this.programInfo || !this.quad) {
         return false;
       }
@@ -10905,6 +11148,14 @@ void main() {
       this.previewCacheReady = true;
 
       return true;
+      } finally {
+        trace?.end({
+          cacheHeight: this.previewCacheHeight,
+          cacheWidth: this.previewCacheWidth,
+          mode: this.previewLastDirtyMode || this.previewDirtyStats?.lastMode || "unknown",
+          reason: this.previewCacheReason || "unknown",
+        });
+      }
     }
 
     drawPreviewCacheToCanvas(options = {}) {
@@ -11701,6 +11952,12 @@ void main() {
         return null;
       }
 
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("effects.rasterize", {
+        layerId: layer.id,
+        source: options.source || "layer-effects-rasterize",
+      }) : null;
+
+      try {
       const captureBeforeSnapshot = options.captureBeforeSnapshot !== false;
       const captureAfterSnapshot = options.captureAfterSnapshot !== false;
       let target = this.ensureWritableRasterTarget(layer.id, {
@@ -11868,6 +12125,12 @@ void main() {
         previewDirtyRects: previewDirtyRects.map((rect) => ({ ...rect })),
         targetRect: finalTargetRect ? { ...finalTargetRect } : null,
       };
+      } finally {
+        trace?.end({
+          layerId: layer.id,
+          source: options.source || "layer-effects-rasterize",
+        });
+      }
     }
 
     drawToCanvas(options = {}) {
@@ -11972,6 +12235,14 @@ void main() {
         !activeStrokeNeedsFullStack &&
         activeStrokeCanOverlayPreview
       );
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("canvas.draw", {
+        activeStroke: Boolean(options.activeStrokeTexture),
+        canUsePreviewCache,
+        layers: renderableLayers.length,
+        zoom: camera.zoom || 1,
+      }) : null;
+
+      try {
       let didDrawActiveStroke = false;
       let currentMaskTexture = null;
       let currentMaskRect = null;
@@ -12599,6 +12870,13 @@ void main() {
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
+      } finally {
+        trace?.end({
+          activeStroke: Boolean(options.activeStrokeTexture),
+          canUsePreviewCache,
+          layers: renderableLayers.length,
+        });
+      }
     }
 
     dispose() {

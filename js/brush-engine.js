@@ -12,6 +12,7 @@ window.CBO = window.CBO || {};
   const STROKE_PREVIEW_DIRTY_TILE_SIZE = 512;
   const STROKE_PREVIEW_DIRTY_MAX_RECTS = 96;
   const STROKE_PREVIEW_DIRTY_KEEP_CACHE_MAX_COVERAGE = 0.45;
+  const STROKE_TARGET_PREWARM_MAX_TILES = 2;
   const PREVIEW_DIRTY_DEBUG_EVENT = "cbo:preview-dirty-region-debug";
   const ERASER_EMPTY_LAYER_TOAST_MS = 800;
   const ERASER_EMPTY_LAYER_TOAST_THROTTLE_MS = 1600;
@@ -587,6 +588,7 @@ void main() {
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
       this.activeStrokeDirtyDebugFrame = 0;
+      this.activeStrokeTargetPrewarmFrame = 0;
       this.strokePreviewDirtyRects = null;
       this.lastStrokePreviewDirtyRects = null;
       this.documentRenderer = options.documentRenderer;
@@ -1247,11 +1249,19 @@ void main() {
         return null;
       }
 
-      return history.pruneRasterHistoryBudget();
+      return history.pruneRasterHistoryBudget({ deferGpuHotPrune: true });
     }
 
     coolRasterHistoryGpuHotForBrush() {
       const history = namespace.documentHistory;
+
+      if (typeof history?.scheduleRasterHistoryGpuHotPrune === "function") {
+        return history.scheduleRasterHistoryGpuHotPrune({
+          minProtectedEntries: 0,
+          source: "brush-stroke",
+          targetGpuHotBytes: 0,
+        });
+      }
 
       if (!history?.pruneRasterHistoryGpuHotBudget) {
         return null;
@@ -1664,7 +1674,12 @@ void main() {
     replaceStrokeLayerTarget(nextRect, previousTargets = this.getCurrentStrokeTargets(), previousRect = this.strokeBufferRect) {
       const gl = this.gl;
       const nextTargets = [];
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.stroke-target.replace", {
+        nextPixels: Math.max(0, Math.round(nextRect?.width || 0)) * Math.max(0, Math.round(nextRect?.height || 0)),
+        previousPixels: Math.max(0, Math.round(previousRect?.width || 0)) * Math.max(0, Math.round(previousRect?.height || 0)),
+      }) : null;
 
+      try {
       try {
         const resourceMetadata = {
           bbox: nextRect,
@@ -1693,6 +1708,12 @@ void main() {
       this.strokeBufferRect = { ...nextRect };
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
+      } finally {
+        trace?.end({
+          nextHeight: Math.max(0, Math.round(nextRect?.height || 0)),
+          nextWidth: Math.max(0, Math.round(nextRect?.width || 0)),
+        });
+      }
     }
 
     ensureStrokeLayerTargetForRect(rect, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
@@ -3444,6 +3465,74 @@ void main() {
 
       this.updateStrokePreviewDirtyRects();
       this.queueActiveStrokeDirtyRegionDebug();
+      this.queueStrokeTargetPrewarm();
+    }
+
+    getStampBufferDirtyRect(stamps, clipRect = null) {
+      if (!Array.isArray(stamps) || stamps.length === 0) {
+        return null;
+      }
+
+      let dirtyRect = null;
+
+      for (let index = 0; index < stamps.length; index += 1) {
+        const bounds = this.getStampBounds(stamps[index]);
+        const x = Math.floor(bounds.minX);
+        const y = Math.floor(bounds.minY);
+        const width = Math.ceil(bounds.maxX) - x;
+        const height = Math.ceil(bounds.maxY) - y;
+
+        if (width <= 0 || height <= 0) {
+          continue;
+        }
+
+        dirtyRect = this.unionDocumentRects(dirtyRect, {
+          height,
+          width,
+          x,
+          y,
+        });
+      }
+
+      if (!dirtyRect) {
+        return null;
+      }
+
+      return clipRect
+        ? this.intersectDocumentRects(dirtyRect, clipRect)
+        : dirtyRect;
+    }
+
+    getStrokeBufferScissor(rect, strokeBufferRect = this.strokeBufferRect) {
+      const clipped = this.intersectDocumentRects(rect, strokeBufferRect);
+
+      if (!clipped || !strokeBufferRect) {
+        return null;
+      }
+
+      const x = Math.max(0, Math.round(clipped.x - strokeBufferRect.x));
+      const y = Math.max(0, Math.round(
+        strokeBufferRect.height - ((clipped.y - strokeBufferRect.y) + clipped.height),
+      ));
+      const width = Math.max(0, Math.round(clipped.width));
+      const height = Math.max(0, Math.round(clipped.height));
+
+      return width > 0 && height > 0
+        ? { height, width, x, y }
+        : null;
+    }
+
+    setStrokeBufferScissor(scissor) {
+      if (!scissor) {
+        return false;
+      }
+
+      const gl = this.gl;
+
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(scissor.x, scissor.y, scissor.width, scissor.height);
+
+      return true;
     }
 
     includeStrokeTilePatchRect(rect) {
@@ -3853,6 +3942,99 @@ void main() {
       }
 
       this.activeStrokeDirtyDebugFrame = 0;
+    }
+
+    queueStrokeTargetPrewarm() {
+      if (
+        this.currentStrokeTool === "eraser" ||
+        !this.isDrawing ||
+        this.activeStrokeTargetPrewarmFrame ||
+        this.isDisposed ||
+        typeof this.documentRenderer?.prewarmRasterTargetsForPaintRect !== "function"
+      ) {
+        return;
+      }
+
+      const requestFrame = window.requestAnimationFrame || ((callback) => window.setTimeout?.(callback, 16) || 0);
+
+      this.activeStrokeTargetPrewarmFrame = requestFrame(() => {
+        this.activeStrokeTargetPrewarmFrame = 0;
+        this.prewarmStrokePaintTargets();
+      });
+    }
+
+    cancelStrokeTargetPrewarm() {
+      if (!this.activeStrokeTargetPrewarmFrame) {
+        return;
+      }
+
+      if (window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(this.activeStrokeTargetPrewarmFrame);
+      } else {
+        window.clearTimeout?.(this.activeStrokeTargetPrewarmFrame);
+      }
+
+      this.activeStrokeTargetPrewarmFrame = 0;
+    }
+
+    prewarmStrokePaintTargets(maxNewTiles = STROKE_TARGET_PREWARM_MAX_TILES) {
+      if (
+        this.currentStrokeTool === "eraser" ||
+        !this.isDrawing ||
+        typeof this.documentRenderer?.prewarmRasterTargetsForPaintRect !== "function"
+      ) {
+        return 0;
+      }
+
+      const layerId = this.strokeTargetLayerId || this.documentRenderer?.resolvePaintLayerId?.() || "";
+      const strokeRect = this.getActiveStrokeRect();
+
+      if (!layerId || !strokeRect) {
+        return 0;
+      }
+
+      const selectionCoverageRects = this.getActiveAreaSelectionCoverageRects(strokeRect);
+      const hasSelectionCoverage = Array.isArray(selectionCoverageRects) && selectionCoverageRects.length > 0;
+      const hasEmptySelectionCoverage = Array.isArray(selectionCoverageRects) && selectionCoverageRects.length === 0;
+
+      if (hasEmptySelectionCoverage) {
+        return 0;
+      }
+
+      const effectiveStrokeRect = hasSelectionCoverage
+        ? this.getBoundsForDocumentRects(selectionCoverageRects)
+        : strokeRect;
+
+      if (!effectiveStrokeRect) {
+        return 0;
+      }
+
+      const activeStrokeTilePatchRects = hasSelectionCoverage
+        ? this.filterTilePatchRectsToCoverage(
+            this.getActiveStrokeTilePatchRects(effectiveStrokeRect),
+            selectionCoverageRects,
+          )
+        : this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
+
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.targets.prewarm", {
+        layerId,
+        maxNewTiles,
+        tilePatchRectCount: Array.isArray(activeStrokeTilePatchRects) ? activeStrokeTilePatchRects.length : 0,
+      }) : null;
+
+      try {
+        const targets = this.documentRenderer.prewarmRasterTargetsForPaintRect(layerId, effectiveStrokeRect, {
+          maxNewTiles,
+          source: "brush-stroke-target-prewarm",
+          tilePatchRects: activeStrokeTilePatchRects,
+        });
+
+        return Array.isArray(targets) ? targets.length : 0;
+      } finally {
+        trace?.end({
+          maxNewTiles,
+        });
+      }
     }
 
     filterTilePatchRectsToCoverage(tilePatchRects, coverageRects) {
@@ -4306,6 +4488,11 @@ void main() {
         return;
       }
 
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.process-stamps", {
+        tool: this.currentStrokeTool || "brush",
+      }) : null;
+
+      try {
       const [p0, p1, p2, p3] = this.currentStroke;
       const segmentDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
 
@@ -4359,6 +4546,12 @@ void main() {
 
       this.currentStroke.shift();
       this.flushStamps();
+      } finally {
+        trace?.end({
+          bufferedStamps: this.stampsBuffer.length,
+          strokeStamps: this.strokeStampCount,
+        });
+      }
     }
 
     flushStamps() {
@@ -4366,6 +4559,16 @@ void main() {
         return;
       }
 
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.flush-stamps", {
+        bufferedStamps: this.stampsBuffer.length,
+        tool: this.currentStrokeTool || "brush",
+      }) : null;
+      const beginFlushTrace = (name, detail = {}) => namespace.PerfTrace?.enabled
+        ? namespace.PerfTrace.begin(`brush.flush-stamps.${name}`, detail)
+        : null;
+      let flushUsedScissor = false;
+
+      try {
       const gl = this.gl;
       const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
       const strokeRect = this.getActiveStrokeRect();
@@ -4377,6 +4580,14 @@ void main() {
 
       const strokeBufferRect = this.strokeBufferRect || this.getFullDocumentRect(target);
       const stampCount = this.stampsBuffer.length;
+      const flushDirtyRect = this.getStampBufferDirtyRect(this.stampsBuffer, strokeBufferRect);
+      const flushScissor = this.getStrokeBufferScissor(flushDirtyRect, strokeBufferRect);
+      flushUsedScissor = Boolean(flushScissor);
+      const instanceTrace = beginFlushTrace("instance-data", {
+        scissorPixels: Math.max(0, Math.round(flushScissor?.width || 0)) *
+          Math.max(0, Math.round(flushScissor?.height || 0)),
+        stampCount,
+      });
       // 14 float per istanza: base dab + colore + dati grain Moving.
       const instanceData = new Float32Array(stampCount * 14);
       const brushSize = this.getBrushSize();
@@ -4405,6 +4616,9 @@ void main() {
         instanceData[offset + 12] = stamp.grainRotation ?? 0;
         instanceData[offset + 13] = stamp.grainDepthScale ?? 1;
       }
+      instanceTrace?.end({
+        floatCount: instanceData.length,
+      });
 
       gl.useProgram(this.brushProgramInfo.program);
       gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, target.width, target.height);
@@ -4454,8 +4668,22 @@ void main() {
 
       gl.bindVertexArray(this.brush.vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.brush.instanceVBO);
+      const uploadTrace = beginFlushTrace("upload", {
+        bytes: instanceData.byteLength,
+        stampCount,
+      });
       gl.bufferData(gl.ARRAY_BUFFER, instanceData, gl.DYNAMIC_DRAW);
+      uploadTrace?.end({
+        bytes: instanceData.byteLength,
+      });
 
+      const drawTrace = beginFlushTrace("draw-stamps", {
+        scissor: Boolean(flushScissor),
+        stampCount,
+      });
+      const didSetFlushScissor = this.setStrokeBufferScissor(flushScissor);
+
+      try {
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokePlateauFBO);
       gl.viewport(0, 0, strokeBufferRect.width, strokeBufferRect.height);
       gl.enable(gl.BLEND);
@@ -4471,6 +4699,15 @@ void main() {
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
+      } finally {
+      if (didSetFlushScissor) {
+        gl.disable(gl.SCISSOR_TEST);
+      }
+      }
+      drawTrace?.end({
+        scissorHeight: Math.max(0, Math.round(flushScissor?.height || 0)),
+        scissorWidth: Math.max(0, Math.round(flushScissor?.width || 0)),
+      });
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
@@ -4484,21 +4721,37 @@ void main() {
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      this.composeStrokeBuildUp();
+      const composeTrace = beginFlushTrace("compose", {
+        scissor: Boolean(flushScissor),
+      });
+      this.composeStrokeBuildUp(flushDirtyRect);
+      composeTrace?.end({
+        scissorHeight: Math.max(0, Math.round(flushScissor?.height || 0)),
+        scissorWidth: Math.max(0, Math.round(flushScissor?.width || 0)),
+      });
       this.stampsBuffer.length = 0;
       this.strokeStampCount += stampCount;
       this.requestDraw();
+      } finally {
+        trace?.end({
+          scissor: flushUsedScissor,
+          strokeStamps: this.strokeStampCount,
+        });
+      }
     }
 
-    composeStrokeBuildUp() {
+    composeStrokeBuildUp(dirtyRect = null) {
       const gl = this.gl;
       const target = this.strokeBufferRect || this.getFullDocumentRect();
       const { program, uniforms } = this.strokeBuildupProgramInfo;
+      const scissor = this.getStrokeBufferScissor(dirtyRect, target);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeFBO);
       gl.viewport(0, 0, target.width, target.height);
       gl.disable(gl.BLEND);
+      const didSetScissor = this.setStrokeBufferScissor(scissor);
 
+      try {
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.strokePlateauTexture);
@@ -4511,6 +4764,11 @@ void main() {
       gl.bindVertexArray(this.fullscreenQuad.vao);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindVertexArray(null);
+      } finally {
+      if (didSetScissor) {
+        gl.disable(gl.SCISSOR_TEST);
+      }
+      }
 
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, null);
@@ -4524,6 +4782,15 @@ void main() {
     }
 
     bakeStroke() {
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.bake", {
+        tool: this.currentStrokeTool || "brush",
+      }) : null;
+      const beginBakeTrace = (name, detail = {}) => namespace.PerfTrace?.enabled
+        ? namespace.PerfTrace.begin(`brush.bake.${name}`, detail)
+        : null;
+
+      try {
+      const setupTrace = beginBakeTrace("setup");
       const gl = this.gl;
       const layerId = this.strokeTargetLayerId ||
         this.documentRenderer?.resolvePaintLayerId?.() ||
@@ -4531,15 +4798,27 @@ void main() {
       const isEraserStroke = this.currentStrokeTool === "eraser";
       const { program, uniforms } = this.compositeProgramInfo;
       const strokeRect = this.getActiveStrokeRect();
+      setupTrace?.end({
+        hasStrokeRect: Boolean(strokeRect),
+        hasStrokeTexture: Boolean(this.strokeTexture),
+        layerId,
+        tool: this.currentStrokeTool || "brush",
+      });
 
       if (!this.strokeTexture || !strokeRect) {
         this.releaseStrokeLayerTarget();
         return;
       }
 
+      const coverageTrace = beginBakeTrace("coverage");
       const selectionCoverageRects = this.getActiveAreaSelectionCoverageRects(strokeRect);
       const hasSelectionCoverage = Array.isArray(selectionCoverageRects) && selectionCoverageRects.length > 0;
       const hasEmptySelectionCoverage = Array.isArray(selectionCoverageRects) && selectionCoverageRects.length === 0;
+      coverageTrace?.end({
+        coverageRectCount: Array.isArray(selectionCoverageRects) ? selectionCoverageRects.length : 0,
+        hasEmptySelectionCoverage,
+        hasSelectionCoverage,
+      });
 
       if (hasEmptySelectionCoverage) {
         this.clearStrokeLayer();
@@ -4559,6 +4838,7 @@ void main() {
         return;
       }
 
+      const targetTrace = beginBakeTrace("targets");
       const documentTarget = this.getDocumentDrawTarget(layerId);
       const finalStrokeBufferRect = this.getFinalStrokeAllocationRect(strokeRect, documentTarget);
       const activeStrokeTilePatchRects = hasSelectionCoverage
@@ -4590,12 +4870,20 @@ void main() {
             }) || this.documentRenderer?.getRasterTarget?.(layerId),
           }];
       const target = paintTargets.find((item) => item?.target?.framebuffer && item?.target?.texture)?.target || null;
+      targetTrace?.end({
+        hasFinalStrokeBufferRect: Boolean(finalStrokeBufferRect),
+        hasTarget: Boolean(target),
+        paintTargetCount: paintTargets.length,
+        previewDirtyRectCount: previewDirtyRects.length,
+        tilePatchRectCount: activeStrokeTilePatchRects.length,
+      });
 
       if (!target?.framebuffer || !target?.texture || !finalStrokeBufferRect) {
         this.releaseStrokeLayerTarget();
         return;
       }
 
+      const historyPrepareTrace = beginBakeTrace("history-prepare");
       const memoryReport = this.createStrokeMemoryReport({
         layerId,
         phase: "brush-bake",
@@ -4620,11 +4908,26 @@ void main() {
       const beforeSnapshot = this.options.enableHistory && effectiveStrokeRect && !batchedTileHistory && !tileHistory
         ? this.createHistorySnapshot(target, effectiveStrokeRect, "before-stroke")
         : null;
+      historyPrepareTrace?.end({
+        hasBatchedTileHistory: Boolean(batchedTileHistory),
+        hasBeforeSnapshot: Boolean(beforeSnapshot),
+        hasTileHistory: Boolean(tileHistory),
+        historyMode: memoryReport?.historyMode || "",
+        policy: memoryReport?.policy || "",
+      });
 
+      const preDrawTrace = beginBakeTrace("pre-draw");
       this.recordStrokeMemory(memoryReport);
       this.compactStrokeLayerTargetForRect(strokeRect, documentTarget);
       this.warmPreviewCacheForStroke();
+      preDrawTrace?.end({
+        policy: memoryReport?.policy || "",
+      });
       const bakeRect = this.strokeBufferRect || { ...strokeRect };
+      const drawTrace = beginBakeTrace("draw-targets", {
+        paintTargetCount: paintTargets.length,
+      });
+      let drawCallCount = 0;
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       if (isEraserStroke) {
@@ -4671,10 +4974,12 @@ void main() {
               selectionTargetRect.height,
             );
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            drawCallCount += 1;
           });
           gl.disable(gl.SCISSOR_TEST);
         } else {
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          drawCallCount += 1;
         }
         this.documentRenderer?.markRasterTargetDirty?.(paintTarget);
       });
@@ -4685,10 +4990,20 @@ void main() {
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      drawTrace?.end({
+        drawCallCount,
+        paintTargetCount: paintTargets.length,
+        selectionScissorCount: hasSelectionCoverage ? drawCallCount : 0,
+      });
 
+      const historyCommitTrace = beginBakeTrace("history-commit");
+      let historyCommitMode = "none";
+      let pushedHistoryEntry = false;
       if (batchedTileHistory) {
+        historyCommitMode = "batched-tile";
         this.schedulePendingBrushHistoryCommit();
       } else if (tileHistory) {
+        historyCommitMode = "tile";
         const history = namespace.documentHistory;
         const tileEntry = this.documentRenderer?.commitRasterTileHistory?.(tileHistory, {
           label: "brush-stroke",
@@ -4707,6 +5022,7 @@ void main() {
 
         if (history?.push && entry) {
           history.push(entry);
+          pushedHistoryEntry = true;
           this.pruneRasterHistoryForStroke(memoryReport);
         } else {
           this.documentRenderer?.finalizeRasterEditHistoryEntry?.(layerId, null, {
@@ -4715,6 +5031,7 @@ void main() {
           this.documentRenderer?.deleteRasterTileHistoryCapture?.(tileHistory);
         }
       } else if (beforeSnapshot) {
+        historyCommitMode = "snapshot";
         const history = namespace.documentHistory;
         let afterSnapshot = null;
         let entry = null;
@@ -4772,6 +5089,7 @@ void main() {
           }) || entry;
 
           history.push(entry);
+          pushedHistoryEntry = true;
           this.pruneRasterHistoryForStroke(memoryReport);
         } else {
           this.documentRenderer?.finalizeRasterEditHistoryEntry?.(layerId, null, {
@@ -4784,7 +5102,12 @@ void main() {
           source: this.currentStrokeTool,
         });
       }
+      historyCommitTrace?.end({
+        mode: historyCommitMode,
+        pushedHistoryEntry,
+      });
 
+      const cleanupTrace = beginBakeTrace("cleanup");
       this.clearStrokeLayer();
       this.releaseStrokeLayerTarget();
       this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
@@ -4801,6 +5124,10 @@ void main() {
         excludeLayerId: layerId,
         source: "brush-bake-compact-inactive",
       });
+      cleanupTrace?.end({
+        keepPreviewCacheForDirtyBake,
+      });
+      const dirtyTrace = beginBakeTrace("dirty");
       if (typeof this.documentRenderer?.commitVisualDirtyChange === "function") {
         this.documentRenderer.commitVisualDirtyChange({
           emit: false,
@@ -4819,6 +5146,15 @@ void main() {
         });
       }
       this.requestDraw();
+      dirtyTrace?.end({
+        previewDirtyRectCount: previewDirtyRects.length,
+      });
+      } finally {
+        trace?.end({
+          strokeStamps: this.strokeStampCount,
+          tool: this.currentStrokeTool || "brush",
+        });
+      }
     }
 
     clearStrokeLayer() {
@@ -5157,6 +5493,7 @@ void main() {
 
     resetStrokeRuntimeState() {
       this.cancelActiveStrokeDirtyRegionDebug();
+      this.cancelStrokeTargetPrewarm();
       this.resetStrokeProgress();
       this.strokeDynamicsState = null;
       this.strokeColorRandomState = null;
@@ -5585,6 +5922,7 @@ void main() {
       }
 
       this.cancelActiveStrokeDirtyRegionDebug();
+      this.cancelStrokeTargetPrewarm();
 
       window.removeEventListener("resize", this.handleResize);
       window.removeEventListener("cbo:brush-settings-change", this.handleBrushSettingsChange);

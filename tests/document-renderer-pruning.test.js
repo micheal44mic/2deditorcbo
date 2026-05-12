@@ -823,6 +823,66 @@ test("ensureRasterTargetsForPaintRect uses stamp patch tiles instead of stroke b
   assert.equal(renderer.estimateRasterTargetBytes(sparseTarget), 3 * 256 * 256 * 4);
 });
 
+test("prewarmRasterTargetsForPaintRect limits new sparse tile creation", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map();
+  renderer.isMobileLikeDevice = () => false;
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    texture: { id: `tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+
+  const firstPass = renderer.prewarmRasterTargetsForPaintRect("paint-1", {
+    height: 4000,
+    width: 4000,
+    x: 0,
+    y: 0,
+  }, {
+    maxNewTiles: 2,
+    tilePatchRects: [
+      { patchRect: { height: 20, width: 20, x: 16, y: 16 }, tx: 0, ty: 0 },
+      { patchRect: { height: 20, width: 20, x: 900, y: 16 }, tx: 3, ty: 0 },
+      { patchRect: { height: 20, width: 20, x: 1800, y: 16 }, tx: 7, ty: 0 },
+      { patchRect: { height: 20, width: 20, x: 2700, y: 16 }, tx: 10, ty: 0 },
+    ],
+  });
+  const sparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+
+  assert.equal(firstPass.length, 2);
+  assert.equal(sparseTarget.tiles.size, 2);
+
+  const secondPass = renderer.prewarmRasterTargetsForPaintRect("paint-1", {
+    height: 4000,
+    width: 4000,
+    x: 0,
+    y: 0,
+  }, {
+    maxNewTiles: 2,
+    tilePatchRects: [
+      { patchRect: { height: 20, width: 20, x: 16, y: 16 }, tx: 0, ty: 0 },
+      { patchRect: { height: 20, width: 20, x: 900, y: 16 }, tx: 3, ty: 0 },
+      { patchRect: { height: 20, width: 20, x: 1800, y: 16 }, tx: 7, ty: 0 },
+      { patchRect: { height: 20, width: 20, x: 2700, y: 16 }, tx: 10, ty: 0 },
+    ],
+  });
+
+  assert.equal(secondPass.length, 4);
+  assert.equal(sparseTarget.tiles.size, 4);
+});
+
 test("ensureRasterTargetsForPaintRect retiles materialized sparse paint targets before painting", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -1955,6 +2015,217 @@ test("raster history tiles skip untouched cells when brush patch rects are provi
   );
   assert.deepEqual(JSON.parse(JSON.stringify(rects[0].patchRect)), { x: 12, y: 12, width: 20, height: 20 });
   assert.deepEqual(JSON.parse(JSON.stringify(rects[1].patchRect)), { x: 300, y: 300, width: 20, height: 20 });
+});
+
+test("raster tile history uses empty snapshots for freshly created sparse paint tiles", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  let realSnapshotCount = 0;
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map();
+  renderer.isMobileLikeDevice = () => false;
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `fb-${options.x}-${options.y}` },
+    height: options.height,
+    layerId: options.layerId,
+    texture: { id: `tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.createRasterSnapshot = () => {
+    realSnapshotCount += 1;
+    return null;
+  };
+  renderer.emitRasterHistoryTileDebug = () => {};
+
+  renderer.ensureRasterTargetsForPaintRect("paint-1", {
+    height: 160,
+    width: 160,
+    x: 16,
+    y: 16,
+  }, {
+    source: "unit-fresh-tile",
+  });
+
+  const sparseTarget = renderer.rasterTargetsByLayerId.get("paint-1");
+  const firstTile = sparseTarget.tiles.get("0:0");
+
+  assert.equal(firstTile.freshEmptyPaintTile, true);
+
+  const capture = renderer.beginRasterTileHistory("paint-1", {
+    height: 160,
+    width: 160,
+    x: 16,
+    y: 16,
+  }, {
+    label: "brush-stroke",
+    source: "brush",
+  });
+
+  assert.equal(realSnapshotCount, 0);
+  assert.equal(capture.tileDeltas.length, 1);
+  assert.equal(capture.tileDeltas[0].before.empty, true);
+  assert.equal(capture.tileDeltas[0].before.bytes, 0);
+  assert.equal(firstTile.freshEmptyPaintTile, false);
+
+  assert.equal(renderer.extendRasterTileHistory(capture, {
+    height: 220,
+    width: 220,
+    x: 16,
+    y: 16,
+  }, {
+    label: "brush-stroke",
+    source: "brush",
+  }), true);
+  assert.equal(realSnapshotCount, 0);
+  assert.equal(capture.tileDeltas[0].before.empty, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(capture.tileDeltas[0].before.rect)), {
+    height: 220,
+    width: 220,
+    x: 16,
+    y: 16,
+  });
+});
+
+test("markRasterTargetDirty clears fresh empty state on sparse paint wrappers", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const tileTarget = {
+    freshEmptyPaintTile: true,
+    version: 0,
+  };
+  const paintTarget = {
+    target: tileTarget,
+    version: 0,
+  };
+
+  renderer.markRasterTargetDirty(paintTarget);
+
+  assert.equal(tileTarget.freshEmptyPaintTile, false);
+  assert.equal(tileTarget.version, 1);
+  assert.equal(paintTarget.version, 1);
+});
+
+test("empty raster snapshots restore sparse paint tiles by clearing the covered tile", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const deletedTargets = [];
+
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map();
+  renderer.isMobileLikeDevice = () => false;
+  renderer.gl = {};
+  renderer.deleteRasterTargetObject = (target) => deletedTargets.push(target);
+  renderer.commitVisualDirtyChange = () => {};
+  renderer.requestDraw = () => {};
+
+  const sparseTarget = renderer.createSparseRasterTarget("paint-1");
+  const tileTarget = {
+    framebuffer: { id: "tile-fb" },
+    height: 256,
+    texture: { id: "tile-texture" },
+    tileKey: "0:0",
+    width: 256,
+    x: 0,
+    y: 0,
+  };
+
+  sparseTarget.tiles.set("0:0", tileTarget);
+  renderer.rasterTargetsByLayerId.set("paint-1", sparseTarget);
+
+  const didRestore = renderer.restoreRasterSnapshot("paint-1", {
+    empty: true,
+    rect: { x: 0, y: 0, width: 256, height: 256 },
+    state: "EMPTY",
+  }, {
+    emit: false,
+  });
+
+  assert.equal(didRestore, true);
+  assert.equal(sparseTarget.tiles.has("0:0"), false);
+  assert.deepEqual(deletedTargets, [tileTarget]);
+});
+
+test("empty raster snapshots restore sparse paint tiles with partial scissor clears", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const calls = [];
+
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map();
+  renderer.isMobileLikeDevice = () => false;
+  renderer.gl = {
+    COLOR_BUFFER_BIT: 0x4000,
+    FRAMEBUFFER: 0x8D40,
+    SCISSOR_TEST: 0x0C11,
+    bindFramebuffer(target, framebuffer) {
+      calls.push(["bindFramebuffer", target, framebuffer?.id || null]);
+    },
+    clear(mask) {
+      calls.push(["clear", mask]);
+    },
+    clearColor(r, g, b, a) {
+      calls.push(["clearColor", r, g, b, a]);
+    },
+    disable(flag) {
+      calls.push(["disable", flag]);
+    },
+    enable(flag) {
+      calls.push(["enable", flag]);
+    },
+    scissor(x, y, width, height) {
+      calls.push(["scissor", x, y, width, height]);
+    },
+  };
+  renderer.deleteRasterTargetObject = () => {
+    throw new Error("partial empty restore should not delete the whole tile");
+  };
+  renderer.commitVisualDirtyChange = () => {};
+  renderer.pruneTransparentSparseRasterTiles = () => {};
+  renderer.requestDraw = () => {};
+
+  const sparseTarget = renderer.createSparseRasterTarget("paint-1");
+  const tileTarget = {
+    framebuffer: { id: "tile-fb" },
+    height: 256,
+    texture: { id: "tile-texture" },
+    tileKey: "0:0",
+    width: 256,
+    x: 0,
+    y: 0,
+  };
+
+  sparseTarget.tiles.set("0:0", tileTarget);
+  renderer.rasterTargetsByLayerId.set("paint-1", sparseTarget);
+
+  const didRestore = renderer.restoreRasterSnapshot("paint-1", {
+    empty: true,
+    rect: { x: 20, y: 30, width: 50, height: 40 },
+    state: "EMPTY",
+  }, {
+    emit: false,
+  });
+
+  assert.equal(didRestore, true);
+  assert.equal(sparseTarget.tiles.has("0:0"), true);
+  assert.equal(tileTarget.version, 1);
+  assert.deepEqual(calls.find((call) => call[0] === "scissor"), [
+    "scissor",
+    20,
+    186,
+    50,
+    40,
+  ]);
 });
 
 test("lazy raster tile history captures after snapshots on first undo", () => {

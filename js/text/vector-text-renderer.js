@@ -1459,6 +1459,58 @@
       });
     }
 
+    cloneRasterBox(rasterBox) {
+      return rasterBox && rasterBox.width > 0 && rasterBox.height > 0
+        ? {
+            height: Math.round(rasterBox.height),
+            width: Math.round(rasterBox.width),
+            x: Math.round(rasterBox.x || 0),
+            y: Math.round(rasterBox.y || 0),
+          }
+        : null;
+    }
+
+    getTextRasterCacheRect(layerId, fallbackRasterBox = null) {
+      const fallback = this.cloneRasterBox(fallbackRasterBox);
+
+      if (fallback) {
+        return fallback;
+      }
+
+      const renderer = namespace.documentRenderer;
+      const target = renderer?.rasterTargetsByLayerId?.get?.(layerId);
+
+      return this.cloneRasterBox(renderer?.getRasterTargetDocumentRect?.(target));
+    }
+
+    commitTextRasterDirty(layerId, source = "vector-text-cache", rects = []) {
+      const renderer = namespace.documentRenderer;
+      const dirtyRects = (Array.isArray(rects) ? rects : [rects])
+        .map((rect) => this.cloneRasterBox(rect))
+        .filter(Boolean);
+
+      if (!dirtyRects.length) {
+        return null;
+      }
+
+      if (typeof renderer?.commitVisualDirtyChange === "function") {
+        return renderer.commitVisualDirtyChange({
+          layerId,
+          preserveDirtyRects: true,
+          rects: dirtyRects,
+          source,
+          usePreviewDirtyTiles: true,
+        });
+      }
+
+      renderer?.invalidatePreviewCache?.(source, {
+        layerId,
+        rects: dirtyRects,
+      });
+
+      return null;
+    }
+
     createTextRasterTarget(layerId, rasterBox, source = "vector-text-cache-target") {
       const renderer = namespace.documentRenderer;
       const existingTarget = renderer?.rasterTargetsByLayerId?.get?.(layerId);
@@ -1484,6 +1536,7 @@
 
       if (!renderer.replaceRasterTarget?.(layerId, target, {
         emit: false,
+        invalidate: false,
         source,
       })) {
         renderer.deleteRasterTargetObject?.(target);
@@ -1575,13 +1628,21 @@
     runTextLayerRasterSync(layer, pathData, pathBounds, size, rasterBox, signature) {
       const renderer = namespace.documentRenderer;
       const rasterizer = namespace.imageRasterizer;
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("text.raster-cache", {
+        hasRasterBox: Boolean(rasterBox),
+        layerId: layer?.id || "",
+      }) : null;
 
       if (!renderer?.createRasterTargetForDocumentRect || !rasterizer?.placeRasterImage) {
+        trace?.end({
+          skipped: true,
+        });
         return;
       }
 
       const cached = this.rasterLayerCache.get(layer.id) || {};
       const generation = this.rasterGeneration + 1;
+      const previousRasterBox = this.getTextRasterCacheRect(layer.id, cached.rasterBox);
 
       this.rasterGeneration = generation;
       this.rasterLayerCache.set(layer.id, {
@@ -1592,10 +1653,11 @@
 
       if (!rasterBox) {
         renderer.clearLayer(layer.id, { emit: false });
-        renderer.invalidatePreviewCache?.("vector-text-cache");
+        this.commitTextRasterDirty(layer.id, "vector-text-cache", [previousRasterBox]);
         this.rasterLayerCache.set(layer.id, {
           generation,
           pendingSignature: "",
+          rasterBox: null,
           signature,
         });
         if (renderer.isVectorTextTransformPreviewLayer?.(layer.id)) {
@@ -1604,6 +1666,9 @@
         }
         this.finishRasterPreviewIfIdle();
         namespace.brushEngine?.requestDraw?.();
+        trace?.end({
+          empty: true,
+        });
         return;
       }
 
@@ -1624,6 +1689,9 @@
             namespace.documentRenderer !== renderer ||
             namespace.imageRasterizer !== rasterizer
           ) {
+            trace?.end({
+              stale: true,
+            });
             return;
           }
 
@@ -1654,7 +1722,7 @@
               tileSize: target.sparseTileSize || target.tileSize,
             });
           }
-          renderer.invalidatePreviewCache?.("vector-text-cache");
+          this.commitTextRasterDirty(layer.id, "vector-text-cache", [previousRasterBox, rasterBox]);
           this.debugTextRaster(layer, rasterBox, size, "vector-text-cache");
 
           if (renderer.isVectorTextTransformPreviewLayer?.(layer.id)) {
@@ -1665,10 +1733,17 @@
           this.rasterLayerCache.set(layer.id, {
             generation,
             pendingSignature: "",
+            rasterBox: this.cloneRasterBox(rasterBox),
             signature,
           });
           this.finishRasterPreviewIfIdle();
           namespace.brushEngine?.requestDraw?.();
+          trace?.end({
+            rasterBox: {
+              height: rasterBox.height,
+              width: rasterBox.width,
+            },
+          });
         })
         .catch((error) => {
           const latest = this.rasterLayerCache.get(layer.id);
@@ -1685,6 +1760,9 @@
             renderer.clearVectorTextTransformPreviewLayer?.(layer.id);
             this.endTextEditPreview();
           }
+          trace?.end({
+            error: error?.message || String(error),
+          });
           console.warn("Impossibile sincronizzare il testo vettoriale nel compositing WebGL.", error);
         });
     }
@@ -1692,21 +1770,30 @@
     removeStaleTextRasterTargets(activeLayerIds) {
       const renderer = namespace.documentRenderer;
       let didRemoveTarget = false;
+      const dirtyRects = [];
 
-      this.rasterLayerCache.forEach((_cache, layerId) => {
+      this.rasterLayerCache.forEach((cache, layerId) => {
         if (activeLayerIds.has(layerId)) {
           return;
         }
 
-        if (_cache?.timerId) {
-          window.clearTimeout(_cache.timerId);
+        if (cache?.timerId) {
+          window.clearTimeout(cache.timerId);
         }
 
+        const dirtyRect = this.getTextRasterCacheRect(layerId, cache?.rasterBox);
+
         this.rasterLayerCache.delete(layerId);
-        didRemoveTarget = renderer?.deleteRasterTarget?.(layerId, { emit: false }) || didRemoveTarget;
+        if (renderer?.deleteRasterTarget?.(layerId, { emit: false })) {
+          didRemoveTarget = true;
+          if (dirtyRect) {
+            dirtyRects.push(dirtyRect);
+          }
+        }
       });
 
       if (didRemoveTarget) {
+        this.commitTextRasterDirty("", "vector-text-cache-remove", dirtyRects);
         namespace.brushEngine?.requestDraw?.();
       }
     }

@@ -1090,7 +1090,7 @@ void main() {
         return null;
       }
 
-      return history.pruneRasterHistoryBudget();
+      return history.pruneRasterHistoryBudget({ deferGpuHotPrune: true });
     }
 
     containsRect(container, rect) {

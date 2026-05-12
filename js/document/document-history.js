@@ -6,6 +6,11 @@
   const DEFAULT_MAX_RASTER_HISTORY_BYTES = 320 * MIB;
   const DEFAULT_MAX_RASTER_HISTORY_GPU_HOT_BYTES = 192 * MIB;
   const DEFAULT_MIN_RASTER_HISTORY_GPU_HOT_ENTRIES = 6;
+  const DEFAULT_GPU_HOT_PRUNE_CHUNK_MS = 7;
+  const DEFAULT_GPU_HOT_PRUNE_CHUNK_SNAPSHOTS = 8;
+  const DEFAULT_GPU_HOT_PRUNE_INITIAL_DELAY_MS = 90;
+  const DEFAULT_GPU_HOT_PRUNE_INTERACTION_DELAY_MS = 140;
+  const DEFAULT_GPU_HOT_PRUNE_IDLE_TIMEOUT_MS = 250;
   const HISTORY_CHANGE_EVENT = "cbo:history-change";
 
   function isObject(value) {
@@ -122,6 +127,9 @@
       this.isDisposed = false;
       this.lastRasterBudgetPrune = null;
       this.lastRasterGpuHotPrune = null;
+      this.pendingRasterGpuHotPrune = null;
+      this.scheduledRasterGpuHotPruneHandle = null;
+      this.scheduledRasterGpuHotPruneType = "";
       this.handleHistoryAction = this.handleHistoryAction.bind(this);
 
       window.addEventListener("cbo:history-action", this.handleHistoryAction);
@@ -195,6 +203,12 @@
       }
     }
 
+    beginTrace(name, detail = {}) {
+      return namespace.PerfTrace?.enabled
+        ? namespace.PerfTrace.begin(name, detail)
+        : null;
+    }
+
     normalizeEntry(entry, options = {}) {
       if (!isObject(entry) || typeof entry.undo !== "function" || typeof entry.redo !== "function") {
         return null;
@@ -209,6 +223,13 @@
     }
 
     destroyEntry(entry) {
+      const trace = this.beginTrace("history.destroy-entry", {
+        hasDestroy: typeof entry?.destroy === "function",
+        source: entry?.source || "",
+        type: entry?.type || "",
+      });
+
+      try {
       if (!entry || entry.destroyed === true) {
         return;
       }
@@ -217,6 +238,11 @@
 
       if (typeof entry.destroy === "function") {
         entry.destroy();
+      }
+      } finally {
+        trace?.end({
+          destroyed: entry?.destroyed === true,
+        });
       }
     }
 
@@ -406,6 +432,12 @@
     }
 
     destroyOldestRasterHistoryEntry() {
+      const trace = this.beginTrace("history.destroy-oldest-raster", {
+        redoCount: this.redoStack.length,
+        undoCount: this.undoStack.length,
+      });
+
+      try {
       const totalEntries = this.getRasterHistoryEntryCount();
 
       if (totalEntries <= 1) {
@@ -462,11 +494,25 @@
         stack: candidate.stackName,
         type: entry?.type || "",
       };
+      } finally {
+        trace?.end({
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
+      }
     }
 
-    pruneRasterHistoryBudget() {
+    pruneRasterHistoryBudget(options = {}) {
+      const trace = this.beginTrace("history.prune-budget", {
+        budgetBytes: this.maxRasterHistoryBytes,
+        deferGpuHotPrune: options.deferGpuHotPrune === true,
+      });
+
+      try {
       const budgetBytes = Math.max(0, Math.floor(Number(this.maxRasterHistoryBytes) || 0));
+      const beforeTrace = this.beginTrace("history.prune-budget.total-before", { budgetBytes });
       const beforeBytes = this.getRasterHistoryBytes();
+      beforeTrace?.end({ beforeBytes });
       const dropped = [];
 
       if (!Number.isFinite(budgetBytes)) {
@@ -478,7 +524,13 @@
         };
       }
 
-      while (this.getRasterHistoryBytes() > budgetBytes) {
+      const dropLoopTrace = this.beginTrace("history.prune-budget.drop-loop", {
+        beforeBytes,
+        budgetBytes,
+      });
+      let currentBytes = beforeBytes;
+
+      while (currentBytes > budgetBytes) {
         const droppedEntry = this.destroyOldestRasterHistoryEntry();
 
         if (!droppedEntry) {
@@ -486,9 +538,19 @@
         }
 
         dropped.push(droppedEntry);
+        currentBytes = Math.max(0, currentBytes - Math.max(0, Number(droppedEntry.bytes) || 0));
       }
+      dropLoopTrace?.end({
+        droppedCount: dropped.length,
+        estimatedAfterBytes: currentBytes,
+      });
 
+      const afterTrace = this.beginTrace("history.prune-budget.total-after", {
+        budgetBytes,
+        droppedCount: dropped.length,
+      });
       const afterBytes = this.getRasterHistoryBytes();
+      afterTrace?.end({ afterBytes });
       const result = {
         afterBytes,
         beforeBytes,
@@ -497,13 +559,29 @@
       };
 
       this.lastRasterBudgetPrune = result;
-      this.pruneRasterHistoryGpuHotBudget();
+
+      if (options.deferGpuHotPrune === true) {
+        this.scheduleRasterHistoryGpuHotPrune({
+          budgetBytes: this.maxRasterHistoryGpuHotBytes,
+          minProtectedEntries: this.minRasterHistoryGpuHotEntries,
+          source: "history-budget",
+        });
+      } else {
+        this.pruneRasterHistoryGpuHotBudget();
+      }
 
       return result;
+      } finally {
+        trace?.end({
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
+      }
     }
 
     collectGpuHotSnapshotCandidates(options = {}) {
       const candidates = [];
+      const seenSnapshots = new WeakSet();
       const minProtectedEntries = Number.isFinite(Number(options.minProtectedEntries))
         ? Math.max(0, Math.floor(Number(options.minProtectedEntries)))
         : this.minRasterHistoryGpuHotEntries;
@@ -520,12 +598,17 @@
           }
 
           this.forEachRasterSnapshot(entry, (snapshot, key) => {
+            if (!snapshot || seenSnapshots.has(snapshot)) {
+              return;
+            }
+
             const bytes = this.estimateSnapshotGpuHotBytes(snapshot);
 
             if (bytes <= 0 || typeof snapshot.dehydrateGpu !== "function") {
               return;
             }
 
+            seenSnapshots.add(snapshot);
             candidates.push({
               bytes,
               entry,
@@ -553,7 +636,362 @@
       return candidates;
     }
 
+    cancelScheduledRasterHistoryGpuHotPrune(options = {}) {
+      const handle = this.scheduledRasterGpuHotPruneHandle;
+      const type = this.scheduledRasterGpuHotPruneType;
+
+      if (handle != null) {
+        if (type === "idle" && typeof window.cancelIdleCallback === "function") {
+          window.cancelIdleCallback(handle);
+        } else if (type === "timeout" && typeof window.clearTimeout === "function") {
+          window.clearTimeout(handle);
+        }
+      }
+
+      this.scheduledRasterGpuHotPruneHandle = null;
+      this.scheduledRasterGpuHotPruneType = "";
+
+      if (options.clearPending !== false) {
+        this.pendingRasterGpuHotPrune = null;
+      }
+    }
+
+    isRasterHistoryGpuHotPruneInteractionBusy() {
+      const brushEngine = namespace.brushEngine;
+      const smudgeEngine = namespace.smudgeEngine;
+
+      return Boolean(
+        brushEngine?.isDrawing ||
+        brushEngine?.isPanning ||
+        smudgeEngine?.isDragging
+      );
+    }
+
+    delayScheduledRasterHistoryGpuHotPrune(delayMs = DEFAULT_GPU_HOT_PRUNE_INTERACTION_DELAY_MS) {
+      if (this.isDisposed || !this.pendingRasterGpuHotPrune) {
+        return;
+      }
+
+      if (this.scheduledRasterGpuHotPruneHandle != null) {
+        return;
+      }
+
+      const delay = Math.max(0, Math.floor(Number(delayMs) || 0));
+
+      if (delay > 0 && typeof window.setTimeout !== "function") {
+        this.pendingRasterGpuHotPrune.notBefore = 0;
+        this.requestScheduledRasterHistoryGpuHotPrune();
+        return;
+      }
+
+      const run = (handle) => {
+        if (this.scheduledRasterGpuHotPruneHandle !== handle) {
+          return;
+        }
+
+        this.scheduledRasterGpuHotPruneHandle = null;
+        this.scheduledRasterGpuHotPruneType = "";
+        this.requestScheduledRasterHistoryGpuHotPrune();
+      };
+
+      if (typeof window.setTimeout === "function") {
+        let handle = null;
+
+        handle = window.setTimeout(() => run(handle), delay);
+
+        this.scheduledRasterGpuHotPruneHandle = handle;
+        this.scheduledRasterGpuHotPruneType = "timeout";
+        return;
+      }
+
+      if (typeof queueMicrotask === "function") {
+        const handle = {};
+
+        this.scheduledRasterGpuHotPruneHandle = handle;
+        this.scheduledRasterGpuHotPruneType = "microtask";
+        queueMicrotask(() => run(handle));
+        return;
+      }
+
+      this.requestScheduledRasterHistoryGpuHotPrune();
+    }
+
+    requestScheduledRasterHistoryGpuHotPrune() {
+      if (this.isDisposed || !this.pendingRasterGpuHotPrune) {
+        return;
+      }
+
+      if (this.scheduledRasterGpuHotPruneHandle != null) {
+        return;
+      }
+
+      const run = (handle, deadline = null) => {
+        if (this.scheduledRasterGpuHotPruneHandle !== handle) {
+          return;
+        }
+
+        this.scheduledRasterGpuHotPruneHandle = null;
+        this.scheduledRasterGpuHotPruneType = "";
+        this.runScheduledRasterHistoryGpuHotPrune(deadline);
+      };
+
+      if (typeof window.requestIdleCallback === "function") {
+        let handle = null;
+
+        handle = window.requestIdleCallback((deadline) => run(handle, deadline), {
+          timeout: DEFAULT_GPU_HOT_PRUNE_IDLE_TIMEOUT_MS,
+        });
+
+        this.scheduledRasterGpuHotPruneHandle = handle;
+        this.scheduledRasterGpuHotPruneType = "idle";
+        return;
+      }
+
+      if (typeof window.setTimeout === "function") {
+        let handle = null;
+
+        handle = window.setTimeout(() => run(handle, null), 0);
+
+        this.scheduledRasterGpuHotPruneHandle = handle;
+        this.scheduledRasterGpuHotPruneType = "timeout";
+        return;
+      }
+
+      if (typeof queueMicrotask === "function") {
+        const handle = {};
+
+        this.scheduledRasterGpuHotPruneHandle = handle;
+        this.scheduledRasterGpuHotPruneType = "microtask";
+        queueMicrotask(() => run(handle, null));
+        return;
+      }
+
+      const handle = {};
+
+      this.scheduledRasterGpuHotPruneHandle = handle;
+      this.scheduledRasterGpuHotPruneType = "inline";
+      run(handle, null);
+    }
+
+    scheduleRasterHistoryGpuHotPrune(options = {}) {
+      if (this.isDisposed) {
+        return { scheduled: false, reason: "disposed" };
+      }
+
+      const requestedBudget = options.budgetBytes ?? options.targetGpuHotBytes ?? this.maxRasterHistoryGpuHotBytes;
+      const budgetBytes = Math.max(0, Math.floor(Number(requestedBudget) || 0));
+      const minProtectedEntries = Number.isFinite(Number(options.minProtectedEntries))
+        ? Math.max(0, Math.floor(Number(options.minProtectedEntries)))
+        : this.minRasterHistoryGpuHotEntries;
+      const maxChunkMs = Number.isFinite(Number(options.maxChunkMs))
+        ? Math.max(1, Number(options.maxChunkMs))
+        : DEFAULT_GPU_HOT_PRUNE_CHUNK_MS;
+      const maxSnapshotsPerChunk = Number.isFinite(Number(options.maxSnapshotsPerChunk))
+        ? Math.max(1, Math.floor(Number(options.maxSnapshotsPerChunk)))
+        : DEFAULT_GPU_HOT_PRUNE_CHUNK_SNAPSHOTS;
+      const canDelay = typeof window.setTimeout === "function";
+      const initialDelayMs = Number.isFinite(Number(options.initialDelayMs))
+        ? Math.max(0, Math.floor(Number(options.initialDelayMs)))
+        : (canDelay ? DEFAULT_GPU_HOT_PRUNE_INITIAL_DELAY_MS : 0);
+      const notBefore = Date.now() + initialDelayMs;
+      const existing = this.pendingRasterGpuHotPrune;
+
+      if (existing) {
+        existing.budgetBytes = Math.min(existing.budgetBytes, budgetBytes);
+        existing.maxChunkMs = Math.min(existing.maxChunkMs, maxChunkMs);
+        existing.maxSnapshotsPerChunk = Math.max(existing.maxSnapshotsPerChunk, maxSnapshotsPerChunk);
+        existing.minProtectedEntries = Math.min(existing.minProtectedEntries, minProtectedEntries);
+        existing.notBefore = Math.max(Number(existing.notBefore) || 0, notBefore);
+        this.requestScheduledRasterHistoryGpuHotPrune();
+        return {
+          budgetBytes: existing.budgetBytes,
+          scheduled: true,
+          source: options.source || "",
+        };
+      }
+
+      this.pendingRasterGpuHotPrune = {
+        beforeBytes: null,
+        budgetBytes,
+        candidateIndex: 0,
+        candidates: null,
+        cooled: [],
+        createdAt: Date.now(),
+        currentGpuHotBytes: null,
+        maxChunkMs,
+        maxSnapshotsPerChunk,
+        minProtectedEntries,
+        notBefore,
+        source: options.source || "",
+      };
+      this.requestScheduledRasterHistoryGpuHotPrune();
+
+      return {
+        budgetBytes,
+        scheduled: true,
+        source: options.source || "",
+      };
+    }
+
+    runScheduledRasterHistoryGpuHotPrune(deadline = null) {
+      const pending = this.pendingRasterGpuHotPrune;
+
+      if (this.isDisposed || !pending) {
+        return null;
+      }
+
+      const now = () => (typeof performance !== "undefined" && typeof performance.now === "function")
+        ? performance.now()
+        : Date.now();
+      const waitMs = Math.max(0, Math.ceil((Number(pending.notBefore) || 0) - Date.now()));
+
+      if (waitMs > 0) {
+        this.delayScheduledRasterHistoryGpuHotPrune(waitMs);
+        return {
+          complete: false,
+          delayed: true,
+          waitMs,
+        };
+      }
+
+      if (this.isRasterHistoryGpuHotPruneInteractionBusy()) {
+        pending.notBefore = Date.now() + DEFAULT_GPU_HOT_PRUNE_INTERACTION_DELAY_MS;
+        this.delayScheduledRasterHistoryGpuHotPrune(DEFAULT_GPU_HOT_PRUNE_INTERACTION_DELAY_MS);
+        return {
+          complete: false,
+          delayed: true,
+          reason: "interaction-busy",
+        };
+      }
+
+      const trace = this.beginTrace("history.prune-gpu-hot.async", {
+        budgetBytes: pending.budgetBytes,
+        source: pending.source || "",
+      });
+      const startedAt = now();
+      const remainingMs = typeof deadline?.timeRemaining === "function"
+        ? Math.max(1, deadline.timeRemaining())
+        : pending.maxChunkMs;
+      const maxChunkMs = Math.max(1, Math.min(pending.maxChunkMs, remainingMs));
+      let cooledThisChunk = 0;
+
+      try {
+        if (!Array.isArray(pending.candidates)) {
+          const beforeBytes = this.getRasterHistoryGpuHotBytes();
+          const collectTrace = this.beginTrace("history.prune-gpu-hot.collect", {
+            deferred: true,
+            minProtectedEntries: pending.minProtectedEntries,
+          });
+
+          pending.beforeBytes = beforeBytes;
+          pending.currentGpuHotBytes = beforeBytes;
+          pending.candidates = this.collectGpuHotSnapshotCandidates({
+            minProtectedEntries: pending.minProtectedEntries,
+          });
+          pending.candidateIndex = 0;
+
+          collectTrace?.end({
+            candidateCount: pending.candidates.length,
+          });
+        }
+
+        while (
+          pending.currentGpuHotBytes > pending.budgetBytes &&
+          pending.candidateIndex < pending.candidates.length
+        ) {
+          if (cooledThisChunk >= pending.maxSnapshotsPerChunk) {
+            break;
+          }
+
+          if (cooledThisChunk > 0 && now() - startedAt >= maxChunkMs) {
+            break;
+          }
+
+          const candidate = pending.candidates[pending.candidateIndex];
+          pending.candidateIndex += 1;
+
+          if (!candidate) {
+            continue;
+          }
+
+          const currentCandidateBytes = this.estimateSnapshotGpuHotBytes(candidate.snapshot);
+
+          if (currentCandidateBytes <= 0) {
+            continue;
+          }
+
+          const coolTrace = this.beginTrace("history.prune-gpu-hot.cool", {
+            async: true,
+            bytes: currentCandidateBytes,
+            source: candidate.entry?.source || "",
+            stack: candidate.stackName,
+            type: candidate.entry?.type || "",
+          });
+          const didCool = candidate.snapshot.dehydrateGpu() !== false;
+
+          coolTrace?.end({
+            didCool,
+          });
+          cooledThisChunk += 1;
+
+          if (didCool) {
+            pending.cooled.push({
+              bytes: currentCandidateBytes,
+              key: candidate.key,
+              source: candidate.entry?.source || "",
+              stack: candidate.stackName,
+              type: candidate.entry?.type || "",
+            });
+            pending.currentGpuHotBytes = Math.max(0, pending.currentGpuHotBytes - currentCandidateBytes);
+          } else {
+            pending.currentGpuHotBytes = this.getRasterHistoryGpuHotBytes();
+          }
+        }
+
+        const hasMoreCandidates = pending.candidateIndex < pending.candidates.length;
+        const needsMoreCooling = pending.currentGpuHotBytes > pending.budgetBytes;
+
+        if (needsMoreCooling && hasMoreCandidates) {
+          this.requestScheduledRasterHistoryGpuHotPrune();
+          return {
+            complete: false,
+            cooledThisChunk,
+            remainingCandidates: pending.candidates.length - pending.candidateIndex,
+          };
+        }
+
+        const afterBytes = this.getRasterHistoryGpuHotBytes();
+        const result = {
+          afterBytes,
+          beforeBytes: pending.beforeBytes ?? afterBytes,
+          budgetBytes: pending.budgetBytes,
+          cooled: pending.cooled,
+          deferred: true,
+          minProtectedEntries: pending.minProtectedEntries,
+        };
+
+        this.pendingRasterGpuHotPrune = null;
+        this.lastRasterGpuHotPrune = result;
+        this.emitChange("history-gpu-hot-prune");
+
+        return result;
+      } finally {
+        trace?.end({
+          cooledThisChunk,
+          pending: Boolean(this.pendingRasterGpuHotPrune),
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
+      }
+    }
+
     pruneRasterHistoryGpuHotBudget(options = {}) {
+      const trace = this.beginTrace("history.prune-gpu-hot", {
+        targetGpuHotBytes: options.budgetBytes ?? options.targetGpuHotBytes ?? this.maxRasterHistoryGpuHotBytes,
+      });
+
+      try {
+      this.cancelScheduledRasterHistoryGpuHotPrune();
       const requestedBudget = options.budgetBytes ?? options.targetGpuHotBytes ?? this.maxRasterHistoryGpuHotBytes;
       const budgetBytes = Math.max(0, Math.floor(Number(requestedBudget) || 0));
       const minProtectedEntries = Number.isFinite(Number(options.minProtectedEntries))
@@ -572,28 +1010,48 @@
         };
       }
 
-      const skippedSnapshots = new Set();
-      const getCandidates = () => this.collectGpuHotSnapshotCandidates({ minProtectedEntries })
-        .filter((candidate) => !skippedSnapshots.has(candidate.snapshot));
-      let candidates = getCandidates();
+      const collectTrace = this.beginTrace("history.prune-gpu-hot.collect", {
+        minProtectedEntries,
+      });
+      const candidates = this.collectGpuHotSnapshotCandidates({ minProtectedEntries });
 
-      while (this.getRasterHistoryGpuHotBytes() > budgetBytes && candidates.length > 0) {
+      collectTrace?.end({
+        candidateCount: candidates.length,
+      });
+
+      let currentGpuHotBytes = beforeBytes;
+
+      while (currentGpuHotBytes > budgetBytes && candidates.length > 0) {
         const candidate = candidates.shift();
+        const currentCandidateBytes = this.estimateSnapshotGpuHotBytes(candidate.snapshot);
+
+        if (currentCandidateBytes <= 0) {
+          continue;
+        }
+
+        const coolTrace = this.beginTrace("history.prune-gpu-hot.cool", {
+          bytes: currentCandidateBytes,
+          source: candidate.entry?.source || "",
+          stack: candidate.stackName,
+          type: candidate.entry?.type || "",
+        });
         const didCool = candidate.snapshot.dehydrateGpu() !== false;
+        coolTrace?.end({
+          didCool,
+        });
 
         if (didCool) {
           cooled.push({
-            bytes: candidate.bytes,
+            bytes: currentCandidateBytes,
             key: candidate.key,
             source: candidate.entry?.source || "",
             stack: candidate.stackName,
             type: candidate.entry?.type || "",
           });
+          currentGpuHotBytes = Math.max(0, currentGpuHotBytes - currentCandidateBytes);
         } else {
-          skippedSnapshots.add(candidate.snapshot);
+          currentGpuHotBytes = this.getRasterHistoryGpuHotBytes();
         }
-
-        candidates = getCandidates();
       }
 
       const afterBytes = this.getRasterHistoryGpuHotBytes();
@@ -608,9 +1066,21 @@
       this.lastRasterGpuHotPrune = result;
 
       return result;
+      } finally {
+        trace?.end({
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
+      }
     }
 
-    clearStack(stack) {
+    clearStack(stack, options = {}) {
+      const trace = this.beginTrace("history.clear-stack", {
+        label: options.label || "",
+        length: Array.isArray(stack) ? stack.length : 0,
+      });
+
+      try {
       if (!Array.isArray(stack)) {
         return;
       }
@@ -618,11 +1088,17 @@
       while (stack.length > 0) {
         this.destroyEntry(stack.pop());
       }
+      } finally {
+        trace?.end({
+          length: Array.isArray(stack) ? stack.length : 0,
+        });
+      }
     }
 
     clear() {
-      this.clearStack(this.undoStack);
-      this.clearStack(this.redoStack);
+      this.cancelScheduledRasterHistoryGpuHotPrune();
+      this.clearStack(this.undoStack, { label: "undo" });
+      this.clearStack(this.redoStack, { label: "redo" });
       this.pendingLayerStates = new WeakMap();
       this.emitChange("clear");
     }
@@ -651,44 +1127,97 @@
     }
 
     push(entry, options = {}) {
-      if (!this.canRecord(options)) {
-        this.destroyEntry(entry);
-        return false;
-      }
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("history.push", {
+        source: options.source || entry?.source || "document-history",
+        type: entry?.type || "unknown",
+      }) : null;
 
-      const nextEntry = this.normalizeEntry(entry, options);
+      try {
+        const canRecordTrace = this.beginTrace("history.push.can-record", {
+          source: options.source || entry?.source || "document-history",
+        });
+        const canRecord = this.canRecord(options);
 
-      if (!nextEntry) {
-        this.destroyEntry(entry);
-        return false;
-      }
+        canRecordTrace?.end({ canRecord });
 
-      const previousEntry = this.undoStack[this.undoStack.length - 1];
-
-      if (this.shouldMergeEntries(previousEntry, nextEntry)) {
-        const didMerge = previousEntry.mergeWith(nextEntry) !== false;
-
-        if (didMerge) {
-          previousEntry.updatedAt = nextEntry.updatedAt;
-          this.destroyEntry(nextEntry);
-          this.clearStack(this.redoStack);
-          this.pruneRasterHistoryBudget();
-          this.emitChange("merge");
-          return true;
+        if (!canRecord) {
+          this.destroyEntry(entry);
+          return false;
         }
+
+        const normalizeTrace = this.beginTrace("history.normalize", {
+          source: options.source || entry?.source || "document-history",
+          type: entry?.type || "unknown",
+        });
+        const nextEntry = this.normalizeEntry(entry, options);
+        normalizeTrace?.end({
+          valid: Boolean(nextEntry),
+        });
+
+        if (!nextEntry) {
+          this.destroyEntry(entry);
+          return false;
+        }
+
+        this.cancelScheduledRasterHistoryGpuHotPrune();
+
+        const previousEntry = this.undoStack[this.undoStack.length - 1];
+        const mergeCheckTrace = this.beginTrace("history.merge-check", {
+          historyGroup: nextEntry.historyGroup || "",
+          source: nextEntry.source || "",
+          type: nextEntry.type || "",
+        });
+        const shouldMerge = this.shouldMergeEntries(previousEntry, nextEntry);
+
+        mergeCheckTrace?.end({
+          shouldMerge,
+        });
+
+        if (shouldMerge) {
+          const mergeTrace = this.beginTrace("history.merge-with", {
+            historyGroup: nextEntry.historyGroup || "",
+            source: nextEntry.source || "",
+            type: nextEntry.type || "",
+          });
+          const didMerge = previousEntry.mergeWith(nextEntry) !== false;
+          mergeTrace?.end({
+            didMerge,
+          });
+
+          if (didMerge) {
+            previousEntry.updatedAt = nextEntry.updatedAt;
+            this.destroyEntry(nextEntry);
+            this.clearStack(this.redoStack, { label: "redo" });
+            this.pruneRasterHistoryBudget({ deferGpuHotPrune: true });
+            this.emitChange("merge");
+            return true;
+          }
+        }
+
+        this.undoStack.push(nextEntry);
+        this.clearStack(this.redoStack, { label: "redo" });
+
+        const maxEntriesTrace = this.beginTrace("history.max-entries", {
+          maxEntries: this.maxEntries,
+          undoCount: this.undoStack.length,
+        });
+        while (this.undoStack.length > this.maxEntries) {
+          this.destroyEntry(this.undoStack.shift());
+        }
+        maxEntriesTrace?.end({
+          undoCount: this.undoStack.length,
+        });
+
+        this.pruneRasterHistoryBudget({ deferGpuHotPrune: true });
+
+        this.emitChange("push");
+        return true;
+      } finally {
+        trace?.end({
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
       }
-
-      this.undoStack.push(nextEntry);
-      this.clearStack(this.redoStack);
-
-      while (this.undoStack.length > this.maxEntries) {
-        this.destroyEntry(this.undoStack.shift());
-      }
-
-      this.pruneRasterHistoryBudget();
-
-      this.emitChange("push");
-      return true;
     }
 
     invokeEntry(entry, methodName) {
@@ -701,51 +1230,88 @@
     }
 
     undo() {
-      const entry = this.undoStack.pop();
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("history.undo", {
+        undoCount: this.undoStack.length,
+      }) : null;
 
-      if (!entry) {
-        this.emitChange("undo-empty");
-        return false;
+      try {
+        const entry = this.undoStack.pop();
+
+        if (!entry) {
+          this.emitChange("undo-empty");
+          return false;
+        }
+
+        this.cancelScheduledRasterHistoryGpuHotPrune();
+
+        const didUndo = this.runWithoutRecording(() => this.invokeEntry(entry, "undo"));
+
+        if (didUndo) {
+          entry.updatedAt = Date.now();
+          this.redoStack.push(entry);
+          this.pruneRasterHistoryBudget({ deferGpuHotPrune: true });
+        } else {
+          this.destroyEntry(entry);
+        }
+
+        this.emitChange("undo");
+        return didUndo;
+      } finally {
+        trace?.end({
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
       }
-
-      const didUndo = this.runWithoutRecording(() => this.invokeEntry(entry, "undo"));
-
-      if (didUndo) {
-        entry.updatedAt = Date.now();
-        this.redoStack.push(entry);
-        this.pruneRasterHistoryBudget();
-      } else {
-        this.destroyEntry(entry);
-      }
-
-      this.emitChange("undo");
-      return didUndo;
     }
 
     redo() {
-      const entry = this.redoStack.pop();
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("history.redo", {
+        redoCount: this.redoStack.length,
+      }) : null;
 
-      if (!entry) {
-        this.emitChange("redo-empty");
-        return false;
+      try {
+        const entry = this.redoStack.pop();
+
+        if (!entry) {
+          this.emitChange("redo-empty");
+          return false;
+        }
+
+        this.cancelScheduledRasterHistoryGpuHotPrune();
+
+        const didRedo = this.runWithoutRecording(() => this.invokeEntry(entry, "redo"));
+
+        if (didRedo) {
+          entry.updatedAt = Date.now();
+          this.undoStack.push(entry);
+          this.pruneRasterHistoryBudget({ deferGpuHotPrune: true });
+        } else {
+          this.destroyEntry(entry);
+        }
+
+        this.emitChange("redo");
+        return didRedo;
+      } finally {
+        trace?.end({
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
       }
-
-      const didRedo = this.runWithoutRecording(() => this.invokeEntry(entry, "redo"));
-
-      if (didRedo) {
-        entry.updatedAt = Date.now();
-        this.undoStack.push(entry);
-        this.pruneRasterHistoryBudget();
-      } else {
-        this.destroyEntry(entry);
-      }
-
-      this.emitChange("redo");
-      return didRedo;
     }
 
     emitChange(source) {
-      const detail = {
+      const trace = this.beginTrace("history.emit", {
+        source,
+      });
+      let detail = null;
+
+      try {
+      const detailTrace = this.beginTrace("history.emit.detail", {
+        source,
+      });
+
+      try {
+      detail = {
         canRedo: this.redoStack.length > 0,
         canUndo: this.undoStack.length > 0,
         redoCount: this.redoStack.length,
@@ -757,9 +1323,28 @@
         source,
         undoCount: this.undoStack.length,
       };
+      } finally {
+        detailTrace?.end({
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
+      }
 
+      const dispatchTrace = this.beginTrace("history.emit.dispatch", {
+        source,
+      });
+      try {
       this.dispatchEvent(new CustomEvent("change", { detail }));
       window.dispatchEvent(new CustomEvent(HISTORY_CHANGE_EVENT, { detail }));
+      } finally {
+        dispatchTrace?.end();
+      }
+      } finally {
+        trace?.end({
+          redoCount: this.redoStack.length,
+          undoCount: this.undoStack.length,
+        });
+      }
     }
 
     getLayerSnapshot(layerModel) {
@@ -982,6 +1567,7 @@
       this.clear();
       this.activeGroups.clear();
       this.pendingLayerStates = new WeakMap();
+      this.cancelScheduledRasterHistoryGpuHotPrune();
       this.isDisposed = true;
       this.emitChange("dispose");
     }
