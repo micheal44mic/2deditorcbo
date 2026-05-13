@@ -175,11 +175,15 @@
     let literalStart = 0;
     let literalCount = 0;
 
+    const returnRaw = () => ({ bytes: rawPixels, encoding: null, rawByteLength });
+
     writeHeader(output, rawByteLength);
     output[4] = RLE_V2_MAGIC_0;
     output[5] = RLE_V2_MAGIC_1;
     output[6] = RLE_V2_MAGIC_2;
     output[7] = RLE_V2_MAGIC_3;
+
+    const hasCompressionBudget = (byteCount) => outIdx + byteCount < rawByteLength;
 
     const flushLiteral = () => {
       let remaining = literalCount;
@@ -189,6 +193,11 @@
         const chunk = Math.min(remaining, RLE_PACKET_MAX_COUNT);
         const sourceStart = start * 4;
         const sourceEnd = sourceStart + chunk * 4;
+        const packetBytes = RLE_PACKET_HEADER_BYTES + chunk * 4;
+
+        if (!hasCompressionBudget(packetBytes)) {
+          return false;
+        }
 
         writePacketHeader(output, outIdx, RLE_PACKET_LITERAL_FLAG | chunk);
         outIdx += RLE_PACKET_HEADER_BYTES;
@@ -200,6 +209,7 @@
 
       literalStart = pixelIndex;
       literalCount = 0;
+      return true;
     };
 
     const writeRun = (startPixel, count) => {
@@ -208,6 +218,10 @@
 
       while (remaining > 0) {
         const chunk = Math.min(remaining, RLE_PACKET_MAX_COUNT);
+
+        if (!hasCompressionBudget(RLE_PACKET_HEADER_BYTES + 4)) {
+          return false;
+        }
 
         writePacketHeader(output, outIdx, chunk);
         outIdx += RLE_PACKET_HEADER_BYTES;
@@ -218,6 +232,8 @@
         outIdx += 4;
         remaining -= chunk;
       }
+
+      return true;
     };
 
     while (pixelIndex < pixelCount) {
@@ -233,8 +249,9 @@
       }
 
       if (runCount >= RLE_PACKET_MIN_RUN) {
-        flushLiteral();
-        writeRun(pixelIndex, runCount);
+        if (!flushLiteral() || !writeRun(pixelIndex, runCount)) {
+          return returnRaw();
+        }
         pixelIndex += runCount;
         literalStart = pixelIndex;
         continue;
@@ -244,14 +261,18 @@
       pixelIndex += runCount;
 
       if (literalCount >= RLE_PACKET_MAX_COUNT) {
-        flushLiteral();
+        if (!flushLiteral()) {
+          return returnRaw();
+        }
       }
     }
 
-    flushLiteral();
+    if (!flushLiteral()) {
+      return returnRaw();
+    }
 
     if (outIdx >= rawByteLength) {
-      return { bytes: rawPixels, encoding: null, rawByteLength };
+      return returnRaw();
     }
 
     return {

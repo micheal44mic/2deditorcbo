@@ -103,6 +103,36 @@ test("history compression falls back to raw when RLE would expand", () => {
   assert.equal(compressed.bytes, pixels);
 });
 
+test("history compression handles v2 literal packet overflow without throwing", () => {
+  const compression = loadCompression();
+  const pixelCount = 65534;
+  const pixels = new Uint8Array(pixelCount * 4);
+
+  for (let i = 0; i < pixelCount; i += 2) {
+    const value = (i / 2) & 0xFF;
+
+    for (let j = 0; j < 2; j += 1) {
+      const offset = (i + j) * 4;
+
+      pixels[offset] = value;
+      pixels[offset + 1] = (value * 17) & 0xFF;
+      pixels[offset + 2] = (value * 31) & 0xFF;
+      pixels[offset + 3] = 255;
+    }
+  }
+
+  let compressed;
+
+  assert.doesNotThrow(() => {
+    compressed = compression.compressRgba(pixels);
+  });
+  const restored = compressed.encoding
+    ? compression.decompressRgba(compressed.bytes, pixels.byteLength, compressed.encoding)
+    : compressed.bytes;
+
+  assert.deepEqual(Array.from(restored), Array.from(pixels));
+});
+
 test("history compression exposes a debug summary helper", () => {
   const context = vm.createContext({
     ArrayBuffer,
