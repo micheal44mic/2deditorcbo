@@ -205,6 +205,18 @@
     return `translate(${x} ${y}) rotate(${rotation}) scale(${scaleX} ${scaleY})`;
   }
 
+  function normalizeLayerIdSet(layerIds = []) {
+    return new Set((Array.isArray(layerIds) ? layerIds : [])
+      .map((layerId) => String(layerId || "").trim())
+      .filter(Boolean));
+  }
+
+  function cssEscape(value) {
+    return window.CSS?.escape
+      ? window.CSS.escape(String(value || ""))
+      : String(value || "").replace(/["\\]/g, "\\$&");
+  }
+
   function pointList(...points) {
     return points.map((point) => `${point.x} ${point.y}`).join(" ");
   }
@@ -924,6 +936,7 @@
       this.activeTool = "";
       this.dragState = null;
       this.envelopeDragState = null;
+      this.artboardDragPreview = null;
 
       this.handleCameraChange = this.handleCameraChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
@@ -1310,6 +1323,161 @@
 
       return Array.from(this.contentGroup.querySelectorAll("[data-layer-id]"))
         .find((node) => node.getAttribute("data-layer-id") === layerId) || null;
+    }
+
+    beginArtboardDragPreview(options = {}) {
+      const artboardId = String(options.artboardId || "").trim();
+
+      if (!artboardId) {
+        return false;
+      }
+
+      this.artboardDragPreview = {
+        artboardId,
+        dx: 0,
+        dy: 0,
+        layerIds: normalizeLayerIdSet(options.layerIds),
+      };
+      this.applyArtboardDragPreviewToNodes();
+
+      return true;
+    }
+
+    setArtboardDragPreview(options = {}) {
+      const artboardId = String(options.artboardId || "").trim();
+
+      if (!this.artboardDragPreview || this.artboardDragPreview.artboardId !== artboardId) {
+        return this.beginArtboardDragPreview(options) && this.setArtboardDragPreview(options);
+      }
+
+      const dx = Number(options.dx);
+      const dy = Number(options.dy);
+
+      this.artboardDragPreview.dx = Number.isFinite(dx) ? dx : 0;
+      this.artboardDragPreview.dy = Number.isFinite(dy) ? dy : 0;
+
+      if (Array.isArray(options.layerIds)) {
+        this.artboardDragPreview.layerIds = normalizeLayerIdSet(options.layerIds);
+      }
+
+      this.applyArtboardDragPreviewToNodes();
+      return true;
+    }
+
+    clearArtboardDragPreview(artboardId = "") {
+      const normalizedArtboardId = String(artboardId || "").trim();
+
+      if (!this.artboardDragPreview) {
+        return false;
+      }
+
+      if (normalizedArtboardId && this.artboardDragPreview.artboardId !== normalizedArtboardId) {
+        return false;
+      }
+
+      this.artboardDragPreview = null;
+      this.applyArtboardDragPreviewToNodes();
+
+      return true;
+    }
+
+    getArtboardDragOffsetForLayer(layer) {
+      const preview = this.artboardDragPreview;
+
+      if (!preview || !layer?.id || layer.artboardId !== preview.artboardId) {
+        return null;
+      }
+
+      if (preview.layerIds.size > 0 && !preview.layerIds.has(layer.id)) {
+        return null;
+      }
+
+      if (preview.dx === 0 && preview.dy === 0) {
+        return null;
+      }
+
+      return {
+        dx: preview.dx,
+        dy: preview.dy,
+      };
+    }
+
+    getArtboardDragVisualLayer(layer) {
+      const offset = this.getArtboardDragOffsetForLayer(layer);
+
+      return offset
+        ? {
+            ...layer,
+            x: toFiniteNumber(layer.x, 0) + offset.dx,
+            y: toFiniteNumber(layer.y, 0) + offset.dy,
+        }
+        : layer;
+    }
+
+    getLayerArtboardVisualRect(layer) {
+      const artboardId = String(layer?.artboardId || "").trim();
+
+      if (!artboardId) {
+        return null;
+      }
+
+      const rect = namespace.getDocumentArtboardRect?.(artboardId);
+      const offset = this.getArtboardDragOffsetForLayer(layer);
+
+      if (!rect) {
+        return null;
+      }
+
+      return {
+        height: Math.max(1, Math.round(Number(rect.height) || 1)),
+        width: Math.max(1, Math.round(Number(rect.width) || 1)),
+        x: Math.round(Number(rect.x) || 0) + (offset?.dx || 0),
+        y: Math.round(Number(rect.y) || 0) + (offset?.dy || 0),
+      };
+    }
+
+    createArtboardClipNode(layer, defs) {
+      const rect = this.getLayerArtboardVisualRect(layer);
+
+      if (!rect) {
+        return null;
+      }
+
+      const clipId = `cbo-vector-artboard-clip-${safeDomId(layer.artboardId)}-${safeDomId(layer.id)}`;
+      const clipPath = createSvgElement("clipPath", {
+        clipPathUnits: "userSpaceOnUse",
+        id: clipId,
+      });
+
+      clipPath.append(createSvgElement("rect", {
+        "data-artboard-clip-layer-id": layer.id,
+        height: rect.height,
+        width: rect.width,
+        x: rect.x,
+        y: rect.y,
+      }));
+      defs?.push?.(clipPath);
+
+      return createSvgElement("g", {
+        "clip-path": `url(#${clipId})`,
+      });
+    }
+
+    applyArtboardDragPreviewToNodes() {
+      this.getRenderableTextLayers().forEach((layer) => {
+        const node = this.getLayerNode(layer.id);
+        const clipRect = this.defs?.querySelector?.(`[data-artboard-clip-layer-id="${cssEscape(layer.id)}"]`);
+        const artboardRect = this.getLayerArtboardVisualRect(layer);
+
+        node?.setAttribute("transform", formatLayerTransform(this.getArtboardDragVisualLayer(layer)));
+
+        if (clipRect && artboardRect) {
+          clipRect.setAttribute("x", artboardRect.x);
+          clipRect.setAttribute("y", artboardRect.y);
+          clipRect.setAttribute("width", artboardRect.width);
+          clipRect.setAttribute("height", artboardRect.height);
+        }
+      });
     }
 
     getDocumentTextureSize() {
@@ -1863,20 +2031,27 @@
         const renderLayer = draggingLayer
           ? { ...layer, x: draggingLayer.x, y: draggingLayer.y }
           : layer;
+        const visualLayer = this.getArtboardDragVisualLayer(renderLayer);
         const pathMetrics = this.getPathMetrics(layer, font);
         const pathData = pathMetrics.pathData;
-        const filter = this.createDropShadowFilter(renderLayer);
-        const node = this.createTextLayerNode(renderLayer, pathData, {
-          active: renderLayer.id === activeLayerId,
+        const filter = this.createDropShadowFilter(visualLayer);
+        const node = this.createTextLayerNode(visualLayer, pathData, {
+          active: visualLayer.id === activeLayerId,
           defs,
           filterId: filter?.id || "",
         });
+        const clipNode = this.createArtboardClipNode(visualLayer, defs);
 
         if (filter) {
           defs.push(filter.node);
         }
 
-        nodes.push(node);
+        if (clipNode) {
+          clipNode.append(node);
+          nodes.push(clipNode);
+        } else {
+          nodes.push(node);
+        }
         this.syncTextLayerRaster(renderLayer, pathData, pathMetrics.bounds);
       });
 

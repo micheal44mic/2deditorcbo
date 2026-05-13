@@ -4,6 +4,7 @@ window.CBO = window.CBO || {};
   const DEFAULT_ARTBOARD_WIDTH = 1048;
   const DEFAULT_ARTBOARD_HEIGHT = 2048;
   const DEFAULT_ARTBOARD_GAP = 256;
+  const MIN_ARTBOARD_GAP = 32;
   const DEFAULT_SECONDARY_ARTBOARD_COUNT = 2;
   const PRIMARY_ARTBOARD_ID = "active-document";
 
@@ -76,6 +77,198 @@ window.CBO = window.CBO || {};
       x,
       y,
     };
+  }
+
+  function offsetRect(rect, dx = 0, dy = 0) {
+    return rect
+      ? {
+          height: rect.height,
+          width: rect.width,
+          x: rect.x + dx,
+          y: rect.y + dy,
+        }
+      : null;
+  }
+
+  function expandRect(rect, amount = 0) {
+    const safeAmount = Math.max(0, Number(amount) || 0);
+
+    return rect
+      ? {
+          height: rect.height + safeAmount * 2,
+          width: rect.width + safeAmount * 2,
+          x: rect.x - safeAmount,
+          y: rect.y - safeAmount,
+        }
+      : null;
+  }
+
+  function cloneValue(value) {
+    if (Array.isArray(value)) {
+      return value.map((item) => cloneValue(item));
+    }
+
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, cloneValue(item)]),
+      );
+    }
+
+    return value;
+  }
+
+  function getArtboardContentLayerIds(artboardId) {
+    const layerModel = namespace.documentLayerModel;
+
+    if (typeof layerModel?.getArtboardContentLayerIds === "function") {
+      return layerModel.getArtboardContentLayerIds(artboardId);
+    }
+
+    return (layerModel?.flattenTopToBottom?.() || [])
+      .filter((layer) =>
+        layer?.id &&
+        layer.artboardId === artboardId &&
+        layer.type !== "background" &&
+        layer.id !== "background"
+      )
+      .map((layer) => layer.id);
+  }
+
+  function doRectsOverlap(a, b) {
+    return Boolean(
+      a &&
+      b &&
+      a.x < b.x + b.width &&
+      a.x + a.width > b.x &&
+      a.y < b.y + b.height &&
+      a.y + a.height > b.y
+    );
+  }
+
+  function getRectOverlapArea(a, b) {
+    if (!doRectsOverlap(a, b)) {
+      return 0;
+    }
+
+    const width = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+    const height = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+
+    return Math.max(0, width) * Math.max(0, height);
+  }
+
+  function getTotalOverlapArea(rect, blockers = []) {
+    return blockers.reduce(
+      (total, blocker) => total + getRectOverlapArea(rect, blocker),
+      0,
+    );
+  }
+
+  function doesRectOverlapAny(rect, blockers = []) {
+    return blockers.some((blocker) => doRectsOverlap(rect, blocker));
+  }
+
+  function getArtboardCollisionRects(artboardId) {
+    const normalizedArtboardId = String(artboardId || "").trim();
+
+    return (namespace.documentArtboardModel?.artboards || [])
+      .filter((artboard) => artboard?.id && artboard.id !== normalizedArtboardId)
+      .map((artboard) => getArtboardRect(artboard))
+      .map((rect) => expandRect(rect, MIN_ARTBOARD_GAP))
+      .filter(Boolean);
+  }
+
+  function constrainRectMove(startRect, dx, dy, blockers = []) {
+    const safeDx = Number.isFinite(Number(dx)) ? Number(dx) : 0;
+    const safeDy = Number.isFinite(Number(dy)) ? Number(dy) : 0;
+
+    if (!startRect || blockers.length === 0 || (safeDx === 0 && safeDy === 0)) {
+      return { blocked: false, dx: safeDx, dy: safeDy };
+    }
+
+    const targetRect = offsetRect(startRect, safeDx, safeDy);
+
+    if (!doesRectOverlapAny(targetRect, blockers)) {
+      return { blocked: false, dx: safeDx, dy: safeDy };
+    }
+
+    const startOverlapArea = getTotalOverlapArea(startRect, blockers);
+
+    if (startOverlapArea > 0) {
+      const targetOverlapArea = getTotalOverlapArea(targetRect, blockers);
+
+      if (targetOverlapArea < startOverlapArea) {
+        return { blocked: true, dx: safeDx, dy: safeDy };
+      }
+
+      return { blocked: true, dx: 0, dy: 0 };
+    }
+
+    let low = 0;
+    let high = 1;
+
+    for (let index = 0; index < 28; index += 1) {
+      const mid = (low + high) * 0.5;
+      const testRect = offsetRect(startRect, safeDx * mid, safeDy * mid);
+
+      if (doesRectOverlapAny(testRect, blockers)) {
+        high = mid;
+      } else {
+        low = mid;
+      }
+    }
+
+    return {
+      blocked: true,
+      dx: safeDx * low,
+      dy: safeDy * low,
+    };
+  }
+
+  function safeIntegerDelta(delta, blocked = false) {
+    const value = Number(delta);
+
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+
+    if (!blocked) {
+      return Math.round(value);
+    }
+
+    return value < 0 ? Math.ceil(value - 0.000001) : Math.floor(value + 0.000001);
+  }
+
+  function constrainArtboardMove(artboardId, dx, dy, options = {}) {
+    const normalizedArtboardId = String(artboardId || "").trim();
+    const artboard = namespace.documentArtboardModel?.getArtboardById?.(normalizedArtboardId);
+    const startRect = cloneRect(options.startRect) || getArtboardRect(artboard);
+    const blockers = getArtboardCollisionRects(normalizedArtboardId);
+
+    return {
+      artboardId: normalizedArtboardId,
+      ...constrainRectMove(startRect, dx, dy, blockers),
+    };
+  }
+
+  function getRasterMoveDirtyRects(layerIds, dx, dy) {
+    const renderer = namespace.documentRenderer;
+
+    if (!renderer?.rasterTargetsByLayerId || typeof renderer.getRasterTargetDocumentRect !== "function") {
+      return [];
+    }
+
+    return layerIds.flatMap((layerId) => {
+      const rect = renderer.getRasterTargetDocumentRect(renderer.rasterTargetsByLayerId.get(layerId));
+      const nextRect = offsetRect(rect, dx, dy);
+
+      return [rect, nextRect].filter(Boolean);
+    });
+  }
+
+  function compactRects(rects = []) {
+    return rects
+      .filter(Boolean)
+      .map((rect) => cloneRect(rect));
   }
 
   class DocumentArtboardModel extends EventTarget {
@@ -244,8 +437,18 @@ window.CBO = window.CBO || {};
         return null;
       }
 
-      artboard.x = toFiniteInt(x, artboard.x);
-      artboard.y = toFiniteInt(y, artboard.y);
+      const requestedX = toFiniteInt(x, artboard.x);
+      const requestedY = toFiniteInt(y, artboard.y);
+      const requestedDx = requestedX - artboard.x;
+      const requestedDy = requestedY - artboard.y;
+      const constrained = options.allowOverlap === true
+        ? { blocked: false, dx: requestedDx, dy: requestedDy }
+        : constrainArtboardMove(artboard.id, requestedDx, requestedDy, {
+            startRect: getArtboardRect(artboard),
+          });
+
+      artboard.x += safeIntegerDelta(constrained.dx, constrained.blocked);
+      artboard.y += safeIntegerDelta(constrained.dy, constrained.blocked);
 
       if (options.emit !== false) {
         this.emitChange(options.source || "document-artboard-move");
@@ -473,6 +676,210 @@ window.CBO = window.CBO || {};
 
   namespace.moveDocumentArtboard = function moveDocumentArtboard(artboardId, x, y, options = {}) {
     return namespace.documentArtboardModel.moveArtboard(artboardId, x, y, options);
+  };
+
+  namespace.getDocumentArtboardMinimumGap = function getDocumentArtboardMinimumGap() {
+    return MIN_ARTBOARD_GAP;
+  };
+
+  namespace.constrainDocumentArtboardMove = function constrainDocumentArtboardMove(
+    artboardId,
+    dx,
+    dy,
+    options = {},
+  ) {
+    return constrainArtboardMove(artboardId, dx, dy, options);
+  };
+
+  namespace.wouldDocumentArtboardOverlap = function wouldDocumentArtboardOverlap(
+    artboardId,
+    dx,
+    dy,
+    options = {},
+  ) {
+    const constrained = constrainArtboardMove(artboardId, dx, dy, options);
+
+    return constrained.blocked === true;
+  };
+
+  namespace.applyDocumentArtboardMoveWithContents = function applyDocumentArtboardMoveWithContents(
+    artboardId,
+    dx,
+    dy,
+    options = {},
+  ) {
+    const normalizedArtboardId = String(artboardId || "").trim();
+    const requestedDeltaX = Number.isFinite(Number(dx)) ? Math.round(Number(dx)) : 0;
+    const requestedDeltaY = Number.isFinite(Number(dy)) ? Math.round(Number(dy)) : 0;
+    const artboard = namespace.documentArtboardModel.getArtboardById(normalizedArtboardId);
+
+    if (!artboard || artboard.isPrimary === true || (requestedDeltaX === 0 && requestedDeltaY === 0)) {
+      return false;
+    }
+
+    const source = options.source || "document-artboard-move-with-contents";
+    const layerIds = Array.isArray(options.layerIds)
+      ? options.layerIds.map((id) => String(id || "").trim()).filter(Boolean)
+      : getArtboardContentLayerIds(normalizedArtboardId);
+    const oldArtboardRect = getArtboardRect(artboard);
+    const constrained = options.allowOverlap === true
+      ? { blocked: false, dx: requestedDeltaX, dy: requestedDeltaY }
+      : constrainArtboardMove(normalizedArtboardId, requestedDeltaX, requestedDeltaY, {
+          startRect: oldArtboardRect,
+        });
+    const deltaX = safeIntegerDelta(constrained.dx, constrained.blocked);
+    const deltaY = safeIntegerDelta(constrained.dy, constrained.blocked);
+
+    if (deltaX === 0 && deltaY === 0) {
+      return false;
+    }
+
+    const nextX = artboard.x + deltaX;
+    const nextY = artboard.y + deltaY;
+    const newArtboardRect = offsetRect(oldArtboardRect, deltaX, deltaY);
+    const rasterDirtyRects = getRasterMoveDirtyRects(layerIds, deltaX, deltaY);
+    const didMoveArtboard = namespace.documentArtboardModel.moveArtboard(
+      normalizedArtboardId,
+      nextX,
+      nextY,
+      {
+        allowOverlap: true,
+        emit: false,
+        source,
+      },
+    );
+
+    if (!didMoveArtboard) {
+      return false;
+    }
+
+    const didMoveLayers = namespace.documentLayerModel?.translateLayersByIds?.(
+      layerIds,
+      deltaX,
+      deltaY,
+      {
+        emit: false,
+        history: false,
+        source,
+      },
+    ) === true;
+    const didMoveRasters = namespace.documentRenderer?.translateRasterTargetsByLayerIds?.(
+      layerIds,
+      deltaX,
+      deltaY,
+      {
+        emit: false,
+        history: false,
+        source,
+      },
+    ) === true;
+    const dirtyRects = compactRects([
+      oldArtboardRect,
+      newArtboardRect,
+      ...rasterDirtyRects,
+    ]);
+
+    namespace.documentArtboardModel.emitChange(source);
+
+    if (didMoveLayers) {
+      namespace.documentLayerModel?.emitChange?.(source);
+    }
+
+    if (didMoveRasters || dirtyRects.length > 0) {
+      namespace.documentRenderer?.commitVisualDirtyChange?.({
+        maxDirtyRects: 96,
+        preserveDirtyRects: true,
+        rects: dirtyRects,
+        source,
+      });
+    }
+
+    namespace.documentRenderer?.requestDraw?.();
+
+    return {
+      artboard: namespace.getDocumentArtboardById(normalizedArtboardId),
+      dx: deltaX,
+      dy: deltaY,
+      layerIds,
+    };
+  };
+
+  namespace.commitArtboardMoveWithContents = function commitArtboardMoveWithContents(
+    artboardId,
+    dx,
+    dy,
+    options = {},
+  ) {
+    const normalizedArtboardId = String(artboardId || "").trim();
+    const requestedDeltaX = Number.isFinite(Number(dx)) ? Math.round(Number(dx)) : 0;
+    const requestedDeltaY = Number.isFinite(Number(dy)) ? Math.round(Number(dy)) : 0;
+    const source = options.source || "artboard-move-with-contents";
+    const history = namespace.documentHistory;
+    const layerModel = namespace.documentLayerModel;
+    const layerIds = Array.isArray(options.layerIds)
+      ? options.layerIds.map((id) => String(id || "").trim()).filter(Boolean)
+      : getArtboardContentLayerIds(normalizedArtboardId);
+
+    if (!normalizedArtboardId || (requestedDeltaX === 0 && requestedDeltaY === 0)) {
+      return false;
+    }
+
+    history?.flushLayerState?.(layerModel);
+
+    const canRecordHistory = history?.canRecord?.(options) === true;
+    const applyMove = (moveDx, moveDy, moveSource, moveOptions = {}) =>
+      namespace.applyDocumentArtboardMoveWithContents(normalizedArtboardId, moveDx, moveDy, {
+        ...options,
+        history: false,
+        layerIds,
+        ...moveOptions,
+        source: moveSource,
+      });
+    const result = history?.runWithoutRecording
+      ? history.runWithoutRecording(() => applyMove(requestedDeltaX, requestedDeltaY, source))
+      : applyMove(requestedDeltaX, requestedDeltaY, source);
+
+    if (!result) {
+      return false;
+    }
+
+    if (canRecordHistory && history?.push) {
+      const entryLayerIds = cloneValue(layerIds);
+      const entryDeltaX = result.dx;
+      const entryDeltaY = result.dy;
+
+      history.push({
+        type: "artboard-move-with-contents",
+        historyGroup: options.historyGroup || `artboard-move-${normalizedArtboardId}`,
+        source,
+        undo() {
+          return applyMove(
+            -entryDeltaX,
+            -entryDeltaY,
+            "history-undo-artboard-move-with-contents",
+            { allowOverlap: true },
+          ) !== false;
+        },
+        redo() {
+          return applyMove(
+            entryDeltaX,
+            entryDeltaY,
+            "history-redo-artboard-move-with-contents",
+            { allowOverlap: true },
+          ) !== false;
+        },
+        mergeWith() {
+          return false;
+        },
+        destroy() {},
+        layerIds: entryLayerIds,
+      }, {
+        historyGroup: options.historyGroup || `artboard-move-${normalizedArtboardId}`,
+        source,
+      });
+    }
+
+    return result;
   };
 
   namespace.deleteDocumentArtboard = function deleteDocumentArtboard(artboardId, options = {}) {

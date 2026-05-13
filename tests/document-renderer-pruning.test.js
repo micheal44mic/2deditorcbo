@@ -2485,8 +2485,14 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(previewCacheBody, /const dirtyScissors = dirtyRects/);
   assert.match(previewCacheBody, /const drawPreviewCachePass = \(dirtyScissor = null\) =>/);
   assert.match(previewCacheBody, /const previewPassScissors = Array\.isArray\(dirtyScissors\) && dirtyScissors\.length > 0/);
+  assert.match(previewCacheBody, /const restorePreviewScissor = \(scissor\) =>/);
+  assert.match(previewCacheBody, /const withLayerPreviewArtboardClip = \(layer, callback\) =>/);
+  assert.match(previewCacheBody, /const artboardScissor = getPreviewScissorForDocumentRect\(artboardRect\)/);
+  assert.match(previewCacheBody, /if \(!artboardScissor\) \{\s*return;\s*\}/);
   assert.match(previewCacheBody, /gl\.enable\(gl\.SCISSOR_TEST\)/);
-  assert.match(previewCacheBody, /gl\.scissor\(dirtyScissor\.x, dirtyScissor\.y, dirtyScissor\.width, dirtyScissor\.height\)/);
+  assert.match(previewCacheBody, /gl\.scissor\(scissor\.x, scissor\.y, scissor\.width, scissor\.height\)/);
+  assert.match(previewCacheBody, /restorePreviewScissor\(dirtyScissor \|\| null\)/);
+  assert.match(previewCacheBody, /withLayerPreviewArtboardClip\(layer, \(\) =>/);
   assert.match(previewCacheBody, /this\.previewDirtyRects = \[\]/);
   assert.match(previewCacheBody, /this\.recordPreviewDirtyFrame\(\{/);
 });

@@ -961,6 +961,34 @@
         : 0;
     }
 
+    getLayerArtboardRect(layer) {
+      const artboardId = String(
+        layer?.artboardId ||
+        this.layerModel?.findEntryArtboardId?.(layer?.id) ||
+        "",
+      ).trim();
+
+      return artboardId
+        ? namespace.getDocumentArtboardRect?.(artboardId) || null
+        : null;
+    }
+
+    isPointInsideLayerArtboard(layer, point, padding = 0) {
+      const rect = this.getLayerArtboardRect(layer);
+      const safePadding = Math.max(0, Number(padding) || 0);
+
+      if (!rect || !point) {
+        return true;
+      }
+
+      return (
+        point.x >= rect.x - safePadding &&
+        point.y >= rect.y - safePadding &&
+        point.x <= rect.x + rect.width + safePadding &&
+        point.y <= rect.y + rect.height + safePadding
+      );
+    }
+
     hasLayerAlphaNearPoint(layerId, point, hitRadius = 0) {
       if (this.documentRenderer?.getRasterAlphaAtPoint?.(layerId, point.x, point.y) > RASTER_ALPHA_HIT_THRESHOLD) {
         return true;
@@ -1026,7 +1054,9 @@
 
       const point = this.clientToDocumentPoint(clientX, clientY);
 
-      return this.isPointInCurrentQuad(point) ? layer : null;
+      return this.isPointInsideLayerArtboard(layer, point) && this.isPointInCurrentQuad(point)
+        ? layer
+        : null;
     }
 
     getVectorTextNodeBounds(layerId) {
@@ -1470,7 +1500,10 @@
           continue;
         }
 
-        if (this.hasLayerAlphaNearPoint(layer.id, point, hitRadius)) {
+        if (
+          this.isPointInsideLayerArtboard(layer, point, hitRadius) &&
+          this.hasLayerAlphaNearPoint(layer.id, point, hitRadius)
+        ) {
           return layer;
         }
       }

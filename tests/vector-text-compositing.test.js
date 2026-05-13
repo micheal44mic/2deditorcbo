@@ -192,6 +192,28 @@ test("the SVG overlay no longer paints text above the composited document", () =
   );
 });
 
+test("vector text overlay follows artboard drag preview without moving the raster cache", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /this\.artboardDragPreview = null/);
+  assert.match(source, /beginArtboardDragPreview\(options = \{\}\)/);
+  assert.match(source, /setArtboardDragPreview\(options = \{\}\)/);
+  assert.match(source, /clearArtboardDragPreview\(artboardId = ""\)/);
+  assert.match(source, /getArtboardDragVisualLayer\(layer\)/);
+  assert.match(source, /getLayerArtboardVisualRect\(layer\)/);
+  assert.match(source, /createArtboardClipNode\(layer, defs\)/);
+  assert.match(source, /"data-artboard-clip-layer-id": layer\.id/);
+  assert.match(source, /applyArtboardDragPreviewToNodes\(\)/);
+  assert.match(source, /this\.defs\?\.querySelector\?\.\(`\[data-artboard-clip-layer-id="\$\{cssEscape\(layer\.id\)\}"\]`\)/);
+  assert.match(source, /const visualLayer = this\.getArtboardDragVisualLayer\(renderLayer\)/);
+  assert.match(source, /this\.createTextLayerNode\(visualLayer, pathData/);
+  assert.match(source, /const clipNode = this\.createArtboardClipNode\(visualLayer, defs\)/);
+  assert.match(source, /this\.syncTextLayerRaster\(renderLayer, pathData, pathMetrics\.bounds\)/);
+});
+
 test("active text rasterization is debounced so drag and sliders stay responsive", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "text", "vector-text-renderer.js"),

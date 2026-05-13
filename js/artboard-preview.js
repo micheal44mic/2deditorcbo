@@ -308,6 +308,58 @@ window.CBO = window.CBO || {};
     return cloneArtboard(artboard);
   }
 
+  function getArtboardContentLayerIds(artboardId) {
+    return namespace.getArtboardContentLayerIds?.(artboardId) || [];
+  }
+
+  function getArtboardDragScreenOffset(dx, dy) {
+    const { camera, dpr } = getCameraState();
+    const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
+
+    return {
+      x: (dx * zoom) / dpr,
+      y: (dy * zoom) / dpr,
+    };
+  }
+
+  function applyArtboardDragDomTransform(artboardId, dx = 0, dy = 0) {
+    const stage = getStage();
+    const normalizedId = String(artboardId || "").trim();
+
+    if (!stage || !normalizedId) {
+      return;
+    }
+
+    const screenOffset = getArtboardDragScreenOffset(dx, dy);
+    const transform = dx || dy
+      ? `translate(${screenOffset.x}px, ${screenOffset.y}px)`
+      : "";
+
+    stage
+      .querySelectorAll("[data-artboard-id]")
+      .forEach((element) => {
+        if (element.dataset.artboardId === normalizedId) {
+          element.style.transform = transform;
+        }
+      });
+  }
+
+  function clearArtboardDragDomTransform(artboardId) {
+    applyArtboardDragDomTransform(artboardId, 0, 0);
+  }
+
+  function syncArtboardDragPreview() {
+    if (!artboardDragState) {
+      return;
+    }
+
+    applyArtboardDragDomTransform(
+      artboardDragState.artboardId,
+      artboardDragState.dx || 0,
+      artboardDragState.dy || 0,
+    );
+  }
+
   function deletePreviewArtboard(artboardId, options = {}) {
     const normalizedId = String(artboardId || "").trim();
 
@@ -372,20 +424,40 @@ window.CBO = window.CBO || {};
 
   function startArtboardDrag(event, artboard) {
     const point = getEventDocumentPoint(event);
+    const renderer = getRenderer();
+    const brushEngine = getBrushEngine();
 
-    if (!point || !artboard || artboard.isPrimary === true) {
+    if (!point || !artboard || artboard.isPrimary === true || brushEngine?.isDrawing === true) {
       return false;
     }
 
     artboardDragState = {
       artboardId: artboard.id,
       didMove: false,
+      dx: 0,
+      dy: 0,
+      layerIds: getArtboardContentLayerIds(artboard.id),
       pointerId: event.pointerId,
+      startArtboardRect: {
+        height: artboard.height,
+        width: artboard.width,
+        x: artboard.x,
+        y: artboard.y,
+      },
       startDocX: Number(point.docX) || 0,
       startDocY: Number(point.docY) || 0,
       startX: Number(artboard.x) || 0,
       startY: Number(artboard.y) || 0,
     };
+    renderer?.beginArtboardDragPreview?.({
+      artboardId: artboard.id,
+      layerIds: artboardDragState.layerIds,
+      startArtboardRect: artboardDragState.startArtboardRect,
+    });
+    namespace.vectorTextRenderer?.beginArtboardDragPreview?.({
+      artboardId: artboard.id,
+      layerIds: artboardDragState.layerIds,
+    });
 
     getStage()?.classList.add("artboard-dragging");
     try {
@@ -417,11 +489,36 @@ window.CBO = window.CBO || {};
 
     const nextX = artboardDragState.startX + ((Number(point.docX) || 0) - artboardDragState.startDocX);
     const nextY = artboardDragState.startY + ((Number(point.docY) || 0) - artboardDragState.startDocY);
+    const rawDx = nextX - artboardDragState.startX;
+    const rawDy = nextY - artboardDragState.startY;
+    const constrained = namespace.constrainDocumentArtboardMove?.(
+      artboardDragState.artboardId,
+      rawDx,
+      rawDy,
+      {
+        startRect: artboardDragState.startArtboardRect,
+      },
+    ) || { dx: rawDx, dy: rawDy };
+    const dx = Number.isFinite(Number(constrained.dx)) ? Number(constrained.dx) : rawDx;
+    const dy = Number.isFinite(Number(constrained.dy)) ? Number(constrained.dy) : rawDy;
 
     artboardDragState.didMove = true;
-    movePreviewArtboard(artboardDragState.artboardId, nextX, nextY, {
-      emit: false,
+    artboardDragState.dx = dx;
+    artboardDragState.dy = dy;
+    getRenderer()?.setArtboardDragPreview?.({
+      artboardId: artboardDragState.artboardId,
+      dx,
+      dy,
+      layerIds: artboardDragState.layerIds,
     });
+    namespace.vectorTextRenderer?.setArtboardDragPreview?.({
+      artboardId: artboardDragState.artboardId,
+      dx,
+      dy,
+      layerIds: artboardDragState.layerIds,
+    });
+    applyArtboardDragDomTransform(artboardDragState.artboardId, dx, dy);
+    getBrushEngine()?.requestDraw?.();
 
     event.preventDefault();
     event.stopPropagation();
@@ -436,6 +533,9 @@ window.CBO = window.CBO || {};
 
     artboardDragState = null;
     getStage()?.classList.remove("artboard-dragging", "artboard-label-hover");
+    getRenderer()?.clearArtboardDragPreview?.(state.artboardId);
+    namespace.vectorTextRenderer?.clearArtboardDragPreview?.(state.artboardId);
+    clearArtboardDragDomTransform(state.artboardId);
     try {
       event.currentTarget?.releasePointerCapture?.(event.pointerId);
     } catch (error) {
@@ -444,16 +544,21 @@ window.CBO = window.CBO || {};
     event.preventDefault();
     event.stopPropagation();
 
-    if (state.didMove) {
-      const artboard = getArtboardById(state.artboardId);
+    if (state.didMove && event.type !== "pointercancel") {
+      const dx = Math.round(Number(state.dx) || 0);
+      const dy = Math.round(Number(state.dy) || 0);
 
-      if (artboard) {
-        movePreviewArtboard(artboard.id, artboard.x, artboard.y, {
+      if (dx || dy) {
+        namespace.commitArtboardMoveWithContents?.(state.artboardId, dx, dy, {
+          layerIds: state.layerIds,
           source: "artboard-preview-label-drag",
         });
       } else {
         emitArtboardPreviewChange("artboard-preview-label-drag");
       }
+    } else {
+      renderArtboardPreviews();
+      getBrushEngine()?.requestDraw?.();
     }
   }
 
@@ -533,10 +638,11 @@ window.CBO = window.CBO || {};
       return { artboard, height, left, top, width };
     });
 
-    paperLayer.replaceChildren(...artboardViews.map(({ height, left, top, width }) => {
+    paperLayer.replaceChildren(...artboardViews.map(({ artboard, height, left, top, width }) => {
       const paper = document.createElement("div");
 
       paper.className = "editor-artboard-paper";
+      paper.dataset.artboardId = artboard.id;
       paper.style.left = `${left}px`;
       paper.style.top = `${top}px`;
       paper.style.width = `${width}px`;
@@ -566,6 +672,8 @@ window.CBO = window.CBO || {};
       frame.append(label);
       return frame;
     }));
+
+    syncArtboardDragPreview();
   }
 
   function fitPreviewArtboards() {

@@ -199,6 +199,83 @@
     return normalizeFieldBlurPins(pins).some((pin) => pin.blur > 0);
   }
 
+  function translateFiniteProperty(target, key, delta) {
+    const value = Number(target?.[key]);
+
+    if (!target || !Number.isFinite(value) || !Number.isFinite(delta) || delta === 0) {
+      return false;
+    }
+
+    target[key] = value + delta;
+    return true;
+  }
+
+  function translateDocumentPoint(target, dx, dy) {
+    let didChange = false;
+
+    didChange = translateFiniteProperty(target, "x", dx) || didChange;
+    didChange = translateFiniteProperty(target, "y", dy) || didChange;
+
+    return didChange;
+  }
+
+  function translateDocumentRect(target, dx, dy) {
+    if (!target || typeof target !== "object") {
+      return false;
+    }
+
+    let didChange = false;
+
+    didChange = translateFiniteProperty(target, "x", dx) || didChange;
+    didChange = translateFiniteProperty(target, "y", dy) || didChange;
+
+    return didChange;
+  }
+
+  function translatePuppetPins(puppet, dx, dy) {
+    if (!puppet || !Array.isArray(puppet.pins)) {
+      return false;
+    }
+
+    let didChange = false;
+
+    puppet.pins = puppet.pins.map((pin) => {
+      const nextPin = { ...pin };
+
+      didChange = translateFiniteProperty(nextPin, "x", dx) || didChange;
+      didChange = translateFiniteProperty(nextPin, "y", dy) || didChange;
+      didChange = translateFiniteProperty(nextPin, "restX", dx) || didChange;
+      didChange = translateFiniteProperty(nextPin, "restY", dy) || didChange;
+
+      return nextPin;
+    });
+
+    return didChange;
+  }
+
+  function translateLayerEffects(effects, dx, dy) {
+    if (!Array.isArray(effects)) {
+      return false;
+    }
+
+    let didChange = false;
+
+    effects.forEach((effect) => {
+      if (effect?.type !== "field-blur" || !Array.isArray(effect.pins)) {
+        return;
+      }
+
+      effect.pins = effect.pins.map((pin) => {
+        const nextPin = { ...pin };
+
+        didChange = translateDocumentPoint(nextPin, dx, dy) || didChange;
+        return nextPin;
+      });
+    });
+
+    return didChange;
+  }
+
   class DocumentLayerModel extends EventTarget {
     constructor(options = {}) {
       super();
@@ -785,6 +862,77 @@
       return undefined;
     }
 
+    getArtboardContentLayerIds(artboardId) {
+      const normalizedArtboardId = String(artboardId || "").trim();
+
+      if (!normalizedArtboardId) {
+        return [];
+      }
+
+      return this.flattenTopToBottom()
+        .filter((entry) =>
+          entry?.id &&
+          entry.artboardId === normalizedArtboardId &&
+          entry.type !== "background" &&
+          entry.id !== BACKGROUND_LAYER_ID
+        )
+        .map((entry) => entry.id);
+    }
+
+    translateLayerGeometry(entry, dx, dy) {
+      if (!entry || entry.type === "group" || entry.type === "background" || entry.id === BACKGROUND_LAYER_ID) {
+        return false;
+      }
+
+      let didChange = false;
+
+      didChange = translateDocumentPoint(entry, dx, dy) || didChange;
+      didChange = translateDocumentRect(entry.imageBounds, dx, dy) || didChange;
+      didChange = translatePuppetPins(entry.puppet, dx, dy) || didChange;
+      didChange = translateLayerEffects(entry.effects, dx, dy) || didChange;
+
+      return didChange;
+    }
+
+    translateLayersByIds(layerIds = [], dx = 0, dy = 0, options = {}) {
+      const ids = new Set((Array.isArray(layerIds) ? layerIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean));
+      const deltaX = Number(dx);
+      const deltaY = Number(dy);
+
+      if (ids.size === 0 || (!Number.isFinite(deltaX) && !Number.isFinite(deltaY))) {
+        return false;
+      }
+
+      const safeDx = Number.isFinite(deltaX) ? deltaX : 0;
+      const safeDy = Number.isFinite(deltaY) ? deltaY : 0;
+
+      if (safeDx === 0 && safeDy === 0) {
+        return false;
+      }
+
+      const beforeState = this.captureHistoryState(options);
+      let didChange = false;
+
+      ids.forEach((id) => {
+        const entry = this.findEntryById(id);
+
+        didChange = this.translateLayerGeometry(entry, safeDx, safeDy) || didChange;
+      });
+
+      if (!didChange) {
+        return false;
+      }
+
+      if (options.emit !== false) {
+        this.emitChange(options.source || "translate-layers");
+      }
+      this.recordHistoryStateChange(beforeState, options);
+
+      return true;
+    }
+
     getSelectedArtboardId(options = {}) {
       const explicitArtboardId = String(options.artboardId || "").trim();
 
@@ -1176,6 +1324,14 @@
       history: options.history === true,
       source: options.source || "ensure-document-layer-artboard-groups",
     }) === true;
+  };
+
+  namespace.getArtboardContentLayerIds = function getArtboardContentLayerIds(artboardId) {
+    return namespace.documentLayerModel?.getArtboardContentLayerIds?.(artboardId) || [];
+  };
+
+  namespace.translateDocumentLayersByIds = function translateDocumentLayersByIds(layerIds, dx, dy, options = {}) {
+    return namespace.documentLayerModel?.translateLayersByIds?.(layerIds, dx, dy, options) === true;
   };
 
   namespace.rasterizeImageLayerToPaint = function rasterizeImageLayerToPaint(layerId, options = {}) {

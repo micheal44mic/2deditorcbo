@@ -199,7 +199,8 @@ test("raster transform commits pad dirty rectangles for edge anti-aliasing", () 
   assert.match(source, /padRasterRect\(rect, padding = 0\)/);
   assert.match(source, /const destDirtyRect = this\.padRasterRect\(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING\)/);
   assert.match(source, /bounds\.getUnionRect\(sourceRect, destDirtyRect \|\| destRect\)/);
-  assert.match(source, /getClampedDocumentRect\(\s*destDirtyRect \|\| destRect,\s*CROPPED_TARGET_EDGE_PADDING,/);
+  assert.match(source, /getUnclampedDocumentRect\(\s*destDirtyRect \|\| destRect,\s*CROPPED_TARGET_EDGE_PADDING,/);
+  assert.match(source, /createRasterTargetForUnclampedRect\(nextRect\)/);
 });
 
 test("raster transform tool uses SVG overlay, resize/rotate activation, and history-safe commit", () => {
@@ -229,6 +230,9 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /selectionMoveHoldState/);
   assert.match(source, /window\.setTimeout\(\(\) => \{\s*this\.beginSelectionMoveDrag\(\);\s*\}, SELECTION_MOVE_HOLD_MS\)/);
   assert.match(source, /getSelectionHitRadius\(pointerType = ""\)/);
+  assert.match(source, /getLayerArtboardRect\(layer\) \{/);
+  assert.match(source, /isPointInsideLayerArtboard\(layer, point, padding = 0\) \{/);
+  assert.match(source, /this\.isPointInsideLayerArtboard\(layer, point, hitRadius\) &&/);
   assert.match(source, /function isRotateToolDetail\(detail = \{\}\)/);
   assert.match(source, /function getTransformToolMode\(detail = \{\}\)/);
   assert.match(source, /getPixelTightRasterContentBounds\(layerId\)/);
