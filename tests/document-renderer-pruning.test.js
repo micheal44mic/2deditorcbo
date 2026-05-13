@@ -469,6 +469,101 @@ test("raster snapshot rectangles clamp crop bounds safely", () => {
   });
 });
 
+test("raster snapshots and transform bounds preserve off-artboard pixels", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  let currentFramebuffer = null;
+  const target = {
+    framebuffer: { id: "off-artboard-target" },
+    height: 4,
+    texture: { id: "off-artboard-texture" },
+    width: 4,
+    x: 120,
+    y: 10,
+  };
+
+  renderer.width = 100;
+  renderer.height = 100;
+  window.CBO.documentBounds = {
+    getClampedRasterBox(rect, width, height) {
+      const x0 = Math.max(0, Math.floor(rect.x));
+      const y0 = Math.max(0, Math.floor(rect.y));
+      const x1 = Math.min(width, Math.ceil(rect.x + rect.width));
+      const y1 = Math.min(height, Math.ceil(rect.y + rect.height));
+
+      return x1 > x0 && y1 > y0
+        ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+        : null;
+    },
+  };
+  renderer.gl = {
+    bindFramebuffer: (targetName, framebuffer) => {
+      if (targetName === "READ_FRAMEBUFFER") {
+        currentFramebuffer = framebuffer;
+      }
+    },
+    READ_FRAMEBUFFER: "READ_FRAMEBUFFER",
+    readPixels: (x, y, width, height, format, type, pixels) => {
+      if (currentFramebuffer?.id === "off-artboard-target") {
+        for (let index = 3; index < pixels.length; index += 4) {
+          pixels[index] = 255;
+        }
+      }
+    },
+    RGBA: "RGBA",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+  };
+
+  const mappedRect = renderer.getRasterTargetLocalRect(target, {
+    height: 4,
+    width: 4,
+    x: 120,
+    y: 10,
+  });
+  const visibleBounds = renderer.getRasterTargetPixelContentBounds(target, {
+    alphaThreshold: 2,
+    padding: 0,
+    pixelPerfect: true,
+  });
+  const preservedBounds = renderer.getRasterTargetPixelContentBounds(target, {
+    alphaThreshold: 2,
+    clampToDocument: false,
+    padding: 0,
+    pixelPerfect: true,
+  });
+  const unclampedTiles = renderer.getRasterHistoryTileRects({
+    height: 10,
+    width: 10,
+    x: 130,
+    y: 10,
+  }, {
+    clampToDocument: false,
+    tileSize: 64,
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(mappedRect.docRect)), {
+    height: 4,
+    width: 4,
+    x: 120,
+    y: 10,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(mappedRect.localRect)), {
+    height: 4,
+    width: 4,
+    x: 0,
+    y: 0,
+  });
+  assert.equal(visibleBounds, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(preservedBounds)), {
+    height: 4,
+    width: 4,
+    x: 120,
+    y: 10,
+  });
+  assert.equal(unclampedTiles.length, 1);
+  assert.equal(unclampedTiles[0].tx, 2);
+});
+
 test("duplicateRasterTarget shares source pixels until copy-on-write detach", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);

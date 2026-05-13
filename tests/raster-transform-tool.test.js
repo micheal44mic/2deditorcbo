@@ -201,6 +201,9 @@ test("raster transform commits pad dirty rectangles for edge anti-aliasing", () 
   assert.match(source, /bounds\.getUnionRect\(sourceRect, destDirtyRect \|\| destRect\)/);
   assert.match(source, /getUnclampedDocumentRect\(\s*destDirtyRect \|\| destRect,\s*CROPPED_TARGET_EDGE_PADDING,/);
   assert.match(source, /createRasterTargetForUnclampedRect\(nextRect\)/);
+  assert.match(source, /const transformEscapesTarget = Boolean\(/);
+  assert.match(source, /this\.isCroppedRasterTarget\(target\) \|\| transformEscapesTarget/);
+  assert.match(source, /clampToDocument: false,[\s\S]*source: `\$\{source\}-retile`/);
 });
 
 test("raster transform tool uses SVG overlay, resize/rotate activation, and history-safe commit", () => {
@@ -223,6 +226,7 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /window\.addEventListener\("cbo:text-transform-edit-request", this\.handleTextTransformEditRequest\);/);
   assert.match(source, /handleTextTransformEditRequest\(event\) \{[\s\S]*this\.activeTool = "text-transform";[\s\S]*this\.deactivateLayer\(\);/);
   assert.match(source, /const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object\.freeze\(\{/);
+  assert.match(source, /clampToDocument: false,/);
   assert.match(source, /padding: 0,/);
   assert.match(source, /pixelPerfect: true,/);
   assert.match(source, /const TOUCH_SELECTION_HIT_RADIUS_PX = 8;/);

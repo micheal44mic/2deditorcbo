@@ -7,6 +7,7 @@
   const RASTER_ALPHA_HIT_THRESHOLD = 2;
   const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object.freeze({
     alphaThreshold: RASTER_ALPHA_HIT_THRESHOLD,
+    clampToDocument: false,
     padding: 0,
     pixelPerfect: true,
   });

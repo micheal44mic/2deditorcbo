@@ -1948,6 +1948,7 @@ void main() {
 
     getSparseRasterTileRects(rect, options = {}) {
       return this.getRasterHistoryTileRects(rect, {
+        clampToDocument: options.clampToDocument,
         patchRects: options.patchRects,
         tileSize: options.tileSize || options.liveTileSize,
         tilePatchRects: options.tilePatchRects,
@@ -2307,6 +2308,16 @@ void main() {
       const documentRect = this.getDocumentBoundsRect();
       const tileX = tx * tileSize;
       const tileY = ty * tileSize;
+
+      if (options.clampToDocument === false) {
+        return {
+          height: tileSize,
+          width: tileSize,
+          x: tileX,
+          y: tileY,
+        };
+      }
+
       const x0 = Math.max(documentRect.x, tileX);
       const y0 = Math.max(documentRect.y, tileY);
       const x1 = Math.min(tileX + tileSize, documentRect.x + documentRect.width);
@@ -2355,7 +2366,9 @@ void main() {
     }
 
     getRasterHistoryTileRects(rect, options = {}) {
-      const captureRect = this.getClampedDocumentRect(rect);
+      const captureRect = options.clampToDocument === false
+        ? this.getUnclampedDocumentRect(rect)
+        : this.getClampedDocumentRect(rect);
 
       if (!captureRect) {
         return [];
@@ -2371,7 +2384,10 @@ void main() {
 
       for (let ty = startTy; ty <= endTy; ty += 1) {
         for (let tx = startTx; tx <= endTx; tx += 1) {
-          const tileRect = this.getRasterHistoryTileBounds(tx, ty, { tileSize });
+          const tileRect = this.getRasterHistoryTileBounds(tx, ty, {
+            clampToDocument: options.clampToDocument,
+            tileSize,
+          });
 
           if (!tileRect) {
             continue;
@@ -7796,7 +7812,7 @@ void main() {
       });
     }
 
-    createRasterTargetForUnclampedRect(rect, clearColor = [0, 0, 0, 0], padding = 0) {
+    createRasterTargetForUnclampedRect(rect, clearColor = [0, 0, 0, 0], padding = 0, options = {}) {
       const targetRect = this.getUnclampedDocumentRect(rect, padding);
 
       if (!targetRect) {
@@ -7806,6 +7822,8 @@ void main() {
       return this.createRasterTarget(clearColor, {
         cropped: true,
         height: targetRect.height,
+        layerId: options.layerId,
+        reason: options.source || "create-raster-target-for-unclamped-rect",
         width: targetRect.width,
         x: targetRect.x,
         y: targetRect.y,
@@ -8027,7 +8045,10 @@ void main() {
           continue;
         }
 
-        for (const tile of this.getSparseRasterTileRects(shiftedTileRect, { tileSize })) {
+      for (const tile of this.getSparseRasterTileRects(shiftedTileRect, {
+        clampToDocument: false,
+        tileSize,
+      })) {
           const destinationPatchRect = this.intersectRasterHistoryRects(shiftedTileRect, tile.tileRect || tile.rect);
           const sourcePatchRect = destinationPatchRect
             ? {
@@ -8186,7 +8207,7 @@ void main() {
     getRasterTargetLocalRect(target, docRect = null) {
       const targetRect = this.getRasterTargetDocumentRect(target);
       const requested = docRect
-        ? this.getClampedDocumentRect(docRect)
+        ? this.getUnclampedDocumentRect(docRect)
         : targetRect;
 
       if (!targetRect || !requested) {
@@ -8342,13 +8363,14 @@ void main() {
     }
 
     createRasterSnapshotFromSparseTarget(sparseTarget, rect = null, label = "raster snapshot") {
-      const docRect = this.getClampedDocumentRect(rect || this.getRasterTargetDocumentRect(sparseTarget));
+      const docRect = this.getUnclampedDocumentRect(rect || this.getRasterTargetDocumentRect(sparseTarget));
 
       if (!this.isSparseRasterTarget(sparseTarget) || !docRect) {
         return null;
       }
 
-      const tempTarget = this.createRasterTargetForDocumentRect(sparseTarget.layerId || "", docRect, {
+      const tempTarget = this.createRasterTargetForUnclampedRect(docRect, [0, 0, 0, 0], 0, {
+        layerId: sparseTarget.layerId || "",
         source: `${label}-sparse-temp`,
       });
 
@@ -8850,7 +8872,10 @@ void main() {
       let didRestore = false;
       const restoredTileKeys = [];
 
-      for (const tile of this.getSparseRasterTileRects(snapshot.rect, { tileSize: sparseTarget.tileSize })) {
+      for (const tile of this.getSparseRasterTileRects(snapshot.rect, {
+        clampToDocument: false,
+        tileSize: sparseTarget.tileSize,
+      })) {
         const tileTarget = this.ensureSparseRasterTileTarget(layerId, sparseTarget, tile, {
           source: options.source || "raster-snapshot-sparse-restore",
         });
@@ -8953,7 +8978,10 @@ void main() {
       const touchedTileKeys = [];
       let didTouchExistingTile = false;
 
-      for (const tile of this.getSparseRasterTileRects(snapshot.rect, { tileSize: sparseTarget.tileSize })) {
+      for (const tile of this.getSparseRasterTileRects(snapshot.rect, {
+        clampToDocument: false,
+        tileSize: sparseTarget.tileSize,
+      })) {
         const tileKey = this.getSparseTileKey(tile.tx, tile.ty);
         const tileTarget = sparseTarget.tiles.get(tileKey);
         const patchRect = this.intersectRasterHistoryRects(tile.tileRect || tile.rect, snapshot.rect);
@@ -9295,8 +9323,8 @@ void main() {
         return null;
       }
 
-      const fullTarget = this.createRasterTargetForDocumentRect(layerId, targetRect, {
-        clearColor: sparseTarget.clearColor,
+      const fullTarget = this.createRasterTargetForUnclampedRect(targetRect, sparseTarget.clearColor, 0, {
+        layerId,
         source: options.source || "materialize-sparse-raster-target",
       });
 
@@ -9388,9 +9416,9 @@ void main() {
         return null;
       }
 
-      const sourceRect = this.getClampedDocumentRect(
-        options.rect || this.getRasterTargetDocumentRect(sourceTarget),
-      );
+      const sourceRect = options.clampToDocument === false
+        ? this.getUnclampedDocumentRect(options.rect || this.getRasterTargetDocumentRect(sourceTarget))
+        : this.getClampedDocumentRect(options.rect || this.getRasterTargetDocumentRect(sourceTarget));
 
       if (!sourceRect) {
         return null;
@@ -9404,6 +9432,7 @@ void main() {
       let didCopyAnyTile = false;
 
       for (const tile of this.getSparseRasterTileRects(sourceRect, {
+        clampToDocument: options.clampToDocument,
         tileSize: sparseTarget.tileSize,
       })) {
         const tileTarget = this.ensureSparseRasterTileTarget(layerId, sparseTarget, tile, {
@@ -9480,6 +9509,7 @@ void main() {
       }
 
       return this.sparsifyRasterTarget(layerId, target, {
+        clampToDocument: false,
         emit: options.emit === true,
         pruneTransparentTiles: options.pruneTransparentTiles,
         source: options.source || "image-rasterize-retile",
@@ -9731,14 +9761,26 @@ void main() {
       }
 
       const targetRect = this.getRasterTargetDocumentRect(target);
+      const clampToDocument = options.clampToDocument !== false;
+      const mapLocalContentRectToDocument = (localRect) => {
+        if (!localRect || !targetRect) {
+          return null;
+        }
+
+        const documentContentRect = {
+          height: localRect.height,
+          width: localRect.width,
+          x: targetRect.x + localRect.x,
+          y: targetRect.y + localRect.y,
+        };
+
+        return clampToDocument
+          ? bounds?.getClampedRasterBox?.(documentContentRect, this.width, this.height) || null
+          : this.getUnclampedDocumentRect(documentContentRect);
+      };
 
       if (options.coarseOnly === true) {
-        return bounds?.getClampedRasterBox?.({
-          x: targetRect.x + coarseRect.x,
-          y: targetRect.y + coarseRect.y,
-          width: coarseRect.width,
-          height: coarseRect.height,
-        }, this.width, this.height) || null;
+        return mapLocalContentRectToDocument(coarseRect);
       }
 
       const gl = this.gl;
@@ -9800,12 +9842,7 @@ void main() {
         return null;
       }
 
-      return bounds?.getClampedRasterBox?.({
-        x: targetRect.x + localBounds.x,
-        y: targetRect.y + localBounds.y,
-        width: localBounds.width,
-        height: localBounds.height,
-      }, this.width, this.height) || null;
+      return mapLocalContentRectToDocument(localBounds);
     }
 
     getRasterContentBounds(layerId, options = {}) {
@@ -10809,6 +10846,7 @@ void main() {
       );
       const finalLiveTarget = afterPreferSparse
         ? this.sparsifyRasterTarget(layerId, nextTarget, {
+            clampToDocument: false,
             emit: false,
             source: `${source}-retile`,
             tileSize: nextTarget.sparseTileSize || target.sparseTileSize || target.tileSize,
@@ -10928,8 +10966,16 @@ void main() {
         : bounds?.quadToBounds?.(destQuad);
       const destRect = bounds?.boundsToRect?.(destBounds);
       const destDirtyRect = this.padRasterRect(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING);
+      const targetRect = this.getRasterTargetDocumentRect(target);
+      const transformEscapesTarget = Boolean(
+        targetRect &&
+        (
+          !this.containsRasterHistoryRect(targetRect, destDirtyRect || destRect) ||
+          !this.containsRasterHistoryRect(targetRect, sourceRect)
+        )
+      );
 
-      if (this.isCroppedRasterTarget(target)) {
+      if (this.isCroppedRasterTarget(target) || transformEscapesTarget) {
         return this.commitCroppedRasterTransform({
           ...options,
           destRect,
@@ -11041,6 +11087,7 @@ void main() {
 
         if (afterPreferSparse) {
           this.sparsifyRasterTarget(layerId, target, {
+            clampToDocument: false,
             emit: false,
             source: `${source}-retile`,
             tileSize: target.sparseTileSize || target.tileSize,
@@ -11102,6 +11149,7 @@ void main() {
 
       if (afterPreferSparse) {
         this.sparsifyRasterTarget(layerId, target, {
+          clampToDocument: false,
           emit: false,
           source: `${source}-retile`,
           tileSize: target.sparseTileSize || target.tileSize,
