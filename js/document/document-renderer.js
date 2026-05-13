@@ -95,13 +95,25 @@ out vec4 outColor;
 
 void main() {
   if (u_gridMode > 0.5) {
-    // Griglia pixel: una linea bianca sottile su ogni bordo di pixel del documento.
+    // Griglia pixel: disattivata in modo duro sotto il 1000%.
+    // Questo evita che fwidth/fract generino shimmer o linee biancastre durante lo zoom out.
+    float safeZoom = abs(uCameraZoom);
+
+    if (safeZoom < 10.01) {
+      discard;
+    }
+
     vec2 docPx = v_uv * uDocumentSize;
-    vec2 boundaryDistance = abs(fract(docPx - 0.5) - 0.5) / fwidth(docPx);
+    vec2 boundaryDistance = abs(fract(docPx - 0.5) - 0.5) / max(fwidth(docPx), vec2(0.0001));
     float line = 1.0 - clamp(min(boundaryDistance.x, boundaryDistance.y), 0.0, 1.0);
-    // Fade in tra zoom 6x e 12x: sotto invisibile, sopra piena visibilita'.
-    float zoomFade = smoothstep(6.0, 12.0, uCameraZoom);
-    float alpha = line * zoomFade * 0.35;
+    // Fade in solo sopra il 1000%: sotto resta una vista pulita e non pixelata.
+    float zoomFade = smoothstep(10.01, 12.0, safeZoom);
+    float alpha = line * zoomFade * 0.30;
+
+    if (alpha <= 0.0001) {
+      discard;
+    }
+
     // Output pre-moltiplicato bianco.
     outColor = vec4(alpha, alpha, alpha, alpha);
   } else {
@@ -1025,7 +1037,8 @@ void main() {
   const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
-  const PREVIEW_CACHE_ZOOM_THRESHOLD = 8.0;
+  const PREVIEW_CACHE_ZOOM_THRESHOLD = 1.0;
+  const PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD = 10.01;
   const PREVIEW_CACHE_MAX_SIZE = 2048;
 
   function normalizeAngle(value) {
@@ -1187,6 +1200,7 @@ void main() {
       this.gl = options.gl;
       this.options = {
         transparentBackground: options.transparentBackground === true,
+        cssArtboardPaper: options.cssArtboardPaper === true,
         documentWidth: Number.isFinite(options.documentWidth) && options.documentWidth > 0
           ? Math.floor(options.documentWidth)
           : null,
@@ -1217,6 +1231,7 @@ void main() {
       this.previewCacheWidth = 0;
       this.previewCacheHeight = 0;
       this.previewCacheScale = 1;
+      this.previewCacheDocumentRect = null;
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
@@ -4193,6 +4208,9 @@ void main() {
       }
 
       const gl = this.gl;
+      const previousTextureUnit = typeof gl.getParameter === "function"
+        ? gl.getParameter(gl.ACTIVE_TEXTURE)
+        : null;
       const resolvedMagFilter = Number.isFinite(magFilter) ? magFilter : minFilter;
 
       gl.activeTexture(gl.TEXTURE0);
@@ -4200,6 +4218,34 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilter);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, resolvedMagFilter);
       gl.bindTexture(gl.TEXTURE_2D, null);
+
+      if (Number.isFinite(previousTextureUnit)) {
+        gl.activeTexture(previousTextureUnit);
+      }
+    }
+
+    getViewportTextureMagFilter(camera = {}) {
+      const zoom = Math.abs(Number(camera?.zoom) || 1);
+
+      return zoom >= PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD
+        ? this.gl.NEAREST
+        : this.gl.LINEAR;
+    }
+
+    shouldDrawPixelGrid(camera = {}) {
+      const zoom = Math.abs(Number(camera?.zoom) || 1);
+
+      return zoom >= PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD;
+    }
+
+    shouldUsePreviewCacheForCamera(camera = {}, previewCacheDimensions = null) {
+      const zoom = Math.abs(Number(camera?.zoom) || 1);
+      const dimensions = previewCacheDimensions || this.getPreviewCacheDimensions();
+      const cacheScale = Math.max(0.0001, Number(dimensions?.scale) || 1);
+
+      // Usa la cache mipmapped per lo zoom out, ma mai quando andrebbe ingrandita.
+      // Cosi' sotto il 100% il downsample resta pulito, sopra il 100% resta full-res.
+      return zoom < PREVIEW_CACHE_ZOOM_THRESHOLD && zoom <= cacheScale * 1.01;
     }
 
     drawWarpTexturedMesh(texture, controlPoints, options = {}) {
@@ -4431,9 +4477,26 @@ void main() {
       return { vao, buffer };
     }
 
+    getPreviewCacheDocumentRect() {
+      const rect = this.getDocumentBoundsRect?.() || this.getFullDocumentRect?.() || {
+        height: Math.max(1, Math.round(this.height || 1)),
+        width: Math.max(1, Math.round(this.width || 1)),
+        x: 0,
+        y: 0,
+      };
+
+      return {
+        height: Math.max(1, Math.round(Number(rect.height) || this.height || 1)),
+        width: Math.max(1, Math.round(Number(rect.width) || this.width || 1)),
+        x: Number.isFinite(Number(rect.x)) ? Math.round(Number(rect.x)) : 0,
+        y: Number.isFinite(Number(rect.y)) ? Math.round(Number(rect.y)) : 0,
+      };
+    }
+
     getPreviewCacheDimensions() {
-      const documentWidth = Math.max(1, Math.round(this.width || 1));
-      const documentHeight = Math.max(1, Math.round(this.height || 1));
+      const documentRect = this.getPreviewCacheDocumentRect();
+      const documentWidth = documentRect.width;
+      const documentHeight = documentRect.height;
       const maxSize = Math.max(1, Math.floor(Number(this.options.previewCacheMaxSize) || PREVIEW_CACHE_MAX_SIZE));
       const scale = Math.min(1, maxSize / Math.max(documentWidth, documentHeight));
       const width = Math.max(1, Math.floor(documentWidth * scale));
@@ -4442,7 +4505,10 @@ void main() {
 
       return {
         documentHeight,
+        documentRect,
         documentWidth,
+        documentX: documentRect.x,
+        documentY: documentRect.y,
         height,
         scale: Math.max(0.0001, effectiveScale),
         width,
@@ -4455,6 +4521,7 @@ void main() {
       if (
         this.previewTexture &&
         this.previewFramebuffer &&
+        this.areDocumentRectsEqual(this.previewCacheDocumentRect, dimensions.documentRect) &&
         this.previewCacheWidth === dimensions.width &&
         this.previewCacheHeight === dimensions.height
       ) {
@@ -4498,6 +4565,11 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+      if (Number.isFinite(gl.TEXTURE_BASE_LEVEL) && Number.isFinite(gl.TEXTURE_MAX_LEVEL)) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, 0);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, levels - 1);
+      }
+
       gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
 
@@ -4518,6 +4590,7 @@ void main() {
       this.previewCacheWidth = width;
       this.previewCacheHeight = height;
       this.previewCacheScale = scale;
+      this.previewCacheDocumentRect = { ...dimensions.documentRect };
       this.previewMipLevels = levels;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
@@ -4529,8 +4602,8 @@ void main() {
 
       const textureRow = this.registerRasterTexture(texture, {
         bbox: {
-          x: 0,
-          y: 0,
+          x: dimensions.documentRect.x,
+          y: dimensions.documentRect.y,
           width: documentWidth,
           height: documentHeight,
         },
@@ -4547,8 +4620,8 @@ void main() {
 
       this.registerRasterFramebuffer(framebuffer, {
         bbox: {
-          x: 0,
-          y: 0,
+          x: dimensions.documentRect.x,
+          y: dimensions.documentRect.y,
           width: documentWidth,
           height: documentHeight,
         },
@@ -4584,6 +4657,7 @@ void main() {
       this.previewCacheWidth = 0;
       this.previewCacheHeight = 0;
       this.previewCacheScale = 1;
+      this.previewCacheDocumentRect = null;
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
@@ -5043,17 +5117,20 @@ void main() {
       };
     }
 
-    getPreviewDirtyRegionScissor(rect, cacheWidth, cacheHeight, cacheScale) {
+    getPreviewDirtyRegionScissor(rect, cacheWidth, cacheHeight, cacheScale, options = {}) {
       const dirtyRect = this.normalizeDirtyRegionRect(rect);
 
       if (!dirtyRect) {
         return null;
       }
 
-      const x0 = Math.max(0, Math.floor(dirtyRect.x * cacheScale));
-      const y0 = Math.max(0, Math.floor(dirtyRect.y * cacheScale));
-      const x1 = Math.min(cacheWidth, Math.ceil((dirtyRect.x + dirtyRect.width) * cacheScale));
-      const y1 = Math.min(cacheHeight, Math.ceil((dirtyRect.y + dirtyRect.height) * cacheScale));
+      const documentRect = options.documentRect || options.cacheDocumentRect || this.previewCacheDocumentRect || this.getPreviewCacheDocumentRect();
+      const offsetX = Number.isFinite(Number(documentRect?.x)) ? Number(documentRect.x) : 0;
+      const offsetY = Number.isFinite(Number(documentRect?.y)) ? Number(documentRect.y) : 0;
+      const x0 = Math.max(0, Math.floor((dirtyRect.x - offsetX) * cacheScale));
+      const y0 = Math.max(0, Math.floor((dirtyRect.y - offsetY) * cacheScale));
+      const x1 = Math.min(cacheWidth, Math.ceil((dirtyRect.x + dirtyRect.width - offsetX) * cacheScale));
+      const y1 = Math.min(cacheHeight, Math.ceil((dirtyRect.y + dirtyRect.height - offsetY) * cacheScale));
 
       if (x1 <= x0 || y1 <= y0) {
         return null;
@@ -5071,7 +5148,7 @@ void main() {
       const cachePixels = Math.max(1, Math.round(cacheWidth || 1) * Math.round(cacheHeight || 1));
       const scissors = this.compactDirtyRegionRects(
         (Array.isArray(rects) ? rects : [])
-          .map((rect) => this.getPreviewDirtyRegionScissor(rect, cacheWidth, cacheHeight, cacheScale))
+          .map((rect) => this.getPreviewDirtyRegionScissor(rect, cacheWidth, cacheHeight, cacheScale, options))
           .filter(Boolean),
         {
           maxRects: options.maxRects || PREVIEW_DIRTY_MAX_RECTS,
@@ -5568,6 +5645,9 @@ void main() {
       const maskTexture = options.maskTexture || null;
       const maskRect = options.maskRect || null;
       const previewCutRect = options.previewCutRect || null;
+      const textureMagFilter = Number.isFinite(options.textureMagFilter)
+        ? options.textureMagFilter
+        : this.getViewportTextureMagFilter(camera);
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("layer-composite.draw", {
         blendModeId,
         hasClipBase: Boolean(clipBase?.target?.texture),
@@ -5620,6 +5700,7 @@ void main() {
           : 1;
 
         gl.activeTexture(gl.TEXTURE2);
+        this.setRasterTextureSampling(clipBase.target.texture, gl.LINEAR, textureMagFilter);
         gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
         gl.uniform1f(uniforms.clipMode, 1.0);
         gl.uniform1f(uniforms.clipOpacity, clipOpacity);
@@ -5658,6 +5739,7 @@ void main() {
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, backdropTexture);
       gl.activeTexture(gl.TEXTURE0);
+      this.setRasterTextureSampling(sourceTexture, gl.LINEAR, textureMagFilter);
       gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindVertexArray(null);
@@ -7039,6 +7121,77 @@ void main() {
       return texture;
     }
 
+    getArtboardBackgroundRenderRects() {
+      const artboards = namespace.getDocumentArtboards?.();
+
+      if (Array.isArray(artboards) && artboards.length > 0) {
+        return artboards
+          .map((artboard) => ({
+            height: Math.max(1, Math.round(Number(artboard.height) || 1)),
+            width: Math.max(1, Math.round(Number(artboard.width) || 1)),
+            x: Math.round(Number(artboard.x) || 0),
+            y: Math.round(Number(artboard.y) || 0),
+          }))
+          .filter((rect) => rect.width > 0 && rect.height > 0);
+      }
+
+      return [{
+        height: Math.max(1, Math.round(this.height || 1)),
+        width: Math.max(1, Math.round(this.width || 1)),
+        x: 0,
+        y: 0,
+      }];
+    }
+
+    isProceduralBackgroundLayerTarget(layer, layerTarget) {
+      return Boolean(
+        layerTarget?.procedural === true &&
+        (layerTarget.layerId === "background" || layer?.id === "background" || layer?.type === "background")
+      );
+    }
+
+    getProceduralBackgroundRenderResults(layer, layerTarget) {
+      if (!layerTarget?.texture) {
+        return [];
+      }
+
+      if (this.options.cssArtboardPaper === true) {
+        return [];
+      }
+
+      const renderRects = this.getArtboardBackgroundRenderRects();
+      const layerArtboardId = String(layer?.artboardId || "").trim();
+      const scopedRects = (() => {
+        if (!layerArtboardId) {
+          return renderRects;
+        }
+
+        const artboards = namespace.getDocumentArtboards?.();
+        const artboardIndex = Array.isArray(artboards)
+          ? artboards.findIndex((artboard, index) => {
+              const artboardId = String(artboard?.id || (index === 0 ? "active-document" : `artboard-${index + 1}`));
+
+              return artboardId === layerArtboardId;
+            })
+          : -1;
+
+        if (artboardIndex >= 0 && renderRects[artboardIndex]) {
+          return [renderRects[artboardIndex]];
+        }
+
+        return layerArtboardId === "active-document" && renderRects[0]
+          ? [renderRects[0]]
+          : [];
+      })();
+
+      return scopedRects.map((rect) => ({
+        height: rect.height,
+        rect,
+        texture: layerTarget.texture,
+        width: rect.width,
+      }));
+    }
+
     getLayerRenderResult(layer, layerTarget) {
       if (!layerTarget?.texture) {
         return null;
@@ -7075,6 +7228,10 @@ void main() {
     }
 
     getLayerRenderResults(layer, layerTarget) {
+      if (this.isProceduralBackgroundLayerTarget(layer, layerTarget)) {
+        return this.getProceduralBackgroundRenderResults(layer, layerTarget);
+      }
+
       if (this.isSparseRasterTarget(layerTarget)) {
         return Array.from(layerTarget.tiles.values())
           .filter((tileTarget) => tileTarget?.texture)
@@ -7107,6 +7264,10 @@ void main() {
     }
 
     getRenderableLayerTarget(layer, layerTarget, options = {}) {
+      if (layer?.type === "background" && !layerTarget?.texture) {
+        return this.rasterTargetsByLayerId.get("background") || layerTarget;
+      }
+
       if (!this.needsSingleTextureLayerTarget(layer, layerTarget, options)) {
         return layerTarget;
       }
@@ -7247,7 +7408,7 @@ void main() {
         0,
         gl.RGBA,
         gl.UNSIGNED_BYTE,
-        new Uint8Array([255, 255, 255, 255]),
+        new Uint8Array([247, 247, 242, 255]),
       );
       gl.bindTexture(gl.TEXTURE_2D, null);
 
@@ -7263,7 +7424,7 @@ void main() {
         resourceHeight: 1,
         resourceWidth: 1,
         version: 0,
-        clearColor: [1, 1, 1, 1],
+        clearColor: [247 / 255, 247 / 255, 242 / 255, 1],
         layerId: "background",
         procedural: true,
       };
@@ -7329,10 +7490,9 @@ void main() {
       }
 
       gl.bindTexture(gl.TEXTURE_2D, texture);
-      // MAG = NEAREST: zoomando in si vedono i pixel quadrati come in Photoshop / Procreate.
-      // MIN = LINEAR: zoom out resta liscio senza moire.
+      // Sampling lineare: la vista resta morbida durante zoom out e zoom intermedi.
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(
@@ -9362,12 +9522,36 @@ void main() {
       });
     }
 
+    shouldSparsifyRasterTargetForPaintRect(layerId, target, requiredRect, options = {}) {
+      const targetRect = this.getRasterTargetDocumentRect(target);
+
+      return Boolean(
+        options.sparse !== false &&
+        requiredRect &&
+        targetRect &&
+        target?.framebuffer &&
+        target?.texture &&
+        !this.isSparseRasterTarget(target) &&
+        this.isPaintRasterLayer(layerId, target) &&
+        !this.containsRasterHistoryRect(targetRect, requiredRect)
+      );
+    }
+
     ensureRasterTargetsForPaintRect(layerId, rect, options = {}) {
+      const requiredRect = this.getClampedDocumentRect(rect, options.padding || 0);
+
+      if (!layerId || !requiredRect) {
+        return [];
+      }
+
       let existingTarget = this.ensureWritableRasterTarget(layerId, {
         source: options.source || "paint-copy-on-write-detach",
       }) || this.rasterTargetsByLayerId.get(layerId);
 
-      if (this.shouldRetileRasterTargetForPaint(layerId, existingTarget, options)) {
+      if (
+        this.shouldRetileRasterTargetForPaint(layerId, existingTarget, options) ||
+        this.shouldSparsifyRasterTargetForPaintRect(layerId, existingTarget, requiredRect, options)
+      ) {
         existingTarget = this.sparsifyRasterTarget(layerId, existingTarget, {
           emit: false,
           source: options.source || "paint-retile-existing-target",
@@ -9418,7 +9602,10 @@ void main() {
         return [];
       }
 
-      if (this.shouldRetileRasterTargetForPaint(layerId, existingTarget, options)) {
+      if (
+        this.shouldRetileRasterTargetForPaint(layerId, existingTarget, options) ||
+        this.shouldSparsifyRasterTargetForPaintRect(layerId, existingTarget, requiredRect, options)
+      ) {
         existingTarget = this.sparsifyRasterTarget(layerId, existingTarget, {
           emit: false,
           source: options.source || "paint-retile-existing-target",
@@ -9448,7 +9635,11 @@ void main() {
           .filter(Boolean);
       }
 
-      return existingTarget?.framebuffer && existingTarget?.texture
+      const existingRect = this.getRasterTargetDocumentRect(existingTarget);
+
+      return existingTarget?.framebuffer &&
+        existingTarget?.texture &&
+        this.containsRasterHistoryRect(existingRect, requiredRect)
         ? [{ target: existingTarget }]
         : [];
     }
@@ -9494,10 +9685,7 @@ void main() {
         };
       }
 
-      if (
-        !this.isCroppedRasterTarget(existingTarget) ||
-        this.containsRasterHistoryRect(existingRect, requiredRect)
-      ) {
+      if (this.containsRasterHistoryRect(existingRect, requiredRect)) {
         return {
           ...existingTarget,
           layerId,
@@ -11051,12 +11239,10 @@ void main() {
     }
 
     updatePreviewCacheIfNeeded() {
-      if (!this.previewTexture || !this.previewFramebuffer) {
-        const didCreate = this.createPreviewCache();
+      const didCreate = this.createPreviewCache();
 
-        if (!didCreate) {
-          return false;
-        }
+      if (!didCreate) {
+        return false;
       }
 
       if (!this.previewCacheDirty && this.previewCacheReady) {
@@ -11078,8 +11264,11 @@ void main() {
       }
 
       const gl = this.gl;
-      const documentWidth = Math.max(1, Math.round(this.width || 1));
-      const documentHeight = Math.max(1, Math.round(this.height || 1));
+      const baseDocumentWidth = Math.max(1, Math.round(this.width || 1));
+      const baseDocumentHeight = Math.max(1, Math.round(this.height || 1));
+      const documentRect = this.previewCacheDocumentRect || this.getPreviewCacheDocumentRect();
+      const documentWidth = Math.max(1, Math.round(documentRect.width || baseDocumentWidth));
+      const documentHeight = Math.max(1, Math.round(documentRect.height || baseDocumentHeight));
       const cacheWidth = Math.max(1, Math.round(this.previewCacheWidth || documentWidth));
       const cacheHeight = Math.max(1, Math.round(this.previewCacheHeight || documentHeight));
       const cacheScale = Math.max(
@@ -11091,13 +11280,20 @@ void main() {
         ? this.compactDirtyRegionRects(this.previewDirtyRects, dirtyCompactOptions)
         : null;
       const dirtyScissors = dirtyRects
-        ? this.getPreviewDirtyRegionScissors(dirtyRects, cacheWidth, cacheHeight, cacheScale, dirtyCompactOptions)
+        ? this.getPreviewDirtyRegionScissors(dirtyRects, cacheWidth, cacheHeight, cacheScale, {
+            ...dirtyCompactOptions,
+            documentRect,
+          })
         : null;
       const dirtyRect = dirtyScissors
         ? this.unionDirtyRegionRects(dirtyRects)
         : null;
       const { program, uniforms } = this.programInfo;
-      const flatCamera = { x: 0, y: 0, zoom: cacheScale };
+      const flatCamera = {
+        x: -documentRect.x * cacheScale,
+        y: -documentRect.y * cacheScale,
+        zoom: cacheScale,
+      };
       let previewCompositeState = null;
       const setDocumentProjection = (projectionWidth, projectionHeight, cameraX, cameraY, cameraZoom = cacheScale) => {
         gl.uniform2f(uniforms.documentSize, projectionWidth, projectionHeight);
@@ -11109,20 +11305,20 @@ void main() {
         gl.viewport(0, 0, cacheWidth, cacheHeight);
         gl.useProgram(program);
         gl.uniform2f(uniforms.viewportSize, cacheWidth, cacheHeight);
-        setDocumentProjection(documentWidth, documentHeight, 0, 0);
+        setDocumentProjection(baseDocumentWidth, baseDocumentHeight, flatCamera.x, flatCamera.y);
         gl.uniform1i(uniforms.texture, 0);
         gl.uniform1i(uniforms.maskTexture, 1);
         gl.uniform1i(uniforms.clipTexture, 2);
         gl.uniform1f(uniforms.maskMode, 0.0);
         gl.uniform1f(uniforms.maskRectMode, 0.0);
-        gl.uniform4f(uniforms.maskRect, 0, 0, documentWidth, documentHeight);
+        gl.uniform4f(uniforms.maskRect, 0, 0, baseDocumentWidth, baseDocumentHeight);
         gl.uniform1f(uniforms.maskClipMode, 0.0);
         gl.uniform4f(uniforms.maskClipRect, 0, 0, 0, 0);
         gl.uniform1i(uniforms.maskClipRectCount, 0);
         gl.uniform1f(uniforms.clipMode, 0.0);
         gl.uniform1f(uniforms.clipOpacity, 1.0);
         gl.uniform2f(uniforms.clipOrigin, 0, 0);
-        gl.uniform2f(uniforms.clipTextureSize, documentWidth, documentHeight);
+        gl.uniform2f(uniforms.clipTextureSize, baseDocumentWidth, baseDocumentHeight);
         gl.uniform2f(uniforms.drawOrigin, 0, 0);
         gl.uniform1f(uniforms.previewCutMode, 0.0);
         gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
@@ -11135,10 +11331,15 @@ void main() {
       };
       const drawTexture = (texture, opacity = 1, rect = null, clipBase = null) => {
         if (rect) {
-          setDocumentProjection(rect.width, rect.height, rect.x * cacheScale, rect.y * cacheScale);
+          setDocumentProjection(
+            rect.width,
+            rect.height,
+            (rect.x - documentRect.x) * cacheScale,
+            (rect.y - documentRect.y) * cacheScale,
+          );
           gl.uniform2f(uniforms.drawOrigin, rect.x, rect.y);
         } else {
-          setDocumentProjection(documentWidth, documentHeight, 0, 0);
+          setDocumentProjection(baseDocumentWidth, baseDocumentHeight, flatCamera.x, flatCamera.y);
           gl.uniform2f(uniforms.drawOrigin, 0, 0);
         }
 
@@ -11159,15 +11360,15 @@ void main() {
           );
           gl.uniform2f(
             uniforms.clipTextureSize,
-            clipBase.target.width || documentWidth,
-            clipBase.target.height || documentHeight,
+            clipBase.target.width || baseDocumentWidth,
+            clipBase.target.height || baseDocumentHeight,
           );
           gl.activeTexture(gl.TEXTURE0);
         } else {
           gl.uniform1f(uniforms.clipMode, 0.0);
           gl.uniform1f(uniforms.clipOpacity, 1.0);
           gl.uniform2f(uniforms.clipOrigin, 0, 0);
-          gl.uniform2f(uniforms.clipTextureSize, documentWidth, documentHeight);
+          gl.uniform2f(uniforms.clipTextureSize, baseDocumentWidth, baseDocumentHeight);
         }
 
         gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -11201,8 +11402,8 @@ void main() {
           blendModeId,
           camera: flatCamera,
           clipBase,
-          documentHeight,
-          documentWidth,
+          documentHeight: baseDocumentHeight,
+          documentWidth: baseDocumentWidth,
           framebuffer: previewCompositeState.write.framebuffer,
           opacity,
           rect,
@@ -11369,7 +11570,11 @@ void main() {
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
-      gl.generateMipmap(gl.TEXTURE_2D);
+
+      if (this.previewMipLevels > 1) {
+        gl.generateMipmap(gl.TEXTURE_2D);
+      }
+
       gl.bindTexture(gl.TEXTURE_2D, null);
 
       this.previewCacheDirty = false;
@@ -11407,24 +11612,29 @@ void main() {
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
       const { program, uniforms } = this.programInfo;
+      const documentRect = this.previewCacheDocumentRect || this.getPreviewCacheDocumentRect();
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
       gl.useProgram(program);
       gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
-      gl.uniform2f(uniforms.documentSize, this.width, this.height);
-      gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
+      gl.uniform2f(uniforms.documentSize, documentRect.width, documentRect.height);
+      gl.uniform2f(
+        uniforms.cameraPosition,
+        (camera.x || 0) + documentRect.x * (camera.zoom || 1),
+        (camera.y || 0) + documentRect.y * (camera.zoom || 1),
+      );
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniform1i(uniforms.texture, 0);
       gl.uniform1i(uniforms.maskTexture, 1);
       gl.uniform1i(uniforms.clipTexture, 2);
       gl.uniform1f(uniforms.maskMode, 0.0);
       gl.uniform1f(uniforms.maskRectMode, 0.0);
-      gl.uniform4f(uniforms.maskRect, 0, 0, this.width, this.height);
+      gl.uniform4f(uniforms.maskRect, documentRect.x, documentRect.y, documentRect.width, documentRect.height);
       gl.uniform1f(uniforms.clipMode, 0.0);
       gl.uniform1f(uniforms.clipOpacity, 1.0);
-      gl.uniform2f(uniforms.clipTextureSize, this.width, this.height);
-      gl.uniform2f(uniforms.drawOrigin, 0, 0);
+      gl.uniform2f(uniforms.clipTextureSize, documentRect.width, documentRect.height);
+      gl.uniform2f(uniforms.drawOrigin, documentRect.x, documentRect.y);
       gl.uniform1f(uniforms.previewCutMode, 0.0);
       gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
       gl.uniform1f(uniforms.gridMode, 0.0);
@@ -11432,6 +11642,7 @@ void main() {
 
       gl.bindVertexArray(this.quad.vao);
       gl.activeTexture(gl.TEXTURE0);
+      this.setRasterTextureSampling(this.previewTexture, gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR);
       gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindVertexArray(null);
@@ -11986,6 +12197,9 @@ void main() {
       const sourceTexture = options.sourceTexture || target.texture;
       const { program, uniforms } = this.ensurePuppetProgramInfo();
       const signature = this.getPuppetMeshSignature(layer, target);
+      const textureMagFilter = Number.isFinite(options.textureMagFilter)
+        ? options.textureMagFilter
+        : this.getViewportTextureMagFilter(camera);
 
       if (resource.signature !== signature) {
         this.updatePuppetMeshVertices(resource, layer, target);
@@ -12002,6 +12216,7 @@ void main() {
       gl.uniform1i(uniforms.texture, 0);
 
       gl.activeTexture(gl.TEXTURE0);
+      this.setRasterTextureSampling(sourceTexture, gl.LINEAR, textureMagFilter);
       gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
       gl.bindVertexArray(resource.vao);
       gl.drawElements(gl.TRIANGLES, resource.indexCount, gl.UNSIGNED_INT, 0);
@@ -12463,10 +12678,12 @@ void main() {
             .some((layer) => this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id)))
         );
       const allowPreviewCache = options.allowPreviewCache === true;
-      const isWithinPreviewCacheZoom = (camera.zoom || 1) < PREVIEW_CACHE_ZOOM_THRESHOLD;
+      const previewCacheDimensions = this.getPreviewCacheDimensions();
+      const previewCacheDocumentRect = this.getPreviewCacheDocumentRect();
+      const canUsePreviewCacheAtCurrentZoom = this.shouldUsePreviewCacheForCamera(camera, previewCacheDimensions);
       const canUsePreviewCache = Boolean(
         allowPreviewCache &&
-        isWithinPreviewCacheZoom &&
+        canUsePreviewCacheAtCurrentZoom &&
         !rasterTransformPreview &&
         !vectorTextTransformPreviewLayerId &&
         !hasActiveEraserStroke &&
@@ -12489,6 +12706,7 @@ void main() {
       let currentPreviewCutRect = null;
       let canvasCompositeState = null;
       let preserveCompositeOutsideScissor = false;
+      const viewportTextureMagFilter = this.getViewportTextureMagFilter(camera);
       const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
         gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
         gl.uniform2f(uniforms.cameraPosition, cameraX, cameraY);
@@ -12611,6 +12829,7 @@ void main() {
             : 1;
 
           gl.activeTexture(gl.TEXTURE2);
+          this.setRasterTextureSampling(clipBase.target.texture, gl.LINEAR, viewportTextureMagFilter);
           gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
           gl.uniform1i(uniforms.clipTexture, 2);
           gl.uniform1f(uniforms.clipMode, 1.0);
@@ -12633,6 +12852,9 @@ void main() {
           gl.uniform2f(uniforms.clipTextureSize, target.width, target.height);
         }
 
+        if (texture !== this.previewTexture) {
+          this.setRasterTextureSampling(texture, gl.LINEAR, viewportTextureMagFilter);
+        }
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, opacity);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -12686,6 +12908,7 @@ void main() {
           previewCutRect: currentPreviewCutRect,
           rect,
           texture,
+          textureMagFilter: viewportTextureMagFilter,
           viewportHeight,
           viewportWidth,
         });
@@ -12792,7 +13015,7 @@ void main() {
       if (usePreviewCache) {
         const activeStrokeOpacity = this.getLayerOpacity(activeStrokeLayerId, renderableLayers);
 
-        drawTexture(this.previewTexture, 1);
+        drawTexture(this.previewTexture, 1, this.previewCacheDocumentRect || previewCacheDocumentRect);
 
         if (options.activeStrokeTexture && activeStrokeMode !== "eraser") {
           withActiveStrokeClip(() => {
@@ -12885,15 +13108,7 @@ void main() {
               }
             }
 
-            const renderResult = this.getLayerRenderResult(layer, renderTarget);
-            const layerTexture = renderResult?.texture;
-            const hasVisualEffects = layerTexture && layerTexture !== renderTarget.texture;
             const blendModeId = this.getLayerBlendModeId(layer);
-            const layerRect = renderResult?.rect || null;
-
-            if (hasVisualEffects) {
-              bindArtboardProgram();
-            }
 
             if (eraserMaskTexture) {
               gl.activeTexture(gl.TEXTURE1);
@@ -12935,26 +13150,40 @@ void main() {
               currentMaskClipRects = activeStrokeClipRects || null;
             }
 
-            if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
-              if (isClippingLayer) {
-                drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
-              } else {
-                const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
-                const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
-                  camera,
-                  sourceTexture: layerTexture,
-                  viewportHeight,
-                  viewportWidth,
-                });
+            for (const renderResult of this.getLayerRenderResults(layer, renderTarget)) {
+              const layerTexture = renderResult?.texture;
+              const layerRect = renderResult?.rect || null;
 
-                bindArtboardProgram();
-
-                if (!didDrawPuppet) {
-                  drawBlendTexture(layerTexture, opacity, layerRect, null, blendModeId);
-                }
+              if (!layerTexture) {
+                continue;
               }
-            } else {
-              drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
+
+              if (layerTexture !== renderTarget.texture) {
+                bindArtboardProgram();
+              }
+
+              if (this.hasPuppetLayerTransform(layer) && !eraserMaskTexture) {
+                if (isClippingLayer) {
+                  drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
+                } else {
+                  const puppetTarget = this.getPuppetVisualTarget(renderTarget, renderResult);
+                  const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
+                    camera,
+                    sourceTexture: layerTexture,
+                    textureMagFilter: viewportTextureMagFilter,
+                    viewportHeight,
+                    viewportWidth,
+                  });
+
+                  bindArtboardProgram();
+
+                  if (!didDrawPuppet) {
+                    drawBlendTexture(layerTexture, opacity, layerRect, null, blendModeId);
+                  }
+                }
+              } else {
+                drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
+              }
             }
 
             if (eraserMaskTexture) {
@@ -13039,10 +13268,14 @@ void main() {
         bindArtboardProgram();
       }
 
-      // Pass 2: griglia pixel sopra tutto. Lo shader la attiva solo a zoom alto.
-      setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
-      gl.uniform1f(uniforms.gridMode, 1.0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      // Pass 2: griglia pixel sopra tutto, ma solo oltre il 1000%.
+      // Sotto quella soglia non disegniamo proprio il pass, evitando overlay bianchi a zoom out.
+      if (this.shouldDrawPixelGrid(camera)) {
+        setDocumentProjection(target.width, target.height, camera.x || 0, camera.y || 0);
+        gl.uniform1f(uniforms.gridMode, 1.0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.uniform1f(uniforms.gridMode, 0.0);
+      }
 
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);

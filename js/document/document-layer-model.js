@@ -488,6 +488,105 @@
       ];
     }
 
+    getArtboardLayerGroupId(artboardId) {
+      const normalizedArtboardId = String(artboardId || "active-document").trim() || "active-document";
+
+      return `${ARTBOARD_LAYER_GROUP_PREFIX}${normalizedArtboardId}`;
+    }
+
+    getArtboardBackgroundLayerId(artboardId) {
+      const normalizedArtboardId = String(artboardId || "active-document").trim() || "active-document";
+
+      return normalizedArtboardId === "active-document"
+        ? BACKGROUND_LAYER_ID
+        : `${BACKGROUND_LAYER_ID}-${normalizedArtboardId}`;
+    }
+
+    isBackgroundLayer(entry) {
+      return Boolean(entry?.type === "background" || entry?.id === BACKGROUND_LAYER_ID);
+    }
+
+    createArtboardBackgroundLayer(artboardId, existingBackground = null) {
+      const normalizedArtboardId = String(artboardId || "active-document").trim() || "active-document";
+
+      return this.createLayer({
+        ...existingBackground,
+        artboardId: normalizedArtboardId,
+        id: this.getArtboardBackgroundLayerId(normalizedArtboardId),
+        locked: true,
+        name: "Background",
+        type: "background",
+        visible: existingBackground?.visible !== false,
+      });
+    }
+
+    createArtboardGroupEntry(artboard, children = [], existingGroup = null) {
+      const artboardId = String(artboard?.id || "").trim() || "active-document";
+      const width = Math.max(1, Math.round(Number(artboard?.width) || 1));
+      const height = Math.max(1, Math.round(Number(artboard?.height) || 1));
+
+      return {
+        ...(existingGroup ? this.cloneEntry(existingGroup) : {}),
+        artboardGroup: true,
+        artboardHeight: height,
+        artboardId,
+        artboardWidth: width,
+        children: children.map((child) => this.cloneEntry(child)),
+        id: this.getArtboardLayerGroupId(artboardId),
+        locked: existingGroup?.locked === true,
+        name: String(artboard?.name || "Artboard"),
+        type: "group",
+        visible: existingGroup?.visible !== false,
+      };
+    }
+
+    ensureArtboardGroups(artboards = [], options = {}) {
+      const records = Array.isArray(artboards) ? artboards.filter(Boolean) : [];
+
+      if (records.length === 0) {
+        return false;
+      }
+
+      const existingGroupsByArtboardId = new Map();
+      const looseEntries = [];
+
+      this.getEntries().forEach((entry) => {
+        if (this.isArtboardGroup(entry)) {
+          existingGroupsByArtboardId.set(this.getArtboardIdFromGroup(entry), entry);
+          return;
+        }
+
+        looseEntries.push(entry);
+      });
+
+      const nextEntries = records.map((artboard, index) => {
+        const artboardId = String(artboard?.id || (index === 0 ? "active-document" : `artboard-${index + 1}`)).trim();
+        const existingGroup = existingGroupsByArtboardId.get(artboardId) || null;
+        const existingChildren = Array.isArray(existingGroup?.children) ? existingGroup.children : [];
+        const children = index === 0 && looseEntries.length > 0
+          ? [...looseEntries, ...existingChildren]
+          : existingChildren;
+
+        return this.createArtboardGroupEntry({
+          ...artboard,
+          id: artboardId,
+          name: artboard?.name || `Artboard ${index + 1}`,
+        }, children, existingGroup);
+      });
+
+      if (JSON.stringify(this.getEntries()) === JSON.stringify(nextEntries)) {
+        return false;
+      }
+
+      this.setEntries(nextEntries, {
+        ...options,
+        history: options.history === true,
+        source: options.source || "document-layer-artboard-groups",
+      });
+
+      return true;
+    }
+
     normalizeEntries(entries = []) {
       return entries
         .filter(Boolean)
@@ -504,36 +603,44 @@
     }
 
     ensureSystemLayers(entries = []) {
-      let backgroundEntry = null;
+      const looseBackgrounds = [];
+      const backgroundsByArtboardId = new Map();
 
-      const stripBackground = (sourceEntries) =>
+      const stripBackground = (sourceEntries, currentArtboardId = "") =>
         sourceEntries
           .map((entry) => {
-            if (entry.type === "background" || entry.id === BACKGROUND_LAYER_ID) {
-              backgroundEntry = entry;
+            const entryArtboardId = this.isArtboardGroup(entry)
+              ? this.getArtboardIdFromGroup(entry) || currentArtboardId
+              : currentArtboardId;
+
+            if (this.isBackgroundLayer(entry)) {
+              const backgroundArtboardId = String(entry.artboardId || entryArtboardId || "").trim();
+
+              if (backgroundArtboardId) {
+                backgroundsByArtboardId.set(backgroundArtboardId, entry);
+              } else {
+                looseBackgrounds.push(entry);
+              }
+
               return null;
             }
 
             if (entry.type === "group") {
               return {
                 ...entry,
-                children: stripBackground(entry.children || []),
+                children: stripBackground(entry.children || [], entryArtboardId),
               };
             }
 
             return entry;
           })
           .filter(Boolean);
-      const backgroundLayer = this.createLayer({
-        ...backgroundEntry,
-        id: BACKGROUND_LAYER_ID,
-        name: "Background",
-        type: "background",
-        locked: true,
-      });
       const strippedEntries = stripBackground(entries);
       let didPlaceBackgroundInArtboard = false;
-      const placeBackgroundInArtboard = (sourceEntries) =>
+      const getExistingBackground = (artboardId) =>
+        backgroundsByArtboardId.get(artboardId) ||
+        (artboardId === "active-document" ? looseBackgrounds[0] : null);
+      const placeBackgroundsInArtboards = (sourceEntries) =>
         sourceEntries.map((entry) => {
           if (entry.type !== "group") {
             return entry;
@@ -542,18 +649,23 @@
           const children = Array.isArray(entry.children) ? entry.children : [];
           const nextEntry = {
             ...entry,
-            children: didPlaceBackgroundInArtboard ? children : placeBackgroundInArtboard(children),
+            children: placeBackgroundsInArtboards(children),
           };
 
-          if (entry.artboardGroup === true && !didPlaceBackgroundInArtboard) {
+          if (this.isArtboardGroup(entry)) {
+            const artboardId = this.getArtboardIdFromGroup(entry) || "active-document";
+
             didPlaceBackgroundInArtboard = true;
-            nextEntry.children = [...children, backgroundLayer];
+            nextEntry.children = [
+              ...nextEntry.children,
+              this.createArtboardBackgroundLayer(artboardId, getExistingBackground(artboardId)),
+            ];
           }
 
           return nextEntry;
         });
 
-      const artboardEntries = placeBackgroundInArtboard(strippedEntries);
+      const artboardEntries = placeBackgroundsInArtboards(strippedEntries);
 
       if (didPlaceBackgroundInArtboard) {
         return artboardEntries;
@@ -561,7 +673,7 @@
 
       return [
         ...strippedEntries,
-        backgroundLayer,
+        this.createArtboardBackgroundLayer("active-document", looseBackgrounds[0] || backgroundsByArtboardId.get("active-document")),
       ];
     }
 
@@ -990,19 +1102,23 @@
       return activeEntry ? this.cloneEntry(activeEntry) : null;
     }
 
-    flattenTopToBottom(entries = this.entries, ancestorsVisible = true) {
+    flattenTopToBottom(entries = this.entries, ancestorsVisible = true, currentArtboardId = "") {
       const result = [];
 
       for (const entry of entries) {
         const visible = ancestorsVisible && entry.visible !== false;
+        const nextArtboardId = this.isArtboardGroup(entry)
+          ? this.getArtboardIdFromGroup(entry) || currentArtboardId
+          : currentArtboardId;
 
         if (entry.type === "group") {
-          result.push(...this.flattenTopToBottom(entry.children || [], visible));
+          result.push(...this.flattenTopToBottom(entry.children || [], visible, nextArtboardId));
           continue;
         }
 
         result.push({
           ...this.cloneEntry(entry),
+          artboardId: nextArtboardId || entry.artboardId || "",
           visible,
         });
       }
@@ -1030,6 +1146,38 @@
   }
 
   namespace.DocumentLayerModel = DocumentLayerModel;
+
+  function ensureLayerModelArtboardGroupsFromEvent(event = null) {
+    const artboards = Array.isArray(event?.detail?.artboards)
+      ? event.detail.artboards
+      : namespace.getDocumentArtboards?.();
+
+    if (!Array.isArray(artboards) || artboards.length === 0) {
+      return false;
+    }
+
+    return namespace.documentLayerModel?.ensureArtboardGroups?.(artboards, {
+      history: false,
+      source: event?.detail?.source || "document-artboards-change",
+    }) === true;
+  }
+
+  if (typeof window !== "undefined") {
+    window.addEventListener?.("cbo:document-artboards-change", ensureLayerModelArtboardGroupsFromEvent);
+    window.addEventListener?.("cbo:editor-canvas-ready", () => ensureLayerModelArtboardGroupsFromEvent());
+  }
+
+  namespace.ensureDocumentLayerArtboardGroups = function ensureDocumentLayerArtboardGroups(options = {}) {
+    const artboards = Array.isArray(options.artboards)
+      ? options.artboards
+      : namespace.getDocumentArtboards?.();
+
+    return namespace.documentLayerModel?.ensureArtboardGroups?.(artboards, {
+      history: options.history === true,
+      source: options.source || "ensure-document-layer-artboard-groups",
+    }) === true;
+  };
+
   namespace.rasterizeImageLayerToPaint = function rasterizeImageLayerToPaint(layerId, options = {}) {
     const layerModel = namespace.documentLayerModel;
     const activeLayerId = layerId || layerModel?.activeLayerId;

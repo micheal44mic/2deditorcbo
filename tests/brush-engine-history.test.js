@@ -94,10 +94,60 @@ test("brush stroke history prefers tile-memento before and after snapshots", () 
   assert.match(source, /let afterSnapshot = null/);
   assert.match(source, /let entry = null/);
   assert.match(source, /const captureRedoSnapshot = \(\) => \{/);
-  assert.match(source, /afterSnapshot = this\.createHistorySnapshot\(redoTarget, beforeSnapshot\.rect, "after-stroke"\)/);
+  assert.match(source, /afterSnapshot = this\.createHistorySnapshot\(redoTarget, beforeSnapshot\.docRect \|\| beforeSnapshot\.rect, "after-stroke"\)/);
   assert.match(source, /entry\.after = afterSnapshot/);
   assert.match(source, /if \(!captureRedoSnapshot\(\)\) \{/);
+  assert.match(source, /rect: beforeSnapshot\.docRect \|\| beforeSnapshot\.rect/);
   assert.doesNotMatch(source, /const afterSnapshot = this\.createHistorySnapshot\(target, beforeSnapshot\.rect, "after-stroke"\)/);
+});
+
+test("brush live stroke targets sample linearly at zoom intermediates", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const createTransparentTargetBody = source.match(
+    /createTransparentRenderTarget\(label, width, height, resourceMetadata = \{\}\) \{([\s\S]*?)\n    releaseStrokeLayerTarget/,
+  )?.[1] || "";
+
+  assert.match(createTransparentTargetBody, /Sampling lineare/);
+  assert.match(createTransparentTargetBody, /gl\.texParameteri\(gl\.TEXTURE_2D, gl\.TEXTURE_MIN_FILTER, gl\.LINEAR\)/);
+  assert.match(createTransparentTargetBody, /gl\.texParameteri\(gl\.TEXTURE_2D, gl\.TEXTURE_MAG_FILTER, gl\.LINEAR\)/);
+  assert.doesNotMatch(createTransparentTargetBody, /gl\.texParameteri\(gl\.TEXTURE_2D, gl\.TEXTURE_MAG_FILTER, gl\.NEAREST\)/);
+});
+
+test("brush artboard clipping accepts stamps outside the primary document rect", () => {
+  const { BrushEngine, window } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  window.CBO.getActiveDocumentArtboardRect = () => ({
+    height: 200,
+    width: 200,
+    x: 1200,
+    y: 0,
+  });
+  engine.strokeTargetLayerId = "paint-secondary";
+  engine.getDocumentDrawTarget = () => ({
+    height: 500,
+    layerId: "paint-secondary",
+    width: 500,
+    x: 0,
+    y: 0,
+  });
+  engine.getStampBounds = () => ({
+    maxX: 1310,
+    maxY: 110,
+    minX: 1290,
+    minY: 90,
+  });
+
+  assert.equal(engine.isStampCompletelyOutsideDocument({}), false);
+
+  engine.getStampBounds = () => ({
+    maxX: 1190,
+    maxY: 110,
+    minX: 1170,
+    minY: 90,
+  });
+
+  assert.equal(engine.isStampCompletelyOutsideDocument({}), true);
 });
 
 test("brush stroke history records memory policy and disables redo for huge strokes", () => {
@@ -116,6 +166,8 @@ test("brush stroke history records memory policy and disables redo for huge stro
   assert.match(source, /this\.documentRenderer\?\.deleteActiveStrokeScratchTarget\?\.\(\)/);
   assert.match(source, /this\.documentRenderer\?\.compactInactivePaintTargets\?\.\(/);
   assert.match(source, /source: "brush-bake-compact-inactive"/);
+  assert.match(source, /activateArtboardAtPoint\(documentPoint\)/);
+  assert.match(source, /namespace\.selectDocumentArtboardAtPoint\?\.\(point/);
   assert.match(source, /queueStrokeTargetPrewarm\(\)/);
   assert.match(source, /prewarmStrokePaintTargets\(maxNewTiles = STROKE_TARGET_PREWARM_MAX_TILES\)/);
   assert.match(source, /prewarmRasterTargetsForPaintRect\(layerId, effectiveStrokeRect/);

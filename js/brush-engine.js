@@ -1007,9 +1007,9 @@ void main() {
       }
 
       gl.bindTexture(gl.TEXTURE_2D, texture);
-      // Stesso schema del documento raster: pixel netti in zoom in, smooth in zoom out.
+      // Sampling lineare come il documento: niente gradoni grossi a zoom intermedi.
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(
@@ -1121,6 +1121,17 @@ void main() {
     }
 
     getFullDocumentRect(target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
+      const documentBounds = this.documentRenderer?.getDocumentBoundsRect?.();
+
+      if (documentBounds) {
+        return {
+          x: Math.round(Number(documentBounds.x) || 0),
+          y: Math.round(Number(documentBounds.y) || 0),
+          width: Math.max(1, Math.round(Number(documentBounds.width) || 1)),
+          height: Math.max(1, Math.round(Number(documentBounds.height) || 1)),
+        };
+      }
+
       return {
         x: 0,
         y: 0,
@@ -2484,6 +2495,10 @@ void main() {
       );
     }
 
+    activateArtboardAtPoint(point, source = "brush-pointer-artboard") {
+      return namespace.selectDocumentArtboardAtPoint?.(point, { source }) || null;
+    }
+
     ensureEmptyEraserLayerToast() {
       if (typeof document === "undefined" || !document.body) {
         return null;
@@ -3451,12 +3466,13 @@ void main() {
 
     includeStrokeStampBounds(stamp) {
       const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
+      const paintRect = this.getStrokeAllocationBounds(target);
       const bounds = this.getStampBounds(stamp);
       const clampedBounds = {
-        minX: Math.max(0, bounds.minX),
-        minY: Math.max(0, bounds.minY),
-        maxX: Math.min(target.width, bounds.maxX),
-        maxY: Math.min(target.height, bounds.maxY),
+        minX: Math.max(paintRect.x, bounds.minX),
+        minY: Math.max(paintRect.y, bounds.minY),
+        maxX: Math.min(paintRect.x + paintRect.width, bounds.maxX),
+        maxY: Math.min(paintRect.y + paintRect.height, bounds.maxY),
       };
 
       if (clampedBounds.maxX <= clampedBounds.minX || clampedBounds.maxY <= clampedBounds.minY) {
@@ -4117,8 +4133,14 @@ void main() {
     warmPreviewCacheForStroke() {
       if (
         namespace.smudgeEngine?.isDragging ||
-        !this.documentRenderer?.updatePreviewCacheIfNeeded ||
-        (this.camera.zoom || 1) >= 8
+        !this.documentRenderer?.updatePreviewCacheIfNeeded
+      ) {
+        return false;
+      }
+
+      if (
+        typeof this.documentRenderer.shouldUsePreviewCacheForCamera === "function" &&
+        !this.documentRenderer.shouldUsePreviewCacheForCamera(this.camera)
       ) {
         return false;
       }
@@ -4145,13 +4167,15 @@ void main() {
 
     isStampCompletelyOutsideDocument(stamp) {
       const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
+      const paintRect = this.getActiveDocumentPaintRect(this.strokeTargetLayerId || target.layerId || "") ||
+        this.getFullDocumentRect(target);
       const bounds = this.getStampBounds(stamp);
 
       return (
-        bounds.maxX < 0 ||
-        bounds.minX > target.width ||
-        bounds.maxY < 0 ||
-        bounds.minY > target.height
+        bounds.maxX < paintRect.x ||
+        bounds.minX > paintRect.x + paintRect.width ||
+        bounds.maxY < paintRect.y ||
+        bounds.minY > paintRect.y + paintRect.height
       );
     }
 
@@ -5084,7 +5108,7 @@ void main() {
 
           const redoTarget = this.documentRenderer?.getRasterTarget?.(layerId);
 
-          afterSnapshot = this.createHistorySnapshot(redoTarget, beforeSnapshot.rect, "after-stroke");
+          afterSnapshot = this.createHistorySnapshot(redoTarget, beforeSnapshot.docRect || beforeSnapshot.rect, "after-stroke");
           if (afterSnapshot?.texture && entry) {
             entry.after = afterSnapshot;
           }
@@ -5099,7 +5123,7 @@ void main() {
             before: beforeSnapshot,
             memoryPolicy: memoryReport,
             layerId,
-            rect: beforeSnapshot.rect,
+            rect: beforeSnapshot.docRect || beforeSnapshot.rect,
             source: this.currentStrokeTool,
             undo: () => {
               if (redoDisabled) {
@@ -5224,11 +5248,23 @@ void main() {
         return null;
       }
 
+      const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(target) || {
+        height: Math.max(1, Math.round(target.height || 1)),
+        width: Math.max(1, Math.round(target.width || 1)),
+        x: Number.isFinite(target.x) ? Math.round(target.x) : 0,
+        y: Number.isFinite(target.y) ? Math.round(target.y) : 0,
+      };
+      const snapshotDocRect = this.intersectDocumentRects(rect, targetRect);
+
+      if (!snapshotDocRect) {
+        return null;
+      }
+
       const gl = this.gl;
-      const x = Math.max(0, Math.min(target.width - 1, Math.floor(rect.x)));
-      const y = Math.max(0, Math.min(target.height - 1, Math.floor(rect.y)));
-      const width = Math.max(1, Math.min(target.width - x, Math.ceil(rect.width)));
-      const height = Math.max(1, Math.min(target.height - y, Math.ceil(rect.height)));
+      const x = Math.max(0, Math.floor(snapshotDocRect.x - targetRect.x));
+      const y = Math.max(0, Math.floor(snapshotDocRect.y - targetRect.y));
+      const width = Math.max(1, Math.min(target.width - x, Math.ceil(snapshotDocRect.width)));
+      const height = Math.max(1, Math.min(target.height - y, Math.ceil(snapshotDocRect.height)));
       const texture = gl.createTexture();
 
       if (!texture) {
@@ -5256,13 +5292,11 @@ void main() {
       gl.bindTexture(gl.TEXTURE_2D, null);
 
       const snapshotId = this.nextBrushResourceOwnerId("brush-history-snapshot");
-      const targetOriginX = Number.isFinite(target?.x) ? Math.round(target.x) : 0;
-      const targetOriginY = Number.isFinite(target?.y) ? Math.round(target.y) : 0;
       const docRect = {
         height,
         width,
-        x: targetOriginX + x,
-        y: targetOriginY + y,
+        x: targetRect.x + x,
+        y: targetRect.y + y,
       };
       const snapshot = {
         bytes: width * height * 4,
@@ -5730,6 +5764,8 @@ void main() {
       }
 
       const documentPoint = this.screenToDocumentSpace(event.clientX, event.clientY);
+
+      this.activateArtboardAtPoint(documentPoint);
 
       if (!this.isDocumentPointInside(documentPoint)) {
         event.preventDefault();

@@ -168,6 +168,22 @@ window.CBO = window.CBO || {};
       return this.artboards.find((artboard) => artboard.id === normalizedId) || null;
     }
 
+    getArtboardAtPoint(point) {
+      const x = Number(point?.docX ?? point?.x);
+      const y = Number(point?.docY ?? point?.y);
+
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+      }
+
+      return [...this.artboards].reverse().find((artboard) => (
+        x >= artboard.x &&
+        y >= artboard.y &&
+        x <= artboard.x + artboard.width &&
+        y <= artboard.y + artboard.height
+      )) || null;
+    }
+
     getSelectedArtboardId() {
       return this.selectedArtboardId || "";
     }
@@ -329,6 +345,12 @@ window.CBO = window.CBO || {};
     return getArtboardRect(namespace.documentArtboardModel.getArtboardById(artboardId));
   };
 
+  namespace.getDocumentArtboardAtPoint = function getDocumentArtboardAtPoint(point) {
+    const artboard = namespace.documentArtboardModel.getArtboardAtPoint(point);
+
+    return artboard ? cloneArtboard(artboard) : null;
+  };
+
   namespace.getActiveDocumentArtboardId = function getActiveDocumentArtboardId(options = {}) {
     const explicitArtboardId = String(options.artboardId || "").trim();
 
@@ -459,6 +481,14 @@ window.CBO = window.CBO || {};
 
   namespace.selectDocumentArtboard = function selectDocumentArtboard(artboardId, options = {}) {
     return namespace.documentArtboardModel.selectArtboard(artboardId, options);
+  };
+
+  namespace.selectDocumentArtboardAtPoint = function selectDocumentArtboardAtPoint(point, options = {}) {
+    const artboard = namespace.documentArtboardModel.getArtboardAtPoint(point);
+
+    return artboard
+      ? namespace.documentArtboardModel.selectArtboard(artboard.id, options)
+      : null;
   };
 
   namespace.clearDocumentArtboardSelection = function clearDocumentArtboardSelection(options = {}) {

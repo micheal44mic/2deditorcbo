@@ -31,6 +31,8 @@
 }
 
 .editor-webgl-canvas {
+  position: relative;
+  z-index: 1;
   align-self: stretch;
   justify-self: stretch;
   display: block;
@@ -40,10 +42,51 @@
   min-height: 0;
 }
 
+.editor-zoom-indicator {
+  position: absolute;
+  left: 16px;
+  bottom: 18px;
+  z-index: 12;
+  min-width: 54px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(245, 247, 251, 0.16);
+  border-radius: 7px;
+  background: rgba(18, 20, 24, 0.86);
+  color: #f2f4f8;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 28px;
+  pointer-events: none;
+  text-align: center;
+}
+
+.editor-artboard-paper-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.editor-artboard-paper {
+  position: absolute;
+  box-sizing: border-box;
+  min-width: 1px;
+  min-height: 1px;
+  background: #f7f7f2;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
 .editor-artboard-preview-layer {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   overflow: hidden;
   pointer-events: none;
 }
@@ -53,15 +96,11 @@
   box-sizing: border-box;
   min-width: 1px;
   min-height: 1px;
-  background: #f7f7f2;
+  background: transparent;
   border: 2px solid rgba(255, 255, 255, 0.82);
-  box-shadow:
-    0 18px 42px rgba(0, 0, 0, 0.34),
-    0 0 0 1px rgba(0, 0, 0, 0.28);
 }
 
 .editor-artboard-frame.is-active {
-  background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.52);
   box-shadow: none;
 }

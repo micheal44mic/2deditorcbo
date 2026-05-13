@@ -95,6 +95,47 @@ function normalizeDocumentSize(options = {}) {
   };
 }
 
+function formatEditorZoomLabel(camera = {}) {
+  const zoom = Math.abs(Number(camera?.zoom));
+  const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const percent = safeZoom * 100;
+
+  if (percent >= 1000) {
+    return `${Math.round(percent).toLocaleString("en-US")}%`;
+  }
+
+  if (percent >= 10) {
+    return `${Math.round(percent)}%`;
+  }
+
+  return `${Math.max(0.1, Math.round(percent * 10) / 10)}%`;
+}
+
+function updateEditorZoomIndicator(indicator, camera = {}) {
+  if (!indicator) {
+    return;
+  }
+
+  const label = formatEditorZoomLabel(camera);
+
+  indicator.value = label;
+  indicator.textContent = label;
+  indicator.title = `Zoom ${label}`;
+}
+
+function createEditorZoomIndicator(camera = {}) {
+  const indicator = document.createElement("output");
+
+  indicator.className = "editor-zoom-indicator";
+  indicator.dataset.editorZoomIndicator = "";
+  indicator.setAttribute("aria-label", "Zoom");
+  indicator.setAttribute("role", "status");
+  indicator.setAttribute("aria-live", "polite");
+  updateEditorZoomIndicator(indicator, camera);
+
+  return indicator;
+}
+
 function createDocumentPresetButton(preset) {
   const button = document.createElement("button");
   const preview = document.createElement("span");
@@ -334,6 +375,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   }
 
   const canvas = document.createElement("canvas");
+  const zoomIndicator = createEditorZoomIndicator();
   const documentSize = normalizeDocumentSize(options);
 
   canvas.className = "editor-webgl-canvas";
@@ -342,8 +384,9 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   stage.dataset.canvasReady = "true";
   stage.dataset.documentStartReady = "false";
   stage.dataset.paintEngine = "webgl2";
-  stage.replaceChildren(canvas);
+  stage.replaceChildren(canvas, zoomIndicator);
 
+  window.CBO.disposeEditorZoomIndicator?.();
   window.CBO.documentHistory?.dispose?.();
   window.CBO.documentHistory = null;
   window.CBO.imageRasterizer?.dispose?.();
@@ -366,10 +409,12 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   window.CBO.documentLayerModel = layerModel;
 
   const documentRenderer = new window.CBO.DocumentRenderer({
+    cssArtboardPaper: true,
     gl,
     layerModel,
     documentWidth: documentSize.width,
     documentHeight: documentSize.height,
+    transparentBackground: true,
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
   });
@@ -417,6 +462,17 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     requestedWidth: documentSize.width,
     width: documentRenderer.width,
   };
+
+  const handleZoomIndicatorCameraChange = (event) => {
+    updateEditorZoomIndicator(zoomIndicator, event.detail?.camera || brushEngine.camera);
+  };
+
+  window.addEventListener("cbo:camera-change", handleZoomIndicatorCameraChange);
+  window.CBO.disposeEditorZoomIndicator = function disposeEditorZoomIndicator() {
+    window.removeEventListener("cbo:camera-change", handleZoomIndicatorCameraChange);
+  };
+  updateEditorZoomIndicator(zoomIndicator, brushEngine.camera);
+
   window.CBO.resetDocumentArtboards?.({
     artboards: options.artboards,
     defaultSecondaryCount: 2,

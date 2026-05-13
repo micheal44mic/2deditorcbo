@@ -641,3 +641,52 @@ test("ensureActivePaintLayer inserts new paint into the selected artboard group"
   assert.equal(model.activeLayerId, paintLayer.id);
   assert.equal(history.undoStack.length, 1);
 });
+
+test("ensureArtboardGroups owns loose layers and flattened layers keep artboard ids", () => {
+  const { DocumentLayerModel } = loadDocumentModules();
+  const model = new DocumentLayerModel();
+  const loosePaintLayer = model.createLayer({
+    id: "loose-paint",
+    name: "Loose Paint",
+    type: "paint",
+  });
+
+  model.setEntries([loosePaintLayer], { history: false, source: "seed" });
+
+  assert.equal(model.ensureArtboardGroups([
+    {
+      height: 4000,
+      id: "active-document",
+      name: "Artboard 1",
+      width: 4000,
+    },
+    {
+      height: 2048,
+      id: "secondary",
+      name: "Artboard 2",
+      width: 1048,
+    },
+  ], {
+    history: false,
+    source: "unit-artboard-groups",
+  }), true);
+
+  const entries = model.getEntries();
+  const primaryGroup = entries.find((entry) => entry.artboardId === "active-document");
+  const secondaryGroup = entries.find((entry) => entry.artboardId === "secondary");
+  const flattenedPaint = model.flattenTopToBottom().find((entry) => entry.id === "loose-paint");
+  const primaryBackground = primaryGroup.children.find((entry) => entry.type === "background");
+  const secondaryBackground = secondaryGroup.children.find((entry) => entry.type === "background");
+
+  assert.equal(entries.length, 2);
+  assert.equal(primaryGroup.children[0].id, "loose-paint");
+  assert.equal(primaryBackground.id, "background");
+  assert.equal(primaryBackground.locked, true);
+  assert.equal(secondaryGroup.children.length, 1);
+  assert.equal(secondaryBackground.id, "background-secondary");
+  assert.equal(secondaryBackground.locked, true);
+  assert.equal(secondaryBackground.artboardId, "secondary");
+  assert.equal(flattenedPaint.artboardId, "active-document");
+  assert.equal(primaryGroup.artboardWidth, 4000);
+  assert.equal(secondaryGroup.artboardHeight, 2048);
+});

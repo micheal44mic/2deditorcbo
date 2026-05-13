@@ -38,6 +38,8 @@ test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
   assert.match(source, /layer\.replaceChildren/);
   assert.match(cssSource, /\.editor-artboard-preview-layer[\s\S]*pointer-events: none/);
   assert.match(cssSource, /\.editor-artboard-frame/);
+  assert.match(cssSource, /\.editor-artboard-paper[\s\S]*background: #f7f7f2/);
+  assert.match(cssSource, /\.editor-artboard-frame[\s\S]*background: transparent/);
   assert.match(appSource, /window\.CBO\.initArtboardPreview\?\.\(\);/);
 });
 
@@ -125,6 +127,8 @@ test("document artboard model owns artboard records and persistence hooks", () =
   assert.match(modelSource, /namespace\.getDocumentArtboards = function getDocumentArtboards/);
   assert.match(modelSource, /namespace\.moveDocumentArtboard = function moveDocumentArtboard/);
   assert.match(modelSource, /namespace\.deleteDocumentArtboard = function deleteDocumentArtboard/);
+  assert.match(modelSource, /namespace\.getDocumentArtboardAtPoint = function getDocumentArtboardAtPoint/);
+  assert.match(modelSource, /namespace\.selectDocumentArtboardAtPoint = function selectDocumentArtboardAtPoint/);
   assert.match(modelSource, /namespace\.getActiveDocumentArtboardRect = function getActiveDocumentArtboardRect/);
   assert.match(modelSource, /namespace\.getDocumentArtboardUnionRect = function getDocumentArtboardUnionRect/);
   assert.match(modelSource, /namespace\.getActiveDocumentArtboardCoverageRects = function getActiveDocumentArtboardCoverageRects/);

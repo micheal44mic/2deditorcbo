@@ -23,6 +23,9 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(editorCanvasSource, /id: "story-1080"[\s\S]*width: 1080, height: 1920/);
   assert.match(editorCanvasSource, /function isMobileLikeDevice\(\)/);
   assert.match(editorCanvasSource, /function getDefaultDocumentPresetId\(\)/);
+  assert.match(editorCanvasSource, /function formatEditorZoomLabel\(camera = \{\}\)/);
+  assert.match(editorCanvasSource, /indicator\.dataset\.editorZoomIndicator = ""/);
+  assert.match(editorCanvasSource, /addEventListener\("cbo:camera-change", handleZoomIndicatorCameraChange\)/);
   assert.match(editorCanvasSource, /maxRasterHistoryGpuHotMiB: 0/);
   assert.match(editorCanvasSource, /maxRasterHistoryMiB: 400/);
   assert.match(editorCanvasSource, /maxRasterHistoryMiB: 600/);
@@ -42,6 +45,7 @@ test("editor starts from a preset-only document chooser", () => {
       indexSource.indexOf("./js/document/document-autosave.js") < indexSource.indexOf("./js/editor-canvas.js"),
   );
   assert.match(cssSource, /\.document-start-screen/);
+  assert.match(cssSource, /\.editor-zoom-indicator/);
   assert.match(cssSource, /\.document-start-recovery/);
   assert.match(cssSource, /\.document-start-preset/);
 });

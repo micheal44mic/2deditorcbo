@@ -174,6 +174,25 @@ window.CBO = window.CBO || {};
     return layer;
   }
 
+  function ensurePaperLayer() {
+    const stage = getStage();
+
+    if (!stage || !getRenderer()) {
+      return null;
+    }
+
+    let layer = stage.querySelector("[data-artboard-paper-layer]");
+
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = "editor-artboard-paper-layer";
+      layer.dataset.artboardPaperLayer = "";
+      stage.appendChild(layer);
+    }
+
+    return layer;
+  }
+
   function getCameraState() {
     const brushEngine = getBrushEngine();
     const camera = lastCameraState?.camera || brushEngine?.camera || { x: 0, y: 0, zoom: 1 };
@@ -493,8 +512,9 @@ window.CBO = window.CBO || {};
 
   function renderArtboardPreviews() {
     const layer = ensureOverlay();
+    const paperLayer = ensurePaperLayer();
 
-    if (!layer) {
+    if (!layer || !paperLayer) {
       return;
     }
 
@@ -504,13 +524,30 @@ window.CBO = window.CBO || {};
 
     selectedArtboardId = namespace.getSelectedDocumentArtboardId?.() || selectedArtboardId || "";
     syncSelectedArtboardId(artboards);
-    layer.replaceChildren(...artboards.map((artboard) => {
-      const frame = document.createElement("div");
-      const label = document.createElement("span");
+    const artboardViews = artboards.map((artboard) => {
       const left = ((Number(camera.x) || 0) + artboard.x * zoom) / dpr;
       const top = ((Number(camera.y) || 0) + artboard.y * zoom) / dpr;
       const width = Math.max(1, (artboard.width * zoom) / dpr);
       const height = Math.max(1, (artboard.height * zoom) / dpr);
+
+      return { artboard, height, left, top, width };
+    });
+
+    paperLayer.replaceChildren(...artboardViews.map(({ height, left, top, width }) => {
+      const paper = document.createElement("div");
+
+      paper.className = "editor-artboard-paper";
+      paper.style.left = `${left}px`;
+      paper.style.top = `${top}px`;
+      paper.style.width = `${width}px`;
+      paper.style.height = `${height}px`;
+
+      return paper;
+    }));
+
+    layer.replaceChildren(...artboardViews.map(({ artboard, height, left, top, width }) => {
+      const frame = document.createElement("div");
+      const label = document.createElement("span");
       const isSelected = selectedArtboardId === artboard.id;
 
       frame.className = artboard.type === "active"

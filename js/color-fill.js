@@ -252,7 +252,7 @@
     });
   }
 
-  function getWritableLayerInfo() {
+  function getWritableLayerInfo(options = {}) {
     const layerModel = namespace.documentLayerModel;
     const renderer = namespace.documentRenderer;
 
@@ -262,13 +262,33 @@
 
     const activeId = layerModel.activeLayerId;
     const activeLayer = activeId ? layerModel.findEntryById?.(activeId) : null;
+    const requestedArtboardId = String(options.artboardId || "").trim();
+    const activeLayerArtboardId = activeId
+      ? String(layerModel.findEntryArtboardId?.(activeId) || "").trim()
+      : "";
+    const activeLayerMatchesArtboard = !requestedArtboardId || activeLayerArtboardId === requestedArtboardId;
     const canWriteActiveLayer =
       activeLayer &&
       activeLayer.locked !== true &&
+      activeLayerMatchesArtboard &&
       (activeLayer.type === "paint" || activeLayer.type === "image");
 
     if (!canWriteActiveLayer) {
-      return null;
+      const paintLayer = layerModel.ensureActivePaintLayer?.({
+        artboardId: options.artboardId,
+        source: "color-fill-layer",
+      });
+      const ensuredLayer = paintLayer?.id ? layerModel.findEntryById?.(paintLayer.id) : null;
+
+      if (!ensuredLayer || ensuredLayer.locked === true || ensuredLayer.type !== "paint") {
+        return null;
+      }
+
+      return {
+        existingTarget: renderer.rasterTargetsByLayerId?.get?.(ensuredLayer.id) || null,
+        layer: ensuredLayer,
+        layerId: ensuredLayer.id,
+      };
     }
 
     return {
@@ -1210,13 +1230,18 @@
       return false;
     }
 
-    const writableLayer = getWritableLayerInfo();
+    const point = brushEngine.screenToDocumentSpace(clientX, clientY);
+    const pointerArtboard = namespace.selectDocumentArtboardAtPoint?.(point, {
+      source: "color-fill-pointer-artboard",
+    }) || null;
+    const writableLayer = getWritableLayerInfo({
+      artboardId: pointerArtboard?.id,
+    });
 
     if (!writableLayer?.layerId) {
       return false;
     }
 
-    const point = brushEngine.screenToDocumentSpace(clientX, clientY);
     const seedX = Math.floor(point.docX);
     const seedY = Math.floor(point.docY);
     const activeArtboardRect = getActiveFillArtboardRect(writableLayer.layerId);

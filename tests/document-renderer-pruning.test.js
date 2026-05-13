@@ -777,6 +777,57 @@ test("ensureRasterTargetsForPaintRect keeps distant first strokes as sparse tile
   assert.equal(renderer.estimateRasterTargetBytes(sparseTarget), 2 * 256 * 256 * 4);
 });
 
+test("paint rect routing rejects primary-canvas targets for offset artboards", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const primaryTarget = {
+    cropped: false,
+    framebuffer: { id: "primary-fb" },
+    height: 2048,
+    layerId: "paint-1",
+    texture: { id: "primary-texture" },
+    width: 1048,
+    x: 0,
+    y: 0,
+  };
+
+  window.CBO.getDocumentArtboardUnionRect = () => ({
+    height: 2048,
+    width: 4096,
+    x: 0,
+    y: 0,
+  });
+  renderer.width = 1048;
+  renderer.height = 2048;
+  renderer.paintLayerId = "paint-1";
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", primaryTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+
+  assert.equal(renderer.shouldSparsifyRasterTargetForPaintRect("paint-1", primaryTarget, {
+    height: 20,
+    width: 20,
+    x: 1200,
+    y: 20,
+  }), true);
+  assert.equal(renderer.shouldSparsifyRasterTargetForPaintRect("paint-1", primaryTarget, {
+    height: 20,
+    width: 20,
+    x: 20,
+    y: 20,
+  }), false);
+  assert.equal(renderer.getRasterTargetsForPaintRect("paint-1", {
+    height: 20,
+    width: 20,
+    x: 1200,
+    y: 20,
+  }, {
+    sparse: false,
+    source: "unit-offset-artboard-eraser",
+  }).length, 0);
+});
+
 test("ensureRasterTargetsForPaintRect uses stamp patch tiles instead of stroke bounds", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -2331,17 +2382,72 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /this\.previewCacheWidth = width/);
   assert.match(source, /this\.previewCacheHeight = height/);
   assert.match(source, /this\.previewCacheScale = scale/);
+  assert.match(source, /this\.previewCacheDocumentRect = \{ \.\.\.dimensions\.documentRect \}/);
+  assert.match(source, /getPreviewCacheDocumentRect\(\)/);
   assert.match(source, /updatePreviewCacheIfNeeded\(\)/);
   assert.match(source, /drawPreviewCacheToCanvas\(options = \{\}\)/);
   assert.doesNotMatch(source, /^\s*this\.createPreviewCache\(\);$/m);
   assert.match(source, /const didCreate = this\.createPreviewCache\(\)/);
   assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
-  assert.match(source, /const PREVIEW_CACHE_ZOOM_THRESHOLD = 8\.0/);
-  assert.match(source, /const isWithinPreviewCacheZoom = \(camera\.zoom \|\| 1\) < PREVIEW_CACHE_ZOOM_THRESHOLD/);
+  assert.match(source, /const PREVIEW_CACHE_ZOOM_THRESHOLD = 1\.0/);
+  assert.match(source, /const PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD = 10\.01/);
+  assert.match(source, /if \(safeZoom < 10\.01\) \{\s*discard;/);
+  assert.match(source, /smoothstep\(10\.01, 12\.0, safeZoom\)/);
+  assert.match(source, /getViewportTextureMagFilter\(camera = \{\}\)/);
+  assert.match(source, /shouldDrawPixelGrid\(camera = \{\}\)/);
+  assert.match(source, /shouldUsePreviewCacheForCamera\(camera = \{\}, previewCacheDimensions = null\)/);
+  assert.match(source, /const previewCacheDimensions = this\.getPreviewCacheDimensions\(\)/);
+  assert.match(source, /const canUsePreviewCacheAtCurrentZoom = this\.shouldUsePreviewCacheForCamera\(camera, previewCacheDimensions\)/);
   assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true/);
-  assert.match(source, /allowPreviewCache &&\s*isWithinPreviewCacheZoom/);
+  assert.match(source, /const previewCacheDocumentRect = this\.getPreviewCacheDocumentRect\(\)/);
+  assert.doesNotMatch(source, /previewCacheCoversDocumentBounds/);
+  assert.match(source, /allowPreviewCache &&\s*canUsePreviewCacheAtCurrentZoom/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
+});
+
+test("document raster targets sample linearly at zoom intermediates", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+  const createRasterTargetBody = source.match(
+    /createRasterTarget\(clearColor = \[0, 0, 0, 0\], options = \{\}\) \{([\s\S]*?)\n    createPaintTarget/,
+  )?.[1] || "";
+
+  assert.match(createRasterTargetBody, /Sampling lineare/);
+  assert.match(createRasterTargetBody, /gl\.texParameteri\(gl\.TEXTURE_2D, gl\.TEXTURE_MIN_FILTER, gl\.LINEAR\)/);
+  assert.match(createRasterTargetBody, /gl\.texParameteri\(gl\.TEXTURE_2D, gl\.TEXTURE_MAG_FILTER, gl\.LINEAR\)/);
+  assert.doesNotMatch(createRasterTargetBody, /gl\.texParameteri\(gl\.TEXTURE_2D, gl\.TEXTURE_MAG_FILTER, gl\.NEAREST\)/);
+});
+
+test("document renderer switches raster magnification to nearest only at high zoom", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.gl = {
+    LINEAR: "linear",
+    NEAREST: "nearest",
+  };
+
+  assert.equal(renderer.getViewportTextureMagFilter({ zoom: 1 }), "linear");
+  assert.equal(renderer.getViewportTextureMagFilter({ zoom: 10 }), "linear");
+  assert.equal(renderer.getViewportTextureMagFilter({ zoom: 10.01 }), "nearest");
+  assert.equal(renderer.getViewportTextureMagFilter({ zoom: 16 }), "nearest");
+});
+
+test("document renderer uses preview cache only when downsampling zoom-out", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.getPreviewCacheDimensions = () => ({ scale: 0.5 });
+
+  assert.equal(renderer.shouldUsePreviewCacheForCamera({ zoom: 0.25 }), true);
+  assert.equal(renderer.shouldUsePreviewCacheForCamera({ zoom: 0.75 }), false);
+  assert.equal(renderer.shouldUsePreviewCacheForCamera({ zoom: 1 }), false);
+  assert.equal(renderer.shouldUsePreviewCacheForCamera({ zoom: 10 }), false);
+  assert.equal(renderer.shouldDrawPixelGrid({ zoom: 10 }), false);
+  assert.equal(renderer.shouldDrawPixelGrid({ zoom: 10.01 }), true);
 });
 
 test("preview cache supports dirty-region compositing", () => {
@@ -2362,7 +2468,7 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(source, /createVisualDirtyChange\(options = \{\}\)/);
   assert.match(source, /commitVisualDirtyChange\(options = \{\}\)/);
   assert.match(source, /compactDirtyRegionRects\(rects = \[\], options = \{\}\)/);
-  assert.match(source, /getPreviewDirtyRegionScissor\(rect, cacheWidth, cacheHeight, cacheScale\)/);
+  assert.match(source, /getPreviewDirtyRegionScissor\(rect, cacheWidth, cacheHeight, cacheScale, options = \{\}\)/);
   assert.match(source, /getPreviewDirtyRegionScissors\(rects, cacheWidth, cacheHeight, cacheScale, options = \{\}\)/);
   assert.match(source, /invalidatePreviewCache\(reason = "unknown", options = \{\}\)/);
   assert.match(source, /forcedFullCause/);
@@ -2485,6 +2591,10 @@ test("preview cache dimensions cap large documents while preserving aspect", () 
   assert.equal(dimensions.height, 1536);
   assert.equal(dimensions.documentWidth, 4000);
   assert.equal(dimensions.documentHeight, 3000);
+  assert.equal(dimensions.documentRect.x, 0);
+  assert.equal(dimensions.documentRect.y, 0);
+  assert.equal(dimensions.documentRect.width, 4000);
+  assert.equal(dimensions.documentRect.height, 3000);
   assert.equal(dimensions.scale, 2048 / 4000);
 
   renderer.width = 1200;
@@ -2496,6 +2606,48 @@ test("preview cache dimensions cap large documents while preserving aspect", () 
   assert.equal(dimensions.scale, 1);
 });
 
+test("preview cache spans artboard bounds and offsets dirty scissors", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = { previewCacheMaxSize: 2048 };
+  renderer.width = 1048;
+  renderer.height = 2048;
+  window.CBO.getDocumentArtboardUnionRect = () => ({
+    height: 2500,
+    width: 4000,
+    x: -200,
+    y: 50,
+  });
+
+  const dimensions = renderer.getPreviewCacheDimensions();
+
+  assert.equal(dimensions.width, 2048);
+  assert.equal(dimensions.height, 1280);
+  assert.equal(dimensions.documentWidth, 4000);
+  assert.equal(dimensions.documentHeight, 2500);
+  assert.equal(dimensions.documentX, -200);
+  assert.equal(dimensions.documentY, 50);
+  assert.equal(dimensions.documentRect.x, -200);
+  assert.equal(dimensions.documentRect.y, 50);
+  assert.equal(dimensions.documentRect.width, 4000);
+  assert.equal(dimensions.documentRect.height, 2500);
+  assert.equal(dimensions.scale, 2048 / 4000);
+
+  const scissor = renderer.getPreviewDirtyRegionScissor(
+    { x: -100, y: 150, width: 200, height: 100 },
+    dimensions.width,
+    dimensions.height,
+    dimensions.scale,
+    { documentRect: dimensions.documentRect },
+  );
+
+  assert.equal(scissor.x, 51);
+  assert.equal(scissor.y, 1177);
+  assert.equal(scissor.width, 103);
+  assert.equal(scissor.height, 52);
+});
+
 test("document renderer uses a procedural background texture", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),
@@ -2503,11 +2655,20 @@ test("document renderer uses a procedural background texture", () => {
   );
 
   assert.match(source, /createProceduralBackgroundTarget\(\)/);
-  assert.match(source, /new Uint8Array\(\[255, 255, 255, 255\]\)/);
+  assert.match(source, /new Uint8Array\(\[247, 247, 242, 255\]\)/);
   assert.match(source, /label: "procedural background texture"/);
   assert.match(source, /resourceHeight: 1/);
   assert.match(source, /resourceWidth: 1/);
   assert.match(source, /bbox: \{\s*x: 0,\s*y: 0,\s*width: this\.width,\s*height: this\.height,\s*\}/);
+  assert.match(source, /getArtboardBackgroundRenderRects\(\)/);
+  assert.match(source, /namespace\.getDocumentArtboards\?\.\(\)/);
+  assert.match(source, /getProceduralBackgroundRenderResults\(layer, layerTarget\)/);
+  assert.match(source, /const layerArtboardId = String\(layer\?\.artboardId \|\| ""\)\.trim\(\)/);
+  assert.match(source, /this\.isProceduralBackgroundLayerTarget\(layer, layerTarget\)/);
+  assert.match(source, /return this\.rasterTargetsByLayerId\.get\("background"\) \|\| layerTarget/);
+  assert.match(source, /getPreviewCacheDocumentRect\(\)/);
+  assert.match(source, /this\.getDocumentBoundsRect\?\.\(\)/);
+  assert.match(source, /for \(const renderResult of this\.getLayerRenderResults\(layer, renderTarget\)\)/);
   assert.match(source, /createBaseLayerTarget\(\) \{\s*const backgroundTarget = this\.createProceduralBackgroundTarget\(\)/);
   assert.doesNotMatch(source, /createBaseLayerTarget\(\) \{[\s\S]*?const target = this\.createRasterTarget\(\[0, 0, 0, 0\]\)/);
   assert.doesNotMatch(source, /const backgroundTarget = this\.createRasterTarget\(\[1, 1, 1, 1\]\)/);

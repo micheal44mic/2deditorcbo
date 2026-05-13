@@ -160,6 +160,11 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /renderer\?\.isSparseRasterTarget\?\.\(existingTarget\) === true/);
   assert.match(source, /renderer\?\.isSparseRasterTarget\?\.\(referenceTarget\) === true/);
   assert.match(source, /reason: "color-fill-reference-hydrate"/);
+  assert.match(source, /const requestedArtboardId = String\(options\.artboardId \|\| ""\)\.trim\(\)/);
+  assert.match(source, /const activeLayerMatchesArtboard = !requestedArtboardId \|\| activeLayerArtboardId === requestedArtboardId/);
+  assert.match(source, /namespace\.selectDocumentArtboardAtPoint\?\.\(point/);
+  assert.match(source, /layerModel\.ensureActivePaintLayer\?\.\(\{/);
+  assert.match(source, /source: "color-fill-layer"/);
   assert.match(source, /return null;/);
   assert.doesNotMatch(source, /updatePreviewCacheIfNeeded/);
   assert.doesNotMatch(source, /previewFramebuffer/);
