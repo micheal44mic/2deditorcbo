@@ -36,7 +36,7 @@ test("preview cache is enabled without waiting for explicit camera navigation", 
   assert.match(source, /this\.userManipulatedCamera = true;\s*this\.requestDraw\(\);/);
   assert.doesNotMatch(source, /const allowPreviewCache = this\.userManipulatedCamera && !namespace\.smudgeEngine\?\.isDragging/);
   assert.match(source, /const allowPreviewCache = !namespace\.smudgeEngine\?\.isDragging/);
-  assert.match(source, /this\.documentRenderer\.shouldUsePreviewCacheForCamera\(this\.camera\)/);
+  assert.match(source, /this\.documentRenderer\.shouldUsePreviewCacheForCamera\(this\.camera, previewCacheDimensions\)/);
   assert.match(source, /allowPreviewCache,/);
 });
 

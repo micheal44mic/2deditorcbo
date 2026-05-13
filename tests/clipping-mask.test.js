@@ -89,7 +89,7 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /isValidClipBaseLayer\(layer\)/);
   assert.match(source, /createClipBaseForLayer\(layer, target, visible = true\)/);
   assert.match(source, /getClipBaseOrigin\(clipBase\)/);
-  assert.match(source, /for \(const renderResult of this\.getLayerRenderResults\(layer, renderTarget\)\)/);
+  assert.match(source, /for \(const renderResult of this\.getLayerRenderResults\(layer, renderTarget, viewportLayerRenderOptions\)\)/);
   assert.match(source, /const layerRect = this\.getArtboardDragVisualRect\(layer, renderResult\?\.rect \|\| null, renderTarget\)/);
   assert.match(source, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);
   assert.match(source, /drawBlendTexture\(\s*options\.activeStrokeTexture,\s*opacity,\s*activeStrokeRect,\s*clipBase,/);

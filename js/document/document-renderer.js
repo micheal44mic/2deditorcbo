@@ -8,6 +8,9 @@
   const PREVIEW_DIRTY_MERGE_WASTE_RATIO = 1.18;
   const PREVIEW_DIRTY_FULL_COVERAGE_RATIO = 0.92;
   const PREVIEW_DIRTY_DEBUG_EVENT = "cbo:preview-dirty-region-debug";
+  const VIEWPORT_RENDER_OVERSCAN_CSS_PX = 256;
+  const VIEWPORT_CULLING_DEBUG_EVENT = "cbo:viewport-culling-debug";
+  const VIEWPORT_LAYER_CULL_SAFE_TYPES = new Set(["paint", "image", "raster", "bitmap"]);
   const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
   const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
   const RASTER_TRANSFORM_ARTBOARD_TRANSFER_MIN_RATIO = 0.4;
@@ -22,7 +25,7 @@
   });
   const WEBGL2_CONTEXT_ATTRIBUTES = Object.freeze({
     alpha: true,
-    antialias: false,
+    antialias: true,
     premultipliedAlpha: true,
   });
 
@@ -1041,6 +1044,8 @@ void main() {
   const PREVIEW_CACHE_ZOOM_THRESHOLD = 1.0;
   const PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD = 10.01;
   const PREVIEW_CACHE_MAX_SIZE = 2048;
+  const PREVIEW_CACHE_SCOPE_DEFAULT = "visible-artboards";
+  const PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX = 256;
 
   function normalizeAngle(value) {
     const number = Number(value);
@@ -1212,9 +1217,19 @@ void main() {
           ? Math.floor(options.documentSizeCap)
           : null,
         isolateDocumentArtboards: options.isolateDocumentArtboards === true,
+        debugViewportCulling: options.debugViewportCulling === true,
+        debugViewportCullingLog: options.debugViewportCullingLog === true,
+        enableViewportLayerCulling: options.enableViewportLayerCulling === true,
+        measureViewportLayerCulling: options.measureViewportLayerCulling === true,
         previewCacheMaxSize: Number.isFinite(options.previewCacheMaxSize) && options.previewCacheMaxSize > 0
           ? Math.floor(options.previewCacheMaxSize)
           : PREVIEW_CACHE_MAX_SIZE,
+        previewCacheOverscanCssPx: Number.isFinite(options.previewCacheOverscanCssPx) && options.previewCacheOverscanCssPx >= 0
+          ? Math.floor(options.previewCacheOverscanCssPx)
+          : PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX,
+        previewCacheScope: typeof options.previewCacheScope === "string" && options.previewCacheScope.trim()
+          ? options.previewCacheScope.trim()
+          : PREVIEW_CACHE_SCOPE_DEFAULT,
       };
       this.layerModel = options.layerModel ||
         (namespace.DocumentLayerModel
@@ -1239,6 +1254,7 @@ void main() {
       this.previewCacheHeight = 0;
       this.previewCacheScale = 1;
       this.previewCacheDocumentRect = null;
+      this.previewCacheScopeInfo = null;
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
@@ -1248,6 +1264,8 @@ void main() {
       this.previewDirtyStats = this.createPreviewDirtyStats();
       this.previewCacheReady = false;
       this.previewCacheReason = "init";
+      this.viewportCullingStatsSequence = 0;
+      this.viewportCullingLastStats = null;
       this.texturedQuad = null;
       this.rasterWarpMesh = null;
       this.programInfo = null;
@@ -4504,7 +4522,54 @@ void main() {
       return { vao, buffer };
     }
 
-    getPreviewCacheDocumentRect() {
+    normalizePreviewCacheDocumentRect(rect) {
+      if (!rect) {
+        return null;
+      }
+
+      const rawX = Number(rect.x);
+      const rawY = Number(rect.y);
+      const rawWidth = Number(rect.width);
+      const rawHeight = Number(rect.height);
+      const x = Number.isFinite(rawX) ? rawX : 0;
+      const y = Number.isFinite(rawY) ? rawY : 0;
+      const width = Number.isFinite(rawWidth) ? Math.max(1, rawWidth) : Math.max(1, this.width || 1);
+      const height = Number.isFinite(rawHeight) ? Math.max(1, rawHeight) : Math.max(1, this.height || 1);
+      const minX = Math.floor(x);
+      const minY = Math.floor(y);
+      const maxX = Math.ceil(x + width);
+      const maxY = Math.ceil(y + height);
+
+      return {
+        height: Math.max(1, maxY - minY),
+        width: Math.max(1, maxX - minX),
+        x: minX,
+        y: minY,
+      };
+    }
+
+    clonePreviewCacheScopeInfo(scopeInfo) {
+      if (!scopeInfo) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(JSON.stringify(scopeInfo));
+      } catch (error) {
+        return { ...scopeInfo };
+      }
+    }
+
+    publishPreviewCacheScopeInfo(scopeInfo) {
+      const snapshot = this.clonePreviewCacheScopeInfo(scopeInfo);
+
+      this.previewCacheScopeInfo = snapshot;
+      namespace.lastPreviewCacheScope = snapshot;
+
+      return snapshot;
+    }
+
+    getPreviewCacheGlobalDocumentRect() {
       const rect = this.getDocumentBoundsRect?.() || this.getFullDocumentRect?.() || {
         height: Math.max(1, Math.round(this.height || 1)),
         width: Math.max(1, Math.round(this.width || 1)),
@@ -4512,16 +4577,177 @@ void main() {
         y: 0,
       };
 
+      return this.normalizePreviewCacheDocumentRect(rect) || this.getFullDocumentRect();
+    }
+
+    getPreviewCacheScopeMode(options = {}) {
+      const rawMode = String(
+        options.previewCacheScope ||
+        this.options?.previewCacheScope ||
+        PREVIEW_CACHE_SCOPE_DEFAULT
+      ).trim().toLowerCase();
+
+      if (rawMode === "document" || rawMode === "all" || rawMode === "global") {
+        return "document";
+      }
+
+      if (rawMode === "viewport" || rawMode === "visible-viewport") {
+        return "visible-viewport";
+      }
+
+      return PREVIEW_CACHE_SCOPE_DEFAULT;
+    }
+
+    getPreviewCacheViewportRect(options = {}) {
+      const camera = options.camera;
+      const viewportWidth = Math.max(0, Math.round(Number(options.viewportWidth) || 0));
+      const viewportHeight = Math.max(0, Math.round(Number(options.viewportHeight) || 0));
+
+      if (!camera || viewportWidth <= 0 || viewportHeight <= 0) {
+        return null;
+      }
+
+      const rawZoom = Number(camera?.zoom);
+      const zoom = Number.isFinite(rawZoom) && Math.abs(rawZoom) > 0.0001
+        ? Math.abs(rawZoom)
+        : 1;
+      const dpr = Number.isFinite(Number(options.dpr))
+        ? Math.max(1, Number(options.dpr))
+        : (typeof window !== "undefined" && Number.isFinite(Number(window.devicePixelRatio))
+          ? Math.max(1, Number(window.devicePixelRatio))
+          : 1);
+      const overscanCssPx = Number.isFinite(Number(options.previewCacheOverscanCssPx))
+        ? Math.max(0, Number(options.previewCacheOverscanCssPx))
+        : Math.max(0, Number(this.options?.previewCacheOverscanCssPx) || PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX);
+      const visibleRect = this.resolveCanvasVisibleDocRect(camera, viewportWidth, viewportHeight);
+      const overscanDoc = (overscanCssPx * dpr) / zoom;
+      const renderRect = this.expandDocumentRect(visibleRect, overscanDoc) || visibleRect;
+
       return {
-        height: Math.max(1, Math.round(Number(rect.height) || this.height || 1)),
-        width: Math.max(1, Math.round(Number(rect.width) || this.width || 1)),
-        x: Number.isFinite(Number(rect.x)) ? Math.round(Number(rect.x)) : 0,
-        y: Number.isFinite(Number(rect.y)) ? Math.round(Number(rect.y)) : 0,
+        dpr,
+        overscanCssPx,
+        renderRect: this.normalizePreviewCacheDocumentRect(renderRect),
+        visibleRect: this.normalizePreviewCacheDocumentRect(visibleRect),
+        zoom,
       };
     }
 
-    getPreviewCacheDimensions() {
-      const documentRect = this.getPreviewCacheDocumentRect();
+    getPreviewCacheArtboardRects() {
+      if (this.options?.isolateDocumentArtboards) {
+        return [];
+      }
+
+      return (namespace.getDocumentArtboards?.() || [])
+        .map((artboard) => this.normalizePreviewCacheDocumentRect(artboard))
+        .filter(Boolean);
+    }
+
+    resolvePreviewCacheDocumentRect(options = {}) {
+      const globalRect = this.getPreviewCacheGlobalDocumentRect();
+      const mode = this.getPreviewCacheScopeMode(options);
+      const baseScopeInfo = {
+        documentRect: { ...globalRect },
+        mode: "document",
+        reason: mode === "document" ? "forced-document" : "fallback-document",
+        scope: mode,
+      };
+
+      if (mode === "document") {
+        return {
+          documentRect: globalRect,
+          scopeInfo: baseScopeInfo,
+        };
+      }
+
+      const viewportRect = this.getPreviewCacheViewportRect(options);
+
+      if (!viewportRect?.visibleRect || !viewportRect.renderRect) {
+        return {
+          documentRect: globalRect,
+          scopeInfo: baseScopeInfo,
+        };
+      }
+
+      if (mode === "visible-viewport") {
+        const documentRect = viewportRect.renderRect;
+
+        return {
+          documentRect,
+          scopeInfo: {
+            documentRect: { ...documentRect },
+            mode: "visible-viewport",
+            overscanCssPx: viewportRect.overscanCssPx,
+            reason: "forced-viewport",
+            renderRect: { ...viewportRect.renderRect },
+            scope: mode,
+            visibleRect: { ...viewportRect.visibleRect },
+          },
+        };
+      }
+
+      const artboardRects = this.getPreviewCacheArtboardRects();
+      const visibleArtboards = artboardRects.filter((artboardRect) =>
+        this.documentRectsIntersect(artboardRect, viewportRect.visibleRect)
+      );
+
+      if (visibleArtboards.length === 1) {
+        const documentRect = visibleArtboards[0];
+
+        return {
+          documentRect,
+          scopeInfo: {
+            artboardCount: artboardRects.length,
+            documentRect: { ...documentRect },
+            mode: "visible-artboard",
+            overscanCssPx: viewportRect.overscanCssPx,
+            reason: "single-visible-artboard",
+            renderRect: { ...viewportRect.renderRect },
+            scope: mode,
+            visibleArtboardCount: 1,
+            visibleRect: { ...viewportRect.visibleRect },
+          },
+        };
+      }
+
+      if (visibleArtboards.length > 1) {
+        const documentRect = viewportRect.renderRect;
+
+        return {
+          documentRect,
+          scopeInfo: {
+            artboardCount: artboardRects.length,
+            documentRect: { ...documentRect },
+            mode: "visible-viewport-artboards",
+            overscanCssPx: viewportRect.overscanCssPx,
+            reason: "multiple-visible-artboards",
+            renderRect: { ...viewportRect.renderRect },
+            scope: mode,
+            visibleArtboardCount: visibleArtboards.length,
+            visibleRect: { ...viewportRect.visibleRect },
+          },
+        };
+      }
+
+      return {
+        documentRect: globalRect,
+        scopeInfo: {
+          ...baseScopeInfo,
+          artboardCount: artboardRects.length,
+          overscanCssPx: viewportRect.overscanCssPx,
+          renderRect: { ...viewportRect.renderRect },
+          visibleArtboardCount: 0,
+          visibleRect: { ...viewportRect.visibleRect },
+        },
+      };
+    }
+
+    getPreviewCacheDocumentRect(options = {}) {
+      return this.resolvePreviewCacheDocumentRect(options).documentRect;
+    }
+
+    getPreviewCacheDimensions(options = {}) {
+      const resolvedPreviewRect = this.resolvePreviewCacheDocumentRect(options);
+      const documentRect = resolvedPreviewRect.documentRect;
       const documentWidth = documentRect.width;
       const documentHeight = documentRect.height;
       const maxSize = Math.max(1, Math.floor(Number(this.options.previewCacheMaxSize) || PREVIEW_CACHE_MAX_SIZE));
@@ -4538,12 +4764,33 @@ void main() {
         documentY: documentRect.y,
         height,
         scale: Math.max(0.0001, effectiveScale),
+        scopeInfo: resolvedPreviewRect.scopeInfo,
         width,
       };
     }
 
-    createPreviewCache() {
-      const dimensions = this.getPreviewCacheDimensions();
+    getPreviewCacheExactDocumentRect(fallbackRect = null) {
+      const documentRect = this.normalizePreviewCacheDocumentRect(
+        this.previewCacheDocumentRect || fallbackRect || this.getPreviewCacheDocumentRect(),
+      ) || this.getPreviewCacheGlobalDocumentRect();
+      const cacheScale = Math.max(0.0001, Number(this.previewCacheScale) || 1);
+      const cacheWidth = Math.max(0, Math.round(Number(this.previewCacheWidth) || 0));
+      const cacheHeight = Math.max(0, Math.round(Number(this.previewCacheHeight) || 0));
+
+      if (cacheWidth <= 0 || cacheHeight <= 0) {
+        return documentRect;
+      }
+
+      return {
+        height: Math.max(1, cacheHeight / cacheScale),
+        width: Math.max(1, cacheWidth / cacheScale),
+        x: documentRect.x,
+        y: documentRect.y,
+      };
+    }
+
+    createPreviewCache(options = {}) {
+      const dimensions = this.getPreviewCacheDimensions(options);
 
       if (
         this.previewTexture &&
@@ -4552,6 +4799,7 @@ void main() {
         this.previewCacheWidth === dimensions.width &&
         this.previewCacheHeight === dimensions.height
       ) {
+        this.publishPreviewCacheScopeInfo(dimensions.scopeInfo);
         return true;
       }
 
@@ -4618,6 +4866,7 @@ void main() {
       this.previewCacheHeight = height;
       this.previewCacheScale = scale;
       this.previewCacheDocumentRect = { ...dimensions.documentRect };
+      this.publishPreviewCacheScopeInfo(dimensions.scopeInfo);
       this.previewMipLevels = levels;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
@@ -4685,6 +4934,8 @@ void main() {
       this.previewCacheHeight = 0;
       this.previewCacheScale = 1;
       this.previewCacheDocumentRect = null;
+      this.previewCacheScopeInfo = null;
+      namespace.lastPreviewCacheScope = null;
       this.previewMipLevels = 0;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
@@ -4770,6 +5021,312 @@ void main() {
       return texture;
     }
 
+    getViewportCullingNow() {
+      return typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    }
+
+    cloneViewportCullingStats(stats) {
+      if (!stats) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(JSON.stringify(stats));
+      } catch (error) {
+        return { ...stats };
+      }
+    }
+
+    isViewportCullingDebugEnabled(options = {}) {
+      return Boolean(
+        options.debugViewportCulling === true ||
+        this.options?.debugViewportCulling === true ||
+        namespace.debugViewportCulling === true ||
+        namespace.viewportCullingDebug === true
+      );
+    }
+
+    isViewportLayerCullingEnabled(options = {}) {
+      return Boolean(
+        options.enableViewportLayerCulling === true ||
+        this.options?.enableViewportLayerCulling === true ||
+        namespace.enableViewportLayerCulling === true ||
+        namespace.viewportLayerCullingEnabled === true
+      );
+    }
+
+    isViewportLayerCullingAuditEnabled(options = {}) {
+      return Boolean(
+        this.isViewportLayerCullingEnabled(options) ||
+        this.isViewportCullingDebugEnabled(options) ||
+        options.measureViewportLayerCulling === true ||
+        this.options?.measureViewportLayerCulling === true ||
+        namespace.measureViewportLayerCulling === true ||
+        namespace.viewportLayerCullingAudit === true
+      );
+    }
+
+    createViewportCullingStats(options = {}) {
+      const camera = options.camera || {};
+      const zoom = Number.isFinite(Number(camera.zoom)) ? Number(camera.zoom) : 1;
+      const cameraX = Number.isFinite(Number(camera.x)) ? Number(camera.x) : 0;
+      const cameraY = Number.isFinite(Number(camera.y)) ? Number(camera.y) : 0;
+
+      return {
+        artboardBackgrounds: {
+          drawn: 0,
+          skippedOutsideRenderRect: 0,
+          tested: 0,
+        },
+        artboardClips: {
+          drawn: 0,
+          skippedOutsideRenderRect: 0,
+          skippedViewportScissor: 0,
+          tested: 0,
+        },
+        debug: options.debug === true,
+        durationMs: 0,
+        enabled: Boolean(options.renderRect),
+        frameId: (this.viewportCullingStatsSequence = (this.viewportCullingStatsSequence || 0) + 1),
+        layerCulling: {
+          enabled: options.layerCullingEnabled === true,
+          measured: options.layerCullingMeasured === true,
+        },
+        layers: {
+          blocked: {
+            activeStroke: 0,
+            advancedBlend: 0,
+            artboardDragPreview: 0,
+            background: 0,
+            clippingMask: 0,
+            clipBase: 0,
+            effects: 0,
+            eraser: 0,
+            globalTransformPreview: 0,
+            group: 0,
+            noRenderRect: 0,
+            noTarget: 0,
+            noTargetRect: 0,
+            puppet: 0,
+            transformPreview: 0,
+            unsafeType: 0,
+          },
+          considered: 0,
+          drawPasses: 0,
+          passedCull: 0,
+          safeCullCandidates: 0,
+          safelyCulled: 0,
+          skippedClippingBaseMissing: 0,
+          skippedInvisible: 0,
+          skippedVectorTransformPreview: 0,
+          total: 0,
+          visible: 0,
+          wouldCullSafely: 0,
+        },
+        notes: [],
+        overscanCssPx: Math.max(0, Number(options.overscanCssPx) || 0),
+        renderRect: options.renderRect ? { ...options.renderRect } : null,
+        renderResults: {
+          returned: 0,
+        },
+        source: options.source || "drawToCanvas",
+        sparseTiles: {
+          drawn: 0,
+          missingTexture: 0,
+          skippedOutsideRenderRect: 0,
+          tested: 0,
+          uncullable: 0,
+        },
+        startedAt: this.getViewportCullingNow(),
+        viewport: {
+          cameraX,
+          cameraY,
+          height: Math.max(1, Math.round(Number(options.viewportHeight) || 1)),
+          visibleRect: options.visibleRect ? { ...options.visibleRect } : null,
+          width: Math.max(1, Math.round(Number(options.viewportWidth) || 1)),
+          zoom,
+        },
+      };
+    }
+
+    finalizeViewportCullingStats(stats) {
+      if (!stats) {
+        return null;
+      }
+
+      stats.durationMs = Math.max(0, this.getViewportCullingNow() - (Number(stats.startedAt) || 0));
+      const snapshot = this.cloneViewportCullingStats(stats);
+
+      this.viewportCullingLastStats = snapshot;
+      namespace.lastViewportCullingStats = snapshot;
+
+      if (stats.debug && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+        try {
+          if (typeof CustomEvent === "function") {
+            window.dispatchEvent(new CustomEvent(VIEWPORT_CULLING_DEBUG_EVENT, { detail: snapshot }));
+          }
+        } catch (error) {
+          // Debug only: never break rendering for an event/listener issue.
+        }
+      }
+
+      if (
+        stats.debug &&
+        (this.options?.debugViewportCullingLog === true || namespace.viewportCullingLog === true) &&
+        typeof console !== "undefined" &&
+        typeof console.debug === "function"
+      ) {
+        console.debug("[CBO] viewport culling", snapshot);
+      }
+
+      return snapshot;
+    }
+
+    getLastViewportCullingStats() {
+      return this.cloneViewportCullingStats(this.viewportCullingLastStats);
+    }
+
+    setViewportCullingDebug(enabled = true) {
+      this.options = this.options || {};
+      this.options.debugViewportCulling = enabled === true;
+    }
+
+    setViewportLayerCulling(enabled = true) {
+      this.options = this.options || {};
+      this.options.enableViewportLayerCulling = enabled === true;
+    }
+
+    getLayerViewportCullRect(layer, layerTarget) {
+      if (!layerTarget || !this.hasRenderableRasterTarget(layerTarget)) {
+        return null;
+      }
+
+      const targetRect = this.getRasterTargetDocumentRect(layerTarget);
+      const visualRect = this.getArtboardDragVisualRect(layer, targetRect, layerTarget) || targetRect;
+
+      return this.normalizeTransformArtboardRect(visualRect);
+    }
+
+    getViewportLayerCullBlockReason(layer, layerTarget, context = {}) {
+      const layerType = String(layer?.type || "").trim();
+
+      if (!context.renderRect) {
+        return "noRenderRect";
+      }
+
+      if (layer?.type === "background" || layer?.id === "background") {
+        return "background";
+      }
+
+      if (layer?.type === "group") {
+        return "group";
+      }
+
+      if (!VIEWPORT_LAYER_CULL_SAFE_TYPES.has(layerType)) {
+        return "unsafeType";
+      }
+
+      if (!layerTarget || !this.hasRenderableRasterTarget(layerTarget)) {
+        return "noTarget";
+      }
+
+      if (layer?.clippingMask === true || context.isClippingLayer === true) {
+        return "clippingMask";
+      }
+
+      if (context.clipBaseLayerIds?.has?.(layer?.id)) {
+        return "clipBase";
+      }
+
+      if (context.isActiveStrokeLayer === true) {
+        return "activeStroke";
+      }
+
+      if (context.eraserMaskTexture) {
+        return "eraser";
+      }
+
+      if (context.isRasterTransformPreviewLayer === true || context.isVectorTextTransformPreviewLayer === true) {
+        return "transformPreview";
+      }
+
+      if (context.rasterTransformPreview || context.vectorTextTransformPreviewLayerId) {
+        return "globalTransformPreview";
+      }
+
+      if (context.hasArtboardDragPreview === true) {
+        return "artboardDragPreview";
+      }
+
+      if (this.hasAdvancedLayerBlendMode(layer)) {
+        return "advancedBlend";
+      }
+
+      if (this.hasEnabledLayerEffects(layer)) {
+        return "effects";
+      }
+
+      if (this.hasPuppetLayerTransform(layer)) {
+        return "puppet";
+      }
+
+      if (!this.getLayerViewportCullRect(layer, layerTarget)) {
+        return "noTargetRect";
+      }
+
+      return "";
+    }
+
+    getViewportLayerCullDecision(layer, layerTarget, context = {}) {
+      const reason = this.getViewportLayerCullBlockReason(layer, layerTarget, context);
+
+      if (reason) {
+        return {
+          canCull: false,
+          reason,
+          shouldCull: false,
+        };
+      }
+
+      const rect = this.getLayerViewportCullRect(layer, layerTarget);
+      const shouldCull = Boolean(rect && context.renderRect && !this.documentRectsIntersect(rect, context.renderRect));
+
+      return {
+        canCull: true,
+        reason: shouldCull ? "outsideRenderRect" : "intersectsRenderRect",
+        rect,
+        shouldCull,
+      };
+    }
+
+    recordViewportLayerCullDecision(stats, decision, didCull = false) {
+      if (!stats?.layers || !decision) {
+        return;
+      }
+
+      if (decision.canCull) {
+        stats.layers.safeCullCandidates += 1;
+
+        if (decision.shouldCull) {
+          stats.layers.wouldCullSafely += 1;
+        }
+
+        if (didCull) {
+          stats.layers.safelyCulled += 1;
+        }
+
+        return;
+      }
+
+      const blocked = stats.layers.blocked;
+
+      if (decision.reason && Object.prototype.hasOwnProperty.call(blocked, decision.reason)) {
+        blocked[decision.reason] += 1;
+      }
+    }
+
     getFullDocumentRect() {
       return {
         x: 0,
@@ -4777,6 +5334,84 @@ void main() {
         width: Math.max(1, Math.round(this.width || 1)),
         height: Math.max(1, Math.round(this.height || 1)),
       };
+    }
+
+    resolveCanvasVisibleDocRect(camera = {}, viewportWidth = 1, viewportHeight = 1) {
+      const rawZoom = Number(camera?.zoom);
+      const zoom = Number.isFinite(rawZoom) && Math.abs(rawZoom) > 0.0001
+        ? Math.abs(rawZoom)
+        : 1;
+      const cameraX = Number.isFinite(Number(camera?.x)) ? Number(camera.x) : 0;
+      const cameraY = Number.isFinite(Number(camera?.y)) ? Number(camera.y) : 0;
+      const safeViewportWidth = Math.max(1, Math.round(Number(viewportWidth) || 1));
+      const safeViewportHeight = Math.max(1, Math.round(Number(viewportHeight) || 1));
+      const left = (0 - cameraX) / zoom;
+      const top = (0 - cameraY) / zoom;
+      const right = (safeViewportWidth - cameraX) / zoom;
+      const bottom = (safeViewportHeight - cameraY) / zoom;
+      const minX = Math.floor(Math.min(left, right));
+      const minY = Math.floor(Math.min(top, bottom));
+      const maxX = Math.ceil(Math.max(left, right));
+      const maxY = Math.ceil(Math.max(top, bottom));
+
+      return {
+        height: Math.max(1, maxY - minY),
+        width: Math.max(1, maxX - minX),
+        x: minX,
+        y: minY,
+      };
+    }
+
+    expandDocumentRect(rect, overscanDoc = 0) {
+      const normalized = this.normalizeTransformArtboardRect(rect);
+
+      if (!normalized) {
+        return null;
+      }
+
+      const amount = Number.isFinite(Number(overscanDoc))
+        ? Math.max(0, Number(overscanDoc))
+        : 0;
+
+      return {
+        height: normalized.height + amount * 2,
+        width: normalized.width + amount * 2,
+        x: normalized.x - amount,
+        y: normalized.y - amount,
+      };
+    }
+
+    documentRectsIntersect(a, b) {
+      const first = this.normalizeTransformArtboardRect(a);
+      const second = this.normalizeTransformArtboardRect(b);
+
+      if (!first || !second) {
+        return false;
+      }
+
+      return (
+        first.x + first.width > second.x &&
+        second.x + second.width > first.x &&
+        first.y + first.height > second.y &&
+        second.y + second.height > first.y
+      );
+    }
+
+    getViewportRenderRect(camera = {}, viewportWidth = 1, viewportHeight = 1, overscanCssPx = VIEWPORT_RENDER_OVERSCAN_CSS_PX) {
+      const visibleRect = this.resolveCanvasVisibleDocRect(camera, viewportWidth, viewportHeight);
+      const rawZoom = Number(camera?.zoom);
+      const zoom = Number.isFinite(rawZoom) && Math.abs(rawZoom) > 0.0001
+        ? Math.abs(rawZoom)
+        : 1;
+      const dpr = typeof window !== "undefined" && Number.isFinite(Number(window.devicePixelRatio))
+        ? Math.max(1, Number(window.devicePixelRatio))
+        : 1;
+      const overscanViewportPx = Number.isFinite(Number(overscanCssPx))
+        ? Math.max(0, Number(overscanCssPx)) * dpr
+        : 0;
+      const overscanDoc = overscanViewportPx / zoom;
+
+      return this.expandDocumentRect(visibleRect, overscanDoc) || visibleRect;
     }
 
     normalizeDirtyRegionRect(rect) {
@@ -5524,7 +6159,11 @@ void main() {
         return null;
       }
 
-      const artboardId = String(layer?.artboardId || "").trim();
+      const explicitArtboardId = String(layer?.artboardId || "").trim();
+      const inferredArtboardId = !explicitArtboardId && layer?.id
+        ? String(this.layerModel?.findEntryArtboardId?.(layer.id) || "").trim()
+        : "";
+      const artboardId = explicitArtboardId || inferredArtboardId;
 
       if (!artboardId) {
         return null;
@@ -7500,7 +8139,7 @@ void main() {
       );
     }
 
-    getProceduralBackgroundRenderResults(layer, layerTarget) {
+    getProceduralBackgroundRenderResults(layer, layerTarget, options = {}) {
       if (!layerTarget?.texture) {
         return [];
       }
@@ -7509,6 +8148,8 @@ void main() {
         return [];
       }
 
+      const renderRect = options.renderRect || null;
+      const cullingStats = options.cullingStats || null;
       const renderRects = this.getArtboardBackgroundRenderRects();
       const layerArtboardId = String(layer?.artboardId || "").trim();
       const scopedRects = (() => {
@@ -7534,7 +8175,26 @@ void main() {
           : [];
       })();
 
-      return scopedRects.map((rect) => ({
+      const visibleRects = [];
+
+      scopedRects.forEach((rect) => {
+        const isVisible = !renderRect || this.documentRectsIntersect(rect, renderRect);
+
+        if (cullingStats?.artboardBackgrounds) {
+          cullingStats.artboardBackgrounds.tested += 1;
+          if (isVisible) {
+            cullingStats.artboardBackgrounds.drawn += 1;
+          } else {
+            cullingStats.artboardBackgrounds.skippedOutsideRenderRect += 1;
+          }
+        }
+
+        if (isVisible) {
+          visibleRects.push(rect);
+        }
+      });
+
+      return visibleRects.map((rect) => ({
         height: rect.height,
         rect,
         texture: layerTarget.texture,
@@ -7577,20 +8237,76 @@ void main() {
       };
     }
 
-    getLayerRenderResults(layer, layerTarget) {
+    getLayerRenderResults(layer, layerTarget, options = {}) {
+      const cullingStats = options.cullingStats || null;
+
       if (this.isProceduralBackgroundLayerTarget(layer, layerTarget)) {
-        return this.getProceduralBackgroundRenderResults(layer, layerTarget);
+        const results = this.getProceduralBackgroundRenderResults(layer, layerTarget, options);
+
+        if (cullingStats?.renderResults) {
+          cullingStats.renderResults.returned += results.length;
+        }
+
+        return results;
       }
 
       if (this.isSparseRasterTarget(layerTarget)) {
-        return Array.from(layerTarget.tiles.values())
-          .filter((tileTarget) => tileTarget?.texture)
+        const renderRect = options.cullSparseTiles === true
+          ? options.renderRect
+          : null;
+        const tileTargets = Array.from(layerTarget.tiles.values());
+        const visibleTileTargets = [];
+
+        tileTargets.forEach((tileTarget) => {
+          if (cullingStats?.sparseTiles) {
+            cullingStats.sparseTiles.tested += 1;
+          }
+
+          if (!tileTarget?.texture) {
+            if (cullingStats?.sparseTiles) {
+              cullingStats.sparseTiles.missingTexture += 1;
+            }
+            return;
+          }
+
+          if (!renderRect) {
+            if (cullingStats?.sparseTiles) {
+              cullingStats.sparseTiles.uncullable += options.cullSparseTiles === true ? 0 : 1;
+              cullingStats.sparseTiles.drawn += 1;
+            }
+            visibleTileTargets.push(tileTarget);
+            return;
+          }
+
+          const tileRect = this.getRasterTargetDocumentRect(tileTarget);
+
+          if (this.documentRectsIntersect(tileRect, renderRect)) {
+            if (cullingStats?.sparseTiles) {
+              cullingStats.sparseTiles.drawn += 1;
+            }
+            visibleTileTargets.push(tileTarget);
+          } else if (cullingStats?.sparseTiles) {
+            cullingStats.sparseTiles.skippedOutsideRenderRect += 1;
+          }
+        });
+
+        const results = visibleTileTargets
           .sort((first, second) => (first.ty - second.ty) || (first.tx - second.tx))
           .map((tileTarget) => this.getLayerRenderResult(layer, tileTarget))
           .filter(Boolean);
+
+        if (cullingStats?.renderResults) {
+          cullingStats.renderResults.returned += results.length;
+        }
+
+        return results;
       }
 
       const result = this.getLayerRenderResult(layer, layerTarget);
+
+      if (result && cullingStats?.renderResults) {
+        cullingStats.renderResults.returned += 1;
+      }
 
       return result ? [result] : [];
     }
@@ -12463,8 +13179,8 @@ void main() {
       }];
     }
 
-    updatePreviewCacheIfNeeded() {
-      const didCreate = this.createPreviewCache();
+    updatePreviewCacheIfNeeded(options = {}) {
+      const didCreate = this.createPreviewCache(options);
 
       if (!didCreate) {
         return false;
@@ -12474,10 +13190,10 @@ void main() {
         return true;
       }
 
-      return this.updatePreviewCache();
+      return this.updatePreviewCache(options);
     }
 
-    updatePreviewCache() {
+    updatePreviewCache(options = {}) {
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("preview-cache.update", {
         dirty: this.previewCacheDirty,
         reason: this.previewCacheReason || "unknown",
@@ -12491,7 +13207,7 @@ void main() {
       const gl = this.gl;
       const baseDocumentWidth = Math.max(1, Math.round(this.width || 1));
       const baseDocumentHeight = Math.max(1, Math.round(this.height || 1));
-      const documentRect = this.previewCacheDocumentRect || this.getPreviewCacheDocumentRect();
+      const documentRect = this.previewCacheDocumentRect || this.getPreviewCacheDocumentRect(options);
       const documentWidth = Math.max(1, Math.round(documentRect.width || baseDocumentWidth));
       const documentHeight = Math.max(1, Math.round(documentRect.height || baseDocumentHeight));
       const cacheWidth = Math.max(1, Math.round(this.previewCacheWidth || documentWidth));
@@ -12934,16 +13650,17 @@ void main() {
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
       const { program, uniforms } = this.programInfo;
       const documentRect = this.previewCacheDocumentRect || this.getPreviewCacheDocumentRect();
+      const exactRect = this.getPreviewCacheExactDocumentRect(documentRect);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
       gl.useProgram(program);
       gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
-      gl.uniform2f(uniforms.documentSize, documentRect.width, documentRect.height);
+      gl.uniform2f(uniforms.documentSize, exactRect.width, exactRect.height);
       gl.uniform2f(
         uniforms.cameraPosition,
-        (camera.x || 0) + documentRect.x * (camera.zoom || 1),
-        (camera.y || 0) + documentRect.y * (camera.zoom || 1),
+        (camera.x || 0) + exactRect.x * (camera.zoom || 1),
+        (camera.y || 0) + exactRect.y * (camera.zoom || 1),
       );
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniform1i(uniforms.texture, 0);
@@ -12951,11 +13668,11 @@ void main() {
       gl.uniform1i(uniforms.clipTexture, 2);
       gl.uniform1f(uniforms.maskMode, 0.0);
       gl.uniform1f(uniforms.maskRectMode, 0.0);
-      gl.uniform4f(uniforms.maskRect, documentRect.x, documentRect.y, documentRect.width, documentRect.height);
+      gl.uniform4f(uniforms.maskRect, exactRect.x, exactRect.y, exactRect.width, exactRect.height);
       gl.uniform1f(uniforms.clipMode, 0.0);
       gl.uniform1f(uniforms.clipOpacity, 1.0);
-      gl.uniform2f(uniforms.clipTextureSize, documentRect.width, documentRect.height);
-      gl.uniform2f(uniforms.drawOrigin, documentRect.x, documentRect.y);
+      gl.uniform2f(uniforms.clipTextureSize, exactRect.width, exactRect.height);
+      gl.uniform2f(uniforms.drawOrigin, exactRect.x, exactRect.y);
       gl.uniform1f(uniforms.previewCutMode, 0.0);
       gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
       gl.uniform1f(uniforms.gridMode, 0.0);
@@ -13917,6 +14634,16 @@ void main() {
       const camera = options.camera || { x: 0, y: 0, zoom: 1 };
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
+      const viewportRenderOverscanCssPx = Number.isFinite(Number(options.viewportRenderOverscanCssPx))
+        ? Math.max(0, Number(options.viewportRenderOverscanCssPx))
+        : VIEWPORT_RENDER_OVERSCAN_CSS_PX;
+      const viewportVisibleDocRect = this.resolveCanvasVisibleDocRect(camera, viewportWidth, viewportHeight);
+      const viewportRenderRect = this.getViewportRenderRect(
+        camera,
+        viewportWidth,
+        viewportHeight,
+        viewportRenderOverscanCssPx,
+      );
       const { program, uniforms } = this.programInfo;
       const activeStrokeLayerId = options.activeStrokeLayerId || target.layerId;
       const activeStrokeMode = String(options.activeStrokeMode || "paint").toLowerCase();
@@ -13939,6 +14666,8 @@ void main() {
       const rasterTransformPreview = this.rasterTransformPreview?.texture
         ? this.rasterTransformPreview
         : null;
+      const hasArtboardDragPreview = this.hasArtboardDragPreview();
+      const staticViewportRenderRect = hasArtboardDragPreview ? null : viewportRenderRect;
       const vectorTextTransformPreviewLayerId = this.vectorTextTransformPreviewLayerId || "";
       const hasActiveEraserStroke = Boolean(options.activeStrokeTexture && activeStrokeMode === "eraser");
       const activeStrokeSelectionMask = hasActiveEraserStroke
@@ -13999,19 +14728,45 @@ void main() {
             .some((layer) => this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id)))
         );
       const allowPreviewCache = options.allowPreviewCache === true;
-      const previewCacheDimensions = this.getPreviewCacheDimensions();
-      const previewCacheDocumentRect = this.getPreviewCacheDocumentRect();
+      const previewCacheOptions = {
+        camera,
+        dpr: options.dpr,
+        previewCacheOverscanCssPx: options.previewCacheOverscanCssPx,
+        previewCacheScope: options.previewCacheScope,
+        viewportHeight,
+        viewportWidth,
+      };
+      const previewCacheDimensions = this.getPreviewCacheDimensions(previewCacheOptions);
+      const previewCacheDocumentRect = previewCacheDimensions.documentRect;
       const canUsePreviewCacheAtCurrentZoom = this.shouldUsePreviewCacheForCamera(camera, previewCacheDimensions);
       const canUsePreviewCache = Boolean(
         allowPreviewCache &&
         canUsePreviewCacheAtCurrentZoom &&
-        !this.hasArtboardDragPreview() &&
+        !hasArtboardDragPreview &&
         !rasterTransformPreview &&
         !vectorTextTransformPreviewLayerId &&
         !hasActiveEraserStroke &&
         !activeStrokeNeedsFullStack &&
         activeStrokeCanOverlayPreview
       );
+      const viewportCullingDebug = this.isViewportCullingDebugEnabled(options);
+      const viewportLayerCullingEnabled = this.isViewportLayerCullingEnabled(options);
+      const viewportLayerCullingMeasured = this.isViewportLayerCullingAuditEnabled(options);
+      const viewportCullingStats = this.createViewportCullingStats({
+        camera,
+        debug: viewportCullingDebug,
+        layerCullingEnabled: viewportLayerCullingEnabled,
+        layerCullingMeasured: viewportLayerCullingMeasured,
+        overscanCssPx: viewportRenderOverscanCssPx,
+        renderRect: viewportRenderRect,
+        source: "drawToCanvas",
+        viewportHeight,
+        viewportWidth,
+        visibleRect: viewportVisibleDocRect,
+      });
+
+      viewportCullingStats.layers.total = orderedLayers.length;
+      viewportCullingStats.layers.visible = renderableLayers.length;
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("canvas.draw", {
         activeStroke: Boolean(options.activeStrokeTexture),
         canUsePreviewCache,
@@ -14116,26 +14871,50 @@ void main() {
       const withLayerArtboardClip = (layer, callback) => {
         const artboardRect = this.getLayerArtboardVisualRect(layer);
 
+        viewportCullingStats.artboardClips.tested += 1;
+
         if (!artboardRect) {
+          viewportCullingStats.artboardClips.drawn += 1;
           callback();
+          return;
+        }
+
+        if (viewportRenderRect && !this.documentRectsIntersect(artboardRect, viewportRenderRect)) {
+          viewportCullingStats.artboardClips.skippedOutsideRenderRect += 1;
           return;
         }
 
         const artboardScissor = getViewportScissorForDocumentRect(artboardRect);
 
         if (!artboardScissor) {
+          viewportCullingStats.artboardClips.skippedViewportScissor += 1;
           return;
         }
 
+        viewportCullingStats.artboardClips.drawn += 1;
         withViewportScissor(artboardScissor, callback);
       };
       const withAllArtboardClips = (callback) => {
-        const artboardRects = (namespace.getDocumentArtboards?.() || [])
+        const allArtboardRects = (namespace.getDocumentArtboards?.() || [])
           .map((artboard) => this.normalizeTransformArtboardRect(artboard))
           .filter(Boolean);
 
-        if (artboardRects.length === 0) {
+        if (allArtboardRects.length === 0) {
           callback();
+          return;
+        }
+
+        const artboardRects = staticViewportRenderRect
+          ? allArtboardRects.filter((artboardRect) => this.documentRectsIntersect(artboardRect, staticViewportRenderRect))
+          : allArtboardRects;
+
+        viewportCullingStats.artboardClips.tested += allArtboardRects.length;
+
+        if (staticViewportRenderRect) {
+          viewportCullingStats.artboardClips.skippedOutsideRenderRect += Math.max(0, allArtboardRects.length - artboardRects.length);
+        }
+
+        if (artboardRects.length === 0) {
           return;
         }
 
@@ -14143,7 +14922,10 @@ void main() {
           const artboardScissor = getViewportScissorForDocumentRect(artboardRect);
 
           if (artboardScissor) {
+            viewportCullingStats.artboardClips.drawn += 1;
             withViewportScissor(artboardScissor, callback);
+          } else {
+            viewportCullingStats.artboardClips.skippedViewportScissor += 1;
           }
         });
       };
@@ -14256,7 +15038,9 @@ void main() {
           gl.uniform2f(uniforms.clipTextureSize, target.width, target.height);
         }
 
-        if (texture !== this.previewTexture) {
+        if (texture === this.previewTexture) {
+          this.setRasterTextureSampling(texture, gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR);
+        } else {
           this.setRasterTextureSampling(texture, gl.LINEAR, viewportTextureMagFilter);
         }
         gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -14393,7 +15177,7 @@ void main() {
         bindArtboardProgram();
       };
       const didUpdatePreviewCache = canUsePreviewCache
-        ? this.updatePreviewCacheIfNeeded()
+        ? this.updatePreviewCacheIfNeeded(previewCacheOptions)
         : false;
       const usePreviewCache = canUsePreviewCache && didUpdatePreviewCache && this.previewCacheReady;
       const canvasNeedsLayerComposite = !usePreviewCache && orderedLayers.some((layer) =>
@@ -14420,8 +15204,10 @@ void main() {
 
       if (usePreviewCache) {
         const activeStrokeOpacity = this.getLayerOpacity(activeStrokeLayerId, renderableLayers);
+        const cacheDocRect = this.previewCacheDocumentRect || previewCacheDocumentRect;
+        const exactCacheDocRect = this.getPreviewCacheExactDocumentRect(cacheDocRect);
 
-        drawTexture(this.previewTexture, 1, this.previewCacheDocumentRect || previewCacheDocumentRect);
+        drawTexture(this.previewTexture, 1, exactCacheDocRect);
 
         if (options.activeStrokeTexture && activeStrokeMode !== "eraser") {
           withLayerArtboardClip(activeStrokeLayer, () => {
@@ -14440,6 +15226,7 @@ void main() {
         let currentClipBase = null;
 
         for (const layer of orderedLayers) {
+          viewportCullingStats.layers.considered += 1;
           const rawLayerTarget = this.rasterTargetsByLayerId.get(layer.id);
           const isClippingLayer = layer.clippingMask === true;
           const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
@@ -14454,6 +15241,24 @@ void main() {
             forceSingleTexture: Boolean(eraserMaskTexture),
             source: "canvas-sparse-layer",
           });
+          const canCullSparseTilesForViewport = Boolean(
+            staticViewportRenderRect &&
+            !isClippingLayer &&
+            !isActiveStrokeLayer &&
+            !isRasterTransformPreviewLayer &&
+            !isVectorTextTransformPreviewLayer &&
+            !eraserMaskTexture &&
+            !rasterTransformPreview &&
+            !vectorTextTransformPreviewLayerId &&
+            !this.hasAdvancedLayerBlendMode(layer) &&
+            !this.hasEnabledLayerEffects(layer) &&
+            !this.hasPuppetLayerTransform(layer)
+          );
+          const viewportLayerRenderOptions = {
+            cullSparseTiles: canCullSparseTilesForViewport,
+            cullingStats: viewportCullingStats,
+            renderRect: staticViewportRenderRect,
+          };
 
           if (!isClippingLayer) {
             const shouldMaterializeClipBase = hasClippingMasks && clipBaseLayerIds.has(layer.id);
@@ -14474,6 +15279,7 @@ void main() {
           }
 
           if (layer.visible === false) {
+            viewportCullingStats.layers.skippedInvisible += 1;
             continue;
           }
 
@@ -14482,18 +15288,45 @@ void main() {
               currentClipBase = null;
             }
 
+            viewportCullingStats.layers.skippedVectorTransformPreview += 1;
             continue;
           }
 
           if (isClippingLayer && (!clipBase?.visible || !clipBase?.target?.texture)) {
+            viewportCullingStats.layers.skippedClippingBaseMissing += 1;
             continue;
           }
+
+          if (viewportLayerCullingMeasured) {
+            const layerCullDecision = this.getViewportLayerCullDecision(layer, layerTarget, {
+              clipBaseLayerIds,
+              eraserMaskTexture,
+              hasArtboardDragPreview,
+              isActiveStrokeLayer,
+              isClippingLayer,
+              isRasterTransformPreviewLayer,
+              isVectorTextTransformPreviewLayer,
+              rasterTransformPreview,
+              renderRect: staticViewportRenderRect,
+              vectorTextTransformPreviewLayerId,
+            });
+            const shouldCullLayer = Boolean(viewportLayerCullingEnabled && layerCullDecision.shouldCull);
+
+            this.recordViewportLayerCullDecision(viewportCullingStats, layerCullDecision, shouldCullLayer);
+
+            if (shouldCullLayer) {
+              continue;
+            }
+          }
+
+          viewportCullingStats.layers.passedCull += 1;
 
           if (isRasterTransformPreviewLayer) {
             setPreviewCut(rasterTransformPreview.sourceRect);
           }
 
           if (layerTarget?.texture) {
+            viewportCullingStats.layers.drawPasses += 1;
             let renderTarget = layerTarget;
             let didMergeActiveStroke = false;
 
@@ -14554,7 +15387,7 @@ void main() {
               currentMaskClipRects = activeStrokeClipRects || null;
             }
 
-            for (const renderResult of this.getLayerRenderResults(layer, renderTarget)) {
+            for (const renderResult of this.getLayerRenderResults(layer, renderTarget, viewportLayerRenderOptions)) {
               const layerTexture = renderResult?.texture;
               const layerRect = this.getArtboardDragVisualRect(layer, renderResult?.rect || null, renderTarget);
 
@@ -14620,9 +15453,10 @@ void main() {
               currentMaskClipRects = null;
             }
           } else if (this.isSparseRasterTarget(layerTarget)) {
+            viewportCullingStats.layers.drawPasses += 1;
             const blendModeId = this.getLayerBlendModeId(layer);
 
-            for (const renderResult of this.getLayerRenderResults(layer, layerTarget)) {
+            for (const renderResult of this.getLayerRenderResults(layer, layerTarget, viewportLayerRenderOptions)) {
               const layerTexture = renderResult?.texture;
 
               if (!layerTexture) {
@@ -14706,7 +15540,10 @@ void main() {
           activeStroke: Boolean(options.activeStrokeTexture),
           canUsePreviewCache,
           layers: renderableLayers.length,
+          layersCulled: viewportCullingStats.layers.safelyCulled,
+          sparseTilesSkipped: viewportCullingStats.sparseTiles.skippedOutsideRenderRect,
         });
+        this.finalizeViewportCullingStats(viewportCullingStats);
       }
     }
 

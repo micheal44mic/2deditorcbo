@@ -4155,14 +4155,24 @@ void main() {
         return false;
       }
 
+      const previewCacheOptions = {
+        camera: this.camera,
+        dpr: this.dpr,
+        viewportHeight: this.viewportHeight,
+        viewportWidth: this.viewportWidth,
+      };
+      const previewCacheDimensions = typeof this.documentRenderer.getPreviewCacheDimensions === "function"
+        ? this.documentRenderer.getPreviewCacheDimensions(previewCacheOptions)
+        : null;
+
       if (
         typeof this.documentRenderer.shouldUsePreviewCacheForCamera === "function" &&
-        !this.documentRenderer.shouldUsePreviewCacheForCamera(this.camera)
+        !this.documentRenderer.shouldUsePreviewCacheForCamera(this.camera, previewCacheDimensions)
       ) {
         return false;
       }
 
-      return this.documentRenderer.updatePreviewCacheIfNeeded() === true;
+      return this.documentRenderer.updatePreviewCacheIfNeeded(previewCacheOptions) === true;
     }
 
     getActiveStrokeRect() {
@@ -5986,6 +5996,7 @@ void main() {
           : null,
         activeStrokeTexture: this.isDrawing ? this.strokeTexture : null,
         camera: this.camera,
+        dpr: this.dpr,
         viewportWidth: this.viewportWidth,
         viewportHeight: this.viewportHeight,
       });

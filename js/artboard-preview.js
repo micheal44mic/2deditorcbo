@@ -14,6 +14,7 @@ window.CBO = window.CBO || {};
     { id: "custom", label: "CUSTOM" },
   ];
   const FIT_PADDING_CSS_PX = 72;
+  const PREVIEW_OVERLAY_OVERSCAN_CSS_PX = 512;
   const LABEL_HIT_HEIGHT_CSS_PX = 30;
   const SELECTION_TOOL_MODE = "selection";
 
@@ -465,27 +466,152 @@ window.CBO = window.CBO || {};
     });
   }
 
-  function getUnionRect(artboards) {
-    return artboards.reduce((rect, artboard) => {
-      const right = artboard.x + artboard.width;
-      const bottom = artboard.y + artboard.height;
+  function normalizeBounds(rect) {
+    if (!rect) {
+      return null;
+    }
 
-      if (!rect) {
+    if (
+      Number.isFinite(Number(rect.left)) &&
+      Number.isFinite(Number(rect.top)) &&
+      Number.isFinite(Number(rect.right)) &&
+      Number.isFinite(Number(rect.bottom))
+    ) {
+      const left = Number(rect.left);
+      const top = Number(rect.top);
+      const right = Number(rect.right);
+      const bottom = Number(rect.bottom);
+
+      return right > left && bottom > top
+        ? { bottom, left, right, top }
+        : null;
+    }
+
+    if (
+      Number.isFinite(Number(rect.x)) &&
+      Number.isFinite(Number(rect.y)) &&
+      Number.isFinite(Number(rect.width)) &&
+      Number.isFinite(Number(rect.height))
+    ) {
+      const left = Number(rect.x);
+      const top = Number(rect.y);
+      const width = Number(rect.width);
+      const height = Number(rect.height);
+
+      return width > 0 && height > 0
+        ? {
+            bottom: top + height,
+            left,
+            right: left + width,
+            top,
+          }
+        : null;
+    }
+
+    if (
+      Number.isFinite(Number(rect.x1)) &&
+      Number.isFinite(Number(rect.y1)) &&
+      Number.isFinite(Number(rect.x2)) &&
+      Number.isFinite(Number(rect.y2))
+    ) {
+      const left = Number(rect.x1);
+      const top = Number(rect.y1);
+      const right = Number(rect.x2);
+      const bottom = Number(rect.y2);
+
+      return right > left && bottom > top
+        ? { bottom, left, right, top }
+        : null;
+    }
+
+    return null;
+  }
+
+  function getBoundsFromQuad(quad) {
+    if (!Array.isArray(quad) || quad.length === 0) {
+      return null;
+    }
+
+    const points = quad
+      .map((point) => ({
+        x: Number(point?.x),
+        y: Number(point?.y),
+      }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+
+    if (points.length === 0) {
+      return null;
+    }
+
+    return normalizeBounds({
+      bottom: Math.max(...points.map((point) => point.y)),
+      left: Math.min(...points.map((point) => point.x)),
+      right: Math.max(...points.map((point) => point.x)),
+      top: Math.min(...points.map((point) => point.y)),
+    });
+  }
+
+  function getArtboardBounds(artboard) {
+    return normalizeBounds({
+      height: artboard?.height,
+      width: artboard?.width,
+      x: artboard?.x,
+      y: artboard?.y,
+    });
+  }
+
+  function getUnionBounds(boundsList = []) {
+    const list = Array.isArray(boundsList) ? boundsList : [];
+
+    return list
+      .map(normalizeBounds)
+      .filter(Boolean)
+      .reduce((rect, bounds) => {
+        if (!rect) {
+          return { ...bounds };
+        }
+
         return {
-          bottom,
-          left: artboard.x,
-          right,
-          top: artboard.y,
+          bottom: Math.max(rect.bottom, bounds.bottom),
+          left: Math.min(rect.left, bounds.left),
+          right: Math.max(rect.right, bounds.right),
+          top: Math.min(rect.top, bounds.top),
         };
-      }
+      }, null);
+  }
 
-      return {
-        bottom: Math.max(rect.bottom, bottom),
-        left: Math.min(rect.left, artboard.x),
-        right: Math.max(rect.right, right),
-        top: Math.min(rect.top, artboard.y),
-      };
-    }, null);
+  function getUnionRect(artboards = []) {
+    const list = Array.isArray(artboards) ? artboards : [];
+
+    return getUnionBounds(list.map(getArtboardBounds));
+  }
+
+  function expandBounds(bounds, amount = 0) {
+    const rect = normalizeBounds(bounds);
+    const safeAmount = Math.max(0, Number(amount) || 0);
+
+    return rect
+      ? {
+          bottom: rect.bottom + safeAmount,
+          left: rect.left - safeAmount,
+          right: rect.right + safeAmount,
+          top: rect.top - safeAmount,
+        }
+      : null;
+  }
+
+  function boundsIntersect(a, b) {
+    const first = normalizeBounds(a);
+    const second = normalizeBounds(b);
+
+    return Boolean(
+      first &&
+      second &&
+      first.left < second.right &&
+      first.right > second.left &&
+      first.top < second.bottom &&
+      first.bottom > second.top
+    );
   }
 
   function ensureOverlay() {
@@ -534,6 +660,143 @@ window.CBO = window.CBO || {};
       camera,
       dpr: Math.max(1, Number(lastCameraState?.dpr || brushEngine?.dpr || window.devicePixelRatio || 1)),
     };
+  }
+
+  function getStageViewportSize(stage, dpr) {
+    if (!stage) {
+      return null;
+    }
+
+    const brushEngine = getBrushEngine();
+    const rect = stage.getBoundingClientRect();
+    const width = Number(lastCameraState?.viewportWidth) ||
+      Number(brushEngine?.viewportWidth) ||
+      ((stage.clientWidth || rect.width || 1) * dpr);
+    const height = Number(lastCameraState?.viewportHeight) ||
+      Number(brushEngine?.viewportHeight) ||
+      ((stage.clientHeight || rect.height || 1) * dpr);
+
+    return {
+      height: Math.max(1, Math.round(height)),
+      width: Math.max(1, Math.round(width)),
+    };
+  }
+
+  function resolveVisibleDocRect() {
+    const stage = getStage();
+
+    if (!stage) {
+      return null;
+    }
+
+    const { camera, dpr } = getCameraState();
+    const viewportSize = getStageViewportSize(stage, dpr);
+    const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
+    const cameraX = Number(camera.x) || 0;
+    const cameraY = Number(camera.y) || 0;
+
+    if (!viewportSize) {
+      return null;
+    }
+
+    return normalizeBounds({
+      bottom: (viewportSize.height - cameraY) / zoom,
+      left: (0 - cameraX) / zoom,
+      right: (viewportSize.width - cameraX) / zoom,
+      top: (0 - cameraY) / zoom,
+    });
+  }
+
+  function getPreviewOverlayCullRect() {
+    const visibleDocRect = resolveVisibleDocRect();
+
+    if (!visibleDocRect) {
+      return null;
+    }
+
+    const { camera, dpr } = getCameraState();
+    const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
+    const overscanDoc = (PREVIEW_OVERLAY_OVERSCAN_CSS_PX * dpr) / zoom;
+
+    return expandBounds(visibleDocRect, overscanDoc);
+  }
+
+  function getActiveSelectionBounds() {
+    const areaSelection = namespace.areaSelection;
+
+    if (areaSelection?.hasSelection?.()) {
+      const selectionBounds = normalizeBounds(areaSelection.getRect?.() || areaSelection.getBounds?.());
+
+      if (selectionBounds) {
+        return selectionBounds;
+      }
+    }
+
+    const selectionProviders = [
+      { context: namespace, method: namespace.resolveActiveSelectionRect },
+      { context: namespace, method: namespace.getActiveSelectionRect },
+      { context: namespace, method: namespace.getSelectionRect },
+      { context: namespace, method: namespace.getSelectionBounds },
+      { context: namespace.selectionTool, method: namespace.selectionTool?.getBounds },
+      { context: namespace.rasterTransformTool, method: namespace.rasterTransformTool?.getSelectionBounds },
+    ];
+
+    for (const provider of selectionProviders) {
+      if (typeof provider.method !== "function") {
+        continue;
+      }
+
+      try {
+        const selectionBounds = normalizeBounds(provider.method.call(provider.context, { source: "artboard-preview-fit" }));
+
+        if (selectionBounds) {
+          return selectionBounds;
+        }
+      } catch (error) {
+        // Optional selection integrations may not be initialized yet.
+      }
+    }
+
+    const transformTool = namespace.rasterTransformTool;
+    const isTransformSelectionActive = Boolean(transformTool) && (
+      transformTool.isActive?.() ||
+      transformTool.isSelectionActive?.() ||
+      transformTool.isOverlayActive?.()
+    );
+
+    if (!isTransformSelectionActive) {
+      return null;
+    }
+
+    return getBoundsFromQuad(transformTool?.currentQuad) || normalizeBounds(transformTool?.contentRect);
+  }
+
+  function resolveScaleTargetRect(options = {}) {
+    const artboards = Array.isArray(options.artboards) ? options.artboards : getAllArtboards();
+
+    if (options.ignoreSelection !== true) {
+      const selectionBounds = getActiveSelectionBounds();
+
+      if (selectionBounds) {
+        return selectionBounds;
+      }
+    }
+
+    const selectedId = String(namespace.getSelectedDocumentArtboardId?.() || selectedArtboardId || "").trim();
+    const selectedArtboardBounds = selectedId
+      ? getArtboardBounds(artboards.find((artboard) => artboard.id === selectedId))
+      : null;
+
+    if (selectedArtboardBounds) {
+      return selectedArtboardBounds;
+    }
+
+    const visibleDocRect = resolveVisibleDocRect();
+    const visibleArtboards = visibleDocRect
+      ? artboards.filter((artboard) => boundsIntersect(getArtboardBounds(artboard), visibleDocRect))
+      : [];
+
+    return getUnionRect(visibleArtboards) || getUnionRect(artboards);
   }
 
   function getEventDocumentPoint(event) {
@@ -981,10 +1244,18 @@ window.CBO = window.CBO || {};
 
     const { camera, dpr } = getCameraState();
     const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
-    const artboards = getAllArtboards();
+    const allArtboards = getAllArtboards();
+    const cullRect = getPreviewOverlayCullRect();
+    const draggedArtboardId = String(artboardDragState?.artboardId || "").trim();
+    const artboards = cullRect
+      ? allArtboards.filter((artboard) => (
+          artboard.id === draggedArtboardId ||
+          boundsIntersect(getArtboardBounds(artboard), cullRect)
+        ))
+      : allArtboards;
 
     selectedArtboardId = namespace.getSelectedDocumentArtboardId?.() || selectedArtboardId || "";
-    syncSelectedArtboardId(artboards);
+    syncSelectedArtboardId(allArtboards);
     const artboardViews = artboards.map((artboard) => {
       const left = ((Number(camera.x) || 0) + artboard.x * zoom) / dpr;
       const top = ((Number(camera.y) || 0) + artboard.y * zoom) / dpr;
@@ -1033,33 +1304,54 @@ window.CBO = window.CBO || {};
     syncArtboardDragPreview();
   }
 
-  function fitPreviewArtboards() {
+  function fitPreviewRect(targetRect) {
     const brushEngine = getBrushEngine();
     const stage = getStage();
-    const union = getUnionRect(getAllArtboards());
+    const bounds = normalizeBounds(targetRect);
 
-    if (!brushEngine?.camera || !stage || !union) {
+    if (!brushEngine?.camera || !stage || !bounds) {
       renderArtboardPreviews();
       return;
     }
 
-    const rect = stage.getBoundingClientRect();
     const dpr = Math.max(1, Number(brushEngine.dpr || window.devicePixelRatio || 1));
-    const viewportWidth = Math.max(1, Math.round((stage.clientWidth || rect.width || 1) * dpr));
-    const viewportHeight = Math.max(1, Math.round((stage.clientHeight || rect.height || 1) * dpr));
+    const viewportSize = getStageViewportSize(stage, dpr);
+
+    if (!viewportSize) {
+      renderArtboardPreviews();
+      return;
+    }
+
     const padding = FIT_PADDING_CSS_PX * dpr;
-    const availableWidth = Math.max(1, viewportWidth - padding * 2);
-    const availableHeight = Math.max(1, viewportHeight - padding * 2);
-    const unionWidth = Math.max(1, union.right - union.left);
-    const unionHeight = Math.max(1, union.bottom - union.top);
-    const zoom = Math.max(0.05, Math.min(32, availableWidth / unionWidth, availableHeight / unionHeight));
+    const availableWidth = Math.max(1, viewportSize.width - padding * 2);
+    const availableHeight = Math.max(1, viewportSize.height - padding * 2);
+    const boundsWidth = Math.max(1, bounds.right - bounds.left);
+    const boundsHeight = Math.max(1, bounds.bottom - bounds.top);
+    const zoom = Math.max(0.05, Math.min(32, availableWidth / boundsWidth, availableHeight / boundsHeight));
 
     brushEngine.camera.zoom = zoom;
-    brushEngine.camera.x = (viewportWidth - unionWidth * zoom) * 0.5 - union.left * zoom;
-    brushEngine.camera.y = (viewportHeight - unionHeight * zoom) * 0.5 - union.top * zoom;
+    brushEngine.camera.x = (viewportSize.width - boundsWidth * zoom) * 0.5 - bounds.left * zoom;
+    brushEngine.camera.y = (viewportSize.height - boundsHeight * zoom) * 0.5 - bounds.top * zoom;
     brushEngine.userManipulatedCamera = true;
+    lastCameraState = {
+      ...(lastCameraState || {}),
+      camera: {
+        x: brushEngine.camera.x,
+        y: brushEngine.camera.y,
+        zoom: brushEngine.camera.zoom,
+      },
+      dpr,
+    };
     brushEngine.requestDraw?.();
     renderArtboardPreviews();
+  }
+
+  function fitPreviewArtboards() {
+    fitPreviewRect(resolveScaleTargetRect());
+  }
+
+  function fitAllPreviewArtboards() {
+    fitPreviewRect(getUnionRect(getAllArtboards()));
   }
 
   function resetPreviewArtboards(options = {}) {
@@ -1181,6 +1473,26 @@ window.CBO = window.CBO || {};
 
   namespace.clearPreviewArtboardSelection = function clearPreviewArtboardSelection(options = {}) {
     return clearArtboardSelection(options);
+  };
+
+  namespace.resolvePreviewVisibleDocRect = function resolvePreviewVisibleDocRect() {
+    const rect = resolveVisibleDocRect();
+
+    return rect ? { ...rect } : null;
+  };
+
+  namespace.resolvePreviewScaleTargetRect = function resolvePreviewScaleTargetRect(options = {}) {
+    const rect = resolveScaleTargetRect(options);
+
+    return rect ? { ...rect } : null;
+  };
+
+  namespace.fitPreviewArtboards = function fitPreviewArtboardsFromTool() {
+    fitPreviewArtboards();
+  };
+
+  namespace.fitAllPreviewArtboards = function fitAllPreviewArtboardsFromTool() {
+    fitAllPreviewArtboards();
   };
 
   namespace.deletePreviewArtboard = function deletePreviewArtboardFromTool(artboardId, options = {}) {

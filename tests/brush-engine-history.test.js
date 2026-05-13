@@ -76,7 +76,9 @@ test("brush stroke history prefers tile-memento before and after snapshots", () 
   assert.match(source, /updateStrokePreviewDirtyRects\(effectiveStrokeRect = null, tilePatchRects = null\)/);
   assert.match(source, /getFallbackStrokePreviewDirtyRects\(effectiveStrokeRect = null\)/);
   assert.match(source, /warmPreviewCacheForStroke\(\)/);
-  assert.match(source, /this\.documentRenderer\.updatePreviewCacheIfNeeded\(\) === true/);
+  assert.match(source, /const previewCacheOptions = \{/);
+  assert.match(source, /this\.documentRenderer\.getPreviewCacheDimensions\(previewCacheOptions\)/);
+  assert.match(source, /this\.documentRenderer\.updatePreviewCacheIfNeeded\(previewCacheOptions\) === true/);
   assert.match(source, /queueActiveStrokeDirtyRegionDebug\(\)/);
   assert.match(source, /emitActiveStrokeDirtyRegionDebug\(\)/);
   assert.match(source, /const PREVIEW_DIRTY_DEBUG_EVENT = "cbo:preview-dirty-region-debug"/);

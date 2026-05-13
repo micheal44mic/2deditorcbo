@@ -2927,18 +2927,25 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   );
 
   assert.match(source, /const PREVIEW_CACHE_MAX_SIZE = 2048/);
-  assert.match(source, /createPreviewCache\(\)/);
-  assert.match(source, /getPreviewCacheDimensions\(\)/);
+  assert.match(source, /const PREVIEW_CACHE_SCOPE_DEFAULT = "visible-artboards"/);
+  assert.match(source, /const PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX = 256/);
+  assert.match(source, /antialias: true/);
+  assert.match(source, /createPreviewCache\(options = \{\}\)/);
+  assert.match(source, /getPreviewCacheDimensions\(options = \{\}\)/);
   assert.match(source, /previewCacheMaxSize/);
+  assert.match(source, /previewCacheScope/);
+  assert.match(source, /previewCacheOverscanCssPx/);
   assert.match(source, /this\.previewCacheWidth = width/);
   assert.match(source, /this\.previewCacheHeight = height/);
   assert.match(source, /this\.previewCacheScale = scale/);
   assert.match(source, /this\.previewCacheDocumentRect = \{ \.\.\.dimensions\.documentRect \}/);
-  assert.match(source, /getPreviewCacheDocumentRect\(\)/);
-  assert.match(source, /updatePreviewCacheIfNeeded\(\)/);
+  assert.match(source, /publishPreviewCacheScopeInfo\(dimensions\.scopeInfo\)/);
+  assert.match(source, /getPreviewCacheDocumentRect\(options = \{\}\)/);
+  assert.match(source, /updatePreviewCacheIfNeeded\(options = \{\}\)/);
+  assert.match(source, /getPreviewCacheExactDocumentRect\(fallbackRect = null\)/);
   assert.match(source, /drawPreviewCacheToCanvas\(options = \{\}\)/);
   assert.doesNotMatch(source, /^\s*this\.createPreviewCache\(\);$/m);
-  assert.match(source, /const didCreate = this\.createPreviewCache\(\)/);
+  assert.match(source, /const didCreate = this\.createPreviewCache\(options\)/);
   assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
   assert.match(source, /const PREVIEW_CACHE_ZOOM_THRESHOLD = 1\.0/);
   assert.match(source, /const PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD = 10\.01/);
@@ -2947,10 +2954,12 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /getViewportTextureMagFilter\(camera = \{\}\)/);
   assert.match(source, /shouldDrawPixelGrid\(camera = \{\}\)/);
   assert.match(source, /shouldUsePreviewCacheForCamera\(camera = \{\}, previewCacheDimensions = null\)/);
-  assert.match(source, /const previewCacheDimensions = this\.getPreviewCacheDimensions\(\)/);
+  assert.match(source, /const previewCacheOptions = \{/);
+  assert.match(source, /const previewCacheDimensions = this\.getPreviewCacheDimensions\(previewCacheOptions\)/);
   assert.match(source, /const canUsePreviewCacheAtCurrentZoom = this\.shouldUsePreviewCacheForCamera\(camera, previewCacheDimensions\)/);
   assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true/);
-  assert.match(source, /const previewCacheDocumentRect = this\.getPreviewCacheDocumentRect\(\)/);
+  assert.match(source, /const previewCacheDocumentRect = previewCacheDimensions\.documentRect/);
+  assert.match(source, /const exactCacheDocRect = this\.getPreviewCacheExactDocumentRect\(cacheDocRect\)/);
   assert.doesNotMatch(source, /previewCacheCoversDocumentBounds/);
   assert.match(source, /allowPreviewCache &&\s*canUsePreviewCacheAtCurrentZoom/);
   assert.match(source, /!hasActiveEraserStroke/);
@@ -3006,7 +3015,7 @@ test("preview cache supports dirty-region compositing", () => {
     path.join(repoRoot, "js", "document", "document-renderer.js"),
     "utf8",
   );
-  const previewCacheBody = source.match(/updatePreviewCache\(\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
+  const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
 
   assert.match(source, /previewDirtyRects/);
   assert.match(source, /previewLastDirtyMode/);
@@ -3357,6 +3366,64 @@ test("preview cache spans artboard bounds and offsets dirty scissors", () => {
   assert.equal(scissor.height, 52);
 });
 
+test("preview cache scopes to the single visible artboard when zoomed out", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {
+    previewCacheMaxSize: 2048,
+    previewCacheOverscanCssPx: 256,
+    previewCacheScope: "visible-artboards",
+  };
+  renderer.width = 8256;
+  renderer.height = 4000;
+  window.CBO.getDocumentArtboards = () => [
+    { x: 0, y: 0, width: 4000, height: 4000 },
+    { x: 4256, y: 0, width: 4000, height: 4000 },
+  ];
+  window.CBO.getDocumentArtboardUnionRect = () => ({
+    height: 4000,
+    width: 8256,
+    x: 0,
+    y: 0,
+  });
+
+  const dimensions = renderer.getPreviewCacheDimensions({
+    camera: { x: -2500, y: 0, zoom: 0.5 },
+    dpr: 1,
+    viewportHeight: 800,
+    viewportWidth: 1000,
+  });
+
+  assert.equal(dimensions.scopeInfo.mode, "visible-artboard");
+  assert.equal(dimensions.documentRect.x, 4256);
+  assert.equal(dimensions.documentRect.y, 0);
+  assert.equal(dimensions.documentRect.width, 4000);
+  assert.equal(dimensions.documentRect.height, 4000);
+  assert.equal(dimensions.width, 2048);
+  assert.equal(dimensions.height, 2048);
+});
+
+test("preview cache exact rect follows the allocated texture scale", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = { previewCacheMaxSize: 2048 };
+  renderer.width = 10000;
+  renderer.height = 3000;
+  renderer.previewCacheDocumentRect = { x: 10, y: 20, width: 10000, height: 3000 };
+  renderer.previewCacheWidth = 2048;
+  renderer.previewCacheHeight = 614;
+  renderer.previewCacheScale = 614 / 3000;
+
+  const exactRect = renderer.getPreviewCacheExactDocumentRect();
+
+  assert.equal(exactRect.x, 10);
+  assert.equal(exactRect.y, 20);
+  assert.equal(exactRect.height, 3000);
+  assert.equal(exactRect.width, 2048 / (614 / 3000));
+});
+
 test("document renderer uses a procedural background texture", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),
@@ -3371,16 +3438,323 @@ test("document renderer uses a procedural background texture", () => {
   assert.match(source, /bbox: \{\s*x: 0,\s*y: 0,\s*width: this\.width,\s*height: this\.height,\s*\}/);
   assert.match(source, /getArtboardBackgroundRenderRects\(\)/);
   assert.match(source, /namespace\.getDocumentArtboards\?\.\(\)/);
-  assert.match(source, /getProceduralBackgroundRenderResults\(layer, layerTarget\)/);
+  assert.match(source, /getProceduralBackgroundRenderResults\(layer, layerTarget, options = \{\}\)/);
   assert.match(source, /const layerArtboardId = String\(layer\?\.artboardId \|\| ""\)\.trim\(\)/);
+  assert.match(source, /const visibleRects = \[\]/);
+  assert.match(source, /cullingStats\.artboardBackgrounds\.skippedOutsideRenderRect/);
   assert.match(source, /this\.isProceduralBackgroundLayerTarget\(layer, layerTarget\)/);
   assert.match(source, /return this\.rasterTargetsByLayerId\.get\("background"\) \|\| layerTarget/);
   assert.match(source, /getPreviewCacheDocumentRect\(\)/);
   assert.match(source, /this\.getDocumentBoundsRect\?\.\(\)/);
-  assert.match(source, /for \(const renderResult of this\.getLayerRenderResults\(layer, renderTarget\)\)/);
+  assert.match(source, /for \(const renderResult of this\.getLayerRenderResults\(layer, renderTarget, viewportLayerRenderOptions\)\)/);
   assert.match(source, /createBaseLayerTarget\(\) \{\s*const backgroundTarget = this\.createProceduralBackgroundTarget\(\)/);
   assert.doesNotMatch(source, /createBaseLayerTarget\(\) \{[\s\S]*?const target = this\.createRasterTarget\(\[0, 0, 0, 0\]\)/);
   assert.doesNotMatch(source, /const backgroundTarget = this\.createRasterTarget\(\[1, 1, 1, 1\]\)/);
+});
+
+test("document renderer resolves viewport render rects from camera and overscan", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  window.devicePixelRatio = 2;
+
+  const visibleRect = renderer.resolveCanvasVisibleDocRect(
+    { x: -200, y: -100, zoom: 2 },
+    1000,
+    800,
+  );
+
+  assert.equal(visibleRect.x, 100);
+  assert.equal(visibleRect.y, 50);
+  assert.equal(visibleRect.width, 500);
+  assert.equal(visibleRect.height, 400);
+
+  const renderRect = renderer.getViewportRenderRect(
+    { x: -200, y: -100, zoom: 2 },
+    1000,
+    800,
+    64,
+  );
+
+  assert.equal(renderRect.x, 36);
+  assert.equal(renderRect.y, -14);
+  assert.equal(renderRect.width, 628);
+  assert.equal(renderRect.height, 528);
+});
+
+test("document renderer culls sparse tiles outside the viewport render rect", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.getLayerRenderResult = (_layer, target) => ({
+    height: target.height,
+    rect: renderer.getRasterTargetDocumentRect(target),
+    texture: target.texture,
+    width: target.width,
+  });
+
+  const sparseTarget = {
+    sparse: true,
+    tiles: new Map([
+      ["0:0", { texture: {}, x: 0, y: 0, width: 256, height: 256, tx: 0, ty: 0 }],
+      ["1:0", { texture: {}, x: 256, y: 0, width: 256, height: 256, tx: 1, ty: 0 }],
+      ["10:0", { texture: {}, x: 2560, y: 0, width: 256, height: 256, tx: 10, ty: 0 }],
+    ]),
+  };
+
+  const culledResults = renderer.getLayerRenderResults(
+    { id: "paint-1", visible: true },
+    sparseTarget,
+    {
+      cullSparseTiles: true,
+      renderRect: { x: -32, y: -32, width: 640, height: 640 },
+    },
+  );
+
+  assert.equal(culledResults.length, 2);
+  assert.equal(culledResults[0].rect.x, 0);
+  assert.equal(culledResults[1].rect.x, 256);
+
+  const unculledResults = renderer.getLayerRenderResults(
+    { id: "paint-1", visible: true },
+    sparseTarget,
+    {
+      cullSparseTiles: false,
+      renderRect: { x: -32, y: -32, width: 640, height: 640 },
+    },
+  );
+
+  assert.equal(unculledResults.length, 3);
+});
+
+test("document renderer culls procedural artboard backgrounds outside the viewport render rect", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 6000;
+  renderer.height = 1000;
+  renderer.options = { cssArtboardPaper: false };
+  renderer.getArtboardBackgroundRenderRects = () => [
+    { x: 0, y: 0, width: 500, height: 500 },
+    { x: 5000, y: 0, width: 500, height: 500 },
+  ];
+
+  const results = renderer.getLayerRenderResults(
+    { id: "background", type: "background", visible: true },
+    { texture: {}, procedural: true, layerId: "background" },
+    { renderRect: { x: -100, y: -100, width: 900, height: 900 } },
+  );
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].rect.x, 0);
+});
+
+test("document renderer keeps viewport culling conservative for risky layer states", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+  const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
+  const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
+
+  assert.match(source, /const VIEWPORT_RENDER_OVERSCAN_CSS_PX = 256/);
+  assert.match(source, /resolveCanvasVisibleDocRect\(camera = \{\}, viewportWidth = 1, viewportHeight = 1\)/);
+  assert.match(source, /getViewportRenderRect\(camera = \{\}, viewportWidth = 1, viewportHeight = 1, overscanCssPx = VIEWPORT_RENDER_OVERSCAN_CSS_PX\)/);
+  assert.match(drawToCanvasBody, /const staticViewportRenderRect = hasArtboardDragPreview \? null : viewportRenderRect/);
+  assert.match(drawToCanvasBody, /const canCullSparseTilesForViewport = Boolean\([\s\S]*?!isClippingLayer[\s\S]*?!isActiveStrokeLayer[\s\S]*?!isRasterTransformPreviewLayer[\s\S]*?!isVectorTextTransformPreviewLayer[\s\S]*?!eraserMaskTexture[\s\S]*?!rasterTransformPreview[\s\S]*?!vectorTextTransformPreviewLayerId[\s\S]*?!this\.hasAdvancedLayerBlendMode\(layer\)[\s\S]*?!this\.hasEnabledLayerEffects\(layer\)[\s\S]*?!this\.hasPuppetLayerTransform\(layer\)/);
+  assert.match(drawToCanvasBody, /getLayerRenderResults\(layer, renderTarget, viewportLayerRenderOptions\)/);
+  assert.match(drawToCanvasBody, /getLayerRenderResults\(layer, layerTarget, viewportLayerRenderOptions\)/);
+  assert.match(previewCacheBody, /getLayerRenderResults\(layer, layerTarget\)/);
+  assert.doesNotMatch(previewCacheBody, /viewportLayerRenderOptions/);
+});
+
+test("document renderer records viewport culling metrics and exposes last stats", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.options = {};
+  renderer.getArtboardDragOffsetForLayer = () => null;
+  renderer.getLayerRenderResult = (_layer, target) => ({
+    rect: renderer.getRasterTargetDocumentRect(target),
+    texture: target.texture,
+  });
+
+  const stats = renderer.createViewportCullingStats({
+    camera: { x: -100, y: -50, zoom: 2 },
+    debug: true,
+    layerCullingEnabled: false,
+    layerCullingMeasured: true,
+    overscanCssPx: 256,
+    renderRect: { x: 0, y: 0, width: 640, height: 640 },
+    viewportHeight: 800,
+    viewportWidth: 1000,
+    visibleRect: { x: 50, y: 25, width: 500, height: 400 },
+  });
+
+  const sparseTarget = {
+    sparse: true,
+    tiles: new Map([
+      ["0:0", { texture: {}, x: 0, y: 0, width: 256, height: 256, tx: 0, ty: 0 }],
+      ["1:0", { texture: {}, x: 256, y: 0, width: 256, height: 256, tx: 1, ty: 0 }],
+      ["10:0", { texture: {}, x: 2560, y: 0, width: 256, height: 256, tx: 10, ty: 0 }],
+      ["11:0", { texture: null, x: 2816, y: 0, width: 256, height: 256, tx: 11, ty: 0 }],
+    ]),
+  };
+
+  const sparseResults = renderer.getLayerRenderResults(
+    { id: "paint-1", type: "paint", visible: true },
+    sparseTarget,
+    {
+      cullSparseTiles: true,
+      cullingStats: stats,
+      renderRect: { x: -32, y: -32, width: 640, height: 640 },
+    },
+  );
+
+  assert.equal(sparseResults.length, 2);
+  assert.equal(stats.sparseTiles.tested, 4);
+  assert.equal(stats.sparseTiles.drawn, 2);
+  assert.equal(stats.sparseTiles.skippedOutsideRenderRect, 1);
+  assert.equal(stats.sparseTiles.missingTexture, 1);
+  assert.equal(stats.renderResults.returned, 2);
+
+  let debugEventDetail = null;
+  window.dispatchEvent = (event) => {
+    if (event?.type === "cbo:viewport-culling-debug") {
+      debugEventDetail = event.detail;
+    }
+  };
+
+  const finalized = renderer.finalizeViewportCullingStats(stats);
+
+  assert.ok(finalized.durationMs >= 0);
+  assert.equal(renderer.getLastViewportCullingStats().frameId, finalized.frameId);
+  assert.equal(window.CBO.lastViewportCullingStats.frameId, finalized.frameId);
+  assert.equal(debugEventDetail.frameId, finalized.frameId);
+
+  renderer.setViewportCullingDebug(true);
+  renderer.setViewportLayerCulling(true);
+
+  assert.equal(renderer.options.debugViewportCulling, true);
+  assert.equal(renderer.options.enableViewportLayerCulling, true);
+});
+
+test("document renderer audits conservative viewport layer culling decisions", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.width = 4000;
+  renderer.height = 4000;
+  renderer.options = {};
+  renderer.getArtboardDragOffsetForLayer = () => null;
+  renderer.hasAdvancedLayerBlendMode = (layer) => Boolean(layer?.blendMode && layer.blendMode !== "normal");
+  renderer.hasEnabledLayerEffects = (layer) => Array.isArray(layer?.effects) && layer.effects.length > 0;
+  renderer.hasPuppetLayerTransform = (layer) => Boolean(layer?.puppet);
+
+  const cullContext = {
+    clipBaseLayerIds: new Set(),
+    renderRect: { x: 0, y: 0, width: 500, height: 500 },
+  };
+  const outsideDecision = renderer.getViewportLayerCullDecision(
+    { id: "paint-out", type: "paint", visible: true },
+    { texture: {}, x: 2000, y: 0, width: 100, height: 100, cropped: true },
+    cullContext,
+  );
+  const insideDecision = renderer.getViewportLayerCullDecision(
+    { id: "image-in", type: "image", visible: true },
+    { texture: {}, x: 100, y: 100, width: 100, height: 100, cropped: true },
+    cullContext,
+  );
+  const effectDecision = renderer.getViewportLayerCullDecision(
+    { id: "paint-effect", type: "paint", visible: true, effects: [{ type: "gaussian-blur" }] },
+    { texture: {}, x: 2000, y: 0, width: 100, height: 100, cropped: true },
+    cullContext,
+  );
+  const clippingDecision = renderer.getViewportLayerCullDecision(
+    { id: "paint-clip", type: "paint", visible: true, clippingMask: true },
+    { texture: {}, x: 2000, y: 0, width: 100, height: 100, cropped: true },
+    cullContext,
+  );
+  const backgroundDecision = renderer.getViewportLayerCullDecision(
+    { id: "background", type: "background", visible: true },
+    { texture: {}, x: 2000, y: 0, width: 100, height: 100, cropped: true },
+    cullContext,
+  );
+  const stats = renderer.createViewportCullingStats({
+    layerCullingEnabled: true,
+    layerCullingMeasured: true,
+    renderRect: cullContext.renderRect,
+  });
+
+  assert.equal(outsideDecision.canCull, true);
+  assert.equal(outsideDecision.shouldCull, true);
+  assert.equal(insideDecision.canCull, true);
+  assert.equal(insideDecision.shouldCull, false);
+  assert.equal(effectDecision.reason, "effects");
+  assert.equal(clippingDecision.reason, "clippingMask");
+  assert.equal(backgroundDecision.reason, "background");
+
+  renderer.recordViewportLayerCullDecision(stats, outsideDecision, true);
+  renderer.recordViewportLayerCullDecision(stats, insideDecision, false);
+  renderer.recordViewportLayerCullDecision(stats, effectDecision, false);
+  renderer.recordViewportLayerCullDecision(stats, clippingDecision, false);
+
+  assert.equal(stats.layers.safeCullCandidates, 2);
+  assert.equal(stats.layers.wouldCullSafely, 1);
+  assert.equal(stats.layers.safelyCulled, 1);
+  assert.equal(stats.layers.blocked.effects, 1);
+  assert.equal(stats.layers.blocked.clippingMask, 1);
+});
+
+test("document renderer wires viewport culling stats without touching preview cache", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "document", "document-renderer.js"),
+    "utf8",
+  );
+  const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
+  const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
+
+  assert.match(source, /const VIEWPORT_CULLING_DEBUG_EVENT = "cbo:viewport-culling-debug"/);
+  assert.match(source, /const VIEWPORT_LAYER_CULL_SAFE_TYPES = new Set\(\["paint", "image", "raster", "bitmap"\]\)/);
+  assert.match(source, /createViewportCullingStats\(options = \{\}\)/);
+  assert.match(source, /finalizeViewportCullingStats\(stats\)/);
+  assert.match(source, /getViewportLayerCullDecision\(layer, layerTarget, context = \{\}\)/);
+  assert.match(source, /setViewportCullingDebug\(enabled = true\)/);
+  assert.match(source, /setViewportLayerCulling\(enabled = true\)/);
+  assert.match(drawToCanvasBody, /const viewportLayerCullingEnabled = this\.isViewportLayerCullingEnabled\(options\)/);
+  assert.match(drawToCanvasBody, /const viewportLayerCullingMeasured = this\.isViewportLayerCullingAuditEnabled\(options\)/);
+  assert.match(drawToCanvasBody, /this\.recordViewportLayerCullDecision\(viewportCullingStats, layerCullDecision, shouldCullLayer\)/);
+  assert.match(drawToCanvasBody, /if \(shouldCullLayer\) \{\s*continue;\s*\}/);
+  assert.match(drawToCanvasBody, /this\.finalizeViewportCullingStats\(viewportCullingStats\)/);
+  assert.doesNotMatch(previewCacheBody, /viewportCullingStats/);
+  assert.doesNotMatch(previewCacheBody, /enableViewportLayerCulling/);
+});
+
+test("document renderer infers artboard clipping from layer model group membership", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {};
+  renderer.layerModel = {
+    findEntryArtboardId: (layerId) => (layerId === "paint-nested" ? "artboard-3" : null),
+  };
+  window.CBO.getDocumentArtboardRect = (artboardId) => (
+    artboardId === "artboard-3"
+      ? { x: 1200, y: 400, width: 3400, height: 4000 }
+      : null
+  );
+
+  const inferredRect = renderer.getLayerArtboardRect({ id: "paint-nested", type: "paint" });
+
+  assert.equal(inferredRect.x, 1200);
+  assert.equal(inferredRect.y, 400);
+  assert.equal(inferredRect.width, 3400);
+  assert.equal(inferredRect.height, 4000);
+  assert.equal(renderer.getLayerArtboardRect({ id: "paint-loose", type: "paint" }), null);
 });
 
 test("createPaintTarget forwards layer metadata before resource tracing", () => {
@@ -3417,7 +3791,7 @@ test("document renderer composites supported layer blend modes in shader", () =>
     path.join(repoRoot, "js", "document", "document-renderer.js"),
     "utf8",
   );
-  const previewCacheBody = source.match(/updatePreviewCache\(\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
+  const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
   const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
 
   assert.match(source, /LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE/);
@@ -3445,7 +3819,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
     path.join(repoRoot, "js", "document", "document-renderer.js"),
     "utf8",
   );
-  const previewCacheBody = source.match(/updatePreviewCache\(\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
+  const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
 
   assert.match(source, /GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /MOTION_BLUR_FRAGMENT_SHADER_SOURCE/);

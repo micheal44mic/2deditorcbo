@@ -255,7 +255,8 @@ test("document artboard model owns artboard records and persistence hooks", () =
   assert.match(rendererSource, /getLayerArtboardVisualRect\(layer\)/);
   assert.match(rendererSource, /const withLayerArtboardClip = \(layer, callback\) =>/);
   assert.match(rendererSource, /const artboardScissor = getViewportScissorForDocumentRect\(artboardRect\)/);
-  assert.match(rendererSource, /!this\.hasArtboardDragPreview\(\)/);
+  assert.match(rendererSource, /const hasArtboardDragPreview = this\.hasArtboardDragPreview\(\)/);
+  assert.match(rendererSource, /!hasArtboardDragPreview/);
   assert.match(rendererSource, /translateRasterTargetsByLayerIds\(layerIds = \[\], dx = 0, dy = 0/);
 
   const layerModelSource = readRepoFile("js", "document", "document-layer-model.js");
