@@ -123,6 +123,95 @@ function updateEditorZoomIndicator(indicator, camera = {}) {
   indicator.title = `Zoom ${label}`;
 }
 
+function getPrimaryDocumentArtboardId() {
+  const artboards = typeof window !== "undefined"
+    ? window.CBO?.getDocumentArtboards?.() || []
+    : [];
+  const primaryArtboard = artboards.find((artboard) => artboard?.isPrimary === true) || artboards[0] || null;
+
+  return String(primaryArtboard?.id || "active-document").trim() || "active-document";
+}
+
+function resolveUploadedImageArtboardId(layerModel) {
+  const activeEntry = layerModel?.findEntryById?.(layerModel.activeLayerId) || null;
+  const resolvedArtboardId = String(
+    layerModel?.resolveInsertionArtboardId?.(activeEntry) ||
+    window.CBO?.getActiveDocumentArtboardId?.({ layerId: activeEntry?.id }) ||
+    "",
+  ).trim();
+  const knownArtboards = window.CBO?.getDocumentArtboards?.() || [];
+
+  return knownArtboards.some((artboard) => artboard?.id === resolvedArtboardId)
+    ? resolvedArtboardId
+    : getPrimaryDocumentArtboardId();
+}
+
+function ensureUploadArtboardGroups(layerModel) {
+  const artboards = window.CBO?.getDocumentArtboards?.() || [];
+
+  if (Array.isArray(artboards) && artboards.length > 0) {
+    layerModel?.ensureArtboardGroups?.(artboards, {
+      history: false,
+      source: "image-upload-artboard-groups",
+    });
+  }
+}
+
+function getEntryArtboardGroupId(entry, layerModel) {
+  return String(
+    layerModel?.getArtboardIdFromGroup?.(entry) ||
+    entry?.artboardId ||
+    "",
+  ).trim();
+}
+
+function insertLayerAtTopOfArtboardEntries(entries, artboardId, layer, layerModel) {
+  const normalizedArtboardId = String(artboardId || "").trim();
+
+  if (!normalizedArtboardId || !Array.isArray(entries) || !layer) {
+    return false;
+  }
+
+  for (const entry of entries) {
+    if (
+      entry?.type === "group" &&
+      entry.artboardGroup === true &&
+      getEntryArtboardGroupId(entry, layerModel) === normalizedArtboardId
+    ) {
+      entry.children = Array.isArray(entry.children) ? entry.children : [];
+      entry.children.unshift(layer);
+      return true;
+    }
+
+    if (insertLayerAtTopOfArtboardEntries(entry?.children || [], normalizedArtboardId, layer, layerModel)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function removeLayerFromEntriesById(entries, layerId) {
+  const normalizedLayerId = String(layerId || "").trim();
+
+  if (!normalizedLayerId || !Array.isArray(entries)) {
+    return Array.isArray(entries) ? entries : [];
+  }
+
+  return entries
+    .filter((entry) => entry?.id !== normalizedLayerId)
+    .map((entry) => {
+      if (entry?.type !== "group") {
+        return entry;
+      }
+
+      return {
+        ...entry,
+        children: removeLayerFromEntriesById(entry.children || [], normalizedLayerId),
+      };
+    });
+}
+
 function createEditorZoomIndicator(camera = {}) {
   const indicator = document.createElement("output");
 
@@ -301,17 +390,29 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
     return;
   }
 
+  ensureUploadArtboardGroups(layerModel);
+  const uploadArtboardId = resolveUploadedImageArtboardId(layerModel);
   const imageLayer = layerModel.createLayer({
+    artboardId: uploadArtboardId,
     name: detail.name || "Image",
     type: "image",
   });
   const entries = layerModel.getEntries();
+  const didInsertInArtboard = insertLayerAtTopOfArtboardEntries(
+    entries,
+    uploadArtboardId,
+    imageLayer,
+    layerModel,
+  );
+  const nextEntries = didInsertInArtboard ? entries : [imageLayer, ...entries];
 
-  layerModel.setEntries([imageLayer, ...entries], { source: "image-upload" });
-  layerModel.setActiveLayer(imageLayer.id, { source: "image-upload" });
+  layerModel.setEntries(nextEntries, { activeLayerId: imageLayer.id, source: "image-upload" });
 
   try {
-    const placement = await rasterizer.placeBlob(detail.blob, { layerId: imageLayer.id });
+    const placement = await rasterizer.placeBlob(detail.blob, {
+      artboardId: uploadArtboardId,
+      layerId: imageLayer.id,
+    });
 
     if (placement?.destinationRect && layerModel.updateLayer) {
       layerModel.updateLayer(imageLayer.id, {
@@ -328,7 +429,7 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
       });
     }
   } catch (error) {
-    const remainingEntries = layerModel.getEntries().filter((entry) => entry.id !== imageLayer.id);
+    const remainingEntries = removeLayerFromEntriesById(layerModel.getEntries(), imageLayer.id);
 
     layerModel.setEntries(remainingEntries, { source: "image-upload-error" });
     console.warn("Impossibile inserire l'immagine caricata nel canvas.", error);
@@ -502,18 +603,27 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
 
         const sourceWidth = Math.max(1, Math.round(options.sourceWidth || 1));
         const sourceHeight = Math.max(1, Math.round(options.sourceHeight || 1));
-        const documentWidth = Math.max(1, Math.round(renderer.width || 1));
-        const documentHeight = Math.max(1, Math.round(renderer.height || 1));
+        const artboardRect = window.CBO.getActiveDocumentArtboardRect?.({
+          artboardId: options.artboardId,
+          layerId: options.layerId,
+        }) || {
+          height: Math.max(1, Math.round(renderer.height || 1)),
+          width: Math.max(1, Math.round(renderer.width || 1)),
+          x: 0,
+          y: 0,
+        };
+        const documentWidth = Math.max(1, Math.round(artboardRect.width || 1));
+        const documentHeight = Math.max(1, Math.round(artboardRect.height || 1));
         const fitScale = Math.min(1, documentWidth / sourceWidth, documentHeight / sourceHeight);
         const drawWidth = Math.max(1, Math.min(documentWidth, Math.floor(sourceWidth * fitScale)));
         const drawHeight = Math.max(1, Math.min(documentHeight, Math.floor(sourceHeight * fitScale)));
         const rect = renderer.getClampedDocumentRect?.({
-          x: Math.round((documentWidth - drawWidth) * 0.5),
-          y: Math.round((documentHeight - drawHeight) * 0.5),
+          x: Math.round(artboardRect.x + (documentWidth - drawWidth) * 0.5),
+          y: Math.round(artboardRect.y + (documentHeight - drawHeight) * 0.5),
           width: drawWidth,
           height: drawHeight,
         });
-        const target = rect ? renderer.createRasterTargetForRect(rect, [0, 0, 0, 0], 2) : null;
+        const target = rect ? renderer.createRasterTargetForRect(rect, [0, 0, 0, 0]) : null;
 
         if (!target) {
           return null;

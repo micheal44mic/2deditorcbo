@@ -293,6 +293,8 @@ test("desktop text tool creates text when the tool is activated", () => {
 
   assert.match(topToolbarSource, /function isMobileTextToolbarViewport\(\) \{[\s\S]*"\(max-width: 900px\)"/);
   assert.match(topToolbarSource, /function getTextCreationCenter\(\)/);
+  assert.match(topToolbarSource, /const artboardRect = window\.CBO\.getActiveDocumentArtboardRect\?\.\(\)/);
+  assert.match(topToolbarSource, /x: artboardRect\.x \+ Math\.max\(1, artboardRect\.width\) \/ 2/);
   assert.match(topToolbarSource, /const renderer = window\.CBO\.documentRenderer;[\s\S]*x: Math\.max\(1, renderer\.width\) \/ 2,[\s\S]*y: Math\.max\(1, renderer\.height\) \/ 2,/);
   assert.doesNotMatch(topToolbarSource, /getTextCreationCenter\(\) \{[\s\S]*getBoundingClientRect/);
   assert.match(topToolbarSource, /if \(isText && !isMobileTextToolbarViewport\(\)\) \{[\s\S]*window\.CBO\.createVectorTextLayer\?\.\(/);
@@ -321,7 +323,10 @@ test("mobile text tool exposes ADD TEXT as the layer creation action", () => {
   assert.match(toolbarSource, /function isTextToolButton\(button\)/);
   assert.match(toolbarSource, /if \(isTextToolButton\(button\)\) \{\s*setMobileTransformToolsOpen\(false\);/);
   assert.match(vectorRendererSource, /const \{ centerAt, \.\.\.layerSeed \} = options;/);
-  assert.match(vectorRendererSource, /getFinitePoint\(centerAt\) \|\| getCenteredDocumentPoint\(\)/);
+  assert.match(vectorRendererSource, /const targetArtboardId = resolveVectorTextArtboardId\(layerModel, activeLayer\)/);
+  assert.match(vectorRendererSource, /getFinitePoint\(centerAt\) \|\| getCenteredDocumentPoint\(\{\s*artboardId: targetArtboardId,\s*layerId: activeLayer\?\.id,/);
+  assert.match(vectorRendererSource, /artboardId: targetArtboardId/);
+  assert.match(vectorRendererSource, /insertEntryAtTopOfArtboard\(entries, targetArtboardId, layer, layerModel\)/);
   assert.match(appSource, /"\.text-add-toolbar"/);
   assert.match(appSource, /"\.mobile-text-panel"/);
 });

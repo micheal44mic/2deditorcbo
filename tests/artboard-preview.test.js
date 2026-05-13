@@ -111,6 +111,7 @@ test("selection tool highlights the clicked artboard and its layer group only", 
   assert.match(layersSource, /function applyArtboardGroupActivationById\(groupId, options = \{\}\)/);
   assert.match(layersSource, /function deleteSelectedArtboardGroup\(\)/);
   assert.match(layersSource, /row\.classList\.toggle\("artboard-active", isActiveArtboard\)/);
+  assert.match(layersSource, /: getArtboardLayerGroupId\("active-document"\)/);
   assert.match(layersSource, /window\.addEventListener\("cbo:artboard-selection-change", handleArtboardSelectionChange\)/);
   assert.match(layersSource, /window\.CBO\.selectPreviewArtboard\?\.\(artboardId/);
   assert.match(layersSource, /window\.CBO\.clearPreviewArtboardSelection\?\.\(/);

@@ -642,6 +642,61 @@ test("ensureActivePaintLayer inserts new paint into the selected artboard group"
   assert.equal(history.undoStack.length, 1);
 });
 
+test("moveLayerToArtboard transfers a layer into the target artboard group", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory();
+  const model = new DocumentLayerModel();
+  const paintLayer = model.createLayer({
+    id: "transfer-paint",
+    name: "Transfer Paint",
+    type: "paint",
+  });
+
+  window.CBO.documentHistory = history;
+  model.setEntries([
+    {
+      artboardGroup: true,
+      artboardId: "active-document",
+      children: [paintLayer],
+      id: "artboard-group-active-document",
+      name: "Artboard 1",
+      type: "group",
+    },
+    {
+      artboardGroup: true,
+      artboardId: "secondary",
+      children: [],
+      id: "artboard-group-secondary",
+      name: "Artboard 2",
+      type: "group",
+    },
+  ], { history: false, source: "seed" });
+  model.setActiveLayer(paintLayer.id, { history: false, source: "seed" });
+
+  assert.equal(model.moveLayerToArtboard(paintLayer.id, "secondary", {
+    source: "unit-layer-artboard-transfer",
+  }), true);
+  await waitForHistoryFlush();
+
+  let entries = model.getEntries();
+  let primaryGroup = entries.find((entry) => entry.artboardId === "active-document");
+  let secondaryGroup = entries.find((entry) => entry.artboardId === "secondary");
+
+  assert.equal(primaryGroup.children.some((entry) => entry.id === paintLayer.id), false);
+  assert.equal(secondaryGroup.children[0].id, paintLayer.id);
+  assert.equal(model.findEntryArtboardId(paintLayer.id), "secondary");
+  assert.equal(model.activeLayerId, paintLayer.id);
+  assert.equal(history.undoStack.length, 1);
+
+  assert.equal(history.undo(), true);
+  entries = model.getEntries();
+  primaryGroup = entries.find((entry) => entry.artboardId === "active-document");
+  secondaryGroup = entries.find((entry) => entry.artboardId === "secondary");
+
+  assert.equal(primaryGroup.children.some((entry) => entry.id === paintLayer.id), true);
+  assert.equal(secondaryGroup.children.some((entry) => entry.id === paintLayer.id), false);
+});
+
 test("ensureArtboardGroups owns loose layers and flattened layers keep artboard ids", () => {
   const { DocumentLayerModel } = loadDocumentModules();
   const model = new DocumentLayerModel();

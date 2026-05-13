@@ -141,6 +141,60 @@
     entries.splice(index, 0, entry);
   }
 
+  function getPrimaryArtboardId() {
+    const artboards = namespace.getDocumentArtboards?.() || [];
+    const primaryArtboard = artboards.find((artboard) => artboard?.isPrimary === true) || artboards[0] || null;
+
+    return String(primaryArtboard?.id || "active-document").trim() || "active-document";
+  }
+
+  function resolveVectorTextArtboardId(layerModel, activeLayer) {
+    const resolvedArtboardId = String(
+      layerModel?.resolveInsertionArtboardId?.(activeLayer) ||
+      namespace.getActiveDocumentArtboardId?.({ layerId: activeLayer?.id }) ||
+      "",
+    ).trim();
+    const artboards = namespace.getDocumentArtboards?.() || [];
+
+    return artboards.some((artboard) => artboard?.id === resolvedArtboardId)
+      ? resolvedArtboardId
+      : getPrimaryArtboardId();
+  }
+
+  function getEntryArtboardGroupId(entry, layerModel) {
+    return String(
+      layerModel?.getArtboardIdFromGroup?.(entry) ||
+      entry?.artboardId ||
+      "",
+    ).trim();
+  }
+
+  function insertEntryAtTopOfArtboard(entries, artboardId, entry, layerModel) {
+    const normalizedArtboardId = String(artboardId || "").trim();
+
+    if (!normalizedArtboardId || !Array.isArray(entries) || !entry) {
+      return false;
+    }
+
+    for (const candidate of entries) {
+      if (
+        candidate?.type === "group" &&
+        candidate.artboardGroup === true &&
+        getEntryArtboardGroupId(candidate, layerModel) === normalizedArtboardId
+      ) {
+        candidate.children = Array.isArray(candidate.children) ? candidate.children : [];
+        candidate.children.unshift(entry);
+        return true;
+      }
+
+      if (insertEntryAtTopOfArtboard(candidate?.children || [], normalizedArtboardId, entry, layerModel)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function toFiniteNumber(value, fallback) {
     return Number.isFinite(value) ? value : fallback;
   }
@@ -760,7 +814,19 @@
     };
   }
 
-  function getCenteredDocumentPoint() {
+  function getCenteredDocumentPoint(options = {}) {
+    const artboardRect = namespace.getActiveDocumentArtboardRect?.({
+      artboardId: options.artboardId,
+      layerId: options.layerId,
+    });
+
+    if (artboardRect) {
+      return {
+        x: artboardRect.x + Math.max(1, artboardRect.width) / 2,
+        y: artboardRect.y + Math.max(1, artboardRect.height) / 2,
+      };
+    }
+
     const renderer = namespace.documentRenderer;
 
     if (renderer && Number.isFinite(renderer.width) && Number.isFinite(renderer.height)) {
@@ -871,21 +937,34 @@
 
     namespace.documentLayerModel = layerModel;
 
-    const centeredPoint = getFinitePoint(centerAt) || getCenteredDocumentPoint();
+    const entries = layerModel.getEntries();
+    const activeLayer = findEntryById(entries, layerModel.activeLayerId);
+    const targetArtboardId = resolveVectorTextArtboardId(layerModel, activeLayer);
+    const centeredPoint = getFinitePoint(centerAt) || getCenteredDocumentPoint({
+      artboardId: targetArtboardId,
+      layerId: activeLayer?.id,
+    });
     const shouldCenterVisually = !Number.isFinite(layerSeed.x) && !Number.isFinite(layerSeed.y);
     const layer = layerModel.createLayer({
       ...layerSeed,
+      artboardId: targetArtboardId,
       type: TEXT_LAYER_TYPE,
       x: Number.isFinite(layerSeed.x) ? layerSeed.x : centeredPoint.x,
       y: Number.isFinite(layerSeed.y) ? layerSeed.y : centeredPoint.y,
     });
-    const entries = layerModel.getEntries();
-    const activeLayer = findEntryById(entries, layerModel.activeLayerId);
-    const didInsert = activeLayer?.type !== "background"
+    const activeLayerArtboardId = activeLayer?.id
+      ? layerModel.findEntryArtboardId?.(activeLayer.id)
+      : "";
+    let didInsert = activeLayer?.type !== "background" &&
+      (!targetArtboardId || activeLayerArtboardId === targetArtboardId)
       ? insertEntryAbove(entries, activeLayer?.id, layer)
       : false;
     const historyGroup = `vector-text-create-${layer.id}`;
     let shouldEndCreateGroup = true;
+
+    if (!didInsert && targetArtboardId) {
+      didInsert = insertEntryAtTopOfArtboard(entries, targetArtboardId, layer, layerModel);
+    }
 
     if (!didInsert) {
       insertAboveBackground(entries, layer);

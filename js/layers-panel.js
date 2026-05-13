@@ -564,7 +564,9 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       window.CBO.getSelectedPreviewArtboardId?.() ||
       "";
 
-    return selectedArtboardId ? getArtboardLayerGroupId(selectedArtboardId) : "";
+    return selectedArtboardId
+      ? getArtboardLayerGroupId(selectedArtboardId)
+      : getArtboardLayerGroupId("active-document");
   }
 
   function getCurrentArtboardLayerEntry() {

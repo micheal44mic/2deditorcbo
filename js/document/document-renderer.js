@@ -10,6 +10,7 @@
   const PREVIEW_DIRTY_DEBUG_EVENT = "cbo:preview-dirty-region-debug";
   const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
   const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
+  const RASTER_TRANSFORM_ARTBOARD_TRANSFER_MIN_RATIO = 0.4;
   const RASTER_WARP_MESH_COLS = 64;
   const RASTER_WARP_MESH_ROWS = 64;
   const RASTER_MIB = 1024 * 1024;
@@ -10627,6 +10628,256 @@ void main() {
       return value;
     }
 
+    normalizeTransformArtboardRect(rect) {
+      if (!rect) {
+        return null;
+      }
+
+      const x = Number(rect.x);
+      const y = Number(rect.y);
+      const width = Number(rect.width);
+      const height = Number(rect.height);
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !Number.isFinite(width) ||
+        !Number.isFinite(height) ||
+        width <= 0 ||
+        height <= 0
+      ) {
+        return null;
+      }
+
+      return {
+        height,
+        width,
+        x,
+        y,
+      };
+    }
+
+    getRectIntersectionArea(a, b) {
+      const first = this.normalizeTransformArtboardRect(a);
+      const second = this.normalizeTransformArtboardRect(b);
+
+      if (!first || !second) {
+        return 0;
+      }
+
+      const x0 = Math.max(first.x, second.x);
+      const y0 = Math.max(first.y, second.y);
+      const x1 = Math.min(first.x + first.width, second.x + second.width);
+      const y1 = Math.min(first.y + first.height, second.y + second.height);
+
+      return x1 > x0 && y1 > y0 ? (x1 - x0) * (y1 - y0) : 0;
+    }
+
+    getPolygonArea(points = []) {
+      if (!Array.isArray(points) || points.length < 3) {
+        return 0;
+      }
+
+      let area = 0;
+
+      for (let index = 0; index < points.length; index += 1) {
+        const current = points[index];
+        const next = points[(index + 1) % points.length];
+
+        area += (Number(current?.x) || 0) * (Number(next?.y) || 0);
+        area -= (Number(next?.x) || 0) * (Number(current?.y) || 0);
+      }
+
+      return Math.abs(area) * 0.5;
+    }
+
+    clipPolygonToRect(points = [], rect = null) {
+      const clipRect = this.normalizeTransformArtboardRect(rect);
+
+      if (!clipRect || !Array.isArray(points) || points.length < 3) {
+        return [];
+      }
+
+      const boundaries = [
+        {
+          inside: (point) => point.x >= clipRect.x,
+          intersect: (start, end) => {
+            const t = (clipRect.x - start.x) / ((end.x - start.x) || 1);
+            return { x: clipRect.x, y: start.y + (end.y - start.y) * t };
+          },
+        },
+        {
+          inside: (point) => point.x <= clipRect.x + clipRect.width,
+          intersect: (start, end) => {
+            const x = clipRect.x + clipRect.width;
+            const t = (x - start.x) / ((end.x - start.x) || 1);
+            return { x, y: start.y + (end.y - start.y) * t };
+          },
+        },
+        {
+          inside: (point) => point.y >= clipRect.y,
+          intersect: (start, end) => {
+            const t = (clipRect.y - start.y) / ((end.y - start.y) || 1);
+            return { x: start.x + (end.x - start.x) * t, y: clipRect.y };
+          },
+        },
+        {
+          inside: (point) => point.y <= clipRect.y + clipRect.height,
+          intersect: (start, end) => {
+            const y = clipRect.y + clipRect.height;
+            const t = (y - start.y) / ((end.y - start.y) || 1);
+            return { x: start.x + (end.x - start.x) * t, y };
+          },
+        },
+      ];
+
+      return boundaries.reduce((polygon, boundary) => {
+        if (polygon.length === 0) {
+          return [];
+        }
+
+        const output = [];
+
+        for (let index = 0; index < polygon.length; index += 1) {
+          const current = polygon[index];
+          const previous = polygon[(index + polygon.length - 1) % polygon.length];
+          const currentInside = boundary.inside(current);
+          const previousInside = boundary.inside(previous);
+
+          if (currentInside) {
+            if (!previousInside) {
+              output.push(boundary.intersect(previous, current));
+            }
+
+            output.push(current);
+          } else if (previousInside) {
+            output.push(boundary.intersect(previous, current));
+          }
+        }
+
+        return output;
+      }, points.map((point) => ({
+        x: Number(point?.x) || 0,
+        y: Number(point?.y) || 0,
+      })));
+    }
+
+    getTransformArtboardGeometry(options = {}) {
+      const transformMode = String(options.transformMode || "").trim().toLowerCase();
+      const quad = Array.isArray(options.destQuad)
+        ? options.destQuad
+            .map((point) => ({
+              x: Number(point?.x),
+              y: Number(point?.y),
+            }))
+            .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+        : [];
+
+      if (transformMode !== "warp" && quad.length >= 3) {
+        return {
+          points: quad,
+          type: "polygon",
+        };
+      }
+
+      const rect = this.normalizeTransformArtboardRect(options.destRect);
+
+      return rect
+        ? {
+            rect,
+            type: "rect",
+          }
+        : null;
+    }
+
+    getTransformGeometryArea(geometry) {
+      if (geometry?.type === "polygon") {
+        return this.getPolygonArea(geometry.points);
+      }
+
+      return geometry?.rect
+        ? Math.max(0, geometry.rect.width * geometry.rect.height)
+        : 0;
+    }
+
+    getTransformGeometryArtboardOverlapArea(geometry, artboardRect) {
+      if (geometry?.type === "polygon") {
+        return this.getPolygonArea(this.clipPolygonToRect(geometry.points, artboardRect));
+      }
+
+      return this.getRectIntersectionArea(geometry?.rect, artboardRect);
+    }
+
+    resolveTransformArtboardTransfer(layerId, options = {}) {
+      const layer = this.layerModel?.findEntryById?.(layerId);
+      const currentArtboardId = String(
+        layer?.artboardId ||
+        this.layerModel?.findEntryArtboardId?.(layerId) ||
+        "",
+      ).trim();
+      const artboards = (namespace.getDocumentArtboards?.() || [])
+        .map((artboard) => ({
+          id: String(artboard?.id || "").trim(),
+          rect: this.normalizeTransformArtboardRect(artboard),
+        }))
+        .filter((artboard) => artboard.id && artboard.rect);
+      const geometry = this.getTransformArtboardGeometry(options);
+      const geometryArea = this.getTransformGeometryArea(geometry);
+
+      if (!layer || artboards.length === 0 || geometryArea <= 0) {
+        return null;
+      }
+
+      let best = null;
+      let currentOverlapArea = 0;
+
+      artboards.forEach((artboard) => {
+        const overlapArea = this.getTransformGeometryArtboardOverlapArea(geometry, artboard.rect);
+
+        if (artboard.id === currentArtboardId) {
+          currentOverlapArea = overlapArea;
+        }
+
+        if (!best || overlapArea > best.overlapArea) {
+          best = {
+            artboardId: artboard.id,
+            overlapArea,
+          };
+        }
+      });
+
+      if (
+        !best ||
+        best.artboardId === currentArtboardId ||
+        best.overlapArea <= currentOverlapArea ||
+        best.overlapArea / geometryArea < RASTER_TRANSFORM_ARTBOARD_TRANSFER_MIN_RATIO
+      ) {
+        return null;
+      }
+
+      return {
+        fromArtboardId: currentArtboardId,
+        overlapArea: best.overlapArea,
+        overlapRatio: best.overlapArea / geometryArea,
+        toArtboardId: best.artboardId,
+      };
+    }
+
+    applyTransformArtboardTransfer(layerId, options = {}) {
+      const transfer = this.resolveTransformArtboardTransfer(layerId, options);
+
+      if (!transfer?.toArtboardId) {
+        return null;
+      }
+
+      const didMove = this.layerModel?.moveLayerToArtboard?.(layerId, transfer.toArtboardId, {
+        history: false,
+        source: options.source || "raster-transform-artboard-transfer",
+      });
+
+      return didMove ? transfer : null;
+    }
+
     createRasterEditLayerStateHistoryEntry(baseEntry, options = {}) {
       const {
         afterState,
@@ -10701,30 +10952,45 @@ void main() {
       const source = options.source || entry?.source || "raster-edit";
       const history = namespace.documentHistory;
       const layer = layerId ? this.layerModel?.findEntryById?.(layerId) : null;
+      let didLayerStateChange = false;
 
-      if (layer?.type !== "image" || layer.locked === true) {
+      if (!layer || layer.locked === true) {
         return entry;
       }
 
       history?.flushLayerState?.(this.layerModel);
       const beforeState = history?.getLayerSnapshot?.(this.layerModel) || null;
-      const didRasterize = this.layerModel?.rasterizeImageLayerToPaint?.(layer.id, {
-        history: false,
-        source,
+
+      if (layer.type === "image") {
+        const didRasterize = this.layerModel?.rasterizeImageLayerToPaint?.(layer.id, {
+          history: false,
+          source,
+        });
+
+        if (didRasterize) {
+          didLayerStateChange = true;
+
+          window.dispatchEvent(new CustomEvent("cbo:image-layer-rasterized", {
+            detail: {
+              layerId: layer.id,
+              source,
+            },
+          }));
+        }
+      }
+
+      const transfer = this.applyTransformArtboardTransfer(layer.id, {
+        ...(options.artboardTransfer || {}),
+        source: `${source}-artboard-transfer`,
       });
 
-      if (!didRasterize) {
+      didLayerStateChange = didLayerStateChange || Boolean(transfer);
+
+      if (!didLayerStateChange) {
         return entry;
       }
 
       const afterState = history?.getLayerSnapshot?.(this.layerModel) || null;
-
-      window.dispatchEvent(new CustomEvent("cbo:image-layer-rasterized", {
-        detail: {
-          layerId: layer.id,
-          source,
-        },
-      }));
 
       return this.createRasterEditLayerStateHistoryEntry(entry, {
         afterState,
@@ -10902,7 +11168,15 @@ void main() {
           this.deleteRasterSnapshot(beforeSnapshot);
           this.deleteRasterSnapshot(afterSnapshot);
         },
-      }, { source });
+      }, {
+        artboardTransfer: {
+          destQuad,
+          destRect,
+          transformMode,
+          warpControlPoints,
+        },
+        source,
+      });
 
       if (history?.push) {
         history.push(entry);
@@ -11082,7 +11356,15 @@ void main() {
           return false;
         }
 
-        const entry = this.finalizeRasterEditHistoryEntry(layerId, tileEntry, { source });
+        const entry = this.finalizeRasterEditHistoryEntry(layerId, tileEntry, {
+          artboardTransfer: {
+            destQuad,
+            destRect,
+            transformMode,
+            warpControlPoints,
+          },
+          source,
+        });
         const history = namespace.documentHistory;
 
         if (afterPreferSparse) {
@@ -11177,7 +11459,15 @@ void main() {
           this.deleteRasterSnapshot(beforeSnapshot);
           this.deleteRasterSnapshot(afterSnapshot);
         },
-      }, { source });
+      }, {
+        artboardTransfer: {
+          destQuad,
+          destRect,
+          transformMode,
+          warpControlPoints,
+        },
+        source,
+      });
 
       if (history?.push) {
         history.push(entry);
@@ -13444,6 +13734,24 @@ void main() {
 
         withViewportScissor(artboardScissor, callback);
       };
+      const withAllArtboardClips = (callback) => {
+        const artboardRects = (namespace.getDocumentArtboards?.() || [])
+          .map((artboard) => this.normalizeTransformArtboardRect(artboard))
+          .filter(Boolean);
+
+        if (artboardRects.length === 0) {
+          callback();
+          return;
+        }
+
+        artboardRects.forEach((artboardRect) => {
+          const artboardScissor = getViewportScissorForDocumentRect(artboardRect);
+
+          if (artboardScissor) {
+            withViewportScissor(artboardScissor, callback);
+          }
+        });
+      };
       const withActiveStrokeClip = (callback) => {
         const clipRects = activeStrokeClipRects?.length
           ? activeStrokeClipRects
@@ -13663,7 +13971,6 @@ void main() {
           return;
         }
 
-        const previewLayer = orderedLayers.find((layer) => layer?.id === rasterTransformPreview.layerId) || null;
         const drawOptions = {
           camera,
           edgeFeatherPixels: rasterTransformPreview.edgeFeatherPixels,
@@ -13674,7 +13981,7 @@ void main() {
           viewportWidth,
         };
 
-        withLayerArtboardClip(previewLayer, () => {
+        withAllArtboardClips(() => {
           if (rasterTransformPreview.transformMode === "warp") {
             this.drawWarpTexturedMesh(
               rasterTransformPreview.texture,

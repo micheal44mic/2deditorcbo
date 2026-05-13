@@ -776,6 +776,15 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   }
 
   function getTextCreationCenter() {
+    const artboardRect = window.CBO.getActiveDocumentArtboardRect?.();
+
+    if (artboardRect) {
+      return {
+        x: artboardRect.x + Math.max(1, artboardRect.width) / 2,
+        y: artboardRect.y + Math.max(1, artboardRect.height) / 2,
+      };
+    }
+
     const renderer = window.CBO.documentRenderer;
 
     if (renderer && Number.isFinite(renderer.width) && Number.isFinite(renderer.height)) {

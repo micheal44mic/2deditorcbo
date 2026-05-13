@@ -1634,6 +1634,62 @@ test("commitCroppedRasterTransform restores rasterized image layers as authorita
   );
 });
 
+test("transform artboard transfer chooses the artboard with dominant overlap", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  window.CBO.getDocumentArtboards = () => [
+    {
+      height: 100,
+      id: "active-document",
+      width: 100,
+      x: 0,
+      y: 0,
+    },
+    {
+      height: 100,
+      id: "secondary",
+      width: 100,
+      x: 100,
+      y: 0,
+    },
+  ];
+  renderer.layerModel = {
+    findEntryArtboardId: () => "active-document",
+    findEntryById: () => ({
+      artboardId: "active-document",
+      id: "paint-1",
+      type: "paint",
+    }),
+  };
+
+  const transfer = renderer.resolveTransformArtboardTransfer("paint-1", {
+    destQuad: [
+      { x: 80, y: 0 },
+      { x: 180, y: 0 },
+      { x: 180, y: 100 },
+      { x: 80, y: 100 },
+    ],
+    transformMode: "free",
+  });
+
+  assert.equal(transfer.toArtboardId, "secondary");
+  assert.equal(transfer.fromArtboardId, "active-document");
+  assert.equal(Math.round(transfer.overlapRatio * 100), 80);
+
+  const shallowTransfer = renderer.resolveTransformArtboardTransfer("paint-1", {
+    destQuad: [
+      { x: 75, y: 0 },
+      { x: 105, y: 0 },
+      { x: 105, y: 100 },
+      { x: 75, y: 100 },
+    ],
+    transformMode: "free",
+  });
+
+  assert.equal(shallowTransfer, null);
+});
+
 test("getRasterAlphaAtPoint samples the matching sparse tile", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);

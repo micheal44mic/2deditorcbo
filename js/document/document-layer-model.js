@@ -977,6 +977,95 @@
       return true;
     }
 
+    removeEntryByIdFromEntries(id, entries = []) {
+      const normalizedId = String(id || "").trim();
+
+      if (!normalizedId || !Array.isArray(entries)) {
+        return null;
+      }
+
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+
+        if (entry?.id === normalizedId) {
+          entries.splice(index, 1);
+          return entry;
+        }
+
+        const childMatch = this.removeEntryByIdFromEntries(normalizedId, entry?.children || []);
+
+        if (childMatch) {
+          return childMatch;
+        }
+      }
+
+      return null;
+    }
+
+    insertEntryAtTopOfArtboardEntries(entries, artboardId, entry) {
+      const normalizedArtboardId = String(artboardId || "").trim();
+
+      if (!normalizedArtboardId || !Array.isArray(entries) || !entry) {
+        return false;
+      }
+
+      for (const candidate of entries) {
+        if (
+          this.isArtboardGroup(candidate) &&
+          this.getArtboardIdFromGroup(candidate) === normalizedArtboardId
+        ) {
+          candidate.children = Array.isArray(candidate.children) ? candidate.children : [];
+          candidate.children.unshift(entry);
+          return true;
+        }
+
+        if (this.insertEntryAtTopOfArtboardEntries(candidate?.children || [], normalizedArtboardId, entry)) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    moveLayerToArtboard(layerId, artboardId, options = {}) {
+      const normalizedLayerId = String(layerId || "").trim();
+      const normalizedArtboardId = String(artboardId || "").trim();
+      const entry = this.findEntryById(normalizedLayerId);
+      const currentArtboardId = this.findEntryArtboardId(normalizedLayerId);
+
+      if (
+        !normalizedLayerId ||
+        !normalizedArtboardId ||
+        !entry ||
+        entry.type === "group" ||
+        this.isBackgroundLayer(entry) ||
+        currentArtboardId === normalizedArtboardId
+      ) {
+        return false;
+      }
+
+      const entries = this.getEntries();
+      const movedEntry = this.removeEntryByIdFromEntries(normalizedLayerId, entries);
+
+      if (!movedEntry) {
+        return false;
+      }
+
+      movedEntry.artboardId = normalizedArtboardId;
+
+      if (!this.insertEntryAtTopOfArtboardEntries(entries, normalizedArtboardId, movedEntry)) {
+        return false;
+      }
+
+      this.setEntries(entries, {
+        ...options,
+        activeLayerId: normalizedLayerId,
+        source: options.source || "move-layer-to-artboard",
+      });
+
+      return true;
+    }
+
     insertAboveBottomSystemLayer(entry) {
       const backgroundIndex = this.entries.findIndex((layer) => layer.id === BACKGROUND_LAYER_ID);
       const insertIndex = backgroundIndex >= 0 ? backgroundIndex : this.entries.length;

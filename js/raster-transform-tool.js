@@ -1358,6 +1358,7 @@
 
       this.isCommitting = true;
 
+      const historyGroup = `vector-text-transform-${layer.id}`;
       const didCommit = this.layerModel?.updateLayer?.(layer.id, {
         rotation: previewLayer.rotation,
         scaleX: previewLayer.scaleX,
@@ -1365,9 +1366,24 @@
         x: previewLayer.x,
         y: previewLayer.y,
       }, {
-        historyGroup: `vector-text-transform-${layer.id}`,
+        historyGroup,
         source: "vector-text-transform",
       }) === true;
+
+      if (didCommit) {
+        const transfer = this.documentRenderer?.resolveTransformArtboardTransfer?.(layer.id, {
+          destQuad: this.currentQuad,
+          destRect: getRectFromQuad(this.currentQuad),
+          transformMode: "free",
+        });
+
+        if (transfer?.toArtboardId) {
+          this.layerModel?.moveLayerToArtboard?.(layer.id, transfer.toArtboardId, {
+            historyGroup,
+            source: "vector-text-transform",
+          });
+        }
+      }
 
       this.dragState = null;
       this.sourceSnapshot = null;
