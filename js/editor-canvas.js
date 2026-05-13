@@ -123,6 +123,58 @@ function updateEditorZoomIndicator(indicator, camera = {}) {
   indicator.title = `Zoom ${label}`;
 }
 
+function createEditorCanvasReadyDetail(documentRenderer, documentSize = {}, source = "editor-canvas-ready") {
+  if (!documentRenderer) {
+    return null;
+  }
+
+  return {
+    documentHeight: documentRenderer.height,
+    documentWidth: documentRenderer.width,
+    presetId: documentSize.presetId || "",
+    requestedHeight: documentSize.requestedHeight || documentSize.height || documentRenderer.height,
+    requestedWidth: documentSize.requestedWidth || documentSize.width || documentRenderer.width,
+    source,
+  };
+}
+
+function dispatchEditorCanvasReady(documentRenderer, documentSize = {}, options = {}) {
+  const detail = createEditorCanvasReadyDetail(
+    documentRenderer,
+    documentSize,
+    options.source || "editor-canvas-ready",
+  );
+
+  if (!detail) {
+    return null;
+  }
+
+  window.CBO.lastEditorCanvasReadyDetail = detail;
+  window.dispatchEvent(new CustomEvent("cbo:editor-canvas-ready", { detail }));
+
+  return detail;
+}
+
+window.CBO.emitEditorCanvasReady = function emitEditorCanvasReady(options = {}) {
+  const renderer = window.CBO.documentRenderer;
+
+  if (!renderer) {
+    return null;
+  }
+
+  const settings = window.CBO.documentSettings || {};
+
+  return dispatchEditorCanvasReady(renderer, {
+    height: settings.height || renderer.height,
+    presetId: settings.presetId || options.presetId || "",
+    requestedHeight: settings.requestedHeight || settings.height || renderer.height,
+    requestedWidth: settings.requestedWidth || settings.width || renderer.width,
+    width: settings.width || renderer.width,
+  }, {
+    source: options.source || "editor-canvas-ready",
+  });
+};
+
 function getPrimaryDocumentArtboardId() {
   const artboards = typeof window !== "undefined"
     ? window.CBO?.getDocumentArtboards?.() || []
@@ -664,13 +716,16 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     throw error;
   }
 
-  window.dispatchEvent(new CustomEvent("cbo:editor-canvas-ready", {
-    detail: {
-      documentHeight: documentRenderer.height,
-      documentWidth: documentRenderer.width,
-      presetId: documentSize.presetId,
-      requestedHeight: documentSize.height,
-      requestedWidth: documentSize.width,
-    },
-  }));
+  if (options.deferReadyEvent === true) {
+    window.CBO.lastEditorCanvasReadyDetail = createEditorCanvasReadyDetail(
+      documentRenderer,
+      documentSize,
+      "editor-canvas-init-deferred",
+    );
+    return;
+  }
+
+  dispatchEditorCanvasReady(documentRenderer, documentSize, {
+    source: "editor-canvas-init",
+  });
 };

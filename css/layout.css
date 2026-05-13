@@ -393,10 +393,20 @@
 }
 
 body.cbo-memory-recovery-active .editor-stage > .editor-webgl-canvas,
+body.cbo-memory-recovery-active .editor-stage > .editor-artboard-paper-layer,
+body.cbo-memory-recovery-active .editor-stage > .editor-artboard-preview-layer,
 body.cbo-memory-recovery-active .editor-stage > .editor-vector-overlay,
 body.cbo-memory-recovery-active .editor-stage > .editor-raster-transform-overlay,
 body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay,
+body.cbo-document-restore-active .editor-stage > .editor-webgl-canvas,
+body.cbo-document-restore-active .editor-stage > .editor-artboard-paper-layer,
+body.cbo-document-restore-active .editor-stage > .editor-artboard-preview-layer,
+body.cbo-document-restore-active .editor-stage > .editor-vector-overlay,
+body.cbo-document-restore-active .editor-stage > .editor-raster-transform-overlay,
+body.cbo-document-restore-active .editor-stage > .editor-puppet-overlay,
 body.cbo-history-busy-active .editor-stage > .editor-webgl-canvas,
+body.cbo-history-busy-active .editor-stage > .editor-artboard-paper-layer,
+body.cbo-history-busy-active .editor-stage > .editor-artboard-preview-layer,
 body.cbo-history-busy-active .editor-stage > .editor-vector-overlay,
 body.cbo-history-busy-active .editor-stage > .editor-raster-transform-overlay,
 body.cbo-history-busy-active .editor-stage > .editor-puppet-overlay {
@@ -406,6 +416,74 @@ body.cbo-history-busy-active .editor-stage > .editor-puppet-overlay {
   transition:
     filter 160ms ease,
     transform 160ms ease;
+}
+
+body.cbo-document-restore-active {
+  cursor: progress;
+}
+
+body.cbo-document-restore-active .editor-stage {
+  pointer-events: none;
+}
+
+.cbo-document-restore-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483598;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(16, 18, 23, 0.24);
+  backdrop-filter: blur(2px);
+  pointer-events: all;
+}
+
+.cbo-document-restore-overlay[hidden] {
+  display: none;
+}
+
+.cbo-document-restore-panel {
+  display: grid;
+  min-width: min(300px, calc(100vw - 48px));
+  max-width: min(420px, calc(100vw - 48px));
+  justify-items: center;
+  gap: 12px;
+  padding: 22px 24px;
+  border: 1px solid rgba(245, 247, 251, 0.24);
+  border-radius: 8px;
+  background: rgba(18, 21, 28, 0.86);
+  color: #f5f7fb;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  text-align: center;
+}
+
+.cbo-document-restore-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(245, 247, 251, 0.22);
+  border-top-color: #f5f7fb;
+  border-radius: 50%;
+  animation: cbo-history-busy-spin 720ms linear infinite;
+}
+
+.cbo-document-restore-title {
+  margin: 0;
+  color: #f5f7fb;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.15;
+}
+
+.cbo-document-restore-detail {
+  margin: -4px 0 0;
+  color: #aeb6c3;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.35;
 }
 
 .cbo-memory-autosave-overlay {

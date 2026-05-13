@@ -122,6 +122,7 @@ test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
   assert.match(source, /function isArtboardBackgroundVisible\(artboardId\)/);
   assert.match(source, /paper\.classList\.toggle\("is-transparent", !isArtboardBackgroundVisible\(artboard\.id\)\)/);
   assert.match(source, /window\.addEventListener\("cbo:document-layers-change"/);
+  assert.match(source, /event\.detail\?\.source === "autosave-restore"[\s\S]*fitAllPreviewArtboards\(\)/);
   assert.match(appSource, /\.artboard-create-popover/);
   assert.match(cssSource, /\.editor-artboard-preview-layer[\s\S]*pointer-events: none/);
   assert.match(cssSource, /\.editor-artboard-frame/);
@@ -243,9 +244,12 @@ test("document artboard model owns artboard records and persistence hooks", () =
   assert.match(editorCanvasSource, /artboards: options\.artboards/);
   assert.match(editorCanvasSource, /defaultSecondaryCount: 0/);
   assert.match(autosaveSource, /artboards: namespace\.getDocumentArtboards\?\.\(\) \|\| \[\]/);
-  assert.match(autosaveSource, /artboards: session\.document\.artboards \|\| \[\]/);
+  assert.match(autosaveSource, /function getSessionArtboards\(session\)/);
+  assert.match(autosaveSource, /cloneValue\(session\.document\.artboards\)/);
+  assert.match(autosaveSource, /restoreSessionArtboards\(session\)/);
+  assert.match(autosaveSource, /namespace\.ensureDocumentLayerArtboardGroups\?\.\(\{/);
   assert.match(autosaveSource, /defaultSecondaryCount: 0/);
-  assert.match(autosaveSource, /source: "autosave-restore-artboards"/);
+  assert.match(autosaveSource, /source = "autosave-restore-artboards"/);
   assert.match(rendererSource, /getDocumentBoundsRect\(\)/);
   assert.match(rendererSource, /namespace\.getDocumentArtboardUnionRect\?\.\(\)/);
   assert.match(rendererSource, /const documentRect = this\.getDocumentBoundsRect\(\)/);

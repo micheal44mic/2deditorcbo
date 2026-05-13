@@ -1428,9 +1428,13 @@ window.CBO = window.CBO || {};
       selectedArtboardId = event.detail?.artboardId || "";
       renderArtboardPreviews();
     });
-    window.addEventListener("cbo:editor-canvas-ready", () => {
+    window.addEventListener("cbo:editor-canvas-ready", (event) => {
       bindStagePointerSelection();
-      fitPreviewArtboards();
+      if (event.detail?.source === "autosave-restore") {
+        fitAllPreviewArtboards();
+      } else {
+        fitPreviewArtboards();
+      }
     });
     window.addEventListener("cbo:editor-canvas-reset", (event) => {
       resetPreviewArtboards({

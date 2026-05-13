@@ -133,16 +133,49 @@ test("document autosave restores the latest session before the canvas is started
   const editorCanvasSource = readRepoFile("js", "editor-canvas.js");
 
   assert.match(source, /async function restoreLatest\(options = \{\}\)/);
+  assert.match(source, /function getSessionArtboards\(session\)/);
+  assert.match(source, /function restoreSessionArtboards\(session, source = "autosave-restore-artboards"\)/);
   assert.match(source, /namespace\.initEditorCanvas\?\.\(\{[\s\S]*documentHeight: session\.document\.height,[\s\S]*documentWidth: session\.document\.width/);
+  assert.match(source, /deferReadyEvent: true/);
   assert.match(source, /stage\?\.dataset\.canvasReady === "true"/);
   assert.match(source, /layerModel\?\.setEntries\?\.\(cloneValue\(session\.entries\)/);
+  assert.match(source, /restoreSessionArtboards\(session\)/);
   assert.match(source, /restoreRasterLayers\(session, tileRecords\)/);
   assert.match(source, /projectName: applyProjectName\(session\.project\?\.name \|\| ""\)/);
-  assert.match(source, /renderer\.createRasterTargetForRect\?\.\(layerRecord\.rect, \[0, 0, 0, 0\]\)/);
+  assert.match(source, /renderer\.createSparseRasterTarget\?\.\(layerId, \{/);
+  assert.match(source, /renderer\.installRasterTargetForLayer\(layerId, sparseTarget/);
+  assert.match(source, /pruneTransparentTiles: false/);
+  assert.match(source, /releaseSnapshotGpuAfterRestore: true/);
   assert.match(source, /renderer\.restoreRasterSnapshot\?\.\(layerId, snapshot/);
+  assert.match(source, /namespace\.emitEditorCanvasReady\?\.\(\{ source: "autosave-restore" \}\)/);
   assert.match(editorCanvasSource, /createDocumentRecoveryButton\(summary\)/);
   assert.match(editorCanvasSource, /const projectName = String\(summary\?\.projectName \|\| ""\)\.trim\(\)/);
   assert.match(editorCanvasSource, /autosave\.restoreLatest\(\)/);
+  assert.match(editorCanvasSource, /window\.CBO\.emitEditorCanvasReady = function emitEditorCanvasReady/);
+  assert.match(editorCanvasSource, /if \(options\.deferReadyEvent === true\)/);
+});
+
+test("document restore locks the UI and fits all artboards while loading", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+  const cssSource = readRepoFile("css", "layout.css");
+
+  assert.match(source, /const RESTORE_OVERLAY_ID = "cbo-document-restore-overlay"/);
+  assert.match(source, /const RESTORE_BLOCKED_EVENTS = \[/);
+  assert.match(source, /function blockDocumentRestoreInteraction\(event\)/);
+  assert.match(source, /event\.stopImmediatePropagation\?\.\(\)/);
+  assert.match(source, /function beginDocumentRestoreUi\(options = \{\}\)/);
+  assert.match(source, /document\.body\?\.classList\.add\("cbo-document-restore-active"\)/);
+  assert.match(source, /function fitRestoreViewToArtboards\(session, options = \{\}\)/);
+  assert.match(source, /getRestoreArtboardFitRect\(session\)/);
+  assert.match(source, /camera\.zoom = zoom/);
+  assert.match(source, /window\.dispatchEvent\(new CustomEvent\("cbo:camera-change", \{ detail \}\)\)/);
+  assert.match(source, /fitRestoreViewToArtboards\(session\)/);
+  assert.match(source, /restoreUiActive: didBeginRestoreUi \|\| options\.restoreUiActive === true/);
+  assert.match(source, /endDocumentRestoreUi\(didBeginRestoreUi\)/);
+  assert.match(cssSource, /\.cbo-document-restore-overlay/);
+  assert.match(cssSource, /body\.cbo-document-restore-active \.editor-stage > \.editor-artboard-paper-layer/);
+  assert.match(cssSource, /body\.cbo-document-restore-active \.editor-stage > \.editor-artboard-preview-layer/);
+  assert.match(cssSource, /body\.cbo-document-restore-active \.editor-stage[\s\S]*pointer-events: none/);
 });
 
 test("document autosave can reset the active renderer when restoring a memory checkpoint", () => {
@@ -154,7 +187,8 @@ test("document autosave can reset the active renderer when restoring a memory ch
   assert.match(source, /namespace\.brushEngine\.documentRenderer = nextRenderer/);
   assert.match(source, /namespace\.smudgeEngine\.documentRenderer = nextRenderer/);
   assert.match(source, /options\.resetRenderer === true/);
-  assert.match(source, /return restoreSession\(session, tileRecords, options\)/);
+  assert.match(source, /return restoreSession\(session, tileRecords, \{/);
+  assert.match(source, /restoreUiActive: didBeginRestoreUi \|\| options\.restoreUiActive === true/);
 });
 
 test("manual document save includes project metadata from the sidebar", () => {

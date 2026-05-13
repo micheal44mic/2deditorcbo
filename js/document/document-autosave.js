@@ -19,6 +19,31 @@
   let isSaving = false;
   let isRestoring = false;
   let cachedTileCodec = null;
+  let restoreUiDepth = 0;
+  let restoreUiListenersBound = false;
+
+  const RESTORE_OVERLAY_ID = "cbo-document-restore-overlay";
+  const RESTORE_BLOCKED_EVENTS = [
+    "auxclick",
+    "click",
+    "contextmenu",
+    "dblclick",
+    "keydown",
+    "keyup",
+    "mousedown",
+    "mousemove",
+    "mouseup",
+    "pointercancel",
+    "pointerdown",
+    "pointermove",
+    "pointerup",
+    "touchcancel",
+    "touchend",
+    "touchmove",
+    "touchstart",
+    "wheel",
+  ];
+  const RESTORE_BLOCKED_EVENT_OPTIONS = { capture: true, passive: false };
 
   function isObject(value) {
     return Boolean(value && typeof value === "object");
@@ -422,6 +447,254 @@
     return name;
   }
 
+  function getRestoreUiTitle(options = {}) {
+    return String(options.title || "Loading saved document...").trim() || "Loading saved document...";
+  }
+
+  function getRestoreUiDetail(options = {}) {
+    return String(options.detail || "Restoring artboards and layers").trim() || "Restoring artboards and layers";
+  }
+
+  function ensureDocumentRestoreOverlay() {
+    let overlay = document.getElementById(RESTORE_OVERLAY_ID);
+
+    if (overlay) {
+      return overlay;
+    }
+
+    overlay = document.createElement("div");
+    overlay.id = RESTORE_OVERLAY_ID;
+    overlay.className = "cbo-document-restore-overlay";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-live", "assertive");
+    overlay.innerHTML = [
+      '<div class="cbo-document-restore-panel">',
+      '  <div class="cbo-document-restore-spinner" aria-hidden="true"></div>',
+      '  <p class="cbo-document-restore-title" data-document-restore-title>Loading saved document...</p>',
+      '  <p class="cbo-document-restore-detail" data-document-restore-detail>Restoring artboards and layers</p>',
+      "</div>",
+    ].join("");
+    document.body.appendChild(overlay);
+
+    return overlay;
+  }
+
+  function blockDocumentRestoreInteraction(event) {
+    if (namespace.isRestoringDocumentAutosave !== true && restoreUiDepth <= 0) {
+      return;
+    }
+
+    event.preventDefault?.();
+    event.stopImmediatePropagation?.();
+    event.stopPropagation?.();
+  }
+
+  function bindDocumentRestoreInteractionGuard() {
+    if (restoreUiListenersBound) {
+      return;
+    }
+
+    restoreUiListenersBound = true;
+    RESTORE_BLOCKED_EVENTS.forEach((eventName) => {
+      document.addEventListener(eventName, blockDocumentRestoreInteraction, RESTORE_BLOCKED_EVENT_OPTIONS);
+    });
+  }
+
+  function unbindDocumentRestoreInteractionGuard() {
+    if (!restoreUiListenersBound) {
+      return;
+    }
+
+    restoreUiListenersBound = false;
+    RESTORE_BLOCKED_EVENTS.forEach((eventName) => {
+      document.removeEventListener(eventName, blockDocumentRestoreInteraction, RESTORE_BLOCKED_EVENT_OPTIONS);
+    });
+  }
+
+  function shouldShowRestoreUi(options = {}) {
+    return options.showRestoreOverlay !== false && options.source !== "memory-auto-recovery";
+  }
+
+  function beginDocumentRestoreUi(options = {}) {
+    if (!shouldShowRestoreUi(options)) {
+      return false;
+    }
+
+    restoreUiDepth += 1;
+
+    const overlay = ensureDocumentRestoreOverlay();
+    const titleNode = overlay.querySelector("[data-document-restore-title]");
+    const detailNode = overlay.querySelector("[data-document-restore-detail]");
+
+    if (titleNode) {
+      titleNode.textContent = getRestoreUiTitle(options);
+    }
+
+    if (detailNode) {
+      detailNode.textContent = getRestoreUiDetail(options);
+    }
+
+    document.body?.classList.add("cbo-document-restore-active");
+    overlay.hidden = false;
+    bindDocumentRestoreInteractionGuard();
+
+    return true;
+  }
+
+  function endDocumentRestoreUi(didBegin = true) {
+    if (!didBegin) {
+      return;
+    }
+
+    restoreUiDepth = Math.max(0, restoreUiDepth - 1);
+
+    if (restoreUiDepth > 0) {
+      return;
+    }
+
+    const overlay = document.getElementById(RESTORE_OVERLAY_ID);
+
+    if (overlay) {
+      overlay.hidden = true;
+    }
+
+    document.body?.classList.remove("cbo-document-restore-active");
+    unbindDocumentRestoreInteractionGuard();
+  }
+
+  function getBoundsForRects(rects = []) {
+    const bounds = (Array.isArray(rects) ? rects : [])
+      .map((rect) => {
+        const x = Number(rect?.x);
+        const y = Number(rect?.y);
+        const width = Number(rect?.width);
+        const height = Number(rect?.height);
+
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+          return null;
+        }
+
+        return {
+          bottom: y + Math.max(1, height),
+          left: x,
+          right: x + Math.max(1, width),
+          top: y,
+        };
+      })
+      .filter(Boolean)
+      .reduce((result, rect) => {
+        if (!result) {
+          return { ...rect };
+        }
+
+        return {
+          bottom: Math.max(result.bottom, rect.bottom),
+          left: Math.min(result.left, rect.left),
+          right: Math.max(result.right, rect.right),
+          top: Math.min(result.top, rect.top),
+        };
+      }, null);
+
+    return bounds
+      ? {
+          height: Math.max(1, bounds.bottom - bounds.top),
+          width: Math.max(1, bounds.right - bounds.left),
+          x: bounds.left,
+          y: bounds.top,
+        }
+      : null;
+  }
+
+  function getRestoreArtboardFitRect(session) {
+    return namespace.getDocumentArtboardUnionRect?.() ||
+      getBoundsForRects(namespace.getDocumentArtboards?.() || []) ||
+      getBoundsForRects(getSessionArtboards(session)) ||
+      {
+        height: Math.max(1, Math.round(session?.document?.height || namespace.documentSettings?.height || 1)),
+        width: Math.max(1, Math.round(session?.document?.width || namespace.documentSettings?.width || 1)),
+        x: 0,
+        y: 0,
+      };
+  }
+
+  function fitRestoreViewToArtboards(session, options = {}) {
+    const brushEngine = namespace.brushEngine;
+    const camera = brushEngine?.camera;
+    const fitRect = getRestoreArtboardFitRect(session);
+
+    if (!brushEngine || !camera || !fitRect) {
+      return false;
+    }
+
+    brushEngine.resizeViewport?.();
+
+    const dpr = Math.max(1, Number(brushEngine.dpr || window.devicePixelRatio || 1));
+    const viewportWidth = Math.max(1, Math.round(Number(brushEngine.viewportWidth) || brushEngine.canvas?.width || 1));
+    const viewportHeight = Math.max(1, Math.round(Number(brushEngine.viewportHeight) || brushEngine.canvas?.height || 1));
+    const paddingCssPx = Number.isFinite(Number(options.paddingCssPx))
+      ? Math.max(0, Number(options.paddingCssPx))
+      : 56;
+    const maxPadding = Math.max(0, Math.min(viewportWidth, viewportHeight) * 0.22);
+    const padding = Math.min(maxPadding, paddingCssPx * dpr);
+    const availableWidth = Math.max(1, viewportWidth - padding * 2);
+    const availableHeight = Math.max(1, viewportHeight - padding * 2);
+    const boundsWidth = Math.max(1, Number(fitRect.width) || 1);
+    const boundsHeight = Math.max(1, Number(fitRect.height) || 1);
+    const zoom = Math.max(0.02, Math.min(32, availableWidth / boundsWidth, availableHeight / boundsHeight));
+
+    camera.zoom = zoom;
+    camera.x = (viewportWidth - boundsWidth * zoom) * 0.5 - (Number(fitRect.x) || 0) * zoom;
+    camera.y = (viewportHeight - boundsHeight * zoom) * 0.5 - (Number(fitRect.y) || 0) * zoom;
+    brushEngine.userManipulatedCamera = true;
+
+    const detail = {
+      camera: { ...camera },
+      dpr,
+      viewportHeight,
+      viewportWidth,
+    };
+
+    window.dispatchEvent(new CustomEvent("cbo:camera-change", { detail }));
+    brushEngine.requestDraw?.();
+
+    return true;
+  }
+
+  function getSessionArtboards(session) {
+    return Array.isArray(session?.document?.artboards)
+      ? cloneValue(session.document.artboards)
+      : [];
+  }
+
+  function restoreSessionArtboards(session, source = "autosave-restore-artboards") {
+    const artboards = getSessionArtboards(session);
+
+    namespace.resetDocumentArtboards?.({
+      artboards,
+      defaultSecondaryCount: 0,
+      documentHeight: session.document.height,
+      documentWidth: session.document.width,
+      source,
+    });
+
+    namespace.ensureDocumentLayerArtboardGroups?.({
+      artboards: namespace.getDocumentArtboards?.() || artboards,
+      history: false,
+      source: `${source}-layers`,
+    });
+  }
+
+  function syncRendererAfterRestore(source = "autosave-restore") {
+    const renderer = namespace.documentRenderer;
+
+    renderer?.syncActivePaintLayerReference?.();
+    renderer?.pruneOrphanRasterTargets?.();
+    renderer?.invalidatePreviewCache?.(source);
+    renderer?.emitContentChange?.({ source });
+    renderer?.requestDraw?.();
+  }
+
   function emitSaveStatus(status, source) {
     window.dispatchEvent(new CustomEvent("cbo:document-save-status", {
       detail: {
@@ -769,11 +1042,59 @@
 
     const didRestore = renderer.restoreRasterSnapshot?.(layerId, snapshot, {
       emit: false,
+      pruneTransparentTiles: false,
+      releaseSnapshotGpuAfterRestore: true,
       source: "autosave-restore-tile",
     }) !== false;
 
     renderer.deleteRasterSnapshot?.(snapshot);
     return didRestore;
+  }
+
+  function installRestoreTarget(layerRecord, renderer) {
+    const layerId = layerRecord?.layerId;
+
+    if (!layerId) {
+      return null;
+    }
+
+    const sparseTarget = renderer.createSparseRasterTarget?.(layerId, {
+      clearColor: [0, 0, 0, 0],
+      source: "autosave-restore-sparse-target",
+      tileSize: TILE_SIZE,
+    });
+
+    if (sparseTarget && renderer.isSparseRasterTarget?.(sparseTarget) === true) {
+      if (typeof renderer.installRasterTargetForLayer === "function") {
+        renderer.installRasterTargetForLayer(layerId, sparseTarget, {
+          emit: false,
+          invalidate: false,
+          source: "autosave-restore-sparse-target",
+        });
+      } else if (renderer.rasterTargetsByLayerId?.set) {
+        const previousTarget = renderer.rasterTargetsByLayerId.get?.(layerId);
+
+        renderer.rasterTargetsByLayerId.set(layerId, sparseTarget);
+        if (previousTarget && previousTarget !== sparseTarget) {
+          renderer.deleteRasterTargetObject?.(previousTarget);
+        }
+      }
+
+      return sparseTarget;
+    }
+
+    const denseTarget = renderer.createRasterTargetForRect?.(layerRecord.rect, [0, 0, 0, 0]);
+
+    if (!denseTarget) {
+      return null;
+    }
+
+    renderer.replaceRasterTarget?.(layerId, denseTarget, {
+      emit: false,
+      source: "autosave-restore-target",
+    });
+
+    return denseTarget;
   }
 
   async function restoreRasterLayers(session, tileRecords) {
@@ -790,16 +1111,9 @@
         continue;
       }
 
-      const target = renderer.createRasterTargetForRect?.(layerRecord.rect, [0, 0, 0, 0]);
-
-      if (!target) {
+      if (!installRestoreTarget(layerRecord, renderer)) {
         continue;
       }
-
-      renderer.replaceRasterTarget?.(layerRecord.layerId, target, {
-        emit: false,
-        source: "autosave-restore-target",
-      });
 
       for (const tileManifest of layerRecord.tiles) {
         const tileRecord = tileMap.get(tileManifest.key);
@@ -828,7 +1142,7 @@
 
     if (!canvas || !gl || !layerModel || !namespace.DocumentRenderer) {
       namespace.initEditorCanvas?.({
-        artboards: session.document.artboards || [],
+        artboards: getSessionArtboards(session),
         documentHeight: session.document.height,
         documentWidth: session.document.width,
         presetId: session.document.presetId,
@@ -842,11 +1156,13 @@
 
     const viewport = namespace.DocumentRenderer.resizeCanvasViewport(canvas, gl);
     const nextRenderer = new namespace.DocumentRenderer({
+      cssArtboardPaper: true,
       documentHeight: session.document.height,
       documentWidth: session.document.width,
       gl,
       layerModel,
       presetId: session.document.presetId,
+      transparentBackground: true,
       viewportHeight: viewport.height,
       viewportWidth: viewport.width,
     });
@@ -892,24 +1208,32 @@
       return false;
     }
 
+    const previousNamespaceRestoreFlag = namespace.isRestoringDocumentAutosave === true;
+    const didBeginRestoreUi = options.restoreUiActive === true
+      ? false
+      : beginDocumentRestoreUi(options);
+
     isRestoring = true;
+    namespace.isRestoringDocumentAutosave = true;
+    let didDeferCanvasReady = false;
 
     try {
       if (options.resetRenderer === true && stage?.dataset.canvasReady === "true") {
         resetRendererForRestore(session);
       } else {
         namespace.initEditorCanvas?.({
-          artboards: session.document.artboards || [],
+          artboards: getSessionArtboards(session),
+          deferReadyEvent: true,
           documentHeight: session.document.height,
           documentWidth: session.document.width,
           presetId: session.document.presetId,
         });
+        didDeferCanvasReady = Boolean(namespace.documentRenderer);
       }
 
       const layerModel = namespace.documentLayerModel;
       const history = namespace.documentHistory;
-
-      history?.runWithoutRecording?.(() => {
+      const restoreLayerState = () => {
         layerModel?.setEntries?.(cloneValue(session.entries), {
           history: false,
           source: "autosave-restore",
@@ -922,8 +1246,16 @@
           emit: true,
           source: "autosave-restore",
         });
-      });
+      };
 
+      if (typeof history?.runWithoutRecording === "function") {
+        history.runWithoutRecording(restoreLayerState);
+      } else {
+        restoreLayerState();
+      }
+
+      restoreSessionArtboards(session);
+      fitRestoreViewToArtboards(session);
       await restoreRasterLayers(session, tileRecords);
 
       namespace.documentSettings = {
@@ -934,13 +1266,12 @@
         requestedWidth: session.document.requestedWidth || session.document.width,
         width: session.document.width,
       };
-      namespace.resetDocumentArtboards?.({
-        artboards: session.document.artboards || [],
-        defaultSecondaryCount: 0,
-        documentHeight: session.document.height,
-        documentWidth: session.document.width,
-        source: "autosave-restore-artboards",
-      });
+      syncRendererAfterRestore("autosave-restore-complete");
+
+      if (didDeferCanvasReady) {
+        namespace.emitEditorCanvasReady?.({ source: "autosave-restore" });
+        didDeferCanvasReady = false;
+      }
 
       window.dispatchEvent(new CustomEvent("cbo:document-autosave-restored", {
         detail: createSummary(session),
@@ -948,24 +1279,42 @@
 
       return true;
     } catch (error) {
+      if (didDeferCanvasReady) {
+        namespace.emitEditorCanvasReady?.({ source: "autosave-restore-failed" });
+      }
+
       console.warn?.("Ripristino autosave non riuscito.", error);
       return false;
     } finally {
+      namespace.isRestoringDocumentAutosave = previousNamespaceRestoreFlag;
       isRestoring = false;
+      endDocumentRestoreUi(didBeginRestoreUi);
     }
   }
 
   async function restoreLatest(options = {}) {
-    const sessionId = await getLatestSessionId();
-    const session = await getSession(sessionId);
+    const didBeginRestoreUi = beginDocumentRestoreUi({
+      ...options,
+      detail: options.detail || "Preparing saved artboards",
+    });
 
-    if (!session) {
-      return false;
+    try {
+      const sessionId = await getLatestSessionId();
+      const session = await getSession(sessionId);
+
+      if (!session) {
+        return false;
+      }
+
+      const tileRecords = await getTilesForSession(session.id);
+
+      return restoreSession(session, tileRecords, {
+        ...options,
+        restoreUiActive: didBeginRestoreUi || options.restoreUiActive === true,
+      });
+    } finally {
+      endDocumentRestoreUi(didBeginRestoreUi);
     }
-
-    const tileRecords = await getTilesForSession(session.id);
-
-    return restoreSession(session, tileRecords, options);
   }
 
   async function restoreMemoryCheckpoint(options = {}) {
