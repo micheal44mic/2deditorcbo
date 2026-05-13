@@ -43,6 +43,17 @@ test("history compression round-trips compressible RGBA pixels", () => {
   );
 });
 
+test("history compression trims retained RLE backing buffers", () => {
+  const compression = loadCompression();
+  const pixels = new Uint8Array(1024 * 1024 * 4);
+
+  const compressed = compression.compressRgba(pixels);
+
+  assert.equal(compression.isCompressedEncoding(compressed.encoding), true);
+  assert.equal(compressed.bytes.buffer.byteLength, compressed.bytes.byteLength);
+  assert.ok(compressed.bytes.byteLength < pixels.byteLength);
+});
+
 test("history compression packetizes mixed literal and repeated RGBA pixels", () => {
   const compression = loadCompression();
   const pixels = new Uint8Array(250 * 4);
@@ -133,4 +144,46 @@ test("history compression exposes a debug summary helper", () => {
   assert.equal(summary.compressedSnapshots, 1);
   assert.equal(summary.rawSnapshots, 0);
   assert.ok(summary.rawEquivalentMiB >= summary.compressedSnapshotsMiB);
+});
+
+test("history compression debug summary counts retained backing buffers", () => {
+  const context = vm.createContext({
+    ArrayBuffer,
+    console: {
+      log() {},
+      table() {},
+    },
+    Uint8Array,
+    window: {
+      CBO: {},
+    },
+  });
+
+  vm.runInContext(
+    fs.readFileSync(path.join(repoRoot, "js", "document", "document-history-compression.js"), "utf8"),
+    context,
+  );
+
+  const retainedBytes = 2 * 1024 * 1024;
+  const rawBytes = 4 * 1024 * 1024;
+  const retainedView = new Uint8Array(retainedBytes).subarray(0, 16);
+
+  context.window.CBO.documentHistory = {
+    redoStack: [],
+    undoStack: [
+      {
+        before: {
+          cpuPixels: retainedView,
+          cpuPixelsEncoding: context.window.CBO.HistoryCompression.ENCODING,
+          cpuRawBytes: rawBytes,
+        },
+      },
+    ],
+  };
+
+  const summary = context.window.CBO.debugHistoryCompression({ log: false });
+
+  assert.equal(summary.compressedSnapshotsMiB, 2);
+  assert.equal(summary.compressedRawEquivalentMiB, 4);
+  assert.equal(summary.compressionRatio, 2);
 });

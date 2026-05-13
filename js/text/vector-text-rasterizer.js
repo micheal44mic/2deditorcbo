@@ -77,10 +77,22 @@
 
   function getDocumentSize() {
     const renderer = namespace.documentRenderer;
+    const documentRect = renderer?.getDocumentBoundsRect?.();
+
+    if (documentRect) {
+      return {
+        height: Math.max(1, Math.round(Number(documentRect.height) || 1)),
+        width: Math.max(1, Math.round(Number(documentRect.width) || 1)),
+        x: Number.isFinite(documentRect.x) ? Math.round(documentRect.x) : 0,
+        y: Number.isFinite(documentRect.y) ? Math.round(documentRect.y) : 0,
+      };
+    }
 
     return {
       height: Math.max(1, Math.round(renderer?.height || 4000)),
       width: Math.max(1, Math.round(renderer?.width || 4000)),
+      x: 0,
+      y: 0,
     };
   }
 
@@ -92,8 +104,8 @@
     const box = rasterBox || {
       height: size.height,
       width: size.width,
-      x: 0,
-      y: 0,
+      x: Number.isFinite(size.x) ? size.x : 0,
+      y: Number.isFinite(size.y) ? size.y : 0,
     };
     const outputWidth = Math.max(1, Math.round(box.width * Math.max(1, rasterScale)));
     const outputHeight = Math.max(1, Math.round(box.height * Math.max(1, rasterScale)));
@@ -140,8 +152,8 @@
     const box = rasterBox || {
       height: size.height,
       width: size.width,
-      x: 0,
-      y: 0,
+      x: Number.isFinite(size.x) ? size.x : 0,
+      y: Number.isFinite(size.y) ? size.y : 0,
     };
     const rasterScale = getTextRasterSupersampleScale(box);
     const outputWidth = Math.max(1, Math.round(box.width * rasterScale));
@@ -197,8 +209,8 @@
     const rasterBox = {
       height: size.height,
       width: size.width,
-      x: 0,
-      y: 0,
+      x: Number.isFinite(size.x) ? size.x : 0,
+      y: Number.isFinite(size.y) ? size.y : 0,
     };
 
     return {

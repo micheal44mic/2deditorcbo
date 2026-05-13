@@ -9128,6 +9128,8 @@ void main() {
       }
 
       const previousTarget = this.rasterTargetsByLayerId.get(layerId);
+      const previousTargetRect = this.getRasterTargetDocumentRect(previousTarget);
+      const restoreDirtyRect = this.unionRasterHistoryRects(previousTargetRect, snapshot.rect);
 
       this.rasterTargetsByLayerId.set(layerId, sparseTarget);
 
@@ -9144,7 +9146,7 @@ void main() {
       this.commitVisualDirtyChange({
         emit: options.emit,
         layerId,
-        rect: snapshot.rect,
+        rect: restoreDirtyRect || snapshot.rect,
         source,
         usePreviewDirtyTiles: true,
       });
@@ -9294,6 +9296,7 @@ void main() {
       let target = this.getRasterTarget(layerId);
       const snapshotTargetRect = snapshot.targetRect;
       const targetRect = this.getRasterTargetDocumentRect(target);
+      const restoreDirtyRect = this.unionRasterHistoryRects(targetRect, snapshot.rect);
 
       if (
         snapshotTargetRect &&
@@ -9373,7 +9376,7 @@ void main() {
       if (options.emit !== false) {
         this.commitVisualDirtyChange({
           layerId,
-          rect: snapshot.rect ? { ...snapshot.rect } : null,
+          rect: restoreDirtyRect || (snapshot.rect ? { ...snapshot.rect } : null),
           source: options.source || "raster-snapshot-restore",
           usePreviewDirtyTiles: true,
         });
@@ -12344,7 +12347,10 @@ void main() {
     }
 
     ensurePaintLayerForBrush(options = {}) {
-      const paintLayer = this.layerModel?.ensureActivePaintLayer?.({ source: "brush-stroke" });
+      const paintLayer = this.layerModel?.ensureActivePaintLayer?.({
+        reuseExistingPaintLayer: true,
+        source: "brush-stroke",
+      });
 
       if (paintLayer?.id) {
         if (options.materialize === false) {

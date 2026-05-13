@@ -1089,6 +1089,25 @@
       return true;
     }
 
+    findFirstPaintLayerForArtboard(artboardId = "") {
+      const normalizedArtboardId = String(artboardId || "").trim();
+
+      return this.flattenTopToBottom()
+        .find((entry) => {
+          if (entry?.type !== "paint") {
+            return false;
+          }
+
+          const sourceEntry = this.findEntryById(entry.id);
+
+          if (!this.canActivateEntry(sourceEntry)) {
+            return false;
+          }
+
+          return !normalizedArtboardId || entry.artboardId === normalizedArtboardId;
+        }) || null;
+    }
+
     ensureActivePaintLayer(options = {}) {
       const activeEntry = this.findEntryById(this.activeLayerId);
       const targetArtboardId = this.resolveInsertionArtboardId(activeEntry, options);
@@ -1101,6 +1120,21 @@
         (!targetArtboardId || activeEntryArtboardId === targetArtboardId)
       ) {
         return this.cloneEntry(activeEntry);
+      }
+
+      if (
+        options.reuseExistingPaintLayer === true &&
+        (!activeEntry || (targetArtboardId && activeEntryArtboardId !== targetArtboardId))
+      ) {
+        const paintLayer = this.findFirstPaintLayerForArtboard(targetArtboardId);
+
+        if (paintLayer?.id) {
+          this.setActiveLayer(paintLayer.id, {
+            source: options.source || "ensure-paint-layer",
+          });
+
+          return this.cloneEntry(this.findEntryById(paintLayer.id) || paintLayer);
+        }
       }
 
       const beforeState = this.captureHistoryState(options);

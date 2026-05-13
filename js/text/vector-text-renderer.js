@@ -534,6 +534,8 @@
     return JSON.stringify({
       documentHeight: size.height,
       documentWidth: size.width,
+      documentX: Number.isFinite(size.x) ? size.x : 0,
+      documentY: Number.isFinite(size.y) ? size.y : 0,
       pathData,
       rasterBox: rasterBox ? {
         height: rasterBox.height,
@@ -576,8 +578,8 @@
     const box = rasterBox || {
       height: size.height,
       width: size.width,
-      x: 0,
-      y: 0,
+      x: Number.isFinite(size.x) ? size.x : 0,
+      y: Number.isFinite(size.y) ? size.y : 0,
     };
     const rasterScale = Math.max(1, Number(options.rasterScale) || 1);
     const svg = createSvgElement("svg", {
@@ -775,10 +777,16 @@
 
   function getClampedRasterBox(bounds, size) {
     const paddedBounds = expandBounds(bounds, TEXT_RASTER_BOUNDS_PADDING);
-    const x1 = Math.max(0, Math.min(size.width, paddedBounds.x1));
-    const y1 = Math.max(0, Math.min(size.height, paddedBounds.y1));
-    const x2 = Math.max(0, Math.min(size.width, paddedBounds.x2));
-    const y2 = Math.max(0, Math.min(size.height, paddedBounds.y2));
+    const documentX = Number.isFinite(size?.x) ? Math.round(size.x) : 0;
+    const documentY = Number.isFinite(size?.y) ? Math.round(size.y) : 0;
+    const documentWidth = Math.max(1, Math.round(Number(size?.width) || 1));
+    const documentHeight = Math.max(1, Math.round(Number(size?.height) || 1));
+    const documentRight = documentX + documentWidth;
+    const documentBottom = documentY + documentHeight;
+    const x1 = Math.max(documentX, Math.min(documentRight, paddedBounds.x1));
+    const y1 = Math.max(documentY, Math.min(documentBottom, paddedBounds.y1));
+    const x2 = Math.max(documentX, Math.min(documentRight, paddedBounds.x2));
+    const y2 = Math.max(documentY, Math.min(documentBottom, paddedBounds.y2));
 
     if (x2 <= x1 || y2 <= y1) {
       return null;
@@ -786,8 +794,8 @@
 
     const x = Math.floor(x1);
     const y = Math.floor(y1);
-    const width = Math.max(1, Math.min(size.width - x, Math.ceil(x2) - x));
-    const height = Math.max(1, Math.min(size.height - y, Math.ceil(y2) - y));
+    const width = Math.max(1, Math.min(documentRight - x, Math.ceil(x2) - x));
+    const height = Math.max(1, Math.min(documentBottom - y, Math.ceil(y2) - y));
 
     return { height, width, x, y };
   }
@@ -1561,10 +1569,22 @@
 
     getDocumentTextureSize() {
       const renderer = namespace.documentRenderer;
+      const documentRect = renderer?.getDocumentBoundsRect?.();
+
+      if (documentRect) {
+        return {
+          height: Math.max(1, Math.round(Number(documentRect.height) || 1)),
+          width: Math.max(1, Math.round(Number(documentRect.width) || 1)),
+          x: Number.isFinite(documentRect.x) ? Math.round(documentRect.x) : 0,
+          y: Number.isFinite(documentRect.y) ? Math.round(documentRect.y) : 0,
+        };
+      }
 
       return {
         height: Math.max(1, Math.round(renderer?.height || 4000)),
         width: Math.max(1, Math.round(renderer?.width || 4000)),
+        x: 0,
+        y: 0,
       };
     }
 

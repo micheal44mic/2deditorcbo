@@ -248,6 +248,14 @@
     return result.allowed;
   }
 
+  function retainedViewBytes(view) {
+    if (!ArrayBuffer.isView?.(view)) {
+      return 0;
+    }
+
+    return Math.max(0, Number(view.buffer?.byteLength) || Number(view.byteLength) || 0);
+  }
+
   function isArrayBuffer(value) {
     return typeof ArrayBuffer !== "undefined" && value instanceof ArrayBuffer;
   }
@@ -312,7 +320,7 @@
 
         if (buffer && !seenBuffers.has(buffer)) {
           seenBuffers.add(buffer);
-          const byteLength = value.byteLength || buffer.byteLength || 0;
+          const byteLength = retainedViewBytes(value);
           rawBytes += byteLength;
           rawEquivalentBytes += byteLength;
         }
@@ -375,8 +383,8 @@
 
         if (buffer && !seenBuffers.has(buffer)) {
           seenBuffers.add(buffer);
-          const actual = pixels.byteLength;
-          const equivalent = Number(value.cpuRawBytes) || actual;
+          const actual = retainedViewBytes(pixels);
+          const equivalent = Number(value.cpuRawBytes) || pixels.byteLength || actual;
           rawBytes += actual;
           rawEquivalentBytes += equivalent;
           compressedSnapshotCount += 1;

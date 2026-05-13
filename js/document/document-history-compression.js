@@ -18,6 +18,28 @@
     return value instanceof Uint8Array;
   }
 
+  function retainedUint8Bytes(view) {
+    if (!isUint8Array(view)) {
+      return 0;
+    }
+
+    return Math.max(0, Number(view.buffer?.byteLength) || Number(view.byteLength) || 0);
+  }
+
+  function trimCompressedBytes(output, byteLength) {
+    if (!isUint8Array(output)) {
+      return output;
+    }
+
+    const length = Math.max(0, Math.min(output.byteLength, Math.floor(Number(byteLength) || 0)));
+
+    if (output.byteOffset === 0 && output.byteLength === length && output.buffer?.byteLength === length) {
+      return output;
+    }
+
+    return output.slice(0, length);
+  }
+
   function writeHeader(output, rawByteLength) {
     output[0] = rawByteLength & 0xFF;
     output[1] = (rawByteLength >>> 8) & 0xFF;
@@ -128,7 +150,7 @@
     }
 
     return {
-      bytes: output.subarray(0, outIdx),
+      bytes: trimCompressedBytes(output, outIdx),
       encoding: LEGACY_RLE_ENCODING,
       rawByteLength,
     };
@@ -233,7 +255,7 @@
     }
 
     return {
-      bytes: output.subarray(0, outIdx),
+      bytes: trimCompressedBytes(output, outIdx),
       encoding: RLE_ENCODING,
       rawByteLength,
     };
@@ -478,8 +500,8 @@
 
       seenBuffers.add(buffer);
 
-      const actualBytes = view.byteLength || 0;
-      const equivalentBytes = Math.max(actualBytes, Number(rawEquivalentBytes) || 0);
+      const actualBytes = retainedUint8Bytes(view);
+      const equivalentBytes = Math.max(0, Number(rawEquivalentBytes) || view.byteLength || actualBytes || 0);
 
       if (bucket === "compressed") {
         summary.compressedSnapshots += 1;

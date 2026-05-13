@@ -1407,6 +1407,107 @@ test("restoreRasterSnapshot rebuilds sparse paint targets when requested", () =>
   assert.equal(renderer.framebuffer, null);
 });
 
+test("restoreRasterSnapshot invalidates previous dense bounds when restoring a smaller target", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const dirtyChanges = [];
+  const existingTarget = {
+    framebuffer: { id: "target-fb" },
+    height: 512,
+    layerId: "paint-1",
+    texture: { id: "target-texture" },
+    width: 512,
+    x: 0,
+    y: 0,
+  };
+  const snapshot = {
+    framebuffer: { id: "snapshot-fb" },
+    rect: { height: 128, width: 128, x: 64, y: 64 },
+    texture: { id: "snapshot-texture" },
+  };
+
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.gl = {
+    COLOR_BUFFER_BIT: 0x4000,
+    DRAW_FRAMEBUFFER: 0x8CA9,
+    NEAREST: 0x2600,
+    READ_FRAMEBUFFER: 0x8CA8,
+    bindFramebuffer() {},
+    blitFramebuffer() {},
+  };
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", existingTarget]]);
+  renderer.getRasterTarget = () => existingTarget;
+  renderer.needsCopyOnWriteDetach = () => false;
+  renderer.commitVisualDirtyChange = (detail) => dirtyChanges.push(detail);
+
+  assert.equal(renderer.restoreRasterSnapshot("paint-1", snapshot, {
+    source: "unit-restore-dense-dirty",
+  }), true);
+
+  assert.deepEqual(dirtyChanges.map((detail) => ({ ...detail.rect })), [
+    { height: 512, width: 512, x: 0, y: 0 },
+  ]);
+});
+
+test("restoreRasterSnapshot invalidates previous dense bounds when rebuilding sparse target", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const dirtyChanges = [];
+  const denseTarget = {
+    framebuffer: { id: "dense-fb" },
+    height: 512,
+    layerId: "paint-1",
+    texture: { id: "dense-texture" },
+    width: 512,
+    x: 0,
+    y: 0,
+  };
+  const snapshot = {
+    framebuffer: { id: "snapshot-fb" },
+    rect: { height: 128, width: 128, x: 64, y: 64 },
+    texture: { id: "snapshot-texture" },
+  };
+
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.paintLayerId = "paint-1";
+  renderer.texture = denseTarget.texture;
+  renderer.framebuffer = denseTarget.framebuffer;
+  renderer.rasterTargetIdSequence = 1;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", denseTarget]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.createRasterTarget = (clearColor, options = {}) => ({
+    clearColor,
+    cropped: options.cropped === true,
+    framebuffer: { id: `fb-${options.x}-${options.y}` },
+    height: options.height,
+    kind: options.kind,
+    layerId: options.layerId,
+    texture: { id: `tex-${options.x}-${options.y}` },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  renderer.copyRasterTargetRectIntoTarget = () => true;
+  renderer.deleteRasterTargetObject = () => {};
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.isRasterTargetFullyTransparent = () => false;
+  renderer.requestDraw = () => {};
+  renderer.commitVisualDirtyChange = (detail) => dirtyChanges.push(detail);
+
+  assert.equal(renderer.restoreRasterSnapshot("paint-1", snapshot, {
+    preferSparse: true,
+    source: "unit-restore-sparse-dirty",
+  }), true);
+
+  assert.deepEqual(dirtyChanges.map((detail) => ({ ...detail.rect })), [
+    { height: 512, width: 512, x: 0, y: 0 },
+  ]);
+});
+
 test("restoreRasterSnapshot can replace sparse paint targets to remove stale tiles", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);

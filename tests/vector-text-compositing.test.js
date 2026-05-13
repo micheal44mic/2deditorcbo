@@ -183,6 +183,26 @@ test("vector text renderer caches visual text into the matching WebGL layer targ
   assert.doesNotMatch(source, /type:\s*"paint"[\s\S]{0,120}vector-text-cache/);
 });
 
+test("vector text raster cache bounds include offset artboards", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+  const clampedBody = source.match(/function getClampedRasterBox\(bounds, size\) \{([\s\S]*?)\n  \}/)?.[1] || "";
+  const sizeBody = source.match(/getDocumentTextureSize\(\) \{([\s\S]*?)\n    createRasterTextLayerMarkup/)?.[1] || "";
+
+  assert.match(sizeBody, /const documentRect = renderer\?\.getDocumentBoundsRect\?\.\(\)/);
+  assert.match(sizeBody, /x: Number\.isFinite\(documentRect\.x\) \? Math\.round\(documentRect\.x\) : 0/);
+  assert.match(sizeBody, /y: Number\.isFinite\(documentRect\.y\) \? Math\.round\(documentRect\.y\) : 0/);
+  assert.match(clampedBody, /const documentX = Number\.isFinite\(size\?\.x\) \? Math\.round\(size\.x\) : 0/);
+  assert.match(clampedBody, /const documentRight = documentX \+ documentWidth/);
+  assert.match(clampedBody, /Math\.min\(documentRight, paddedBounds\.x1\)/);
+  assert.match(clampedBody, /Math\.min\(documentBottom, paddedBounds\.y1\)/);
+  assert.match(source, /documentX: Number\.isFinite\(size\.x\) \? size\.x : 0/);
+  assert.match(source, /viewBox: `\$\{box\.x\} \$\{box\.y\} \$\{box\.width\} \$\{box\.height\}`/);
+  assert.doesNotMatch(clampedBody, /Math\.min\(size\.width, paddedBounds/);
+});
+
 test("the SVG overlay no longer paints text above the composited document", () => {
   const css = fs.readFileSync(path.join(repoRoot, "css", "layout.css"), "utf8");
 
@@ -477,10 +497,15 @@ test("manual vector text rasterization reads document size without materializing
   );
   const getDocumentSizeBody = source.match(/function getDocumentSize\(\) \{([\s\S]*?)\n  \}/)?.[1] || "";
 
+  assert.match(getDocumentSizeBody, /const documentRect = renderer\?\.getDocumentBoundsRect\?\.\(\)/);
+  assert.match(getDocumentSizeBody, /x: Number\.isFinite\(documentRect\.x\) \? Math\.round\(documentRect\.x\) : 0/);
+  assert.match(getDocumentSizeBody, /y: Number\.isFinite\(documentRect\.y\) \? Math\.round\(documentRect\.y\) : 0/);
   assert.match(getDocumentSizeBody, /renderer\?\.height \|\| 4000/);
   assert.match(getDocumentSizeBody, /renderer\?\.width \|\| 4000/);
   assert.doesNotMatch(getDocumentSizeBody, /getPaintTarget/);
   assert.doesNotMatch(getDocumentSizeBody, /paintTarget/);
+  assert.match(source, /x: Number\.isFinite\(size\.x\) \? size\.x : 0/);
+  assert.match(source, /y: Number\.isFinite\(size\.y\) \? size\.y : 0/);
 });
 
 test("vector text cache target creation does not fall back to full raster targets", () => {

@@ -596,6 +596,36 @@ test("ensureActivePaintLayer without an active layer inserts above everything", 
   assert.equal(history.undoStack.length, 1);
 });
 
+test("ensureActivePaintLayer can reuse the first paint layer for brush when no layer is active", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory();
+  const model = new DocumentLayerModel();
+  const topLayer = model.createLayer({
+    id: "top-image",
+    name: "Top Image",
+    type: "image",
+  });
+
+  window.CBO.documentHistory = history;
+  model.setEntries([topLayer, ...model.getEntries()], { history: false, source: "seed" });
+  model.setActiveLayer(null, { history: false, source: "seed" });
+
+  const paintLayer = model.ensureActivePaintLayer({
+    reuseExistingPaintLayer: true,
+    source: "brush-stroke",
+  });
+  await waitForHistoryFlush();
+
+  const entries = model.getEntries();
+  const paintLayers = model.flattenTopToBottom().filter((entry) => entry.type === "paint");
+
+  assert.equal(paintLayer.id, "paint-main");
+  assert.equal(model.activeLayerId, "paint-main");
+  assert.equal(entries[0].id, topLayer.id);
+  assert.equal(paintLayers.length, 1);
+  assert.equal(history.undoStack.length, 0);
+});
+
 test("ensureActivePaintLayer inserts new paint into the selected artboard group", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory();
@@ -629,6 +659,109 @@ test("ensureActivePaintLayer inserts new paint into the selected artboard group"
   model.setActiveLayer(primaryTextLayer.id, { history: false, source: "seed" });
 
   const paintLayer = model.ensureActivePaintLayer({ source: "brush-stroke" });
+  await waitForHistoryFlush();
+
+  const entries = model.getEntries();
+  const primaryGroup = entries.find((entry) => entry.artboardId === "active-document");
+  const secondaryGroup = entries.find((entry) => entry.artboardId === "secondary");
+
+  assert.equal(primaryGroup.children.some((entry) => entry.id === paintLayer.id), false);
+  assert.equal(secondaryGroup.children[0].id, paintLayer.id);
+  assert.equal(model.findEntryArtboardId(paintLayer.id), "secondary");
+  assert.equal(model.activeLayerId, paintLayer.id);
+  assert.equal(history.undoStack.length, 1);
+});
+
+test("ensureActivePaintLayer reuses selected artboard paint before creating another brush layer", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory();
+  const model = new DocumentLayerModel();
+  const primaryPaintLayer = model.createLayer({
+    id: "primary-paint",
+    name: "Primary Paint",
+    type: "paint",
+  });
+  const secondaryPaintLayer = model.createLayer({
+    id: "secondary-paint",
+    name: "Secondary Paint",
+    type: "paint",
+  });
+
+  window.CBO.documentHistory = history;
+  window.CBO.getSelectedDocumentArtboardId = () => "secondary";
+  model.setEntries([
+    {
+      artboardGroup: true,
+      artboardId: "active-document",
+      children: [primaryPaintLayer],
+      id: "artboard-group-active-document",
+      name: "Artboard 1",
+      type: "group",
+    },
+    {
+      artboardGroup: true,
+      artboardId: "secondary",
+      children: [secondaryPaintLayer],
+      id: "artboard-group-secondary",
+      name: "Artboard 2",
+      type: "group",
+    },
+  ], { history: false, source: "seed" });
+  model.setActiveLayer(null, { history: false, source: "seed" });
+
+  const paintLayer = model.ensureActivePaintLayer({
+    reuseExistingPaintLayer: true,
+    source: "brush-stroke",
+  });
+  await waitForHistoryFlush();
+
+  const entries = model.getEntries();
+  const secondaryGroup = entries.find((entry) => entry.artboardId === "secondary");
+  const paintLayers = model.flattenTopToBottom().filter((entry) => entry.type === "paint");
+
+  assert.equal(paintLayer.id, secondaryPaintLayer.id);
+  assert.equal(model.activeLayerId, secondaryPaintLayer.id);
+  assert.equal(secondaryGroup.children.filter((entry) => entry.type === "paint").length, 1);
+  assert.equal(paintLayers.length, 2);
+  assert.equal(history.undoStack.length, 0);
+});
+
+test("ensureActivePaintLayer creates the first brush paint layer in an empty selected artboard", async () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
+  const history = new DocumentHistory();
+  const model = new DocumentLayerModel();
+  const primaryPaintLayer = model.createLayer({
+    id: "primary-paint",
+    name: "Primary Paint",
+    type: "paint",
+  });
+
+  window.CBO.documentHistory = history;
+  window.CBO.getSelectedDocumentArtboardId = () => "secondary";
+  model.setEntries([
+    {
+      artboardGroup: true,
+      artboardId: "active-document",
+      children: [primaryPaintLayer],
+      id: "artboard-group-active-document",
+      name: "Artboard 1",
+      type: "group",
+    },
+    {
+      artboardGroup: true,
+      artboardId: "secondary",
+      children: [],
+      id: "artboard-group-secondary",
+      name: "Artboard 2",
+      type: "group",
+    },
+  ], { history: false, source: "seed" });
+  model.setActiveLayer(null, { history: false, source: "seed" });
+
+  const paintLayer = model.ensureActivePaintLayer({
+    reuseExistingPaintLayer: true,
+    source: "brush-stroke",
+  });
   await waitForHistoryFlush();
 
   const entries = model.getEntries();
