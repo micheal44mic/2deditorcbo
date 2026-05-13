@@ -1211,12 +1211,17 @@ void main() {
         documentSizeCap: Number.isFinite(options.documentSizeCap) && options.documentSizeCap > 0
           ? Math.floor(options.documentSizeCap)
           : null,
+        isolateDocumentArtboards: options.isolateDocumentArtboards === true,
         previewCacheMaxSize: Number.isFinite(options.previewCacheMaxSize) && options.previewCacheMaxSize > 0
           ? Math.floor(options.previewCacheMaxSize)
           : PREVIEW_CACHE_MAX_SIZE,
       };
       this.layerModel = options.layerModel ||
-        (namespace.DocumentLayerModel ? new namespace.DocumentLayerModel() : null);
+        (namespace.DocumentLayerModel
+          ? new namespace.DocumentLayerModel({
+              ignoreGlobalArtboards: this.options.isolateDocumentArtboards,
+            })
+          : null);
       this.width = 1;
       this.height = 1;
       this.texture = null;
@@ -5410,6 +5415,10 @@ void main() {
     }
 
     getLayerArtboardRect(layer) {
+      if (this.options?.isolateDocumentArtboards) {
+        return null;
+      }
+
       const artboardId = String(layer?.artboardId || "").trim();
 
       if (!artboardId) {
@@ -8258,6 +8267,18 @@ void main() {
     }
 
     clearTarget(target) {
+      if (this.isSparseRasterTarget(target)) {
+        target.tiles.forEach((tile) => this.deleteRasterTargetObject(tile));
+        target.tiles.clear();
+        target.cpuBytes = 0;
+        target.cpuPixels = null;
+        target.cpuPixelsEncoding = null;
+        target.cpuRawBytes = 0;
+        target.state = "";
+        this.markRasterTargetDirty(target);
+        return;
+      }
+
       if (!target?.framebuffer) {
         return;
       }
@@ -12198,7 +12219,9 @@ void main() {
     }
 
     getDocumentBoundsRect() {
-      const artboardUnion = namespace.getDocumentArtboardUnionRect?.();
+      const artboardUnion = this.options?.isolateDocumentArtboards
+        ? null
+        : namespace.getDocumentArtboardUnionRect?.();
 
       return artboardUnion || {
         x: 0,

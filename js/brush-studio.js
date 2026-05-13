@@ -224,6 +224,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         gl,
         viewportWidth: viewport.width,
         viewportHeight: viewport.height,
+        isolateDocumentArtboards: true,
         transparentBackground: true,
         documentSizeCap: 2048,
       });
@@ -231,6 +232,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         gl,
         documentRenderer: previewDocumentRenderer,
         getSettings: () => draftBrushSettings,
+        isolateDocumentArtboards: true,
+        suppressCameraEvents: true,
         transparentBackground: true,
         singleStrokeMode: true,
         disableNavigation: true,

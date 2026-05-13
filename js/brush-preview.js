@@ -292,6 +292,7 @@ window.CBO = window.CBO || {};
         gl,
         viewportWidth: viewport.width,
         viewportHeight: viewport.height,
+        isolateDocumentArtboards: true,
         transparentBackground: true,
         documentSizeCap: 512,
       });
@@ -300,6 +301,8 @@ window.CBO = window.CBO || {};
         gl,
         documentRenderer,
         getSettings: () => thumbnailBrushSettings,
+        isolateDocumentArtboards: true,
+        suppressCameraEvents: true,
         transparentBackground: true,
         singleStrokeMode: true,
         disableInput: true,

@@ -509,6 +509,8 @@ void main() {
         singleStrokeMode: options.singleStrokeMode === true,
         disableNavigation: options.disableNavigation === true,
         disableInput: options.disableInput === true,
+        isolateDocumentArtboards: options.isolateDocumentArtboards === true,
+        suppressCameraEvents: options.suppressCameraEvents === true,
         manualRender: options.manualRender === true,
         enableHistory: options.enableHistory === true
           ? true
@@ -1120,8 +1122,15 @@ void main() {
       this.strokeBufferRect = { ...nextRect };
     }
 
+    usesIsolatedDocumentArtboards() {
+      return this.options?.isolateDocumentArtboards === true ||
+        this.documentRenderer?.options?.isolateDocumentArtboards === true;
+    }
+
     getFullDocumentRect(target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
-      const documentBounds = this.documentRenderer?.getDocumentBoundsRect?.();
+      const documentBounds = this.usesIsolatedDocumentArtboards()
+        ? null
+        : this.documentRenderer?.getDocumentBoundsRect?.();
 
       if (documentBounds) {
         return {
@@ -1141,6 +1150,10 @@ void main() {
     }
 
     getActiveDocumentPaintRect(layerId = this.strokeTargetLayerId || "") {
+      if (this.usesIsolatedDocumentArtboards()) {
+        return null;
+      }
+
       return namespace.getActiveDocumentArtboardRect?.({ layerId }) || null;
     }
 
@@ -2496,6 +2509,10 @@ void main() {
     }
 
     activateArtboardAtPoint(point, source = "brush-pointer-artboard") {
+      if (this.usesIsolatedDocumentArtboards()) {
+        return null;
+      }
+
       return namespace.selectDocumentArtboardAtPoint?.(point, { source }) || null;
     }
 
@@ -5972,16 +5989,18 @@ void main() {
         viewportHeight: this.viewportHeight,
       });
 
-      window.dispatchEvent(
-        new CustomEvent("cbo:camera-change", {
-          detail: {
-            camera: { ...this.camera },
-            dpr: this.dpr,
-            viewportHeight: this.viewportHeight,
-            viewportWidth: this.viewportWidth,
-          },
-        }),
-      );
+      if (!this.options.suppressCameraEvents) {
+        window.dispatchEvent(
+          new CustomEvent("cbo:camera-change", {
+            detail: {
+              camera: { ...this.camera },
+              dpr: this.dpr,
+              viewportHeight: this.viewportHeight,
+              viewportWidth: this.viewportWidth,
+            },
+          }),
+        );
+      }
     }
 
     dispose() {

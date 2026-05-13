@@ -280,6 +280,9 @@
     constructor(options = {}) {
       super();
 
+      this.options = {
+        ignoreGlobalArtboards: options.ignoreGlobalArtboards === true,
+      };
       this.sequence = 0;
       this.entries = Array.isArray(options.entries)
         ? this.ensureSystemLayers(this.normalizeEntries(options.entries))
@@ -938,6 +941,10 @@
 
       if (explicitArtboardId) {
         return explicitArtboardId;
+      }
+
+      if (this.options?.ignoreGlobalArtboards) {
+        return "";
       }
 
       return String(
