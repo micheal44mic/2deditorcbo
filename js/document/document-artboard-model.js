@@ -117,6 +117,49 @@ window.CBO = window.CBO || {};
     return value;
   }
 
+  function captureArtboardHistoryState() {
+    const history = namespace.documentHistory;
+    const layerModel = namespace.documentLayerModel;
+
+    return {
+      artboards: namespace.documentArtboardModel?.getArtboards?.() || [],
+      layerState: history?.getLayerSnapshot?.(layerModel) || null,
+      selectedArtboardId: namespace.documentArtboardModel?.getSelectedArtboardId?.() || "",
+    };
+  }
+
+  function restoreArtboardHistoryState(state, source = "history-artboard-restore") {
+    if (!state || !Array.isArray(state.artboards) || !namespace.documentArtboardModel?.reset) {
+      return false;
+    }
+
+    const selectedArtboardId = String(state.selectedArtboardId || "").trim();
+
+    namespace.documentArtboardModel.reset({
+      artboards: cloneValue(state.artboards),
+      defaultSecondaryCount: 0,
+      source,
+    });
+
+    if (selectedArtboardId && namespace.documentArtboardModel.getArtboardById(selectedArtboardId)) {
+      namespace.documentArtboardModel.selectArtboard(selectedArtboardId, { source });
+    } else {
+      namespace.documentArtboardModel.clearSelection({ source });
+    }
+
+    if (state.layerState) {
+      namespace.documentHistory?.restoreLayerState?.(
+        namespace.documentLayerModel,
+        cloneValue(state.layerState),
+        { source },
+      );
+    }
+
+    namespace.documentRenderer?.requestDraw?.();
+
+    return true;
+  }
+
   function getArtboardContentLayerIds(artboardId) {
     const layerModel = namespace.documentLayerModel;
 
@@ -811,7 +854,47 @@ window.CBO = window.CBO || {};
   };
 
   namespace.createDocumentArtboard = function createDocumentArtboard(options = {}) {
-    return namespace.documentArtboardModel.createArtboard(options);
+    const history = namespace.documentHistory;
+    const canRecordHistory = history?.canRecord?.(options) === true;
+    const source = options.source || "document-artboard-create";
+    const beforeState = canRecordHistory ? captureArtboardHistoryState() : null;
+    const create = () => namespace.documentArtboardModel.createArtboard({
+      ...options,
+      source,
+    });
+    const artboard = canRecordHistory && history?.runWithoutRecording
+      ? history.runWithoutRecording(create)
+      : create();
+
+    if (!artboard || !canRecordHistory || !history?.push) {
+      return artboard;
+    }
+
+    const afterState = captureArtboardHistoryState();
+    const before = cloneValue(beforeState);
+    const after = cloneValue(afterState);
+
+    history.push({
+      type: "artboard-create",
+      artboardId: artboard.id,
+      historyGroup: options.historyGroup || "",
+      source,
+      undo() {
+        return restoreArtboardHistoryState(before, "history-undo-artboard-create");
+      },
+      redo() {
+        return restoreArtboardHistoryState(after, "history-redo-artboard-create");
+      },
+      mergeWith() {
+        return false;
+      },
+      destroy() {},
+    }, {
+      historyGroup: options.historyGroup || "",
+      source,
+    });
+
+    return artboard;
   };
 
   namespace.moveDocumentArtboard = function moveDocumentArtboard(artboardId, x, y, options = {}) {

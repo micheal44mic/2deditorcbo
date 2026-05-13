@@ -34,6 +34,58 @@ function loadDocumentArtboardNamespace() {
   return context.window.CBO;
 }
 
+function loadDocumentArtboardHistoryNamespace() {
+  const eventTarget = new EventTarget();
+  const window = {
+    CBO: {},
+    addEventListener: (...args) => eventTarget.addEventListener(...args),
+    dispatchEvent: (event) => eventTarget.dispatchEvent(event),
+    removeEventListener: (...args) => eventTarget.removeEventListener(...args),
+  };
+  const context = vm.createContext({
+    CustomEvent: class CustomEvent extends Event {
+      constructor(type, init = {}) {
+        super(type);
+        this.detail = init.detail;
+      }
+    },
+    Date,
+    Event,
+    EventTarget,
+    JSON,
+    Map,
+    Math,
+    Number,
+    Object,
+    Set,
+    String,
+    Uint8Array,
+    WeakMap,
+    console,
+    queueMicrotask,
+    window,
+  });
+
+  vm.runInContext(readRepoFile("js", "blend-modes.js"), context);
+  vm.runInContext(readRepoFile("js", "curves-engine.js"), context);
+  vm.runInContext(readRepoFile("js", "document", "document-history.js"), context);
+  vm.runInContext(readRepoFile("js", "document", "document-artboard-model.js"), context);
+  vm.runInContext(readRepoFile("js", "document", "document-layer-model.js"), context);
+
+  const namespace = context.window.CBO;
+  const history = new namespace.DocumentHistory({ maxEntries: 20 });
+  const layerModel = new namespace.DocumentLayerModel();
+
+  namespace.documentHistory = history;
+  namespace.documentLayerModel = layerModel;
+
+  return {
+    history,
+    layerModel,
+    namespace,
+  };
+}
+
 test("left rail exposes a visual artboard tool below layers", () => {
   const indexSource = readRepoFile("index.html");
   const layerButtonIndex = indexSource.indexOf('data-drawer-panel="layers"');
@@ -403,4 +455,59 @@ test("new artboard creation uses requested size and skips occupied slots", () =>
   assert.equal(custom.width, 321);
   assert.equal(custom.height, 654);
   assert.equal(namespace.getDocumentArtboards().length, 5);
+});
+
+test("created artboards undo and redo their generated layer groups", () => {
+  const { history, layerModel, namespace } = loadDocumentArtboardHistoryNamespace();
+
+  namespace.resetDocumentArtboards({
+    artboards: [
+      {
+        height: 100,
+        id: "active-document",
+        isPrimary: true,
+        name: "Artboard 1",
+        width: 100,
+        x: 0,
+        y: 0,
+      },
+    ],
+    defaultSecondaryCount: 0,
+    documentHeight: 100,
+    documentWidth: 100,
+    source: "unit-artboard-history-seed",
+  });
+  namespace.ensureDocumentLayerArtboardGroups({
+    history: false,
+    source: "unit-artboard-history-seed-groups",
+  });
+
+  assert.equal(history.undoStack.length, 0);
+  assert.ok(layerModel.findEntryById("artboard-group-active-document"));
+
+  const created = namespace.createDocumentArtboard({
+    height: 90,
+    id: "secondary",
+    source: "unit-artboard-create-history",
+    width: 80,
+    x: 200,
+    y: 0,
+  });
+
+  assert.equal(created.id, "secondary");
+  assert.equal(history.undoStack.length, 1);
+  assert.equal(history.undoStack[0].type, "artboard-create");
+  assert.ok(namespace.getDocumentArtboardById("secondary"));
+  assert.ok(layerModel.findEntryById("artboard-group-secondary"));
+  assert.ok(layerModel.findEntryById("background-secondary"));
+
+  assert.equal(history.undo(), true);
+  assert.equal(namespace.getDocumentArtboardById("secondary"), null);
+  assert.equal(layerModel.findEntryById("artboard-group-secondary"), null);
+  assert.equal(layerModel.findEntryById("background-secondary"), null);
+
+  assert.equal(history.redo(), true);
+  assert.ok(namespace.getDocumentArtboardById("secondary"));
+  assert.ok(layerModel.findEntryById("artboard-group-secondary"));
+  assert.ok(layerModel.findEntryById("background-secondary"));
 });
