@@ -267,7 +267,35 @@ const BENCHMARK_EXPRESSION = `
 
     return {
       name,
+      activeStrokeScratchMiB: report.activeStrokeScratchMiB || "0.00",
+      activeStrokeScratchTargetPresent: Boolean(report.activeStrokeScratchTargetPresent),
+      brushStrokeScratchMiB: report.brushStrokeScratchMiB || "0.00",
       countedTextures: report.countedTextures,
+      effectScratchMiB: report.effectScratchMiB || "0.00",
+      incrementalBrushBakeDecision: window.CBO.lastBrushIncrementalStrokeBakeDecision || window.CBO.lastIncrementalBrushBakeDecision || null,
+      incrementalBrushBakeReport: window.CBO.lastBrushIncrementalStrokeBake || window.CBO.lastIncrementalBrushBakeReport || null,
+      layerEffectScratchAPresent: Boolean(report.layerEffectScratchAPresent),
+      layerEffectScratchBPresent: Boolean(report.layerEffectScratchBPresent),
+      scratchMiB: report.scratchMiB || "0.00",
+      scratchDiagnostics: report.scratchDiagnostics || null,
+      strokeMemoryEvents: (report.strokeMemoryEvents || []).slice(0, 3).map((event) => ({
+        activeStrokeScratchTargetPresent: Boolean(event.activeStrokeScratchTargetPresent),
+        layerEffectScratchAPresent: Boolean(event.layerEffectScratchAPresent),
+        layerEffectScratchBPresent: Boolean(event.layerEffectScratchBPresent),
+        scratchMiB: event.scratchMiB,
+        incrementalBake: Boolean(event.incrementalBake),
+        incrementalBakeCount: event.incrementalBakeCount || 0,
+        incrementalBakeIndex: event.incrementalBakeIndex || 0,
+        incrementalBakeLastReason: event.incrementalBakeLastReason || "",
+        incrementalBakeReason: event.incrementalBakeReason || "",
+        incrementalBakeSkippedReason: event.incrementalBakeSkippedReason || "",
+        incrementalStrokeBakeCount: event.incrementalStrokeBakeCount || 0,
+        incrementalStrokeBakeLastReason: event.incrementalStrokeBakeLastReason || "",
+        strokeBufferCoverage: event.strokeBufferCoverage,
+        strokeBufferRect: event.strokeBufferRect,
+        strokeTargetReallocationCount: event.strokeTargetReallocationCount,
+        strokeTargetReplaceCount: event.strokeTargetReplaceCount,
+      })),
       summary: report.summary,
       topRows: report.rows.slice(0, 8).map((row) => ({
         category: row.category,
@@ -275,10 +303,37 @@ const BENCHMARK_EXPRESSION = `
         height: row.height,
         label: row.label,
         MiB: row.estimatedMiB,
+        ownerId: row.ownerId,
+        ownerType: row.ownerType,
+        kind: row.kind,
+        width: row.width,
+      })),
+      topScratchRows: (report.topScratchResourcesByBytes || []).slice(0, 8).map((row) => ({
+        height: row.height,
+        kind: row.kind,
+        label: row.label,
+        MiB: row.estimatedMiB || row.MiB,
+        ownerId: row.ownerId,
+        ownerType: row.ownerType,
         width: row.width,
       })),
       totalMiB: report.totalMiB,
     };
+  };
+  const resetEditorCanvas = async (presetId) => {
+    if (!window.CBO?.initEditorCanvas) {
+      return;
+    }
+
+    const stage = document.querySelector(".editor-stage");
+
+    if (stage) {
+      stage.dataset.canvasReady = "false";
+    }
+
+    window.CBO.documentLayerModel = null;
+    window.CBO.initEditorCanvas({ presetId });
+    await delay(300);
   };
   const makeSourceCanvas = (width, height) => {
     const canvas = document.createElement("canvas");
@@ -366,10 +421,7 @@ const BENCHMARK_EXPRESSION = `
     blurError,
   });
 
-  if (window.CBO?.initEditorCanvas) {
-    window.CBO.initEditorCanvas({ presetId: "square-2048" });
-    await delay(300);
-  }
+  await resetEditorCanvas("square-4000");
 
   const strokeRenderer = window.CBO.documentRenderer;
   const strokeLayerModel = window.CBO.documentLayerModel || strokeRenderer?.layerModel;
@@ -385,18 +437,22 @@ const BENCHMARK_EXPRESSION = `
     strokeEngine.camera = { x: 0, y: 0, zoom: 1 };
     strokeEngine.dpr = 1;
     strokeEngine.canvas.getBoundingClientRect = () => ({
-      bottom: 2048,
-      height: 2048,
+      bottom: 4000,
+      height: 4000,
       left: 0,
-      right: 2048,
+      right: 4000,
       top: 0,
-      width: 2048,
+      width: 4000,
       x: 0,
       y: 0,
     });
     strokeEngine.canvas.setPointerCapture = () => {};
     strokeEngine.canvas.hasPointerCapture = () => false;
     strokeEngine.canvas.releasePointerCapture = () => {};
+    window.CBO.enableBrushIncrementalBake = true;
+    window.CBO.incrementalBrushBakeEnabled = true;
+    window.CBO.experimentalBrushIncrementalBakeUnsafe = false;
+    window.CBO.experimentalIncrementalBrushBakeUnsafe = false;
 
     const brushSettings = window.CBO.BrushDefaults?.createSettings
       ? window.CBO.BrushDefaults.createSettings({
@@ -404,8 +460,8 @@ const BENCHMARK_EXPRESSION = `
           flow: 1,
           grainEnabled: false,
           opacity: 1,
-          radius: 96,
-          renderingMode: "uniform-glaze",
+          radius: 160,
+          renderingMode: "intense-blending",
           shapeAlphaSrc: "",
           spacing: 0.16,
           spacingJitter: 0,
@@ -418,8 +474,8 @@ const BENCHMARK_EXPRESSION = `
           flow: 1,
           grainEnabled: false,
           opacity: 1,
-          radius: 96,
-          renderingMode: "uniform-glaze",
+          radius: 160,
+          renderingMode: "intense-blending",
           shapeAlphaSrc: "",
           spacing: 0.16,
           taperEnd: 0,
@@ -469,16 +525,34 @@ const BENCHMARK_EXPRESSION = `
       return points;
     };
     const strokeSets = [
-      makeStroke(220, 250, 1320, 120),
-      makeStroke(260, 520, 1240, 300),
-      makeStroke(310, 820, 1180, -180),
-      makeStroke(520, 1150, 960, 260),
-      makeStroke(420, 1480, 1120, -260),
-      makeStroke(700, 380, 820, 1180),
+      makeStroke(320, 420, 2920, 220),
+      makeStroke(360, 920, 2820, 520),
+      makeStroke(420, 1520, 2640, -340),
+      makeStroke(820, 2220, 2200, 520),
+      makeStroke(640, 3060, 2740, -560),
+      makeStroke(1160, 700, 1760, 2520),
     ];
 
     await delay(100);
-    results.push(take("stroke-fresh-2048-history-cleared"));
+    results.push(take("stroke-fresh-4000-history-cleared"));
+
+    const liveStroke = makeStroke(180, 220, 3600, 3440, 48);
+    const livePointerId = 4900;
+
+    try {
+      strokeEngine.handlePointerDown(makePointerEvent(liveStroke[0], livePointerId));
+      for (let index = 1; index < liveStroke.length - 1; index += 1) {
+        strokeEngine.handlePointerMove(makePointerEvent(liveStroke[index], livePointerId));
+      }
+      await delay(80);
+      results.push(take("stroke-live-long-before-pointerup"));
+    } finally {
+      if (strokeEngine.isDrawing && strokeEngine.activePointerId === livePointerId) {
+        strokeEngine.handlePointerUp(makePointerEvent(liveStroke[liveStroke.length - 1], livePointerId));
+      }
+    }
+    await delay(120);
+    results.push(take("stroke-live-long-after-pointerup"));
 
     strokeSets.forEach((points, index) => {
       drawStroke(points, 5000 + index);
@@ -558,6 +632,25 @@ function printHumanSummary(result) {
 
   result.results.forEach((item) => {
     console.log(`${item.name}: ${item.totalMiB} MiB`);
+    const inc = item.incrementalBrushBakeReport?.memoryReport?.incrementalBakeCount ||
+      item.incrementalBrushBakeReport?.incrementalStrokeBakeCount ||
+      item.incrementalBrushBakeReport?.incrementalBakeCount ||
+      item.strokeMemoryEvents?.[0]?.incrementalBakeCount ||
+      item.strokeMemoryEvents?.[0]?.incrementalStrokeBakeCount ||
+      item.strokeMemoryEvents?.[0]?.incrementalBakeIndex ||
+      0;
+    console.log(`  scratch: total ${item.scratchMiB || "0.00"} MiB, brush ${item.brushStrokeScratchMiB || "0.00"}, active ${item.activeStrokeScratchMiB || "0.00"}, fx ${item.effectScratchMiB || "0.00"}, inc ${inc}`);
+    if (item.topScratchRows?.length) {
+      item.topScratchRows.forEach((row) => {
+        console.log(`    scratch top: ${row.label || row.kind} ${row.MiB} MiB ${row.width}x${row.height} (${row.ownerType}/${row.kind})`);
+      });
+    }
+    if (item.strokeMemoryEvents?.length) {
+      item.strokeMemoryEvents.forEach((event) => {
+        const rect = event.strokeBufferRect || {};
+        console.log(`    stroke event: scratch ${event.scratchMiB} MiB, rect ${rect.width || 0}x${rect.height || 0}, replace ${event.strokeTargetReplaceCount || 0}, realloc ${event.strokeTargetReallocationCount || 0}`);
+      });
+    }
     if (item.blurError) {
       console.log(`  ! blur allocation error: ${item.blurError}`);
     }

@@ -20,6 +20,7 @@ window.CBO = window.CBO || {};
   const BRUSH_HISTORY_BATCH_IDLE_MS = 1000;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_MIB = 1024 * 1024;
+  const STROKE_SCRATCH_TEXTURE_COUNT = 3;
   const STROKE_MEMORY_POLICY = Object.freeze({
     normalMaxBytes: 5 * RASTER_MIB,
     mediumMaxBytes: 32 * RASTER_MIB,
@@ -27,6 +28,12 @@ window.CBO = window.CBO || {};
     largeCoverage: 0.25,
     hugeCoverage: 0.35,
   });
+  const STROKE_SCRATCH_SOFT_EVICT_BYTES = 96 * RASTER_MIB;
+  const STROKE_SCRATCH_HARD_WARN_BYTES = 128 * RASTER_MIB;
+  const STROKE_SCRATCH_TOP_RESOURCE_LIMIT = 8;
+  const STROKE_INCREMENTAL_BAKE_ENABLED = true;
+  const STROKE_INCREMENTAL_BAKE_COVERAGE = 0.25;
+  const STROKE_INCREMENTAL_BAKE_SAFE_BUILDUP = 0.999;
   const VELOCITY_PRESSURE_MAX_SPEED = 5;
   const VELOCITY_PRESSURE_SMOOTHING = 0.02;
   const RENDERING_MODE_PRESETS = Object.freeze({
@@ -520,6 +527,10 @@ void main() {
         historyBatchIdleMs: Number.isFinite(options.historyBatchIdleMs) && options.historyBatchIdleMs >= 0
           ? Math.floor(options.historyBatchIdleMs)
           : BRUSH_HISTORY_BATCH_IDLE_MS,
+        enableIncrementalStrokeBake: options.enableIncrementalStrokeBake === false
+          ? false
+          : STROKE_INCREMENTAL_BAKE_ENABLED,
+        experimentalIncrementalStrokeBakeUnsafe: options.experimentalIncrementalStrokeBakeUnsafe === true,
         respectActiveTool: options.respectActiveTool === true
           ? true
           : options.respectActiveTool === false
@@ -601,6 +612,23 @@ void main() {
       this.strokeAccumTexture = null;
       this.strokeAccumFBO = null;
       this.strokeBufferRect = null;
+      this.strokeTargetAllocationCount = 0;
+      this.strokeTargetReplaceCount = 0;
+      this.strokeTargetReallocationCount = 0;
+      this.strokeTargetPeakScratchBytes = 0;
+      this.strokeTargetPeakCoverage = 0;
+      this.strokeTargetLastAllocationRect = null;
+      this.strokeScratchPressureEvictionCount = 0;
+      this.lastStrokeScratchDiagnostics = null;
+      this.incrementalStrokeBakeCount = 0;
+      this.incrementalStrokeBakeBytesFreed = 0;
+      this.incrementalStrokeBakePeakScratchBytes = 0;
+      this.incrementalStrokeBakeLastReason = "";
+      this.incrementalStrokeBakeLastRect = null;
+      this.incrementalStrokeBakeSkippedReason = "";
+      this.incrementalStrokeBakedRect = null;
+      this.lastIncrementalStrokeBakeDecision = null;
+      this.isIncrementalStrokeBakeInProgress = false;
       this.lastStrokeMemoryReport = null;
       this.pendingBrushHistory = null;
       this.pendingBrushHistoryTimer = 0;
@@ -1120,6 +1148,9 @@ void main() {
       this.strokeAccumTexture = targets[2].texture;
       this.strokeAccumFBO = targets[2].framebuffer;
       this.strokeBufferRect = { ...nextRect };
+      this.strokeTargetAllocationCount += 1;
+      this.updateStrokeScratchDiagnostics(nextRect, documentTarget);
+      this.evictRasterScratchCachesForStrokePressure(nextRect, documentTarget, "create-stroke-layer-target");
     }
 
     usesIsolatedDocumentArtboards() {
@@ -1183,6 +1214,219 @@ void main() {
       return rectPixels / canvasPixels;
     }
 
+    formatRasterMiB(bytes) {
+      return (Math.max(0, Number(bytes) || 0) / RASTER_MIB).toFixed(2);
+    }
+
+    getStrokeScratchBytes(strokeBufferRect = this.strokeBufferRect) {
+      return this.getRasterRectBytes(strokeBufferRect) * STROKE_SCRATCH_TEXTURE_COUNT;
+    }
+
+    resetStrokeAllocationDiagnostics() {
+      this.strokeTargetAllocationCount = 0;
+      this.strokeTargetReplaceCount = 0;
+      this.strokeTargetReallocationCount = 0;
+      this.strokeTargetPeakScratchBytes = 0;
+      this.strokeTargetPeakCoverage = 0;
+      this.strokeTargetLastAllocationRect = null;
+      this.strokeScratchPressureEvictionCount = 0;
+      this.lastStrokeScratchDiagnostics = null;
+      this.incrementalStrokeBakeCount = 0;
+      this.incrementalStrokeBakeBytesFreed = 0;
+      this.incrementalStrokeBakePeakScratchBytes = 0;
+      this.incrementalStrokeBakeLastReason = "";
+      this.incrementalStrokeBakeLastRect = null;
+      this.incrementalStrokeBakeSkippedReason = "";
+      this.incrementalStrokeBakedRect = null;
+      this.lastIncrementalStrokeBakeDecision = null;
+      this.isIncrementalStrokeBakeInProgress = false;
+    }
+
+    updateStrokeScratchDiagnostics(rect = this.strokeBufferRect, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "")) {
+      const scratchBytes = this.getStrokeScratchBytes(rect);
+      const coverage = this.getRasterRectCoverage(rect, target);
+
+      this.strokeTargetPeakScratchBytes = Math.max(this.strokeTargetPeakScratchBytes || 0, scratchBytes);
+      this.strokeTargetPeakCoverage = Math.max(this.strokeTargetPeakCoverage || 0, coverage);
+      this.strokeTargetLastAllocationRect = rect ? { ...rect } : null;
+
+      const diagnostics = {
+        coverage,
+        coveragePercent: Number((coverage * 100).toFixed(2)),
+        hardWarnBytes: STROKE_SCRATCH_HARD_WARN_BYTES,
+        hardWarnMiB: this.formatRasterMiB(STROKE_SCRATCH_HARD_WARN_BYTES),
+        peakCoverage: this.strokeTargetPeakCoverage || 0,
+        peakCoveragePercent: Number(((this.strokeTargetPeakCoverage || 0) * 100).toFixed(2)),
+        peakScratchBytes: this.strokeTargetPeakScratchBytes || 0,
+        peakScratchMiB: this.formatRasterMiB(this.strokeTargetPeakScratchBytes || 0),
+        scratchBytes,
+        scratchMiB: this.formatRasterMiB(scratchBytes),
+        scratchTextureCount: STROKE_SCRATCH_TEXTURE_COUNT,
+        softEvictBytes: STROKE_SCRATCH_SOFT_EVICT_BYTES,
+        softEvictMiB: this.formatRasterMiB(STROKE_SCRATCH_SOFT_EVICT_BYTES),
+        strokeBufferRect: rect ? { ...rect } : null,
+        strokeScratchPressureEvictionCount: this.strokeScratchPressureEvictionCount || 0,
+        ...this.getIncrementalStrokeBakeTelemetry(),
+        strokeTargetAllocationCount: this.strokeTargetAllocationCount || 0,
+        strokeTargetReallocationCount: this.strokeTargetReallocationCount || 0,
+        strokeTargetReplaceCount: this.strokeTargetReplaceCount || 0,
+      };
+
+      this.lastStrokeScratchDiagnostics = diagnostics;
+      namespace.lastBrushStrokeScratchDiagnostics = diagnostics;
+
+      return diagnostics;
+    }
+
+    evictRasterScratchCachesForStrokePressure(rect = this.strokeBufferRect, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || ""), reason = "brush-stroke-scratch-pressure") {
+      const scratchBytes = this.getStrokeScratchBytes(rect);
+
+      if (scratchBytes < STROKE_SCRATCH_SOFT_EVICT_BYTES) {
+        return null;
+      }
+
+      this.strokeScratchPressureEvictionCount = (this.strokeScratchPressureEvictionCount || 0) + 1;
+      const coverage = this.getRasterRectCoverage(rect, target);
+      const scratchHardBudgetExceeded = scratchBytes >= STROKE_SCRATCH_HARD_WARN_BYTES;
+      const report = {
+        coverage,
+        createdAt: new Date().toISOString(),
+        estimatedPeakBytes: scratchBytes,
+        phase: "brush-live-stroke-scratch",
+        policy: scratchHardBudgetExceeded ? "huge" : "large",
+        reason,
+        scratchBudgetExceeded: true,
+        scratchBytes,
+        scratchHardBudgetExceeded,
+        scratchHardWarnBytes: STROKE_SCRATCH_HARD_WARN_BYTES,
+        scratchMiB: this.formatRasterMiB(scratchBytes),
+        scratchSoftEvictBytes: STROKE_SCRATCH_SOFT_EVICT_BYTES,
+        source: "brush-engine",
+        strokeBufferCoverage: coverage,
+        strokeBufferRect: rect ? { ...rect } : null,
+        strokeScratchDiagnostics: this.lastStrokeScratchDiagnostics || null,
+        ...this.getIncrementalStrokeBakeTelemetry(),
+        strokeTargetAllocationCount: this.strokeTargetAllocationCount || 0,
+        strokeTargetPeakCoverage: this.strokeTargetPeakCoverage || 0,
+        strokeTargetPeakScratchBytes: this.strokeTargetPeakScratchBytes || 0,
+        strokeTargetReallocationCount: this.strokeTargetReallocationCount || 0,
+        strokeTargetReplaceCount: this.strokeTargetReplaceCount || 0,
+        tool: this.currentStrokeTool || "brush",
+      };
+      const eviction = this.documentRenderer?.evictRasterScratchCachesForPolicy?.(report, {
+        deleteActiveStrokeScratch: true,
+        deleteCompositeScratch: true,
+        deleteEffectScratch: true,
+        deletePreviewCache: true,
+        reason,
+        source: "brush-live-stroke-scratch",
+      }) || null;
+
+      if (eviction) {
+        namespace.lastBrushStrokeScratchPressureEviction = eviction;
+      }
+
+      return eviction;
+    }
+
+    getRendererScratchPresence() {
+      const renderer = this.documentRenderer || namespace.documentRenderer;
+      const getTargetSize = (target) => target
+        ? {
+            height: Math.max(0, Math.round(target.height || 0)),
+            width: Math.max(0, Math.round(target.width || 0)),
+          }
+        : null;
+      const getTargetBytes = (target) => {
+        const size = getTargetSize(target);
+
+        return size ? size.width * size.height * RASTER_BYTES_PER_PIXEL : 0;
+      };
+      const activeStrokeScratchTargetBytes = getTargetBytes(renderer?.activeStrokeScratchTarget);
+      const layerEffectScratchABytes = getTargetBytes(renderer?.layerEffectScratchA);
+      const layerEffectScratchBBytes = getTargetBytes(renderer?.layerEffectScratchB);
+      const layerEffectScratchBytes = layerEffectScratchABytes + layerEffectScratchBBytes;
+      const rendererScratchDiagnostics = renderer?.getRasterScratchDiagnostics?.() || null;
+
+      return {
+        activeStrokeScratchTargetBytes,
+        activeStrokeScratchTargetMiB: this.formatRasterMiB(activeStrokeScratchTargetBytes),
+        activeStrokeScratchTargetPresent: Boolean(renderer?.activeStrokeScratchTarget?.texture),
+        activeStrokeScratchTargetSize: getTargetSize(renderer?.activeStrokeScratchTarget),
+        layerEffectScratchABytes,
+        layerEffectScratchAMiB: this.formatRasterMiB(layerEffectScratchABytes),
+        layerEffectScratchAPresent: Boolean(renderer?.layerEffectScratchA?.texture),
+        layerEffectScratchASize: getTargetSize(renderer?.layerEffectScratchA),
+        layerEffectScratchBBytes,
+        layerEffectScratchBMiB: this.formatRasterMiB(layerEffectScratchBBytes),
+        layerEffectScratchBPresent: Boolean(renderer?.layerEffectScratchB?.texture),
+        layerEffectScratchBSize: getTargetSize(renderer?.layerEffectScratchB),
+        layerEffectScratchBytes,
+        layerEffectScratchMiB: this.formatRasterMiB(layerEffectScratchBytes),
+        layerEffectScratchPresent: Boolean(renderer?.layerEffectScratchA?.texture || renderer?.layerEffectScratchB?.texture),
+        rendererScratchDiagnostics,
+      };
+    }
+
+    getTopScratchResources(limit = STROKE_SCRATCH_TOP_RESOURCE_LIMIT) {
+      const manager = this.getRasterResourceManager();
+      const normalizedLimit = Math.max(1, Math.floor(Number(limit) || STROKE_SCRATCH_TOP_RESOURCE_LIMIT));
+      const rows = typeof manager?.getTopScratchResourcesByBytes === "function"
+        ? manager.getTopScratchResourcesByBytes(normalizedLimit)
+        : (
+            typeof manager?.getTopResourcesByBytes === "function"
+              ? manager.getTopResourcesByBytes(64).filter((row) => row.ownerType === "scratch").slice(0, normalizedLimit)
+              : []
+          );
+
+      return rows.map((row) => ({
+        bbox: row.bbox ? { ...row.bbox } : null,
+        bytes: Math.max(0, Math.round(Number(row.bytes) || 0)),
+        height: Math.max(0, Math.round(Number(row.height) || 0)),
+        isFullCanvas: Boolean(row.isFullCanvas),
+        kind: row.kind || "",
+        label: row.label || "",
+        MiB: row.MiB || row.estimatedMiB || this.formatRasterMiB(row.bytes),
+        ownerId: row.ownerId || "",
+        ownerType: row.ownerType || "",
+        purgeable: Boolean(row.purgeable),
+        reason: row.reason || "",
+        width: Math.max(0, Math.round(Number(row.width) || 0)),
+      }));
+    }
+
+    createStrokeScratchDiagnostics({ strokeBufferRect = this.strokeBufferRect, strokeRect = null, target = this.getDocumentDrawTarget(this.strokeTargetLayerId || ""), scratchBytes = this.getStrokeScratchBytes(strokeBufferRect) } = {}) {
+      const strokeBufferCoverage = this.getRasterRectCoverage(strokeBufferRect, target);
+      const strokeCoverage = this.getRasterRectCoverage(strokeRect, target);
+
+      return {
+        ...this.getRendererScratchPresence(),
+        scratchBytes,
+        scratchMiB: this.formatRasterMiB(scratchBytes),
+        scratchTextureCount: STROKE_SCRATCH_TEXTURE_COUNT,
+        strokeScratchPressureEvictionCount: this.strokeScratchPressureEvictionCount || 0,
+        ...this.getIncrementalStrokeBakeTelemetry(),
+        scratchBudgetExceeded: scratchBytes >= STROKE_SCRATCH_SOFT_EVICT_BYTES,
+        scratchHardBudgetExceeded: scratchBytes >= STROKE_SCRATCH_HARD_WARN_BYTES,
+        softEvictMiB: this.formatRasterMiB(STROKE_SCRATCH_SOFT_EVICT_BYTES),
+        hardWarnMiB: this.formatRasterMiB(STROKE_SCRATCH_HARD_WARN_BYTES),
+        strokeBufferCoverage,
+        strokeBufferCoveragePercent: Number((strokeBufferCoverage * 100).toFixed(2)),
+        strokeBufferRect: strokeBufferRect ? { ...strokeBufferRect } : null,
+        strokeCoverage,
+        strokeCoveragePercent: Number((strokeCoverage * 100).toFixed(2)),
+        strokeRect: strokeRect ? { ...strokeRect } : null,
+        strokeTargetAllocationCount: this.strokeTargetAllocationCount || 0,
+        strokeTargetPeakCoverage: this.strokeTargetPeakCoverage || 0,
+        strokeTargetPeakCoveragePercent: Number(((this.strokeTargetPeakCoverage || 0) * 100).toFixed(2)),
+        strokeTargetPeakScratchBytes: this.strokeTargetPeakScratchBytes || 0,
+        strokeTargetPeakScratchMiB: this.formatRasterMiB(this.strokeTargetPeakScratchBytes || 0),
+        strokeTargetReallocationCount: this.strokeTargetReallocationCount || 0,
+        strokeTargetReplaceCount: this.strokeTargetReplaceCount || 0,
+        topScratchResources: this.getTopScratchResources(),
+      };
+    }
+
     classifyStrokeMemory(estimatedPeakBytes, coverage) {
       if (
         estimatedPeakBytes > STROKE_MEMORY_POLICY.largeMaxBytes ||
@@ -1215,11 +1459,18 @@ void main() {
     } = {}) {
       const beforeBytes = this.getRasterRectBytes(strokeRect);
       const potentialAfterBytes = beforeBytes;
-      const scratchBytes = this.getRasterRectBytes(strokeBufferRect) * 3;
+      const scratchBytes = this.getStrokeScratchBytes(strokeBufferRect);
       const persistentBytes = beforeBytes + potentialAfterBytes;
       const estimatedPeakBytes = persistentBytes + scratchBytes;
       const coverage = this.getRasterRectCoverage(strokeRect, target);
-      const policy = this.classifyStrokeMemory(estimatedPeakBytes, coverage);
+      const strokeBufferCoverage = this.getRasterRectCoverage(strokeBufferRect, target);
+      const scratchDiagnostics = this.createStrokeScratchDiagnostics({
+        scratchBytes,
+        strokeBufferRect,
+        strokeRect,
+        target,
+      });
+      const policy = this.classifyStrokeMemory(estimatedPeakBytes, Math.max(coverage, strokeBufferCoverage));
       const hasTileHistory = typeof this.documentRenderer?.beginRasterTileHistory === "function";
       const historyMode = hasTileHistory
         ? "tile-before-after"
@@ -1247,7 +1498,24 @@ void main() {
           ? "redo snapshot disabled for very large brush stroke"
           : "brush stroke memory estimate",
         scratchBytes,
+        scratchMiB: this.formatRasterMiB(scratchBytes),
+        scratchTextureCount: STROKE_SCRATCH_TEXTURE_COUNT,
+        strokeScratchPressureEvictionCount: this.strokeScratchPressureEvictionCount || 0,
+        ...this.getIncrementalStrokeBakeTelemetry(),
+        scratchBudgetExceeded: scratchBytes >= STROKE_SCRATCH_SOFT_EVICT_BYTES,
+        scratchHardBudgetExceeded: scratchBytes >= STROKE_SCRATCH_HARD_WARN_BYTES,
+        scratchSoftEvictBytes: STROKE_SCRATCH_SOFT_EVICT_BYTES,
+        scratchHardWarnBytes: STROKE_SCRATCH_HARD_WARN_BYTES,
         source: "brush-engine",
+        strokeBufferCoverage,
+        strokeScratchDiagnostics: scratchDiagnostics,
+        strokeTargetAllocationCount: this.strokeTargetAllocationCount || 0,
+        strokeTargetPeakCoverage: this.strokeTargetPeakCoverage || 0,
+        strokeTargetPeakScratchBytes: this.strokeTargetPeakScratchBytes || 0,
+        strokeTargetReallocationCount: this.strokeTargetReallocationCount || 0,
+        strokeTargetReplaceCount: this.strokeTargetReplaceCount || 0,
+        topScratchResources: scratchDiagnostics.topScratchResources,
+        ...this.getRendererScratchPresence(),
         strokeBufferRect: strokeBufferRect ? { ...strokeBufferRect } : null,
         strokeRect: strokeRect ? { ...strokeRect } : null,
         tool,
@@ -1262,6 +1530,11 @@ void main() {
       this.lastStrokeMemoryReport = report;
       namespace.lastBrushStrokeMemoryReport = report;
       const recorded = namespace.rasterResourceManager?.recordStrokeMemory?.(report) || report;
+
+      this.documentRenderer?.evictRasterScratchCachesForPolicy?.(recorded, {
+        reason: recorded?.scratchBudgetExceeded ? "stroke-scratch-budget" : "stroke-memory-policy",
+        source: "brush-stroke-memory",
+      });
 
       if (namespace.debugRasterMemoryLogs !== true && namespace.debugStrokeMemoryLogs !== true) {
         return recorded;
@@ -1719,9 +1992,12 @@ void main() {
       try {
         const resourceMetadata = {
           bbox: nextRect,
+          bboxCoverage: this.getRasterRectCoverage(nextRect),
           originX: nextRect.x,
           originY: nextRect.y,
           reason: "replace-stroke-layer-target",
+          scratchBytes: this.getStrokeScratchBytes(nextRect),
+          strokeTargetReplaceCount: (this.strokeTargetReplaceCount || 0) + 1,
         };
 
         nextTargets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height, resourceMetadata));
@@ -1742,6 +2018,13 @@ void main() {
       this.strokeAccumTexture = nextTargets[2].texture;
       this.strokeAccumFBO = nextTargets[2].framebuffer;
       this.strokeBufferRect = { ...nextRect };
+      this.strokeTargetAllocationCount += 1;
+      this.strokeTargetReplaceCount += 1;
+      if (previousRect) {
+        this.strokeTargetReallocationCount += 1;
+      }
+      this.updateStrokeScratchDiagnostics(nextRect);
+      this.evictRasterScratchCachesForStrokePressure(nextRect, undefined, "replace-stroke-layer-target");
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       } finally {
@@ -4819,6 +5102,7 @@ void main() {
       });
       this.stampsBuffer.length = 0;
       this.strokeStampCount += stampCount;
+      this.maybeBakeStrokeIncrementally("flush-stamps-scratch-pressure");
       this.requestDraw();
       } finally {
         trace?.end({
@@ -4869,6 +5153,448 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
+    isIncrementalStrokeBakeEnabled() {
+      if (
+        this.options?.enableIncrementalStrokeBake === false ||
+        this.options?.incrementalBrushBake === false ||
+        namespace.enableBrushIncrementalBake === false ||
+        namespace.incrementalBrushBakeEnabled === false ||
+        namespace.disableIncrementalBrushBake === true
+      ) {
+        return false;
+      }
+
+      return STROKE_INCREMENTAL_BAKE_ENABLED;
+    }
+
+    isIncrementalStrokeBakeForced() {
+      return Boolean(
+        this.options?.experimentalIncrementalStrokeBakeUnsafe === true ||
+        this.options?.experimentalIncrementalBrushBakeUnsafe === true ||
+        namespace.experimentalBrushIncrementalBakeUnsafe === true ||
+        namespace.experimentalIncrementalBrushBakeUnsafe === true ||
+        namespace.experimentalBrushIncrementalBakeAll === true,
+      );
+    }
+
+    getIncrementalStrokeBakeTelemetry(extra = {}) {
+      return {
+        incrementalBakeBytesFreed: this.incrementalStrokeBakeBytesFreed || 0,
+        incrementalBakeBytesFreedMiB: this.formatRasterMiB(this.incrementalStrokeBakeBytesFreed || 0),
+        incrementalBakeCount: this.incrementalStrokeBakeCount || 0,
+        incrementalBakeEnabled: this.isIncrementalStrokeBakeEnabled(),
+        incrementalBakeLastReason: this.incrementalStrokeBakeLastReason || "",
+        incrementalBakeLastRect: this.incrementalStrokeBakeLastRect ? { ...this.incrementalStrokeBakeLastRect } : null,
+        incrementalBakePeakScratchBytes: this.incrementalStrokeBakePeakScratchBytes || 0,
+        incrementalBakePeakScratchMiB: this.formatRasterMiB(this.incrementalStrokeBakePeakScratchBytes || 0),
+        incrementalBakeSkippedReason: this.incrementalStrokeBakeSkippedReason || "",
+        incrementalBakeTriggerCoverage: Number.isFinite(Number(this.lastIncrementalStrokeBakeDecision?.coverage)) ? Number(this.lastIncrementalStrokeBakeDecision.coverage) : 0,
+        incrementalBakeTriggerScratchBytes: Math.max(0, Math.round(Number(this.lastIncrementalStrokeBakeDecision?.scratchBytes) || 0)),
+        incrementalBakeTriggerScratchMiB: this.formatRasterMiB(this.lastIncrementalStrokeBakeDecision?.scratchBytes || 0),
+        incrementalBakedRect: this.incrementalStrokeBakedRect ? { ...this.incrementalStrokeBakedRect } : null,
+        lastIncrementalBakeDecision: this.lastIncrementalStrokeBakeDecision ? { ...this.lastIncrementalStrokeBakeDecision } : null,
+        ...extra,
+      };
+    }
+
+    getIncrementalStrokeBakeSafety() {
+      const forced = this.isIncrementalStrokeBakeForced();
+      const buildUp = this.getStrokeBuildUp();
+      const renderingMode = String(this.brushState?.renderingMode || "").trim().toLowerCase();
+      const tool = this.currentStrokeTool || "brush";
+
+      if (!this.isIncrementalStrokeBakeEnabled()) {
+        return { allowed: false, buildUp, forced, reason: "disabled", renderingMode, tool };
+      }
+
+      if (this.isIncrementalStrokeBakeInProgress) {
+        return { allowed: false, buildUp, forced, reason: "already-in-progress", renderingMode, tool };
+      }
+
+      if (!this.strokeTexture || !this.strokeBufferRect) {
+        return { allowed: false, buildUp, forced, reason: "no-live-stroke-scratch", renderingMode, tool };
+      }
+
+      if (tool !== "brush" && tool !== "eraser") {
+        return { allowed: false, buildUp, forced, reason: "unsupported-tool", renderingMode, tool };
+      }
+
+      if (this.isTaperActive() || this.strokeTotalLength != null) {
+        return { allowed: false, buildUp, forced, reason: "taper-active", renderingMode, tool };
+      }
+
+      if (this.options.enableHistory && !this.canBatchBrushHistory()) {
+        return { allowed: false, buildUp, forced, reason: "history-not-batched", renderingMode, tool };
+      }
+
+      if (!forced && buildUp < STROKE_INCREMENTAL_BAKE_SAFE_BUILDUP) {
+        return {
+          allowed: false,
+          buildUp,
+          forced,
+          reason: "build-up-not-associative",
+          renderingMode,
+          requiredBuildUp: STROKE_INCREMENTAL_BAKE_SAFE_BUILDUP,
+          tool,
+        };
+      }
+
+      return { allowed: true, buildUp, forced, reason: forced ? "forced" : "safe-full-buildup", renderingMode, tool };
+    }
+
+    shouldIncrementallyBakeStrokeScratch(reason = "stroke-scratch-pressure") {
+      const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
+      const scratchBytes = this.getStrokeScratchBytes(this.strokeBufferRect);
+      const coverage = this.getRasterRectCoverage(this.strokeBufferRect, target);
+      const triggeredByBytes = scratchBytes >= STROKE_SCRATCH_SOFT_EVICT_BYTES;
+      const triggeredByCoverage = coverage >= STROKE_INCREMENTAL_BAKE_COVERAGE;
+      const safety = this.getIncrementalStrokeBakeSafety();
+      const shouldBake = Boolean((triggeredByBytes || triggeredByCoverage) && safety.allowed);
+      const skipReason = shouldBake
+        ? ""
+        : (
+            triggeredByBytes || triggeredByCoverage
+              ? safety.reason
+              : "below-threshold"
+          );
+      const decision = {
+        allowed: Boolean(safety.allowed),
+        buildUp: safety.buildUp,
+        coverage,
+        coveragePercent: Number((coverage * 100).toFixed(2)),
+        forced: Boolean(safety.forced),
+        reason,
+        renderingMode: safety.renderingMode || "",
+        requiredBuildUp: safety.requiredBuildUp ?? null,
+        safetyReason: safety.reason || "",
+        scratchBytes,
+        scratchMiB: this.formatRasterMiB(scratchBytes),
+        shouldBake,
+        skipReason,
+        thresholdCoverage: STROKE_INCREMENTAL_BAKE_COVERAGE,
+        thresholdCoveragePercent: Number((STROKE_INCREMENTAL_BAKE_COVERAGE * 100).toFixed(2)),
+        thresholdScratchBytes: STROKE_SCRATCH_SOFT_EVICT_BYTES,
+        thresholdScratchMiB: this.formatRasterMiB(STROKE_SCRATCH_SOFT_EVICT_BYTES),
+        tool: safety.tool || this.currentStrokeTool || "brush",
+        triggeredByBytes,
+        triggeredByCoverage,
+      };
+
+      this.lastIncrementalStrokeBakeDecision = decision;
+      this.incrementalStrokeBakeSkippedReason = skipReason;
+      namespace.lastBrushIncrementalStrokeBakeDecision = decision;
+
+      return decision;
+    }
+
+    maybeBakeStrokeIncrementally(reason = "stroke-scratch-pressure") {
+      const decision = this.shouldIncrementallyBakeStrokeScratch(reason);
+
+      if (!decision.shouldBake) {
+        return false;
+      }
+
+      try {
+        return this.bakeStrokeIncrementally({ decision, reason });
+      } catch (error) {
+        this.incrementalStrokeBakeSkippedReason = error?.message || "incremental-bake-error";
+        console.warn?.("[CBO brush] Bake incrementale stroke saltato: mantengo scratch live.", error);
+        return false;
+      }
+    }
+
+    resetActiveStrokeSegmentAfterIncrementalBake() {
+      this.activeStrokeBounds = null;
+      this.activeStrokeTilePatchRects = null;
+      this.strokePreviewDirtyRects = null;
+      this.cancelStrokeTargetPrewarm();
+    }
+
+    drawStrokeTextureToPaintTargets({
+      bakeRect = this.strokeBufferRect,
+      hasSelectionCoverage = false,
+      isEraserStroke = false,
+      paintTargets = [],
+      selectionCoverageRects = null,
+    } = {}) {
+      if (!this.strokeTexture || !bakeRect || !Array.isArray(paintTargets) || paintTargets.length === 0) {
+        return 0;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.compositeProgramInfo;
+      let drawCallCount = 0;
+
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      if (isEraserStroke) {
+        gl.blendFuncSeparate(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
+      } else {
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      }
+
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.strokeTexture);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1f(uniforms.opacity, 1.0);
+      gl.bindVertexArray(this.fullscreenQuad.vao);
+
+      try {
+        paintTargets.forEach((item) => {
+          const paintTarget = item?.target;
+          const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(paintTarget) || { x: 0, y: 0 };
+          const localBakeX = Math.round(bakeRect.x - targetRect.x);
+          const localBakeY = Math.round(bakeRect.y - targetRect.y);
+          const targetCoverageRects = hasSelectionCoverage
+            ? selectionCoverageRects
+                .map((selectionRect) => this.documentRenderer?.intersectRasterHistoryRects?.(selectionRect, targetRect) ||
+                  this.intersectDocumentRects(selectionRect, targetRect))
+                .filter(Boolean)
+            : null;
+
+          if (!paintTarget?.framebuffer || !paintTarget?.texture) {
+            return;
+          }
+
+          gl.bindFramebuffer(gl.FRAMEBUFFER, paintTarget.framebuffer);
+          gl.viewport(localBakeX, paintTarget.height - (localBakeY + bakeRect.height), bakeRect.width, bakeRect.height);
+
+          if (hasSelectionCoverage) {
+            if (!targetCoverageRects?.length) {
+              return;
+            }
+
+            targetCoverageRects.forEach((selectionTargetRect) => {
+              gl.enable(gl.SCISSOR_TEST);
+              gl.scissor(
+                selectionTargetRect.x - targetRect.x,
+                paintTarget.height - ((selectionTargetRect.y - targetRect.y) + selectionTargetRect.height),
+                selectionTargetRect.width,
+                selectionTargetRect.height,
+              );
+              gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+              drawCallCount += 1;
+            });
+            gl.disable(gl.SCISSOR_TEST);
+          } else {
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            drawCallCount += 1;
+          }
+
+          this.documentRenderer?.markRasterTargetDirty?.(paintTarget);
+        });
+      } finally {
+        gl.disable(gl.SCISSOR_TEST);
+        gl.bindVertexArray(null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.useProgram(null);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      }
+
+      return drawCallCount;
+    }
+
+    bakeStrokeIncrementally({ decision = null, reason = "stroke-scratch-pressure" } = {}) {
+      if (this.isIncrementalStrokeBakeInProgress) {
+        return false;
+      }
+
+      const initialStrokeBufferRect = this.strokeBufferRect ? { ...this.strokeBufferRect } : null;
+      const strokeRect = this.getActiveStrokeRect();
+      const layerId = this.strokeTargetLayerId ||
+        this.documentRenderer?.resolvePaintLayerId?.() ||
+        this.getDocumentDrawTarget().layerId;
+      const documentTarget = this.getDocumentDrawTarget(layerId);
+      const scratchBytes = this.getStrokeScratchBytes(initialStrokeBufferRect);
+      const safetyDecision = decision || this.shouldIncrementallyBakeStrokeScratch(reason);
+
+      if (!safetyDecision.shouldBake || !this.strokeTexture || !initialStrokeBufferRect || !strokeRect || !layerId) {
+        return false;
+      }
+
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.incremental-bake", {
+        coverage: safetyDecision.coverage,
+        layerId,
+        reason,
+        scratchBytes,
+        tool: this.currentStrokeTool || "brush",
+      }) : null;
+
+      this.isIncrementalStrokeBakeInProgress = true;
+
+      try {
+        const isEraserStroke = this.currentStrokeTool === "eraser";
+        const selectionCoverageRects = this.getActiveAreaSelectionCoverageRects(strokeRect);
+        const hasSelectionCoverage = Array.isArray(selectionCoverageRects) && selectionCoverageRects.length > 0;
+        const hasEmptySelectionCoverage = Array.isArray(selectionCoverageRects) && selectionCoverageRects.length === 0;
+
+        if (hasEmptySelectionCoverage) {
+          this.clearStrokeLayer();
+          this.releaseStrokeLayerTarget();
+          this.resetActiveStrokeSegmentAfterIncrementalBake();
+          this.requestDraw();
+          return true;
+        }
+
+        const effectiveStrokeRect = hasSelectionCoverage
+          ? this.getBoundsForDocumentRects(selectionCoverageRects)
+          : strokeRect;
+
+        if (!effectiveStrokeRect) {
+          return false;
+        }
+
+        const activeStrokeTilePatchRects = hasSelectionCoverage
+          ? this.filterTilePatchRectsToCoverage(
+              this.getActiveStrokeTilePatchRects(effectiveStrokeRect),
+              selectionCoverageRects,
+            )
+          : this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
+        const computedPreviewDirtyRects = this.updateStrokePreviewDirtyRects(
+          effectiveStrokeRect,
+          activeStrokeTilePatchRects,
+        );
+        const previewDirtyRects = computedPreviewDirtyRects.length > 0
+          ? computedPreviewDirtyRects
+          : this.getFallbackStrokePreviewDirtyRects(effectiveStrokeRect);
+        const paintTargets = isEraserStroke
+          ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
+              source: "brush-incremental-eraser-target",
+              tilePatchRects: activeStrokeTilePatchRects,
+            }) || [{
+              target: this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget(),
+            }]
+          : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
+              source: "brush-incremental-stroke-target",
+              tilePatchRects: activeStrokeTilePatchRects,
+            }) || [{
+              target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, effectiveStrokeRect, {
+                source: "brush-incremental-stroke-target",
+              }) || this.documentRenderer?.getRasterTarget?.(layerId),
+            }];
+        const target = paintTargets.find((item) => item?.target?.framebuffer && item?.target?.texture)?.target || null;
+
+        if (!target?.framebuffer || !target?.texture) {
+          return false;
+        }
+
+        const memoryReport = this.createStrokeMemoryReport({
+          layerId,
+          phase: "brush-incremental-bake",
+          strokeBufferRect: initialStrokeBufferRect,
+          strokeRect: effectiveStrokeRect,
+          target: documentTarget,
+          tool: this.currentStrokeTool,
+        });
+
+        memoryReport.reason = `incremental bake: ${reason}`;
+        memoryReport.incrementalBakeSafetyReason = safetyDecision.safetyReason || "";
+        memoryReport.incrementalBakeTriggerCoverage = safetyDecision.coverage || 0;
+        memoryReport.incrementalBakeTriggerScratchBytes = scratchBytes;
+        memoryReport.incrementalBakeTriggerScratchMiB = this.formatRasterMiB(scratchBytes);
+        memoryReport.lastIncrementalBakeDecision = { ...safetyDecision };
+
+        const batchedTileHistory = this.options.enableHistory
+          ? this.prepareBatchedBrushHistory(layerId, effectiveStrokeRect, memoryReport, activeStrokeTilePatchRects)
+          : null;
+
+        if (this.options.enableHistory && !batchedTileHistory) {
+          this.incrementalStrokeBakeSkippedReason = "history-capture-failed";
+          return false;
+        }
+
+        const drawCallCount = this.drawStrokeTextureToPaintTargets({
+          bakeRect: initialStrokeBufferRect,
+          hasSelectionCoverage,
+          isEraserStroke,
+          paintTargets,
+          selectionCoverageRects,
+        });
+
+        if (drawCallCount <= 0) {
+          this.incrementalStrokeBakeSkippedReason = "no-draw-call";
+          return false;
+        }
+
+        this.incrementalStrokeBakeCount = (this.incrementalStrokeBakeCount || 0) + 1;
+        this.incrementalStrokeBakeBytesFreed = (this.incrementalStrokeBakeBytesFreed || 0) + scratchBytes;
+        this.incrementalStrokeBakePeakScratchBytes = Math.max(this.incrementalStrokeBakePeakScratchBytes || 0, scratchBytes);
+        this.incrementalStrokeBakeLastReason = reason;
+        this.incrementalStrokeBakeLastRect = { ...initialStrokeBufferRect };
+        this.incrementalStrokeBakeSkippedReason = "";
+        this.incrementalStrokeBakedRect = this.unionDocumentRects(this.incrementalStrokeBakedRect, effectiveStrokeRect);
+        memoryReport.incrementalBakeBytesFreed = this.incrementalStrokeBakeBytesFreed || 0;
+        memoryReport.incrementalBakeBytesFreedMiB = this.formatRasterMiB(this.incrementalStrokeBakeBytesFreed || 0);
+        memoryReport.incrementalBakeCount = this.incrementalStrokeBakeCount || 0;
+        memoryReport.incrementalBakeLastRect = this.incrementalStrokeBakeLastRect ? { ...this.incrementalStrokeBakeLastRect } : null;
+        memoryReport.incrementalBakePeakScratchBytes = this.incrementalStrokeBakePeakScratchBytes || 0;
+        memoryReport.incrementalBakePeakScratchMiB = this.formatRasterMiB(this.incrementalStrokeBakePeakScratchBytes || 0);
+        memoryReport.incrementalBakedRect = this.incrementalStrokeBakedRect ? { ...this.incrementalStrokeBakedRect } : null;
+
+        this.recordStrokeMemory(memoryReport);
+        this.clearStrokeLayer();
+        this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+
+        const keepPreviewCacheForDirtyBake = this.shouldKeepPreviewCacheForDirtyBake(
+          previewDirtyRects,
+          memoryReport,
+          documentTarget,
+        );
+
+        this.documentRenderer?.evictRasterScratchCachesForPolicy?.(memoryReport, {
+          deleteActiveStrokeScratch: true,
+          deleteEffectScratch: false,
+          deletePreviewCache: !keepPreviewCacheForDirtyBake,
+          source: "brush-incremental-bake",
+        });
+
+        if (typeof this.documentRenderer?.commitVisualDirtyChange === "function") {
+          this.documentRenderer.commitVisualDirtyChange({
+            emit: false,
+            layerId,
+            maxDirtyRects: STROKE_PREVIEW_DIRTY_MAX_RECTS,
+            preserveDirtyRects: true,
+            rects: previewDirtyRects,
+            source: "brush-incremental-bake",
+          });
+        } else {
+          this.documentRenderer?.invalidatePreviewCache?.("brush-incremental-bake", {
+            layerId,
+            maxDirtyRects: STROKE_PREVIEW_DIRTY_MAX_RECTS,
+            preserveDirtyRects: true,
+            rects: previewDirtyRects,
+          });
+        }
+
+        this.resetActiveStrokeSegmentAfterIncrementalBake();
+        if (this.pendingBrushHistory) {
+          this.schedulePendingBrushHistoryCommit();
+        }
+        this.requestDraw();
+
+        namespace.lastBrushIncrementalStrokeBake = {
+          drawCallCount,
+          layerId,
+          memoryReport,
+          reason,
+          scratchBytes,
+          scratchMiB: this.formatRasterMiB(scratchBytes),
+          strokeBufferRect: { ...initialStrokeBufferRect },
+        };
+
+        return true;
+      } finally {
+        this.isIncrementalStrokeBakeInProgress = false;
+        trace?.end({
+          bakeCount: this.incrementalStrokeBakeCount || 0,
+          scratchBytes,
+        });
+      }
+    }
+
     bakeStroke() {
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.bake", {
         tool: this.currentStrokeTool || "brush",
@@ -4895,6 +5621,10 @@ void main() {
 
       if (!this.strokeTexture || !strokeRect) {
         this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+        if (this.pendingBrushHistory) {
+          this.schedulePendingBrushHistoryCommit();
+        }
         return;
       }
 
@@ -5238,6 +5968,8 @@ void main() {
         previewDirtyRectCount: previewDirtyRects.length,
       });
       } finally {
+        this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
         trace?.end({
           strokeStamps: this.strokeStampCount,
           tool: this.currentStrokeTool || "brush",
@@ -5710,6 +6442,7 @@ void main() {
       }
 
       this.clearAllLayers();
+      this.resetStrokeAllocationDiagnostics();
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
       this.strokePreviewDirtyRects = null;
@@ -5719,45 +6452,52 @@ void main() {
       const startPoint = this.beginStrokeDynamics(firstSample);
 
       this.isDrawing = true;
-      this.resetStrokeProgress();
-      const startStamp = this.createStamp(startPoint);
 
-      startStamp.alphaScale = this.getStampAlphaScale();
-      startStamp.sizeScale = 1;
-      this.pushShapeStamps(startStamp, null);
-      this.nextStampDistance = this.getStampSpacing();
-      this.currentStroke = [startPoint, startPoint, startPoint];
+      try {
+        this.resetStrokeProgress();
+        const startStamp = this.createStamp(startPoint);
 
-      // Replay degli intermedi (escluso ultimo: lo trattiamo come pointer-up).
-      for (let index = 1; index < rawSamples.length - 1; index += 1) {
-        const stableSample = this.applyStabilization(rawSamples[index]);
+        startStamp.alphaScale = this.getStampAlphaScale();
+        startStamp.sizeScale = 1;
+        this.pushShapeStamps(startStamp, null);
+        this.nextStampDistance = this.getStampSpacing();
+        this.currentStroke = [startPoint, startPoint, startPoint];
 
-        this.currentStroke.push(stableSample);
+        // Replay degli intermedi (escluso ultimo: lo trattiamo come pointer-up).
+        for (let index = 1; index < rawSamples.length - 1; index += 1) {
+          const stableSample = this.applyStabilization(rawSamples[index]);
+
+          this.currentStroke.push(stableSample);
+          this.processStamps();
+        }
+
+        const lastRaw = rawSamples[rawSamples.length - 1];
+        const lastPoint = rawSamples.length > 1 ? this.applyStabilization(lastRaw) : startPoint;
+
+        this.currentStroke.push(lastPoint);
         this.processStamps();
-      }
+        this.currentStroke.push(lastPoint);
+        this.processStamps();
+        this.flushStamps();
 
-      const lastRaw = rawSamples[rawSamples.length - 1];
-      const lastPoint = rawSamples.length > 1 ? this.applyStabilization(lastRaw) : startPoint;
+        if (this.isTaperActive() && rawSamples.length > 1) {
+          this.regenerateStrokeWithTaper(rawSamples, this.getCurrentStrokePathLength());
+        }
 
-      this.currentStroke.push(lastPoint);
-      this.processStamps();
-      this.currentStroke.push(lastPoint);
-      this.processStamps();
-      this.flushStamps();
+        this.bakeStroke();
+      } catch (error) {
+        console.error?.("[CBO brush] Replay tratto interrotto: cleanup stroke scratch eseguito.", error);
+      } finally {
+        this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+        this.resetStrokeRuntimeState();
+        this.isDrawing = false;
 
-      if (this.isTaperActive() && rawSamples.length > 1) {
-        this.regenerateStrokeWithTaper(rawSamples, this.getCurrentStrokePathLength());
-      }
-
-      this.bakeStroke();
-
-      this.resetStrokeRuntimeState();
-      this.isDrawing = false;
-
-      if (this.options.manualRender) {
-        this.draw();
-      } else {
-        this.requestDraw();
+        if (this.options.manualRender) {
+          this.draw();
+        } else {
+          this.requestDraw();
+        }
       }
     }
 
@@ -5826,6 +6566,8 @@ void main() {
       }
 
       this.releaseStrokeLayerTarget();
+      this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+      this.resetStrokeAllocationDiagnostics();
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
       this.strokePreviewDirtyRects = null;
@@ -5893,36 +6635,49 @@ void main() {
       }
 
       event.preventDefault();
-      const rawSample = this.createPointerSample(event);
 
-      this.recordedStroke.push(rawSample);
+      try {
+        const rawSample = this.createPointerSample(event);
 
-      const point = this.applyStabilization(rawSample);
+        this.recordedStroke.push(rawSample);
 
-      this.currentStroke.push(point);
-      this.processStamps();
-      this.currentStroke.push(point);
-      this.processStamps();
-      this.flushStamps();
+        const point = this.applyStabilization(rawSample);
 
-      // Taper: rifaccio l'intero tratto in strokeFBO conoscendo la lunghezza totale,
-      // cosi' posso modulare size+opacity ai due estremi. Solo dopo bake.
-      if (this.isTaperActive() && this.recordedStroke.length > 1) {
-        this.regenerateStrokeWithTaper(this.recordedStroke, this.getCurrentStrokePathLength());
+        this.currentStroke.push(point);
+        this.processStamps();
+        this.currentStroke.push(point);
+        this.processStamps();
+        this.flushStamps();
+
+        // Taper: rifaccio l'intero tratto in strokeFBO conoscendo la lunghezza totale,
+        // cosi' posso modulare size+opacity ai due estremi. Solo dopo bake.
+        if (this.isTaperActive() && this.recordedStroke.length > 1) {
+          this.regenerateStrokeWithTaper(this.recordedStroke, this.getCurrentStrokePathLength());
+        }
+
+        this.bakeStroke();
+      } catch (error) {
+        console.error?.("[CBO brush] Fine tratto interrotta: cleanup stroke scratch eseguito.", error);
+      } finally {
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+
+        if (this.recordedStroke.length > 0) {
+          this.lastRecordedStroke = this.recordedStroke.slice();
+        }
+
+        this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+        if (this.pendingBrushHistory) {
+          this.schedulePendingBrushHistoryCommit();
+        }
+        this.recordedStroke = [];
+        this.resetStrokeRuntimeState();
+        this.isDrawing = false;
+        this.activePointerId = null;
+        this.requestDraw();
       }
-
-      this.bakeStroke();
-
-      if (this.canvas.hasPointerCapture(event.pointerId)) {
-        this.canvas.releasePointerCapture(event.pointerId);
-      }
-
-      this.lastRecordedStroke = this.recordedStroke.slice();
-      this.recordedStroke = [];
-      this.resetStrokeRuntimeState();
-      this.isDrawing = false;
-      this.activePointerId = null;
-      this.requestDraw();
     }
 
     handlePointerCancel(event) {
@@ -5944,6 +6699,7 @@ void main() {
       }
 
       this.releaseStrokeLayerTarget();
+      this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
       this.recordedStroke = [];
       this.resetStrokeRuntimeState();
       this.isDrawing = false;

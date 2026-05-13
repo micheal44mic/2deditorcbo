@@ -955,6 +955,13 @@
     const historyGpu = Number(memoryReport?.historyGpuBytes) || getGroupBytes(categories, ["history snapshots"]);
     const liveLayers = Number(memoryReport?.liveLayerBytes) || getGroupBytes(categories, ["persistent layer targets"]);
     const previewCache = Number(memoryReport?.previewCacheBytes) || categories["renderer caches"] || 0;
+    const scratchBytes = Number(memoryReport?.scratchBytes) || getGroupBytes(categories, [
+      "renderer scratch targets",
+      "brush active stroke",
+      "smudge active targets",
+      "scratch/strokeScratch",
+      "scratch/effectScratch",
+    ]);
 
     if (totalBytes >= budget.criticalBytes) {
       warnings.push("gpu budget critical");
@@ -966,6 +973,12 @@
 
     if (previewCache > budget.cacheGpuBytes) {
       warnings.push("cache over budget");
+    }
+
+    if (scratchBytes >= 128 * MIB) {
+      warnings.push("scratch critical");
+    } else if (scratchBytes >= 96 * MIB) {
+      warnings.push("scratch high");
     }
 
     if (liveLayers > budget.layerGpuBytes && budget.layerGpuBytes > 0) {
@@ -1062,6 +1075,20 @@
     const totalBytes = Number(memory.totalBytes) || 0;
     const percent = budget.criticalBytes > 0 ? clampPercent((totalBytes / budget.criticalBytes) * 100) : 0;
     const warningHeadroom = budget.warningBytes - totalBytes;
+    const topScratchResources = Array.isArray(memory.topScratchResourcesByBytes)
+      ? memory.topScratchResourcesByBytes.slice(0, 3)
+      : [];
+    const latestStrokeMemory = Array.isArray(memory.strokeMemoryEvents) && memory.strokeMemoryEvents.length > 0
+      ? memory.strokeMemoryEvents[0]
+      : null;
+    const topScratchText = topScratchResources.length > 0
+      ? topScratchResources
+          .map((row) => `${row.label || row.kind || "scratch"} ${row.MiB || formatMiB(row.bytes)} MiB`)
+          .join(" | ")
+      : "none";
+    const latestStrokeText = latestStrokeMemory
+      ? `rect ${latestStrokeMemory.strokeBufferRect?.width || 0}x${latestStrokeMemory.strokeBufferRect?.height || 0}, ${latestStrokeMemory.scratchMiB} MiB, repl ${latestStrokeMemory.strokeTargetReplaceCount || 0}, inc ${latestStrokeMemory.incrementalBakeCount || 0}${latestStrokeMemory.incrementalBakeSkippedReason ? `, skip ${latestStrokeMemory.incrementalBakeSkippedReason}` : ""}`
+      : "none";
     const lines = [
       "CBO RASTER MONITOR",
       `Status: ${status} (${percent.toFixed(0)}% crit)`,
@@ -1081,6 +1108,9 @@
       `Layers: ${formatMiB(groups.layers)} MiB`,
       `Cache: ${formatMiB(groups.cache)} MiB`,
       `Scratch: ${formatMiB(groups.scratch)} MiB`,
+      `Scratch detail: brush ${formatMiB(memory.brushStrokeScratchBytes)} / active ${formatMiB(memory.activeStrokeScratchBytes)} / fx ${formatMiB(memory.effectScratchBytes)} MiB`,
+      `Scratch top: ${topScratchText}`,
+      `Last stroke: ${latestStrokeText}`,
       `History GPU: ${formatMiB(groups.historyGpu)} MiB`,
       `History CPU: ${formatMiB(cpuHistory.totalBytes)} MiB${
         cpuHistory.compressionRatio > 1.05 && cpuHistory.compressedSnapshotCount > 0

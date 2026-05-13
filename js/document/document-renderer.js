@@ -23,6 +23,9 @@
     mediumMaxBytes: 64 * RASTER_MIB,
     normalMaxBytes: 16 * RASTER_MIB,
   });
+  const RASTER_SCRATCH_SOFT_EVICT_BYTES = 96 * RASTER_MIB;
+  const RASTER_SCRATCH_HARD_WARN_BYTES = 128 * RASTER_MIB;
+  const RASTER_SCRATCH_TOP_RESOURCE_LIMIT = 8;
   const WEBGL2_CONTEXT_ATTRIBUTES = Object.freeze({
     alpha: true,
     antialias: true,
@@ -1460,8 +1463,66 @@ void main() {
 
     shouldEvictRasterScratchForPolicy(report = {}) {
       const policy = this.getRasterOperationPolicy(report);
+      const scratchBytes = Math.max(0, Math.round(Number(report?.scratchBytes) || 0));
 
-      return policy === "large" || policy === "huge";
+      return (
+        policy === "large" ||
+        policy === "huge" ||
+        report?.scratchBudgetExceeded === true ||
+        scratchBytes >= RASTER_SCRATCH_SOFT_EVICT_BYTES
+      );
+    }
+
+    getRasterScratchDiagnostics(limit = RASTER_SCRATCH_TOP_RESOURCE_LIMIT) {
+      const normalizedLimit = Math.max(1, Math.floor(Number(limit) || RASTER_SCRATCH_TOP_RESOURCE_LIMIT));
+      const manager = this.getRasterResourceManager();
+      const topScratchResources = typeof manager?.getTopScratchResourcesByBytes === "function"
+        ? manager.getTopScratchResourcesByBytes(normalizedLimit)
+        : (
+            typeof manager?.getTopResourcesByBytes === "function"
+              ? manager.getTopResourcesByBytes(64).filter((row) => row.ownerType === "scratch").slice(0, normalizedLimit)
+              : []
+          );
+
+      return {
+        activeStrokeScratchTargetPresent: Boolean(this.activeStrokeScratchTarget?.texture),
+        activeStrokeScratchTargetSize: this.activeStrokeScratchTarget
+          ? {
+              height: Math.max(0, Math.round(this.activeStrokeScratchTarget.height || 0)),
+              width: Math.max(0, Math.round(this.activeStrokeScratchTarget.width || 0)),
+            }
+          : null,
+        layerEffectScratchAPresent: Boolean(this.layerEffectScratchA?.texture),
+        layerEffectScratchASize: this.layerEffectScratchA
+          ? {
+              height: Math.max(0, Math.round(this.layerEffectScratchA.height || 0)),
+              width: Math.max(0, Math.round(this.layerEffectScratchA.width || 0)),
+            }
+          : null,
+        layerEffectScratchBPresent: Boolean(this.layerEffectScratchB?.texture),
+        layerEffectScratchBSize: this.layerEffectScratchB
+          ? {
+              height: Math.max(0, Math.round(this.layerEffectScratchB.height || 0)),
+              width: Math.max(0, Math.round(this.layerEffectScratchB.width || 0)),
+            }
+          : null,
+        scratchHardWarnMiB: this.formatRasterMiB(RASTER_SCRATCH_HARD_WARN_BYTES),
+        scratchSoftEvictMiB: this.formatRasterMiB(RASTER_SCRATCH_SOFT_EVICT_BYTES),
+        topScratchResources: topScratchResources.map((row) => ({
+          bbox: row.bbox ? { ...row.bbox } : null,
+          bytes: Math.max(0, Math.round(Number(row.bytes) || 0)),
+          height: Math.max(0, Math.round(Number(row.height) || 0)),
+          isFullCanvas: Boolean(row.isFullCanvas),
+          kind: row.kind || "",
+          label: row.label || "",
+          MiB: row.MiB || row.estimatedMiB || this.formatRasterMiB(row.bytes),
+          ownerId: row.ownerId || "",
+          ownerType: row.ownerType || "",
+          purgeable: Boolean(row.purgeable),
+          reason: row.reason || "",
+          width: Math.max(0, Math.round(Number(row.width) || 0)),
+        })),
+      };
     }
 
     evictRasterScratchCachesForPolicy(report = {}, options = {}) {
@@ -1495,11 +1556,19 @@ void main() {
         this.deleteActiveStrokeScratchTarget();
       }
 
+      const scratchBytes = Math.max(0, Math.round(Number(report?.scratchBytes) || 0));
       const eviction = {
         createdAt: new Date().toISOString(),
         operationType: report?.operationType || report?.phase || "",
         policy,
         reason: report?.reason || options.reason || "raster-policy",
+        scratchBudgetExceeded: scratchBytes >= RASTER_SCRATCH_SOFT_EVICT_BYTES,
+        scratchBytes,
+        scratchDiagnostics: this.getRasterScratchDiagnostics?.() || null,
+        scratchHardBudgetExceeded: scratchBytes >= RASTER_SCRATCH_HARD_WARN_BYTES,
+        scratchHardWarnMiB: this.formatRasterMiB(RASTER_SCRATCH_HARD_WARN_BYTES),
+        scratchMiB: this.formatRasterMiB(scratchBytes),
+        scratchSoftEvictMiB: this.formatRasterMiB(RASTER_SCRATCH_SOFT_EVICT_BYTES),
         source: options.source || report?.source || report?.tool || "raster-policy",
         deletedActiveStrokeScratch: deleteActiveStrokeScratch && hadActiveStrokeScratch,
         deletedCompositeScratch: deleteCompositeScratch && hadCompositeScratch,
@@ -14709,16 +14778,34 @@ void main() {
         hasClippingMasks &&
         activeStrokeLayer?.clippingMask === true
       );
+      const activeStrokeLayerUsesAdvancedCompositing = Boolean(
+        activeStrokeLayer &&
+        (
+          this.hasAdvancedLayerBlendMode(activeStrokeLayer) ||
+          this.hasEnabledLayerEffects(activeStrokeLayer) ||
+          this.hasPuppetLayerTransform(activeStrokeLayer)
+        )
+      );
       const activeStrokeNeedsFullStack = Boolean(
         options.activeStrokeTexture &&
         activeStrokeMode !== "eraser" &&
         activeStrokeLayer &&
         (
-          this.hasAdvancedLayerBlendMode(activeStrokeLayer) ||
-          this.hasEnabledLayerEffects(activeStrokeLayer) ||
+          activeStrokeLayerUsesAdvancedCompositing ||
           activeStrokeUsesClippingMask
         )
       );
+      const activeStrokeNeedsScratchMerge = Boolean(
+        options.activeStrokeTexture &&
+        activeStrokeMode !== "eraser" &&
+        activeStrokeLayer &&
+        !activeStrokeHasClip &&
+        activeStrokeLayerUsesAdvancedCompositing
+      );
+
+      if (!activeStrokeNeedsScratchMerge && this.activeStrokeScratchTarget) {
+        this.deleteActiveStrokeScratchTarget();
+      }
       const activeStrokeCanOverlayPreview = !options.activeStrokeTexture ||
         (
           activeStrokeLayerIndex >= 0 &&
@@ -15330,7 +15417,7 @@ void main() {
             let renderTarget = layerTarget;
             let didMergeActiveStroke = false;
 
-            if (isActiveStrokeLayer && activeStrokeMode !== "eraser" && !activeStrokeHasClip) {
+            if (isActiveStrokeLayer && activeStrokeNeedsScratchMerge) {
               const mergedTarget = this.renderLayerWithActiveStrokeTexture(
                 layerTarget.texture,
                 options.activeStrokeTexture,
@@ -15538,6 +15625,7 @@ void main() {
       } finally {
         trace?.end({
           activeStroke: Boolean(options.activeStrokeTexture),
+          activeStrokeScratchMerge: Boolean(activeStrokeNeedsScratchMerge),
           canUsePreviewCache,
           layers: renderableLayers.length,
           layersCulled: viewportCullingStats.layers.safelyCulled,

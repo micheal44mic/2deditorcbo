@@ -723,6 +723,39 @@
     };
   }
 
+  function cloneJsonSafe(value, fallback = null) {
+    if (value === null || value === undefined) {
+      return fallback;
+    }
+
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return fallback;
+    }
+  }
+
+  function cloneScratchResourceRows(rows, limit = 20) {
+    if (!Array.isArray(rows)) {
+      return [];
+    }
+
+    return rows.slice(0, Math.max(0, Math.floor(Number(limit) || 20))).map((row) => ({
+      bbox: cloneRect(row?.bbox),
+      bytes: toNonNegativeInt(row?.bytes, 0),
+      height: toPositiveInt(row?.height, 0),
+      isFullCanvas: Boolean(row?.isFullCanvas),
+      kind: row?.kind || "",
+      label: row?.label || "",
+      MiB: row?.MiB || row?.estimatedMiB || formatMiB(row?.bytes || 0),
+      ownerId: row?.ownerId || "",
+      ownerType: row?.ownerType || "",
+      purgeable: Boolean(row?.purgeable),
+      reason: row?.reason || "",
+      width: toPositiveInt(row?.width, 0),
+    }));
+  }
+
   function normalizeStrokeMemoryEvent(event = {}) {
     const beforeBytes = toNonNegativeInt(event.beforeBytes, 0);
     const potentialAfterBytes = toNonNegativeInt(event.potentialAfterBytes, 0);
@@ -753,11 +786,61 @@
       potentialAfterBytes,
       potentialAfterMiB: formatMiB(potentialAfterBytes),
       reason: event.reason || "",
+      scratchBudgetExceeded: Boolean(event.scratchBudgetExceeded),
       scratchBytes,
+      scratchHardBudgetExceeded: Boolean(event.scratchHardBudgetExceeded),
+      scratchHardWarnBytes: toNonNegativeInt(event.scratchHardWarnBytes, 0),
+      scratchHardWarnMiB: formatMiB(event.scratchHardWarnBytes || 0),
       scratchMiB: formatMiB(scratchBytes),
+      scratchTextureCount: toPositiveInt(event.scratchTextureCount, 0),
+      scratchSoftEvictBytes: toNonNegativeInt(event.scratchSoftEvictBytes, 0),
+      scratchSoftEvictMiB: formatMiB(event.scratchSoftEvictBytes || 0),
       source: event.source || "",
+      incrementalBakeBytesFreed: toNonNegativeInt(event.incrementalBakeBytesFreed, 0),
+      incrementalBakeBytesFreedMiB: event.incrementalBakeBytesFreedMiB || formatMiB(event.incrementalBakeBytesFreed || 0),
+      incrementalBakeCount: toNonNegativeInt(event.incrementalBakeCount, 0),
+      incrementalBakeEnabled: Boolean(event.incrementalBakeEnabled),
+      incrementalBakeLastReason: event.incrementalBakeLastReason || "",
+      incrementalBakeLastRect: cloneRect(event.incrementalBakeLastRect),
+      incrementalBakePeakScratchBytes: toNonNegativeInt(event.incrementalBakePeakScratchBytes, 0),
+      incrementalBakePeakScratchMiB: event.incrementalBakePeakScratchMiB || formatMiB(event.incrementalBakePeakScratchBytes || 0),
+      incrementalBakeSafetyReason: event.incrementalBakeSafetyReason || "",
+      incrementalBakeSkippedReason: event.incrementalBakeSkippedReason || "",
+      incrementalBakeTriggerCoverage: toFiniteNumber(event.incrementalBakeTriggerCoverage, 0),
+      incrementalBakeTriggerScratchBytes: toNonNegativeInt(event.incrementalBakeTriggerScratchBytes, 0),
+      incrementalBakeTriggerScratchMiB: event.incrementalBakeTriggerScratchMiB || formatMiB(event.incrementalBakeTriggerScratchBytes || 0),
+      incrementalBakedRect: cloneRect(event.incrementalBakedRect),
+      lastIncrementalBakeDecision: cloneJsonSafe(event.lastIncrementalBakeDecision, null),
+      activeStrokeScratchTargetBytes: toNonNegativeInt(event.activeStrokeScratchTargetBytes, 0),
+      activeStrokeScratchTargetMiB: event.activeStrokeScratchTargetMiB || formatMiB(event.activeStrokeScratchTargetBytes || 0),
+      activeStrokeScratchTargetPresent: Boolean(event.activeStrokeScratchTargetPresent),
+      activeStrokeScratchTargetSize: cloneSize(event.activeStrokeScratchTargetSize),
+      layerEffectScratchABytes: toNonNegativeInt(event.layerEffectScratchABytes, 0),
+      layerEffectScratchAMiB: event.layerEffectScratchAMiB || formatMiB(event.layerEffectScratchABytes || 0),
+      layerEffectScratchAPresent: Boolean(event.layerEffectScratchAPresent),
+      layerEffectScratchASize: cloneSize(event.layerEffectScratchASize),
+      layerEffectScratchBBytes: toNonNegativeInt(event.layerEffectScratchBBytes, 0),
+      layerEffectScratchBMiB: event.layerEffectScratchBMiB || formatMiB(event.layerEffectScratchBBytes || 0),
+      layerEffectScratchBPresent: Boolean(event.layerEffectScratchBPresent),
+      layerEffectScratchBSize: cloneSize(event.layerEffectScratchBSize),
+      layerEffectScratchBytes: toNonNegativeInt(event.layerEffectScratchBytes, 0),
+      layerEffectScratchMiB: event.layerEffectScratchMiB || formatMiB(event.layerEffectScratchBytes || 0),
+      layerEffectScratchPresent: Boolean(event.layerEffectScratchPresent),
+      rendererScratchDiagnostics: cloneJsonSafe(event.rendererScratchDiagnostics, null),
+      strokeBufferCoverage: toFiniteNumber(event.strokeBufferCoverage, 0),
+      strokeBufferCoveragePercent: toFiniteNumber(event.strokeBufferCoveragePercent, null),
       strokeBufferRect: cloneRect(event.strokeBufferRect),
       strokeRect: cloneRect(event.strokeRect),
+      strokeScratchDiagnostics: cloneJsonSafe(event.strokeScratchDiagnostics, null),
+      strokeScratchPressureEvictionCount: toNonNegativeInt(event.strokeScratchPressureEvictionCount, 0),
+      strokeTargetAllocationCount: toNonNegativeInt(event.strokeTargetAllocationCount, 0),
+      strokeTargetPeakCoverage: toFiniteNumber(event.strokeTargetPeakCoverage, 0),
+      strokeTargetPeakCoveragePercent: toFiniteNumber(event.strokeTargetPeakCoveragePercent, null),
+      strokeTargetPeakScratchBytes: toNonNegativeInt(event.strokeTargetPeakScratchBytes, 0),
+      strokeTargetPeakScratchMiB: formatMiB(event.strokeTargetPeakScratchBytes || 0),
+      strokeTargetReallocationCount: toNonNegativeInt(event.strokeTargetReallocationCount, 0),
+      strokeTargetReplaceCount: toNonNegativeInt(event.strokeTargetReplaceCount, 0),
+      topScratchResources: cloneScratchResourceRows(event.topScratchResources, 12),
       tool: event.tool || "stroke",
     };
   }
@@ -882,11 +965,49 @@
     return getRowsSortedByBytes().slice(0, Math.max(1, Math.floor(Number(limit) || 20)));
   }
 
+  function getTopScratchResourcesByBytes(limit = 20) {
+    return getRowsSortedByBytes()
+      .filter((row) => row.ownerType === "scratch")
+      .slice(0, Math.max(1, Math.floor(Number(limit) || 20)));
+  }
+
+  function createScratchDiagnostics(scratchRows = [], limit = 20) {
+    const normalizedLimit = Math.max(1, Math.floor(Number(limit) || 20));
+    const totalBytes = scratchRows.reduce((sum, row) => sum + row.bytes, 0);
+    const activeStrokeScratchBytes = sumRows(scratchRows, (row) => row.ownerId === "activeStrokeScratchTarget");
+    const brushStrokeScratchBytes = sumRows(
+      scratchRows,
+      (row) => row.kind === "strokeScratch" && row.ownerId !== "activeStrokeScratchTarget",
+    );
+    const layerEffectScratchBytes = sumRows(
+      scratchRows,
+      (row) => row.kind === "effectScratch" || row.ownerId === "layerEffectScratchA" || row.ownerId === "layerEffectScratchB",
+    );
+
+    return {
+      activeStrokeScratchBytes,
+      activeStrokeScratchMiB: formatMiB(activeStrokeScratchBytes),
+      activeStrokeScratchTargetPresent: scratchRows.some((row) => row.ownerId === "activeStrokeScratchTarget"),
+      brushStrokeScratchBytes,
+      brushStrokeScratchMiB: formatMiB(brushStrokeScratchBytes),
+      layerEffectScratchAPresent: scratchRows.some((row) => row.ownerId === "layerEffectScratchA"),
+      layerEffectScratchBPresent: scratchRows.some((row) => row.ownerId === "layerEffectScratchB"),
+      layerEffectScratchBytes,
+      layerEffectScratchMiB: formatMiB(layerEffectScratchBytes),
+      resourceCount: scratchRows.length,
+      topScratchResourcesByBytes: cloneScratchResourceRows(scratchRows, normalizedLimit),
+      totalBytes,
+      totalMiB: formatMiB(totalBytes),
+    };
+  }
+
   function reportRasterMemory(options = {}) {
     const rows = getRowsSortedByBytes();
     const totalEstimatedGpuBytes = rows.reduce((sum, row) => sum + row.bytes, 0);
     const orphanSuspectRows = rows.filter((row) => row.ownerType === "orphan" || row.ownerType === "suspect");
+    const scratchRows = rows.filter((row) => row.ownerType === "scratch");
     const topLimit = Math.max(1, Math.floor(Number(options.limit) || 20));
+    const scratchDiagnostics = createScratchDiagnostics(scratchRows, topLimit);
     const history = namespace.documentHistory;
     const historyRasterBudgetBytes = Number(history?.getRasterHistoryBudgetBytes?.()) || 0;
     const historyRasterEstimatedBytes = Number(history?.getRasterHistoryBytes?.()) || 0;
@@ -909,7 +1030,15 @@
       deletedFramebufferCount: stats.deletedFramebufferCount,
       deletedRenderbufferCount: stats.deletedRenderbufferCount,
       deletedTextureCount: stats.deletedTextureCount,
-      effectScratchBytes: sumRows(rows, (row) => row.kind === "effectScratch"),
+      activeStrokeScratchBytes: scratchDiagnostics.activeStrokeScratchBytes,
+      activeStrokeScratchMiB: scratchDiagnostics.activeStrokeScratchMiB,
+      activeStrokeScratchTargetPresent: scratchDiagnostics.activeStrokeScratchTargetPresent,
+      brushStrokeScratchBytes: scratchDiagnostics.brushStrokeScratchBytes,
+      brushStrokeScratchMiB: scratchDiagnostics.brushStrokeScratchMiB,
+      effectScratchBytes: scratchDiagnostics.layerEffectScratchBytes,
+      effectScratchMiB: scratchDiagnostics.layerEffectScratchMiB,
+      layerEffectScratchBytes: scratchDiagnostics.layerEffectScratchBytes,
+      layerEffectScratchMiB: scratchDiagnostics.layerEffectScratchMiB,
       framebufferCount: framebuffers.size,
       fullCanvasMaterializationCount: stats.fullCanvasMaterializationCount,
       fullCanvasMaterializations: fullCanvasMaterializations.slice().reverse(),
@@ -954,9 +1083,16 @@
       rasterOperationEvents: rasterOperationEvents.slice().reverse(),
       renderbufferCount: renderbuffers.size,
       rows,
-      scratchBytes: sumRows(rows, (row) => row.ownerType === "scratch"),
+      scratchBytes: scratchDiagnostics.totalBytes,
+      scratchDiagnostics,
+      scratchMiB: scratchDiagnostics.totalMiB,
+      scratchResourceCount: scratchDiagnostics.resourceCount,
       source: "raster-resource-manager",
       strokeScratchBytes: sumRows(rows, (row) => row.kind === "strokeScratch"),
+      strokeScratchMiB: formatMiB(sumRows(rows, (row) => row.kind === "strokeScratch")),
+      layerEffectScratchAPresent: scratchDiagnostics.layerEffectScratchAPresent,
+      layerEffectScratchBPresent: scratchDiagnostics.layerEffectScratchBPresent,
+      topScratchResourcesByBytes: scratchDiagnostics.topScratchResourcesByBytes,
       resourceTraceEventCount: resourceTraceEvents.length,
       resourceTraceEvents: getResourceTraceEvents(),
       strokeMemoryEventCount: stats.strokeMemoryEventCount,
@@ -1002,6 +1138,24 @@
         width: row.width,
       })),
     );
+
+    if (result.topScratchResourcesByBytes?.length > 0) {
+      console.table?.(
+        result.topScratchResourcesByBytes.map((row) => ({
+          MiB: row.MiB,
+          bboxCoverage: row.bboxCoverage,
+          height: row.height,
+          isFullCanvas: row.isFullCanvas,
+          kind: row.kind,
+          label: row.label,
+          ownerId: row.ownerId,
+          ownerType: row.ownerType,
+          purgeable: row.purgeable,
+          reason: row.reason,
+          width: row.width,
+        })),
+      );
+    }
 
     if (result.paintTargetCropPotential?.rows?.length > 0) {
       console.table?.(
@@ -1064,6 +1218,7 @@
     formatMiB,
     getResourceTraceEvents,
     getTopResourcesByBytes,
+    getTopScratchResourcesByBytes,
     logRasterMemoryReport,
     markUsed,
     recordFullCanvasMaterialization,
