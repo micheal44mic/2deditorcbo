@@ -4,7 +4,15 @@ window.CBO = window.CBO || {};
   const PREVIEW_ARTBOARD_WIDTH = 1048;
   const PREVIEW_ARTBOARD_HEIGHT = 2048;
   const PREVIEW_ARTBOARD_GAP = 256;
-  const DEFAULT_PREVIEW_ARTBOARD_COUNT = 2;
+  const DEFAULT_PREVIEW_ARTBOARD_COUNT = 0;
+  const ARTBOARD_SIZE_MAX = 32768;
+  const ARTBOARD_SIZE_PRESETS = [
+    { id: "current", label: "SAME AS CURRENT" },
+    { id: "document", label: "DOCUMENT SIZE" },
+    { id: "portrait", height: 1920, label: "1080 x 1920", width: 1080 },
+    { id: "landscape", height: 1080, label: "1920 x 1080", width: 1920 },
+    { id: "custom", label: "CUSTOM" },
+  ];
   const FIT_PADDING_CSS_PX = 72;
   const LABEL_HIT_HEIGHT_CSS_PX = 30;
   const SELECTION_TOOL_MODE = "selection";
@@ -14,6 +22,9 @@ window.CBO = window.CBO || {};
   let currentToolMode = SELECTION_TOOL_MODE;
   let selectedArtboardId = "";
   let artboardDragState = null;
+  let artboardCreatePopover = null;
+  let artboardCreateButton = null;
+  let activeArtboardSizePreset = "current";
 
   function getStage() {
     return document.querySelector(".editor-stage");
@@ -75,6 +86,325 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function clampArtboardSize(value, fallback) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number) || number <= 0) {
+      return Math.max(1, Math.round(Number(fallback) || 1));
+    }
+
+    return Math.max(1, Math.min(ARTBOARD_SIZE_MAX, Math.round(number)));
+  }
+
+  function formatArtboardSize(size) {
+    return `${clampArtboardSize(size?.width, PREVIEW_ARTBOARD_WIDTH)} x ${clampArtboardSize(size?.height, PREVIEW_ARTBOARD_HEIGHT)}`;
+  }
+
+  function getActiveArtboardForSizing() {
+    const activeId = String(
+      namespace.getSelectedDocumentArtboardId?.() ||
+      selectedArtboardId ||
+      namespace.getActiveDocumentArtboardId?.() ||
+      "",
+    ).trim();
+
+    return getArtboardById(activeId) || getAllArtboards()[0] || getFallbackPrimaryArtboard();
+  }
+
+  function getDocumentArtboardSize() {
+    const renderer = getRenderer();
+
+    return {
+      height: clampArtboardSize(renderer?.height || namespace.documentSettings?.height, PREVIEW_ARTBOARD_HEIGHT),
+      width: clampArtboardSize(renderer?.width || namespace.documentSettings?.width, PREVIEW_ARTBOARD_WIDTH),
+    };
+  }
+
+  function resolveArtboardPresetSize(presetId) {
+    const preset = ARTBOARD_SIZE_PRESETS.find((entry) => entry.id === presetId) || ARTBOARD_SIZE_PRESETS[0];
+
+    if (preset?.id === "document") {
+      return getDocumentArtboardSize();
+    }
+
+    if (Number.isFinite(Number(preset?.width)) && Number.isFinite(Number(preset?.height))) {
+      return {
+        height: clampArtboardSize(preset.height, PREVIEW_ARTBOARD_HEIGHT),
+        width: clampArtboardSize(preset.width, PREVIEW_ARTBOARD_WIDTH),
+      };
+    }
+
+    const activeArtboard = getActiveArtboardForSizing();
+
+    return {
+      height: clampArtboardSize(activeArtboard?.height, PREVIEW_ARTBOARD_HEIGHT),
+      width: clampArtboardSize(activeArtboard?.width, PREVIEW_ARTBOARD_WIDTH),
+    };
+  }
+
+  function ensureArtboardCreatePopover() {
+    if (artboardCreatePopover?.isConnected) {
+      return artboardCreatePopover;
+    }
+
+    const host = document.querySelector(".editor-page") || document.body;
+    const presetButtons = ARTBOARD_SIZE_PRESETS.map((preset) => `
+      <button class="artboard-create-preset" type="button" data-artboard-size-preset="${preset.id}" aria-pressed="false">
+        <span class="artboard-create-preset-label">${preset.label}</span>
+        <span class="artboard-create-preset-size" data-artboard-preset-size="${preset.id}"></span>
+      </button>
+    `).join("");
+
+    host.insertAdjacentHTML(
+      "beforeend",
+      `
+        <section class="artboard-create-popover" data-artboard-create-popover role="dialog" aria-label="Artboard options" hidden>
+          <div class="artboard-create-header">
+            <h2 class="artboard-create-title">ARTBOARD</h2>
+            <button class="artboard-create-icon-button" type="button" aria-label="Close artboard options" data-artboard-popover-close>
+              <svg class="artboard-create-icon lucide lucide-x-icon lucide-x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="artboard-create-presets" data-artboard-preset-list>
+            ${presetButtons}
+          </div>
+          <div class="artboard-create-custom-fields" data-artboard-custom-fields hidden>
+            <label class="artboard-create-size-field">
+              <span>W</span>
+              <input class="artboard-create-size-input" type="number" min="1" max="${ARTBOARD_SIZE_MAX}" step="1" inputmode="numeric" data-artboard-width-input />
+            </label>
+            <label class="artboard-create-size-field">
+              <span>H</span>
+              <input class="artboard-create-size-input" type="number" min="1" max="${ARTBOARD_SIZE_MAX}" step="1" inputmode="numeric" data-artboard-height-input />
+            </label>
+          </div>
+          <div class="artboard-create-actions">
+            <button class="artboard-create-cancel" type="button" data-artboard-popover-close>CANCEL</button>
+            <button class="artboard-create-confirm" type="button" data-artboard-create-confirm>
+              <svg class="artboard-create-check-icon lucide lucide-check-icon lucide-check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              <span>CREATE</span>
+            </button>
+          </div>
+        </section>
+      `,
+    );
+
+    artboardCreatePopover = host.querySelector("[data-artboard-create-popover]");
+    artboardCreatePopover?.addEventListener("click", handleArtboardPopoverClick);
+    artboardCreatePopover?.addEventListener("input", handleArtboardPopoverInput);
+
+    return artboardCreatePopover;
+  }
+
+  function getArtboardCreateInputs() {
+    const popover = ensureArtboardCreatePopover();
+
+    return {
+      heightInput: popover?.querySelector("[data-artboard-height-input]") || null,
+      widthInput: popover?.querySelector("[data-artboard-width-input]") || null,
+    };
+  }
+
+  function syncArtboardCreatePresetLabels() {
+    const popover = ensureArtboardCreatePopover();
+
+    ARTBOARD_SIZE_PRESETS.forEach((preset) => {
+      const label = popover?.querySelector(`[data-artboard-preset-size="${preset.id}"]`);
+
+      if (!label) {
+        return;
+      }
+
+      label.textContent = preset.id === "custom"
+        ? "SET WIDTH + HEIGHT"
+        : formatArtboardSize(resolveArtboardPresetSize(preset.id));
+    });
+  }
+
+  function setActiveArtboardSizePreset(presetId, options = {}) {
+    const popover = ensureArtboardCreatePopover();
+    const normalizedPresetId = ARTBOARD_SIZE_PRESETS.some((preset) => preset.id === presetId)
+      ? presetId
+      : "current";
+    const customFields = popover?.querySelector("[data-artboard-custom-fields]");
+    const { heightInput, widthInput } = getArtboardCreateInputs();
+    const shouldShowCustom = normalizedPresetId === "custom";
+
+    activeArtboardSizePreset = normalizedPresetId;
+    popover?.querySelectorAll("[data-artboard-size-preset]").forEach((button) => {
+      const isActive = button.dataset.artboardSizePreset === normalizedPresetId;
+
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+
+    if (customFields) {
+      customFields.hidden = !shouldShowCustom;
+    }
+
+    if (!options.preserveCustomValue && widthInput && heightInput) {
+      const size = resolveArtboardPresetSize(shouldShowCustom ? "current" : normalizedPresetId);
+
+      widthInput.value = String(size.width);
+      heightInput.value = String(size.height);
+    }
+  }
+
+  function getArtboardCreateSize() {
+    if (activeArtboardSizePreset !== "custom") {
+      return resolveArtboardPresetSize(activeArtboardSizePreset);
+    }
+
+    const { heightInput, widthInput } = getArtboardCreateInputs();
+    const fallback = resolveArtboardPresetSize("current");
+
+    return {
+      height: clampArtboardSize(heightInput?.value, fallback.height),
+      width: clampArtboardSize(widthInput?.value, fallback.width),
+    };
+  }
+
+  function positionArtboardCreatePopover() {
+    const popover = artboardCreatePopover;
+    const button = artboardCreateButton;
+
+    if (!popover || popover.hidden || !button) {
+      return;
+    }
+
+    const buttonRect = button.getBoundingClientRect();
+    const popoverRect = popover.getBoundingClientRect();
+    const gap = 12;
+    const maxLeft = Math.max(12, window.innerWidth - popoverRect.width - 12);
+    const maxTop = Math.max(12, window.innerHeight - popoverRect.height - 12);
+    const left = Math.min(maxLeft, Math.max(12, buttonRect.right + gap));
+    const top = Math.min(maxTop, Math.max(12, buttonRect.top - 6));
+
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+  }
+
+  function closeArtboardCreatePopover() {
+    if (!artboardCreatePopover) {
+      return;
+    }
+
+    artboardCreatePopover.hidden = true;
+    artboardCreateButton?.classList.remove("active");
+    artboardCreateButton?.setAttribute("aria-expanded", "false");
+    artboardCreateButton?.setAttribute("aria-pressed", "false");
+  }
+
+  function openArtboardCreatePopover(button) {
+    artboardCreateButton = button || artboardCreateButton || document.querySelector("[data-artboard-create]");
+    const popover = ensureArtboardCreatePopover();
+
+    if (!popover) {
+      return;
+    }
+
+    syncArtboardCreatePresetLabels();
+    setActiveArtboardSizePreset(activeArtboardSizePreset || "current");
+    popover.hidden = false;
+    artboardCreateButton?.classList.add("active");
+    artboardCreateButton?.setAttribute("aria-expanded", "true");
+    artboardCreateButton?.setAttribute("aria-pressed", "true");
+    positionArtboardCreatePopover();
+  }
+
+  function submitArtboardCreatePopover() {
+    if (!getRenderer()) {
+      namespace.initEditorCanvas?.();
+    }
+
+    if (!getRenderer()) {
+      return;
+    }
+
+    const size = getArtboardCreateSize();
+    const sourceArtboard = getActiveArtboardForSizing();
+    const artboard = createPreviewArtboard({
+      height: size.height,
+      sourceArtboardId: sourceArtboard?.id,
+      width: size.width,
+    });
+
+    if (!artboard) {
+      return;
+    }
+
+    selectArtboard(artboard.id, {
+      source: "artboard-preview-create",
+    });
+    closeArtboardCreatePopover();
+    fitPreviewArtboards();
+  }
+
+  function handleArtboardPopoverClick(event) {
+    const target = event.target;
+
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const presetButton = target.closest("[data-artboard-size-preset]");
+
+    if (presetButton) {
+      setActiveArtboardSizePreset(presetButton.dataset.artboardSizePreset || "current");
+      return;
+    }
+
+    if (target.closest("[data-artboard-create-confirm]")) {
+      submitArtboardCreatePopover();
+      return;
+    }
+
+    if (target.closest("[data-artboard-popover-close]")) {
+      closeArtboardCreatePopover();
+    }
+  }
+
+  function handleArtboardPopoverInput(event) {
+    const target = event.target;
+
+    if (
+      target instanceof Element &&
+      (target.matches("[data-artboard-width-input]") || target.matches("[data-artboard-height-input]"))
+    ) {
+      setActiveArtboardSizePreset("custom", {
+        preserveCustomValue: true,
+      });
+    }
+  }
+
+  function handleArtboardPopoverDocumentClick(event) {
+    const target = event.target;
+
+    if (
+      !artboardCreatePopover ||
+      artboardCreatePopover.hidden ||
+      !(target instanceof Element) ||
+      artboardCreatePopover.contains(target) ||
+      artboardCreateButton?.contains(target)
+    ) {
+      return;
+    }
+
+    closeArtboardCreatePopover();
+  }
+
+  function handleArtboardPopoverKeydown(event) {
+    if (event.key === "Escape" && artboardCreatePopover && !artboardCreatePopover.hidden) {
+      event.stopPropagation();
+      closeArtboardCreatePopover();
+    }
+  }
+
   function emitArtboardPreviewChange(source = "artboard-preview") {
     window.dispatchEvent(new CustomEvent("cbo:artboard-preview-change", {
       detail: {
@@ -101,11 +431,14 @@ window.CBO = window.CBO || {};
     return artboards[artboards.length - 1] || getFallbackPrimaryArtboard();
   }
 
-  function createPreviewArtboard() {
+  function createPreviewArtboard(options = {}) {
+    const width = clampArtboardSize(options.width, resolveArtboardPresetSize("current").width);
+    const height = clampArtboardSize(options.height, resolveArtboardPresetSize("current").height);
     const artboard = namespace.createDocumentArtboard?.({
-      height: PREVIEW_ARTBOARD_HEIGHT,
+      height,
       source: "artboard-preview-create",
-      width: PREVIEW_ARTBOARD_WIDTH,
+      sourceArtboardId: options.sourceArtboardId,
+      width,
     });
 
     if (artboard) {
@@ -115,12 +448,12 @@ window.CBO = window.CBO || {};
     const previous = getLastArtboard();
 
     return {
-      height: PREVIEW_ARTBOARD_HEIGHT,
+      height,
       id: `artboard-${Date.now().toString(36)}`,
       isPrimary: false,
       name: "Artboard",
       type: "artboard",
-      width: PREVIEW_ARTBOARD_WIDTH,
+      width,
       x: Math.round(previous.x + previous.width + PREVIEW_ARTBOARD_GAP),
       y: 0,
     };
@@ -757,9 +1090,12 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    ensureDefaultPreviewArtboards();
-    createPreviewArtboard();
-    fitPreviewArtboards();
+    if (artboardCreatePopover && !artboardCreatePopover.hidden) {
+      closeArtboardCreatePopover();
+      return;
+    }
+
+    openArtboardCreatePopover(artboardCreateButton);
   }
 
   namespace.initArtboardPreview = function initArtboardPreview() {
@@ -771,6 +1107,10 @@ window.CBO = window.CBO || {};
 
     if (button && button.dataset.artboardReady !== "true") {
       button.dataset.artboardReady = "true";
+      button.setAttribute("aria-haspopup", "dialog");
+      button.setAttribute("aria-expanded", "false");
+      button.setAttribute("aria-pressed", "false");
+      artboardCreateButton = button;
       button.addEventListener("click", handleCreateButtonClick);
     }
 
@@ -798,7 +1138,6 @@ window.CBO = window.CBO || {};
     });
     window.addEventListener("cbo:editor-canvas-ready", () => {
       bindStagePointerSelection();
-      ensureDefaultPreviewArtboards();
       fitPreviewArtboards();
     });
     window.addEventListener("cbo:editor-canvas-reset", (event) => {
@@ -807,16 +1146,23 @@ window.CBO = window.CBO || {};
       });
     });
     window.addEventListener("resize", () => renderArtboardPreviews());
+    window.addEventListener("resize", positionArtboardCreatePopover);
+    document.addEventListener("click", handleArtboardPopoverDocumentClick);
+    document.addEventListener("keydown", handleArtboardPopoverKeydown);
 
     if (getRenderer()) {
-      ensureDefaultPreviewArtboards();
       fitPreviewArtboards();
     }
   };
 
-  namespace.createPreviewArtboard = function createPreviewArtboardFromTool() {
-    const artboard = createPreviewArtboard();
+  namespace.createPreviewArtboard = function createPreviewArtboardFromTool(options = {}) {
+    const artboard = createPreviewArtboard(options);
 
+    if (artboard?.id) {
+      selectArtboard(artboard.id, {
+        source: options.source || "artboard-preview-create",
+      });
+    }
     renderArtboardPreviews();
     return { ...artboard };
   };

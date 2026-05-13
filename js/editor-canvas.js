@@ -576,7 +576,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
 
   window.CBO.resetDocumentArtboards?.({
     artboards: options.artboards,
-    defaultSecondaryCount: 2,
+    defaultSecondaryCount: 0,
     documentHeight: documentRenderer.height,
     documentWidth: documentRenderer.width,
     source: "editor-canvas-init-artboards",

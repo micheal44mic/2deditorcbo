@@ -55,17 +55,26 @@ test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
 
   assert.match(source, /const PREVIEW_ARTBOARD_WIDTH = 1048/);
   assert.match(source, /const PREVIEW_ARTBOARD_HEIGHT = 2048/);
-  assert.match(source, /const DEFAULT_PREVIEW_ARTBOARD_COUNT = 2/);
+  assert.match(source, /const DEFAULT_PREVIEW_ARTBOARD_COUNT = 0/);
+  assert.match(source, /const ARTBOARD_SIZE_PRESETS = \[/);
+  assert.match(source, /data-artboard-create-popover/);
+  assert.match(source, /data-artboard-width-input/);
+  assert.match(source, /function positionArtboardCreatePopover\(\)/);
   assert.match(source, /namespace\.getDocumentArtboards\?\.\(\)/);
   assert.match(source, /namespace\.createDocumentArtboard\?\.\(/);
   assert.match(source, /namespace\.initArtboardPreview = function initArtboardPreview\(\)/);
   assert.match(source, /button\.addEventListener\("click", handleCreateButtonClick\)/);
+  assert.match(source, /openArtboardCreatePopover\(artboardCreateButton\)/);
+  assert.doesNotMatch(source, /ensureDefaultPreviewArtboards\(\);\s*createPreviewArtboard\(\);/);
   assert.match(source, /layer\.replaceChildren/);
   assert.match(source, /function isArtboardBackgroundVisible\(artboardId\)/);
   assert.match(source, /paper\.classList\.toggle\("is-transparent", !isArtboardBackgroundVisible\(artboard\.id\)\)/);
   assert.match(source, /window\.addEventListener\("cbo:document-layers-change"/);
+  assert.match(appSource, /\.artboard-create-popover/);
   assert.match(cssSource, /\.editor-artboard-preview-layer[\s\S]*pointer-events: none/);
   assert.match(cssSource, /\.editor-artboard-frame/);
+  assert.match(cssSource, /\.artboard-create-popover/);
+  assert.match(cssSource, /\.artboard-create-preset\.active/);
   assert.match(cssSource, /\.editor-artboard-paper[\s\S]*background: #f7f7f2/);
   assert.match(cssSource, /\.editor-artboard-paper\.is-transparent[\s\S]*background: transparent/);
   assert.match(cssSource, /\.editor-artboard-frame[\s\S]*background: transparent/);
@@ -180,8 +189,10 @@ test("document artboard model owns artboard records and persistence hooks", () =
   assert.match(editorCanvasSource, /DocumentArtboardModel non caricato/);
   assert.match(editorCanvasSource, /window\.CBO\.resetDocumentArtboards\?\.\(\{/);
   assert.match(editorCanvasSource, /artboards: options\.artboards/);
+  assert.match(editorCanvasSource, /defaultSecondaryCount: 0/);
   assert.match(autosaveSource, /artboards: namespace\.getDocumentArtboards\?\.\(\) \|\| \[\]/);
   assert.match(autosaveSource, /artboards: session\.document\.artboards \|\| \[\]/);
+  assert.match(autosaveSource, /defaultSecondaryCount: 0/);
   assert.match(autosaveSource, /source: "autosave-restore-artboards"/);
   assert.match(rendererSource, /getDocumentBoundsRect\(\)/);
   assert.match(rendererSource, /namespace\.getDocumentArtboardUnionRect\?\.\(\)/);
@@ -333,4 +344,63 @@ test("overlapped artboards can only move toward a resolved placement", () => {
 
   assert.notEqual(fullRecovery, false);
   assert.equal(namespace.getDocumentArtboardById("left").x, 160);
+});
+
+test("new artboard creation uses requested size and skips occupied slots", () => {
+  const namespace = loadDocumentArtboardNamespace();
+
+  namespace.resetDocumentArtboards({
+    artboards: [
+      {
+        height: 100,
+        id: "active-document",
+        isPrimary: true,
+        name: "Artboard 1",
+        width: 100,
+        x: 0,
+        y: 0,
+      },
+      {
+        height: 180,
+        id: "selected",
+        name: "Selected",
+        width: 240,
+        x: 200,
+        y: 0,
+      },
+      {
+        height: 180,
+        id: "right-blocker",
+        name: "Right blocker",
+        width: 240,
+        x: 696,
+        y: 0,
+      },
+    ],
+    defaultSecondaryCount: 0,
+    documentHeight: 100,
+    documentWidth: 100,
+    source: "unit-artboard-create-placement",
+  });
+  namespace.selectDocumentArtboard("selected", { emit: false });
+
+  const copied = namespace.createDocumentArtboard({
+    source: "unit-artboard-create-placement",
+  });
+
+  assert.equal(copied.width, 240);
+  assert.equal(copied.height, 180);
+  assert.equal(copied.x, 200);
+  assert.equal(copied.y, 436);
+
+  const custom = namespace.createDocumentArtboard({
+    height: 654,
+    source: "unit-artboard-create-custom-size",
+    sourceArtboardId: "selected",
+    width: 321,
+  });
+
+  assert.equal(custom.width, 321);
+  assert.equal(custom.height, 654);
+  assert.equal(namespace.getDocumentArtboards().length, 5);
 });

@@ -151,6 +151,228 @@
   color: #17130a;
 }
 
+.artboard-create-popover {
+  position: fixed;
+  z-index: 5200;
+  width: 286px;
+  max-width: calc(100vw - 24px);
+  padding: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(223, 227, 234, 0.32);
+  border-radius: 8px;
+  background: #181a1f;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.16);
+}
+
+.artboard-create-popover[hidden] {
+  display: none;
+}
+
+.artboard-create-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.artboard-create-title {
+  margin: 0;
+  color: #dfe3ea;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.artboard-create-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #c3c8d1;
+}
+
+.artboard-create-icon-button:hover,
+.artboard-create-icon-button:focus-visible {
+  background: #2c303a;
+  color: #ffffff;
+  outline: none;
+}
+
+.artboard-create-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.artboard-create-presets {
+  display: grid;
+  gap: 6px;
+}
+
+.artboard-create-preset {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(223, 227, 234, 0.16);
+  border-radius: 7px;
+  background: #2c303a;
+  color: #c3c8d1;
+}
+
+.artboard-create-preset:hover,
+.artboard-create-preset:focus-visible {
+  background: #3a3f4b;
+  color: #ffffff;
+  outline: none;
+}
+
+.artboard-create-preset.active {
+  border-color: rgba(255, 209, 102, 0.82);
+  background: rgba(255, 209, 102, 0.12);
+  color: #ffffff;
+}
+
+.artboard-create-preset-label,
+.artboard-create-preset-size {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artboard-create-preset-size {
+  flex: 0 0 auto;
+  color: rgba(223, 227, 234, 0.58);
+}
+
+.artboard-create-custom-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.artboard-create-custom-fields[hidden] {
+  display: none;
+}
+
+.artboard-create-size-field {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid rgba(223, 227, 234, 0.22);
+  border-radius: 7px;
+  background: #2c303a;
+  color: #dfe3ea;
+}
+
+.artboard-create-size-field:focus-within {
+  border-color: rgba(255, 209, 102, 0.58);
+  background: #3a3f4b;
+}
+
+.artboard-create-size-field span {
+  flex: 0 0 auto;
+  color: rgba(223, 227, 234, 0.58);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.artboard-create-size-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 0 0 8px;
+  border: 0;
+  outline: 0;
+  appearance: textfield;
+  background: transparent;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 30px;
+  text-align: right;
+}
+
+.artboard-create-size-input::-webkit-outer-spin-button,
+.artboard-create-size-input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.artboard-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.artboard-create-cancel,
+.artboard-create-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.artboard-create-cancel {
+  background: transparent;
+  color: #c3c8d1;
+}
+
+.artboard-create-cancel:hover,
+.artboard-create-cancel:focus-visible {
+  background: #2c303a;
+  color: #ffffff;
+  outline: none;
+}
+
+.artboard-create-confirm {
+  gap: 6px;
+  background: #ffd166;
+  color: #17130a;
+}
+
+.artboard-create-confirm:hover,
+.artboard-create-confirm:focus-visible {
+  background: #ffe08c;
+  outline: none;
+}
+
+.artboard-create-check-icon {
+  width: 15px;
+  height: 15px;
+}
+
 .editor-area-selection-overlay {
   position: absolute;
   z-index: 3;

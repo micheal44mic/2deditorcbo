@@ -27,6 +27,7 @@ document.addEventListener(
     ".right-vertical-toolbar-dock",
     ".brush-studio-panel",
     ".brushes-gallery-popout",
+    ".artboard-create-popover",
     ".layer-effects-popover",
   ].join(", ");
 

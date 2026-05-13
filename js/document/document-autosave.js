@@ -935,7 +935,7 @@
       };
       namespace.resetDocumentArtboards?.({
         artboards: session.document.artboards || [],
-        defaultSecondaryCount: 2,
+        defaultSecondaryCount: 0,
         documentHeight: session.document.height,
         documentWidth: session.document.width,
         source: "autosave-restore-artboards",

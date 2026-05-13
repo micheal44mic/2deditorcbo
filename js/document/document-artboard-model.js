@@ -5,7 +5,7 @@ window.CBO = window.CBO || {};
   const DEFAULT_ARTBOARD_HEIGHT = 2048;
   const DEFAULT_ARTBOARD_GAP = 256;
   const MIN_ARTBOARD_GAP = 32;
-  const DEFAULT_SECONDARY_ARTBOARD_COUNT = 2;
+  const DEFAULT_SECONDARY_ARTBOARD_COUNT = 0;
   const PRIMARY_ARTBOARD_ID = "active-document";
 
   function toPositiveInt(value, fallback = 1) {
@@ -294,20 +294,160 @@ window.CBO = window.CBO || {};
       };
     }
 
-    createSecondaryArtboard(options = {}) {
-      const previous = this.artboards[this.artboards.length - 1] || this.createPrimaryArtboard(options);
-      const index = Math.max(2, this.artboards.length + 1);
-      const id = String(options.id || `artboard-${Date.now().toString(36)}-${this.sequence++}`);
+    getArtboardBounds() {
+      return this.artboards.reduce((bounds, artboard) => {
+        const rect = getArtboardRect(artboard);
+
+        if (!rect) {
+          return bounds;
+        }
+
+        const right = rect.x + rect.width;
+        const bottom = rect.y + rect.height;
+
+        if (!bounds) {
+          return {
+            bottom,
+            left: rect.x,
+            right,
+            top: rect.y,
+          };
+        }
+
+        return {
+          bottom: Math.max(bounds.bottom, bottom),
+          left: Math.min(bounds.left, rect.x),
+          right: Math.max(bounds.right, right),
+          top: Math.min(bounds.top, rect.y),
+        };
+      }, null);
+    }
+
+    resolveNewArtboardSize(options = {}) {
+      const sourceArtboardId = String(options.sourceArtboardId || this.selectedArtboardId || "").trim();
+      const sourceArtboard = this.getArtboardById(sourceArtboardId) || this.artboards[0] || null;
 
       return {
-        height: toPositiveInt(options.height, DEFAULT_ARTBOARD_HEIGHT),
+        height: toPositiveInt(options.height, toPositiveInt(sourceArtboard?.height, DEFAULT_ARTBOARD_HEIGHT)),
+        width: toPositiveInt(options.width, toPositiveInt(sourceArtboard?.width, DEFAULT_ARTBOARD_WIDTH)),
+      };
+    }
+
+    getNewArtboardAnchor(options = {}) {
+      const sourceArtboardId = String(
+        options.anchorArtboardId ||
+        options.sourceArtboardId ||
+        this.selectedArtboardId ||
+        "",
+      ).trim();
+
+      return (
+        (sourceArtboardId ? this.getArtboardById(sourceArtboardId) : null) ||
+        this.artboards[this.artboards.length - 1] ||
+        this.artboards[0] ||
+        null
+      );
+    }
+
+    findFreeArtboardPlacement(size, options = {}) {
+      const width = toPositiveInt(size?.width, DEFAULT_ARTBOARD_WIDTH);
+      const height = toPositiveInt(size?.height, DEFAULT_ARTBOARD_HEIGHT);
+      const blockers = this.artboards
+        .map((artboard) => getArtboardRect(artboard))
+        .map((rect) => expandRect(rect, MIN_ARTBOARD_GAP))
+        .filter(Boolean);
+      const canUseRect = (rect) => (
+        options.allowOverlap === true ||
+        !doesRectOverlapAny(rect, blockers)
+      );
+      const hasExplicitX = Number.isFinite(Number(options.x));
+      const hasExplicitY = Number.isFinite(Number(options.y));
+
+      if (hasExplicitX && hasExplicitY) {
+        const explicitRect = {
+          height,
+          width,
+          x: toFiniteInt(options.x, 0),
+          y: toFiniteInt(options.y, 0),
+        };
+
+        if (canUseRect(explicitRect)) {
+          return {
+            x: explicitRect.x,
+            y: explicitRect.y,
+          };
+        }
+      }
+
+      const anchorRect = getArtboardRect(this.getNewArtboardAnchor(options));
+      const bounds = this.getArtboardBounds();
+      const candidates = [];
+      const seen = new Set();
+      const pushCandidate = (x, y) => {
+        const rect = {
+          height,
+          width,
+          x: toFiniteInt(x, 0),
+          y: toFiniteInt(y, 0),
+        };
+        const key = `${rect.x}:${rect.y}`;
+
+        if (!seen.has(key)) {
+          seen.add(key);
+          candidates.push(rect);
+        }
+      };
+
+      if (anchorRect) {
+        pushCandidate(anchorRect.x + anchorRect.width + DEFAULT_ARTBOARD_GAP, anchorRect.y);
+        pushCandidate(anchorRect.x, anchorRect.y + anchorRect.height + DEFAULT_ARTBOARD_GAP);
+      }
+
+      if (bounds) {
+        pushCandidate(bounds.right + DEFAULT_ARTBOARD_GAP, bounds.top);
+        pushCandidate(bounds.left, bounds.bottom + DEFAULT_ARTBOARD_GAP);
+      }
+
+      this.artboards
+        .map((artboard) => getArtboardRect(artboard))
+        .filter(Boolean)
+        .forEach((rect) => {
+          pushCandidate(rect.x + rect.width + DEFAULT_ARTBOARD_GAP, rect.y);
+          pushCandidate(rect.x, rect.y + rect.height + DEFAULT_ARTBOARD_GAP);
+        });
+
+      const freeCandidate = candidates.find(canUseRect);
+
+      if (freeCandidate) {
+        return {
+          x: freeCandidate.x,
+          y: freeCandidate.y,
+        };
+      }
+
+      return bounds
+        ? {
+            x: toFiniteInt(bounds.right + DEFAULT_ARTBOARD_GAP, 0),
+            y: toFiniteInt(bounds.top, 0),
+          }
+        : { x: 0, y: 0 };
+    }
+
+    createSecondaryArtboard(options = {}) {
+      const index = Math.max(2, this.artboards.length + 1);
+      const id = String(options.id || `artboard-${Date.now().toString(36)}-${this.sequence++}`);
+      const size = this.resolveNewArtboardSize(options);
+      const position = this.findFreeArtboardPlacement(size, options);
+
+      return {
+        height: size.height,
         id,
         isPrimary: false,
         name: String(options.name || `Artboard ${index}`),
         type: "artboard",
-        width: toPositiveInt(options.width, DEFAULT_ARTBOARD_WIDTH),
-        x: toFiniteInt(options.x, previous.x + previous.width + DEFAULT_ARTBOARD_GAP),
-        y: toFiniteInt(options.y, 0),
+        width: size.width,
+        x: position.x,
+        y: position.y,
       };
     }
 
