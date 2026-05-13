@@ -1711,6 +1711,97 @@ test("commitRasterTransform records pure moves as placement history without pixe
   assert.ok(dirtyChanges.some((detail) => detail.source === "history-redo-unit-move"));
 });
 
+test("commitRasterTransform treats fractional drags as rounded placement history", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const target = {
+    framebuffer: { id: "target-fb" },
+    height: 40,
+    layerId: "paint-1",
+    texture: { id: "target-texture" },
+    width: 50,
+    x: 10,
+    y: 20,
+  };
+  let pushedEntry = null;
+  let snapshotCount = 0;
+
+  window.CBO.documentBounds = {
+    boundsToRect: (bounds) => ({ ...bounds }),
+    getClampedRasterBox: (rect) => ({ ...rect }),
+    getUnionRect: (first, second) => ({
+      x: Math.min(first.x, second.x),
+      y: Math.min(first.y, second.y),
+      width: Math.max(first.x + first.width, second.x + second.width) - Math.min(first.x, second.x),
+      height: Math.max(first.y + first.height, second.y + second.height) - Math.min(first.y, second.y),
+    }),
+    quadToBounds: (quad) => ({
+      x: Math.min(...quad.map((point) => point.x)),
+      y: Math.min(...quad.map((point) => point.y)),
+      width: Math.max(...quad.map((point) => point.x)) - Math.min(...quad.map((point) => point.x)),
+      height: Math.max(...quad.map((point) => point.y)) - Math.min(...quad.map((point) => point.y)),
+    }),
+    rectToBounds: (rect) => ({ ...rect }),
+  };
+  window.CBO.documentHistory = {
+    push(entry) {
+      pushedEntry = entry;
+      return true;
+    },
+  };
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", target]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.clearRasterTransformPreview = () => {};
+  renderer.commitVisualDirtyChange = () => {};
+  renderer.createRasterSnapshot = () => {
+    snapshotCount += 1;
+    throw new Error("fractional move should not create history snapshots");
+  };
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.drawTexturedQuad = () => {
+    throw new Error("fractional move should not redraw pixels");
+  };
+  renderer.getTileBasedPreviewDirtyRects = (rects) => rects.filter(Boolean).map((rect) => ({ ...rect }));
+  renderer.markRasterTargetDirty = () => {};
+  renderer.recordRasterOperation = (report) => report;
+  renderer.requestDraw = () => {};
+  renderer.updateRasterTargetResourceMetadata = () => {};
+
+  const sourceRect = { x: 10, y: 20, width: 50, height: 40 };
+  const didCommit = renderer.commitRasterTransform({
+    destQuad: [
+      { x: 17.42, y: 28.67 },
+      { x: 67.42, y: 28.67 },
+      { x: 67.42, y: 68.67 },
+      { x: 17.42, y: 68.67 },
+    ],
+    layerId: "paint-1",
+    source: "unit-fractional-move",
+    sourceRect,
+    sourceSnapshot: { texture: { id: "preview-texture" } },
+  });
+
+  assert.equal(didCommit, true);
+  assert.equal(snapshotCount, 0);
+  assert.equal(target.x, 17);
+  assert.equal(target.y, 29);
+  assert.ok(pushedEntry);
+  assert.equal(pushedEntry.beforeSnapshot, undefined);
+  assert.equal(pushedEntry.afterSnapshot, undefined);
+  assert.equal(pushedEntry.memoryPolicy.persistentBytes, 0);
+
+  assert.equal(pushedEntry.undo(), true);
+  assert.equal(target.x, 10);
+  assert.equal(target.y, 20);
+  assert.equal(pushedEntry.redo(), true);
+  assert.equal(target.x, 17);
+  assert.equal(target.y, 29);
+});
+
 test("commitCroppedRasterTransform restores rasterized image layers as authoritative sparse targets", () => {
   const { DocumentRenderer, window } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -2901,6 +2992,92 @@ test("preview dirty tiles split separated transform bounds without unioning empt
   assert.equal(rects.some((rect) => rect.width >= 1500), false);
 });
 
+test("preview dirty regions clip spanning rects to document artboards", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {};
+  renderer.width = 1400;
+  renderer.height = 400;
+  renderer.layerModel = { findEntryById: () => null };
+  renderer.previewCacheReady = true;
+  renderer.previewCacheDirty = false;
+  renderer.previewDirtyRects = [];
+  renderer.previewDirtyCompactOptions = null;
+  window.CBO.getDocumentArtboards = () => [
+    { id: "left", x: 0, y: 0, width: 400, height: 400 },
+    { id: "right", x: 1000, y: 0, width: 400, height: 400 },
+  ];
+
+  renderer.invalidatePreviewCache("unit-artboard-dirty", {
+    preserveDirtyRects: true,
+    rect: { x: 100, y: 100, width: 1100, height: 40 },
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(renderer.previewDirtyRects)), [
+    { x: 100, y: 100, width: 300, height: 40 },
+    { x: 1000, y: 100, width: 200, height: 40 },
+  ]);
+  assert.equal(renderer.previewDirtyRects.some((rect) => rect.x > 400 && rect.x < 1000), false);
+});
+
+test("preview dirty tiles skip gaps between document artboards", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {};
+  renderer.width = 1400;
+  renderer.height = 400;
+  window.CBO.getDocumentArtboards = () => [
+    { id: "left", x: 0, y: 0, width: 400, height: 400 },
+    { id: "right", x: 1000, y: 0, width: 400, height: 400 },
+  ];
+
+  const rects = renderer.getTileBasedPreviewDirtyRects([
+    { x: 100, y: 100, width: 1100, height: 40 },
+  ], { previewDirtyTileSize: 256 });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(rects)), [
+    { x: 100, y: 100, width: 156, height: 40 },
+    { x: 256, y: 100, width: 144, height: 40 },
+    { x: 1000, y: 100, width: 24, height: 40 },
+    { x: 1024, y: 100, width: 176, height: 40 },
+  ]);
+  assert.equal(rects.some((rect) => rect.x >= 400 && rect.x < 1000), false);
+});
+
+test("preview dirty regions skip rects fully outside document artboards", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {};
+  renderer.width = 1400;
+  renderer.height = 400;
+  renderer.layerModel = { findEntryById: () => null };
+  renderer.previewCacheReady = true;
+  renderer.previewCacheDirty = false;
+  renderer.previewDirtyRects = [];
+  renderer.previewDirtyCompactOptions = null;
+  window.CBO.getDocumentArtboards = () => [
+    { id: "left", x: 0, y: 0, width: 400, height: 400 },
+    { id: "right", x: 1000, y: 0, width: 400, height: 400 },
+  ];
+
+  assert.deepEqual(JSON.parse(JSON.stringify(renderer.getTileBasedPreviewDirtyRects([
+    { x: 500, y: 100, width: 100, height: 40 },
+  ], { previewDirtyTileSize: 256 }))), []);
+
+  renderer.commitVisualDirtyChange({
+    emit: false,
+    preserveDirtyRects: true,
+    rect: { x: 500, y: 100, width: 100, height: 40 },
+    source: "unit-gap-dirty",
+  });
+
+  assert.equal(renderer.previewCacheDirty, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(renderer.previewDirtyRects)), []);
+});
+
 test("visual dirty changes normalize operations into one dirty payload", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -2940,6 +3117,72 @@ test("visual dirty changes normalize operations into one dirty payload", () => {
 
   assert.equal(invalidated[0].source, "unit-invalidate-only");
   assert.equal(emitted[0].source, "unit-emit");
+});
+
+test("raster transform artboard transfer does not force a full layer invalidation", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const invalidated = [];
+
+  renderer.pruneOrphanRasterTargets = () => {};
+  renderer.invalidatePreviewCache = (source) => invalidated.push(source);
+
+  renderer.handleLayerModelChange({
+    detail: {
+      source: "raster-transform-artboard-transfer",
+    },
+  });
+  renderer.handleLayerModelChange({
+    detail: {
+      source: "history-redo-raster-transform-artboard-transfer",
+    },
+  });
+
+  assert.deepEqual(invalidated, []);
+
+  renderer.handleLayerModelChange({
+    detail: {
+      source: "unit-layer-artboard-transfer",
+    },
+  });
+
+  assert.deepEqual(invalidated, ["layers-change"]);
+});
+
+test("history memory maintenance does not force a preview cache redraw", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const invalidated = [];
+
+  renderer.previewCacheDirty = false;
+  renderer.pruneOrphanRasterTargets = () => {};
+  renderer.invalidatePreviewCache = (source) => invalidated.push(source);
+
+  renderer.handleHistoryChange({
+    detail: {
+      source: "history-gpu-hot-prune",
+    },
+  });
+  renderer.handleHistoryChange({
+    detail: {
+      source: "clear",
+    },
+  });
+  renderer.handleHistoryChange({
+    detail: {
+      source: "dispose",
+    },
+  });
+
+  assert.deepEqual(invalidated, []);
+
+  renderer.handleHistoryChange({
+    detail: {
+      source: "undo",
+    },
+  });
+
+  assert.deepEqual(invalidated, ["history-change"]);
 });
 
 test("preview cache dimensions cap large documents while preserving aspect", () => {

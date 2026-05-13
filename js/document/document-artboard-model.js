@@ -929,6 +929,7 @@ window.CBO = window.CBO || {};
       namespace.documentRenderer?.commitVisualDirtyChange?.({
         maxDirtyRects: 96,
         preserveDirtyRects: true,
+        previewArtboardClipRects: [oldArtboardRect, newArtboardRect],
         rects: dirtyRects,
         source,
       });

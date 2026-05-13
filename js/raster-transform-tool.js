@@ -5,10 +5,12 @@
   const ROTATE_TOOL_MODE = "rotate";
   const WARP_TRANSFORM_MODE = "warp";
   const RASTER_ALPHA_HIT_THRESHOLD = 2;
+  const RASTER_TRANSFORM_BOUNDS_ALPHA_THRESHOLD = 0;
+  const RASTER_TRANSFORM_BOUNDS_PADDING = 2;
   const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object.freeze({
-    alphaThreshold: RASTER_ALPHA_HIT_THRESHOLD,
+    alphaThreshold: RASTER_TRANSFORM_BOUNDS_ALPHA_THRESHOLD,
     clampToDocument: false,
-    padding: 0,
+    padding: RASTER_TRANSFORM_BOUNDS_PADDING,
     pixelPerfect: true,
   });
   const HANDLE_SIZE = 10;

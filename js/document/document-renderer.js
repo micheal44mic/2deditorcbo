@@ -2222,6 +2222,7 @@ void main() {
           uploadPixels = compression.decompressRgba(
             target.cpuPixels,
             Number(target.cpuRawBytes) || width * height * RASTER_BYTES_PER_PIXEL,
+            target.cpuPixelsEncoding,
           );
         } catch (error) {
           console.warn?.("[CBO renderer] Decompressione RLE target raster fallita.", error);
@@ -4813,7 +4814,79 @@ void main() {
         .map((rect) => this.normalizeDirtyRegionRect(rect))
         .filter(Boolean);
 
-      return normalizedRects;
+      return this.clipPreviewDirtyRectsToArtboards(normalizedRects, options);
+    }
+
+    getIncomingDirtyRegionRectCount(options = {}) {
+      const explicitCount = Number(options.dirtyRectInputCount);
+
+      if (Number.isFinite(explicitCount) && explicitCount > 0) {
+        return Math.round(explicitCount);
+      }
+
+      let count = 0;
+
+      if (options.rect) {
+        count += 1;
+      }
+
+      if (Array.isArray(options.rects)) {
+        count += options.rects.length;
+      }
+
+      if (Array.isArray(options.projectionInvalidation)) {
+        count += options.projectionInvalidation.length;
+      }
+
+      return count;
+    }
+
+    getPreviewDirtyArtboardClipRects(options = {}) {
+      if (options.clipToArtboards === false || this.options?.isolateDocumentArtboards) {
+        return null;
+      }
+
+      const explicitRects = Array.isArray(options.previewArtboardClipRects)
+        ? options.previewArtboardClipRects
+        : null;
+      const sourceRects = explicitRects || namespace.getDocumentArtboards?.() || [];
+      const rects = (Array.isArray(sourceRects) ? sourceRects : [])
+        .map((rect) => this.normalizeTransformArtboardRect(rect))
+        .filter(Boolean)
+        .map((rect) => this.normalizeDirtyRegionRect(rect))
+        .filter(Boolean);
+
+      return rects.length > 0 ? rects : null;
+    }
+
+    clonePreviewDirtyArtboardClipRects(rects) {
+      return (Array.isArray(rects) ? rects : [])
+        .map((rect) => this.normalizeTransformArtboardRect(rect))
+        .filter(Boolean)
+        .map((rect) => ({ ...rect }));
+    }
+
+    clipPreviewDirtyRectsToArtboards(rects = [], options = {}) {
+      const sourceRects = (Array.isArray(rects) ? rects : [rects])
+        .map((rect) => this.normalizeDirtyRegionRect(rect))
+        .filter(Boolean);
+      const clipRects = this.getPreviewDirtyArtboardClipRects(options);
+
+      if (!clipRects || sourceRects.length === 0) {
+        return sourceRects;
+      }
+
+      const clippedRects = [];
+
+      sourceRects.forEach((rect) => {
+        const rectClips = clipRects
+          .map((clipRect) => this.intersectRasterHistoryRects(rect, clipRect))
+          .filter(Boolean);
+
+        clippedRects.push(...rectClips);
+      });
+
+      return clippedRects.map((rect) => ({ ...rect }));
     }
 
     getPreviewDirtyTileSize(options = {}) {
@@ -4827,9 +4900,7 @@ void main() {
     }
 
     getTileBasedPreviewDirtyRects(rects = [], options = {}) {
-      const sourceRects = (Array.isArray(rects) ? rects : [rects])
-        .map((rect) => this.normalizeDirtyRegionRect(rect))
-        .filter(Boolean);
+      const sourceRects = this.clipPreviewDirtyRectsToArtboards(rects, options);
       const tileSize = this.getPreviewDirtyTileSize(options);
       const dirtyTiles = new Map();
 
@@ -4890,14 +4961,16 @@ void main() {
       const normalizedRects = rawRects
         .map((rect) => this.normalizeDirtyRegionRect(rect))
         .filter(Boolean);
+      const previewRects = this.clipPreviewDirtyRectsToArtboards(normalizedRects, options);
       const shouldTileDirtyRects = options.tileDirty === true || options.usePreviewDirtyTiles === true;
       const dirtyRects = shouldTileDirtyRects
-        ? this.getTileBasedPreviewDirtyRects(normalizedRects, options)
-        : normalizedRects.map((rect) => ({ ...rect }));
+        ? this.getTileBasedPreviewDirtyRects(previewRects, options)
+        : previewRects.map((rect) => ({ ...rect }));
       const preserveDirtyRects = options.preserveDirtyRects === true ||
         shouldTileDirtyRects ||
         Array.isArray(options.tilePatchRects);
       const detail = {
+        dirtyRectInputCount: normalizedRects.length,
         layerId: options.layerId || "",
         maxDirtyRects: Math.max(
           1,
@@ -4913,6 +4986,18 @@ void main() {
 
       if (options.mergeAdjacentDirtyRects === false) {
         detail.mergeAdjacentDirtyRects = false;
+      }
+
+      if (options.clipToArtboards === false) {
+        detail.clipToArtboards = false;
+      }
+
+      if (Array.isArray(options.previewArtboardClipRects)) {
+        const previewArtboardClipRects = this.clonePreviewDirtyArtboardClipRects(options.previewArtboardClipRects);
+
+        if (previewArtboardClipRects.length > 0) {
+          detail.previewArtboardClipRects = previewArtboardClipRects;
+        }
       }
 
       if (dirtyRects.length === 1 && preserveDirtyRects !== true) {
@@ -5215,11 +5300,29 @@ void main() {
         });
       }
       const hadFullInvalidation = this.previewCacheDirty && this.previewDirtyRects === null;
+      const dirtyRects = this.getDirtyRegionRectsFromOptions(options);
+      const incomingDirtyRectCount = this.getIncomingDirtyRegionRectCount(options);
+
+      if (!dirtyRects.length && incomingDirtyRectCount > 0) {
+        this.emitPreviewDirtyRegionDebug({
+          layerId: options.layerId || "",
+          meta: {
+            forcedFullCause: "dirty-outside-visible-artboards",
+            incomingDirtyRectCount,
+            incomingDirtyRectsLength: dirtyRects.length,
+            incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
+            previewCacheDirty: this.previewCacheDirty,
+            previewCacheReady: this.previewCacheReady,
+          },
+          mode: "skipped",
+          reason,
+          rects: [],
+        });
+        return;
+      }
 
       this.previewCacheDirty = true;
       this.previewCacheReason = reason;
-
-      const dirtyRects = this.getDirtyRegionRectsFromOptions(options);
 
       if (!dirtyRects.length || !this.previewCacheReady) {
         const forcedFullCause = !dirtyRects.length
@@ -5235,6 +5338,7 @@ void main() {
           layerId: options.layerId || "",
           meta: {
             forcedFullCause,
+            incomingDirtyRectCount,
             incomingDirtyRectsLength: dirtyRects.length,
             incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
             previewCacheDirty: this.previewCacheDirty,
@@ -5252,6 +5356,7 @@ void main() {
           layerId: options.layerId || "",
           meta: {
             forcedFullCause: "full-invalidation-pending",
+            incomingDirtyRectCount,
             incomingDirtyRectsLength: dirtyRects.length,
             incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
             previewCacheDirty: this.previewCacheDirty,
@@ -8662,6 +8767,7 @@ void main() {
           uploadPixels = compression.decompressRgba(
             snapshot.cpuPixels,
             Number(snapshot.cpuRawBytes) || width * height * 4,
+            snapshot.cpuPixelsEncoding,
           );
         } catch (error) {
           console.warn?.("[CBO renderer] Decompressione RLE history fallita.", error);
@@ -8842,6 +8948,7 @@ void main() {
         return compression.decompressRgba(
           target.cpuPixels,
           Number(target.cpuRawBytes) || Math.max(1, Math.round(target.width || 1)) * Math.max(1, Math.round(target.height || 1)) * RASTER_BYTES_PER_PIXEL,
+          target.cpuPixelsEncoding,
         );
       } catch (error) {
         console.warn?.("[CBO renderer] Decompressione RLE target raster fallita.", error);
@@ -11114,18 +11221,18 @@ void main() {
       const epsilon = 0.001;
 
       if (
-        Math.abs(dx - roundedDx) > epsilon ||
-        Math.abs(dy - roundedDy) > epsilon ||
+        !Number.isFinite(dx) ||
+        !Number.isFinite(dy) ||
         (roundedDx === 0 && roundedDy === 0)
       ) {
         return null;
       }
 
       const expected = [
-        { x: sourceRect.x + roundedDx, y: sourceRect.y + roundedDy },
-        { x: sourceRect.x + sourceRect.width + roundedDx, y: sourceRect.y + roundedDy },
-        { x: sourceRect.x + sourceRect.width + roundedDx, y: sourceRect.y + sourceRect.height + roundedDy },
-        { x: sourceRect.x + roundedDx, y: sourceRect.y + sourceRect.height + roundedDy },
+        { x: sourceRect.x + dx, y: sourceRect.y + dy },
+        { x: sourceRect.x + sourceRect.width + dx, y: sourceRect.y + dy },
+        { x: sourceRect.x + sourceRect.width + dx, y: sourceRect.y + sourceRect.height + dy },
+        { x: sourceRect.x + dx, y: sourceRect.y + sourceRect.height + dy },
       ];
 
       for (let index = 0; index < expected.length; index += 1) {
@@ -11812,6 +11919,8 @@ void main() {
     handleLayerModelChange(event) {
       const source = event?.detail?.source || "layers-change";
       const changeType = event?.detail?.changeType || "";
+      const isRasterTransformArtboardTransfer =
+        source.endsWith("-artboard-transfer") && source.includes("raster-transform");
       const nonVisualSources = new Set([
         "active-layer",
         "image-rasterize",
@@ -11822,7 +11931,7 @@ void main() {
         "raster-transform",
       ]);
 
-      if (changeType !== "active-layer" && !nonVisualSources.has(source)) {
+      if (changeType !== "active-layer" && !nonVisualSources.has(source) && !isRasterTransformArtboardTransfer) {
         this.invalidatePreviewCache("layers-change");
       }
 
@@ -11838,8 +11947,11 @@ void main() {
     handleHistoryChange(event) {
       const source = event?.detail?.source || "history-change";
       const stackOnlySources = new Set([
+        "clear",
+        "dispose",
         "history-budget-change",
         "history-gpu-hot-budget-change",
+        "history-gpu-hot-prune",
         "init",
         "merge",
         "push",

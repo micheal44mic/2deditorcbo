@@ -34,6 +34,7 @@ test("raster memory recovery uses soft warning trim and hard checkpoint reset", 
   assert.match(source, /restoreLatest\?\.\(\{[\s\S]*resetRenderer: true/);
   assert.match(source, /pruneRasterHistoryGpuHotBudget\?\.\(\{[\s\S]*minProtectedEntries: 0/);
   assert.match(source, /targetGpuHotBytes: normalizedLevel === "critical" \? 0 : 64 \* MIB/);
+  assert.match(source, /historyGpuBytes: deviceClass === "software" \? 0 : deviceClass === "mobile" \? 64 \* MIB : 256 \* MIB/);
   assert.match(source, /getHistoryColdRasterTargetBytes/);
   assert.match(source, /layerTargetBytes/);
   assert.match(source, /state\.autoRecoveryCheckpointBlocked = true/);

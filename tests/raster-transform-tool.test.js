@@ -225,9 +225,12 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /syncActiveToolFromToolbar\(\) \{/);
   assert.match(source, /window\.addEventListener\("cbo:text-transform-edit-request", this\.handleTextTransformEditRequest\);/);
   assert.match(source, /handleTextTransformEditRequest\(event\) \{[\s\S]*this\.activeTool = "text-transform";[\s\S]*this\.deactivateLayer\(\);/);
+  assert.match(source, /const RASTER_TRANSFORM_BOUNDS_ALPHA_THRESHOLD = 0;/);
+  assert.match(source, /const RASTER_TRANSFORM_BOUNDS_PADDING = 2;/);
   assert.match(source, /const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object\.freeze\(\{/);
+  assert.match(source, /alphaThreshold: RASTER_TRANSFORM_BOUNDS_ALPHA_THRESHOLD,/);
   assert.match(source, /clampToDocument: false,/);
-  assert.match(source, /padding: 0,/);
+  assert.match(source, /padding: RASTER_TRANSFORM_BOUNDS_PADDING,/);
   assert.match(source, /pixelPerfect: true,/);
   assert.match(source, /const TOUCH_SELECTION_HIT_RADIUS_PX = 8;/);
   assert.match(source, /const SELECTION_MOVE_HOLD_MS = 120;/);

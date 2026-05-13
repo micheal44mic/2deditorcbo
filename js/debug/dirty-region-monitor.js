@@ -491,11 +491,13 @@
   function renderOverlay() {
     const telemetry = collectDirtyRegionTelemetry();
     const overlay = ensureOverlay();
+    const cache = telemetry.debug.cache;
     const live = telemetry.debug.live;
     const bake = telemetry.debug.bake;
     const lines = [
       "CBO DIRTY REGIONS",
       `Cache ${telemetry.last.pending ? "pending" : "last"}: ${telemetry.last.mode} / ${telemetry.last.reason}`,
+      `Cache event: ${formatDebugEvent(cache)}`,
       `Zoom: ${telemetry.zoom ? telemetry.zoom.toFixed(3) : "n/a"}`,
       "",
       `Last rect: ${formatRect(telemetry.last.rect)}`,

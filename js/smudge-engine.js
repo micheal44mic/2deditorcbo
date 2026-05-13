@@ -880,6 +880,7 @@ void main() {
           uploadPixels = compression.decompressRgba(
             snapshot.cpuPixels,
             Number(snapshot.cpuRawBytes) || width * height * 4,
+            snapshot.cpuPixelsEncoding,
           );
         } catch (error) {
           console.warn?.("[CBO smudge] Decompressione RLE snapshot fallita.", error);

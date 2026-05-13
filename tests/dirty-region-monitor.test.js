@@ -26,6 +26,7 @@ test("dirty region monitor exposes a separate debug menu and telemetry", () => {
   assert.match(source, /previewLastDirtyMode/);
   assert.match(source, /getPreviewDirtyStats/);
   assert.match(source, /Cache \$\{telemetry\.last\.pending \? "pending" : "last"\}:/);
+  assert.match(source, /Cache event:/);
   assert.match(source, /pending: true/);
   assert.match(source, /pending: false/);
   assert.match(source, /Live stroke:/);

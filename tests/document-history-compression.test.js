@@ -35,10 +35,42 @@ test("history compression round-trips compressible RGBA pixels", () => {
 
   const compressed = compression.compressRgba(pixels);
 
+  assert.equal(compression.isCompressedEncoding(compressed.encoding), true);
+  assert.ok(compressed.bytes.byteLength < pixels.byteLength);
+  assert.deepEqual(
+    Array.from(compression.decompressRgba(compressed.bytes, pixels.byteLength, compressed.encoding)),
+    Array.from(pixels),
+  );
+});
+
+test("history compression packetizes mixed literal and repeated RGBA pixels", () => {
+  const compression = loadCompression();
+  const pixels = new Uint8Array(250 * 4);
+
+  for (let i = 0; i < 100; i += 1) {
+    const offset = i * 4;
+
+    pixels[offset] = i & 0xFF;
+    pixels[offset + 1] = (i * 3) & 0xFF;
+    pixels[offset + 2] = (i * 7) & 0xFF;
+    pixels[offset + 3] = 255;
+  }
+
+  for (let i = 150; i < 250; i += 1) {
+    const offset = i * 4;
+
+    pixels[offset] = i & 0xFF;
+    pixels[offset + 1] = (i * 5) & 0xFF;
+    pixels[offset + 2] = (i * 11) & 0xFF;
+    pixels[offset + 3] = 255;
+  }
+
+  const compressed = compression.compressRgba(pixels);
+
   assert.equal(compressed.encoding, compression.ENCODING);
   assert.ok(compressed.bytes.byteLength < pixels.byteLength);
   assert.deepEqual(
-    Array.from(compression.decompressRgba(compressed.bytes, pixels.byteLength)),
+    Array.from(compression.decompressRgba(compressed.bytes, pixels.byteLength, compressed.encoding)),
     Array.from(pixels),
   );
 });

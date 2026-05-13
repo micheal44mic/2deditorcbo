@@ -485,6 +485,7 @@
               pixels = compression.decompressRgba(
                 pixels,
                 Number(snapshot.cpuRawBytes) || 0,
+                snapshot.cpuPixelsEncoding,
               );
             } catch (error) {
               console.warn?.("[CBO autosave] Decompressione RLE tile fallita.", error);
