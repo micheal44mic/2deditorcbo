@@ -312,6 +312,29 @@ window.CBO = window.CBO || {};
     return namespace.getArtboardContentLayerIds?.(artboardId) || [];
   }
 
+  function getArtboardBackgroundLayer(artboardId) {
+    const normalizedId = String(artboardId || "active-document").trim() || "active-document";
+    const layerModel = namespace.documentLayerModel;
+    const backgroundId = layerModel?.getArtboardBackgroundLayerId?.(normalizedId) ||
+      (normalizedId === "active-document" ? "background" : `background-${normalizedId}`);
+    const flatLayers = layerModel?.flattenTopToBottom?.();
+
+    if (Array.isArray(flatLayers)) {
+      return flatLayers.find((layer) => (
+        (layer.id === backgroundId || layer.type === "background") &&
+        String(layer.artboardId || "active-document").trim() === normalizedId
+      )) || null;
+    }
+
+    return layerModel?.findEntryById?.(backgroundId) || null;
+  }
+
+  function isArtboardBackgroundVisible(artboardId) {
+    const backgroundLayer = getArtboardBackgroundLayer(artboardId);
+
+    return backgroundLayer ? backgroundLayer.visible !== false : true;
+  }
+
   function getArtboardDragScreenOffset(dx, dy) {
     const { camera, dpr } = getCameraState();
     const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
@@ -643,6 +666,7 @@ window.CBO = window.CBO || {};
 
       paper.className = "editor-artboard-paper";
       paper.dataset.artboardId = artboard.id;
+      paper.classList.toggle("is-transparent", !isArtboardBackgroundVisible(artboard.id));
       paper.style.left = `${left}px`;
       paper.style.top = `${top}px`;
       paper.style.width = `${width}px`;
@@ -763,6 +787,9 @@ window.CBO = window.CBO || {};
     });
     window.addEventListener("cbo:tool-change", handleToolChange);
     window.addEventListener("cbo:document-artboards-change", () => {
+      renderArtboardPreviews();
+    });
+    window.addEventListener("cbo:document-layers-change", () => {
       renderArtboardPreviews();
     });
     window.addEventListener("cbo:document-artboard-selection-change", (event) => {

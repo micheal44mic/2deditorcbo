@@ -83,6 +83,13 @@
     0 0 0 1px rgba(0, 0, 0, 0.28);
 }
 
+.editor-artboard-paper.is-transparent {
+  background: transparent;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 18px 42px rgba(0, 0, 0, 0.18);
+}
+
 .editor-artboard-preview-layer {
   position: absolute;
   inset: 0;

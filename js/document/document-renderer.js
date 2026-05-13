@@ -2891,11 +2891,13 @@ void main() {
           }
 
           return renderer.restoreRasterTileHistoryEntry(this, "before", {
+            releaseSnapshotGpuAfterRestore: options.releaseSnapshotGpuAfterRestore === true,
             source: options.undoSource || `history-undo-${this.source}`,
           });
         },
         redo() {
           return renderer.restoreRasterTileHistoryEntry(this, "after", {
+            releaseSnapshotGpuAfterRestore: options.releaseSnapshotGpuAfterRestore === true,
             source: options.redoSource || `history-redo-${this.source}`,
           });
         },
@@ -2933,6 +2935,7 @@ void main() {
         const layerId = delta.layerId || entry.layerId;
         const didRestore = this.restoreRasterSnapshot(layerId, delta[snapshotKey], {
           emit: false,
+          releaseSnapshotGpuAfterRestore: options.releaseSnapshotGpuAfterRestore === true,
           source: options.source || "raster-tile-history-restore",
         });
 
@@ -8611,7 +8614,7 @@ void main() {
       return true;
     }
 
-    hydrateRasterSnapshot(snapshot) {
+    hydrateRasterSnapshot(snapshot, options = {}) {
       if (!snapshot || snapshot.texture || snapshot.framebuffer) {
         return Boolean(snapshot?.texture && snapshot?.framebuffer);
       }
@@ -8716,12 +8719,48 @@ void main() {
         width,
       });
 
-      snapshot.cpuBytes = 0;
-      snapshot.cpuPixels = null;
-      snapshot.cpuPixelsEncoding = null;
-      snapshot.cpuRawBytes = 0;
+      if (options.retainCpuPixels !== true) {
+        snapshot.cpuBytes = 0;
+        snapshot.cpuPixels = null;
+        snapshot.cpuPixelsEncoding = null;
+        snapshot.cpuRawBytes = 0;
+      } else {
+        snapshot.cpuBytes = snapshot.cpuPixels.byteLength;
+        snapshot.cpuRawBytes = Number(snapshot.cpuRawBytes) || width * height * 4;
+      }
 
       return true;
+    }
+
+    releaseRetainedRasterSnapshotGpu(snapshot) {
+      if (!snapshot || !(snapshot.cpuPixels instanceof Uint8Array)) {
+        return false;
+      }
+
+      const gl = this.gl;
+      let didRelease = false;
+
+      if (snapshot.framebuffer) {
+        this.deleteRasterFramebuffer(snapshot.framebuffer);
+        gl.deleteFramebuffer(snapshot.framebuffer);
+        snapshot.framebuffer = null;
+        didRelease = true;
+      }
+
+      if (snapshot.texture) {
+        this.deleteRasterTexture(snapshot.texture);
+        gl.deleteTexture(snapshot.texture);
+        snapshot.texture = null;
+        didRelease = true;
+      }
+
+      const { height, width } = this.getRasterSnapshotDimensions(snapshot);
+
+      snapshot.cpuBytes = snapshot.cpuPixels.byteLength;
+      snapshot.cpuRawBytes = Number(snapshot.cpuRawBytes) || width * height * 4;
+      snapshot.state = "CPU_COLD";
+
+      return didRelease;
     }
 
     canRestoreRasterSnapshot(target, snapshot) {
@@ -8859,7 +8898,23 @@ void main() {
         return this.restoreEmptyRasterSnapshotToSparseTarget(layerId, sparseTarget, snapshot, options);
       }
 
-      if ((!snapshot.texture || !snapshot.framebuffer) && !this.hydrateRasterSnapshot(snapshot)) {
+      const needsHydrate = !snapshot.texture || !snapshot.framebuffer;
+      const releaseSnapshotGpuAfterRestore = Boolean(
+        options.releaseSnapshotGpuAfterRestore === true &&
+        needsHydrate &&
+        snapshot.cpuPixels instanceof Uint8Array
+      );
+      const finish = (result) => {
+        if (releaseSnapshotGpuAfterRestore) {
+          this.releaseRetainedRasterSnapshotGpu(snapshot);
+        }
+
+        return result;
+      };
+
+      if (needsHydrate && !this.hydrateRasterSnapshot(snapshot, {
+        retainCpuPixels: releaseSnapshotGpuAfterRestore,
+      })) {
         return false;
       }
 
@@ -8895,7 +8950,7 @@ void main() {
       }
 
       if (!didRestore) {
-        return false;
+        return finish(false);
       }
 
       const prunedCount = options.pruneTransparentTiles === false
@@ -8913,7 +8968,7 @@ void main() {
       }
 
       this.requestDraw();
-      return true;
+      return finish(true);
     }
 
     restoreRasterSnapshotAsSparseTarget(layerId, snapshot, options = {}) {
@@ -9063,7 +9118,23 @@ void main() {
         return didClear || !existingTarget;
       }
 
-      if ((!snapshot.texture || !snapshot.framebuffer) && !this.hydrateRasterSnapshot(snapshot)) {
+      const needsHydrate = !snapshot.texture || !snapshot.framebuffer;
+      const releaseSnapshotGpuAfterRestore = Boolean(
+        options.releaseSnapshotGpuAfterRestore === true &&
+        needsHydrate &&
+        snapshot.cpuPixels instanceof Uint8Array
+      );
+      const finish = (result) => {
+        if (releaseSnapshotGpuAfterRestore) {
+          this.releaseRetainedRasterSnapshotGpu(snapshot);
+        }
+
+        return result;
+      };
+
+      if (needsHydrate && !this.hydrateRasterSnapshot(snapshot, {
+        retainCpuPixels: releaseSnapshotGpuAfterRestore,
+      })) {
         return false;
       }
 
@@ -9082,14 +9153,14 @@ void main() {
 
       if (this.isSparseRasterTarget(existingTarget)) {
         if (options.replaceSparse === true && shouldRestoreAsSparseTarget) {
-          return this.restoreRasterSnapshotAsSparseTarget(layerId, snapshot, options);
+          return finish(this.restoreRasterSnapshotAsSparseTarget(layerId, snapshot, options));
         }
 
-        return this.restoreRasterSnapshotToSparseTarget(layerId, existingTarget, snapshot, options);
+        return finish(this.restoreRasterSnapshotToSparseTarget(layerId, existingTarget, snapshot, options));
       }
 
       if (shouldRestoreAsSparseTarget && this.restoreRasterSnapshotAsSparseTarget(layerId, snapshot, options)) {
-        return true;
+        return finish(true);
       }
 
       let target = this.getRasterTarget(layerId);
@@ -9152,7 +9223,7 @@ void main() {
       }
 
       if (!this.canRestoreRasterSnapshot(target, snapshot)) {
-        return false;
+        return finish(false);
       }
 
       const gl = this.gl;
@@ -9180,7 +9251,7 @@ void main() {
         });
       }
 
-      return true;
+      return finish(true);
     }
 
     deleteRasterSnapshot(snapshot) {
@@ -11001,6 +11072,156 @@ void main() {
       });
     }
 
+    getTranslateOnlyRasterTransformDelta(options = {}) {
+      const transformMode = String(options.transformMode || "free").trim().toLowerCase();
+
+      if (transformMode === "warp" || transformMode === "perspective" || options.warpControlPoints) {
+        return null;
+      }
+
+      const sourceRect = this.getUnclampedDocumentRect(options.sourceRect);
+      const destQuad = Array.isArray(options.destQuad) ? options.destQuad : null;
+
+      if (!sourceRect || !destQuad || destQuad.length < 4) {
+        return null;
+      }
+
+      const dx = Number(destQuad[0]?.x) - sourceRect.x;
+      const dy = Number(destQuad[0]?.y) - sourceRect.y;
+      const roundedDx = Math.round(dx);
+      const roundedDy = Math.round(dy);
+      const epsilon = 0.001;
+
+      if (
+        Math.abs(dx - roundedDx) > epsilon ||
+        Math.abs(dy - roundedDy) > epsilon ||
+        (roundedDx === 0 && roundedDy === 0)
+      ) {
+        return null;
+      }
+
+      const expected = [
+        { x: sourceRect.x + roundedDx, y: sourceRect.y + roundedDy },
+        { x: sourceRect.x + sourceRect.width + roundedDx, y: sourceRect.y + roundedDy },
+        { x: sourceRect.x + sourceRect.width + roundedDx, y: sourceRect.y + sourceRect.height + roundedDy },
+        { x: sourceRect.x + roundedDx, y: sourceRect.y + sourceRect.height + roundedDy },
+      ];
+
+      for (let index = 0; index < expected.length; index += 1) {
+        const point = destQuad[index];
+
+        if (
+          !point ||
+          Math.abs(Number(point.x) - expected[index].x) > epsilon ||
+          Math.abs(Number(point.y) - expected[index].y) > epsilon
+        ) {
+          return null;
+        }
+      }
+
+      return {
+        dx: roundedDx,
+        dy: roundedDy,
+      };
+    }
+
+    commitTranslatedRasterTransform(options = {}) {
+      const {
+        destQuad,
+        destRect,
+        layerId,
+        source = "raster-transform",
+        sourceRect,
+        target,
+        transformMode = "free",
+        warpControlPoints,
+      } = options;
+      const delta = this.getTranslateOnlyRasterTransformDelta({
+        destQuad,
+        sourceRect,
+        transformMode,
+        warpControlPoints,
+      });
+
+      if (!layerId || !target || !delta) {
+        return false;
+      }
+
+      const beforeTargetRect = this.getRasterTargetDocumentRect(target);
+      const afterTargetRect = beforeTargetRect
+        ? this.offsetDocumentRect(beforeTargetRect, delta.dx, delta.dy)
+        : null;
+      const previewDirtyRects = this.getTileBasedPreviewDirtyRects(
+        [sourceRect, destRect || this.offsetDocumentRect(sourceRect, delta.dx, delta.dy)],
+        { previewDirtyTileSize: options.previewDirtyTileSize },
+      );
+      const applyPlacement = (dx, dy, historySource) => {
+        const didTranslate = this.translateRasterTargetPlacement(layerId, dx, dy, {
+          source: historySource,
+        });
+
+        if (!didTranslate) {
+          return false;
+        }
+
+        this.commitVisualDirtyChange({
+          layerId,
+          maxDirtyRects: PREVIEW_DIRTY_MAX_RECTS,
+          preserveDirtyRects: true,
+          rects: previewDirtyRects,
+          source: historySource,
+        });
+        this.requestDraw();
+        return true;
+      };
+
+      if (!applyPlacement(delta.dx, delta.dy, source)) {
+        return false;
+      }
+
+      const memoryPolicy = this.recordRasterOperation(this.createRasterOperationMemoryReport({
+        afterRect: afterTargetRect,
+        beforeRect: beforeTargetRect,
+        estimatedPeakBytes: 0,
+        layerId,
+        mode: transformMode,
+        operationType: "raster-transform-placement",
+        persistentBytes: 0,
+        reason: source,
+        scratchBytes: 0,
+        source,
+        sourceBytes: 0,
+        sourceRect,
+        targetBytes: 0,
+        targetRect: afterTargetRect,
+        tool: "raster-transform",
+      }));
+      const history = namespace.documentHistory;
+      const entry = this.finalizeRasterEditHistoryEntry(layerId, {
+        layerId,
+        memoryPolicy,
+        source,
+        type: "custom",
+        undo: () => applyPlacement(-delta.dx, -delta.dy, `history-undo-${source}`),
+        redo: () => applyPlacement(delta.dx, delta.dy, `history-redo-${source}`),
+      }, {
+        artboardTransfer: {
+          destQuad,
+          destRect,
+          transformMode,
+          warpControlPoints,
+        },
+        source,
+      });
+
+      if (history?.push) {
+        history.push(entry);
+      }
+
+      this.clearRasterTransformPreview(layerId);
+      return true;
+    }
+
     commitCroppedRasterTransform(options = {}) {
       const {
         destQuad,
@@ -11083,14 +11304,6 @@ void main() {
 
       this.markRasterTargetDirty(nextTarget);
 
-      const afterSnapshot = this.createRasterSnapshot(nextTarget, null, `${source}-after-target`);
-
-      if (!afterSnapshot?.texture) {
-        this.deleteRasterTargetObject(nextTarget);
-        this.deleteRasterSnapshot(beforeSnapshot);
-        return false;
-      }
-
       const currentTargetRect = this.getRasterTargetDocumentRect(target);
       const previewDirtyRects = this.getTileBasedPreviewDirtyRects(
         [currentTargetRect, nextRect],
@@ -11121,21 +11334,19 @@ void main() {
       const targetBytes = this.estimateRasterTargetBytes(finalLiveTarget);
 
       const memoryPolicy = this.recordRasterOperation(this.createRasterOperationMemoryReport({
-        afterSnapshot,
+        afterRect: nextRect,
         beforeSnapshot,
         estimatedPeakBytes:
           sourceBytes +
           targetBytes +
           scratchBytes +
-          this.estimateRasterSnapshotBytes(beforeSnapshot) +
-          this.estimateRasterSnapshotBytes(afterSnapshot),
+          this.estimateRasterSnapshotBytes(beforeSnapshot),
         layerId,
         mode: transformMode,
         operationType: "raster-transform",
         persistentBytes:
           targetBytes +
-          this.estimateRasterSnapshotBytes(beforeSnapshot) +
-          this.estimateRasterSnapshotBytes(afterSnapshot),
+          this.estimateRasterSnapshotBytes(beforeSnapshot),
         reason: source,
         scratchBytes,
         source,
@@ -11147,28 +11358,54 @@ void main() {
       }));
 
       const history = namespace.documentHistory;
-      const entry = this.finalizeRasterEditHistoryEntry(layerId, {
+      let afterSnapshot = null;
+      const snapshots = {
+        after: null,
+        before: beforeSnapshot,
+      };
+      const captureAfterSnapshot = () => {
+        if (afterSnapshot?.texture || afterSnapshot?.cpuPixels || afterSnapshot?.empty === true) {
+          return true;
+        }
+
+        afterSnapshot = this.createRasterSnapshot(layerId, nextRect, `${source}-after-target`);
+        snapshots.after = afterSnapshot;
+
+        return Boolean(afterSnapshot?.texture || afterSnapshot?.cpuPixels || afterSnapshot?.empty === true);
+      };
+      const baseEntry = {
         type: "custom",
-        afterSnapshot,
         beforeSnapshot,
         layerId,
         memoryPolicy,
+        snapshots,
         source,
-        undo: () => this.restoreRasterSnapshot(layerId, beforeSnapshot, {
-          preferSparse: preferSparseRestore,
-          replaceSparse: preferSparseRestore,
-          source: `history-undo-${source}`,
-        }),
-        redo: () => this.restoreRasterSnapshot(layerId, afterSnapshot, {
-          preferSparse: afterPreferSparse,
-          replaceSparse: afterPreferSparse,
-          source: `history-redo-${source}`,
-        }),
+        undo: () => {
+          if (!captureAfterSnapshot()) {
+            return false;
+          }
+
+          return this.restoreRasterSnapshot(layerId, beforeSnapshot, {
+            preferSparse: preferSparseRestore,
+            replaceSparse: preferSparseRestore,
+            releaseSnapshotGpuAfterRestore: true,
+            source: `history-undo-${source}`,
+          });
+        },
+        redo: () => snapshots.after
+          ? this.restoreRasterSnapshot(layerId, snapshots.after, {
+              preferSparse: afterPreferSparse,
+              replaceSparse: afterPreferSparse,
+              releaseSnapshotGpuAfterRestore: true,
+              source: `history-redo-${source}`,
+            })
+          : false,
         destroy: () => {
           this.deleteRasterSnapshot(beforeSnapshot);
-          this.deleteRasterSnapshot(afterSnapshot);
+          this.deleteRasterSnapshot(snapshots.after);
         },
-      }, {
+      };
+      const entry = this.finalizeRasterEditHistoryEntry(layerId, baseEntry, {
         artboardTransfer: {
           destQuad,
           destRect,
@@ -11249,6 +11486,19 @@ void main() {
         )
       );
 
+      if (this.getTranslateOnlyRasterTransformDelta({
+        destQuad,
+        sourceRect,
+        transformMode: normalizedTransformMode,
+        warpControlPoints,
+      })) {
+        return this.commitTranslatedRasterTransform({
+          ...options,
+          destRect,
+          target,
+        });
+      }
+
       if (this.isCroppedRasterTarget(target) || transformEscapesTarget) {
         return this.commitCroppedRasterTransform({
           ...options,
@@ -11328,7 +11578,7 @@ void main() {
           layerId,
           mode: transformMode,
           operationType: "raster-transform",
-          persistentBytes: this.getRasterRectBytes(dirtyRect) * 2,
+          persistentBytes: this.getRasterRectBytes(dirtyRect),
           reason: source,
           scratchBytes: 0,
           source,
@@ -11340,8 +11590,10 @@ void main() {
         }));
         const tileEntry = this.commitRasterTileHistory(tileHistory, {
           label: source,
+          lazyAfter: true,
           memoryPolicy,
           redoSource: `history-redo-${source}`,
+          releaseSnapshotGpuAfterRestore: true,
           source,
           type: "custom",
           undoSource: `history-undo-${source}`,
@@ -11448,11 +11700,13 @@ void main() {
         undo: () => this.restoreRasterSnapshot(layerId, beforeSnapshot, {
           preferSparse: preferSparseRestore,
           replaceSparse: preferSparseRestore,
+          releaseSnapshotGpuAfterRestore: true,
           source: `history-undo-${source}`,
         }),
         redo: () => this.restoreRasterSnapshot(layerId, afterSnapshot, {
           preferSparse: afterPreferSparse,
           replaceSparse: afterPreferSparse,
+          releaseSnapshotGpuAfterRestore: true,
           source: `history-redo-${source}`,
         }),
         destroy: () => {

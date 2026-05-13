@@ -61,9 +61,13 @@ test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
   assert.match(source, /namespace\.initArtboardPreview = function initArtboardPreview\(\)/);
   assert.match(source, /button\.addEventListener\("click", handleCreateButtonClick\)/);
   assert.match(source, /layer\.replaceChildren/);
+  assert.match(source, /function isArtboardBackgroundVisible\(artboardId\)/);
+  assert.match(source, /paper\.classList\.toggle\("is-transparent", !isArtboardBackgroundVisible\(artboard\.id\)\)/);
+  assert.match(source, /window\.addEventListener\("cbo:document-layers-change"/);
   assert.match(cssSource, /\.editor-artboard-preview-layer[\s\S]*pointer-events: none/);
   assert.match(cssSource, /\.editor-artboard-frame/);
   assert.match(cssSource, /\.editor-artboard-paper[\s\S]*background: #f7f7f2/);
+  assert.match(cssSource, /\.editor-artboard-paper\.is-transparent[\s\S]*background: transparent/);
   assert.match(cssSource, /\.editor-artboard-frame[\s\S]*background: transparent/);
   assert.match(appSource, /window\.CBO\.initArtboardPreview\?\.\(\);/);
 });

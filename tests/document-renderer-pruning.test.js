@@ -52,6 +52,7 @@ function loadDocumentRenderer(options = {}) {
   vm.runInContext(source, context);
 
   return {
+    context,
     DocumentRenderer: context.window.CBO.DocumentRenderer,
     window: context.window,
   };
@@ -240,6 +241,105 @@ test("dehydrateRasterTarget compresses cold layer targets when history compressi
 
   assert.equal(pixels.byteLength, rawBytes);
   assert.equal(pixels.every((value) => value === 0), true);
+});
+
+test("restoreRasterSnapshot can transiently hydrate compressed CPU history snapshots", () => {
+  const { context, DocumentRenderer, window } = loadDocumentRenderer({ historyCompression: true });
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const calls = [];
+  const VmUint8Array = vm.runInContext("Uint8Array", context);
+  const rawPixels = new VmUint8Array(2 * 2 * 4);
+
+  rawPixels.fill(0);
+  const packed = window.CBO.HistoryCompression.compressRgba(rawPixels);
+  const target = {
+    framebuffer: { id: "target-fb" },
+    height: 2,
+    texture: { id: "target-texture" },
+    width: 2,
+    x: 0,
+    y: 0,
+  };
+  const snapshot = {
+    bytes: rawPixels.byteLength,
+    cpuBytes: packed.bytes.byteLength,
+    cpuPixels: packed.bytes,
+    cpuPixelsEncoding: packed.encoding,
+    cpuRawBytes: rawPixels.byteLength,
+    label: "transform-before",
+    rect: { x: 0, y: 0, width: 2, height: 2 },
+    state: "CPU_COLD",
+  };
+
+  renderer.gl = {
+    bindFramebuffer: (...args) => calls.push(["bindFramebuffer", ...args]),
+    bindTexture: (...args) => calls.push(["bindTexture", ...args]),
+    blitFramebuffer: (...args) => calls.push(["blitFramebuffer", ...args]),
+    checkFramebufferStatus: () => "FRAMEBUFFER_COMPLETE",
+    COLOR_ATTACHMENT0: "COLOR_ATTACHMENT0",
+    COLOR_BUFFER_BIT: "COLOR_BUFFER_BIT",
+    createFramebuffer: () => ({ id: "snapshot-fb" }),
+    createTexture: () => ({ id: "snapshot-texture" }),
+    deleteFramebuffer: (framebuffer) => calls.push(["deleteFramebuffer", framebuffer?.id || framebuffer]),
+    deleteTexture: (texture) => calls.push(["deleteTexture", texture?.id || texture]),
+    DRAW_FRAMEBUFFER: "DRAW_FRAMEBUFFER",
+    FRAMEBUFFER: "FRAMEBUFFER",
+    FRAMEBUFFER_COMPLETE: "FRAMEBUFFER_COMPLETE",
+    framebufferTexture2D: (...args) => calls.push(["framebufferTexture2D", ...args]),
+    NEAREST: "NEAREST",
+    readPixels: () => {
+      throw new Error("transient restore should not re-read snapshot pixels");
+    },
+    READ_FRAMEBUFFER: "READ_FRAMEBUFFER",
+    RGBA: "RGBA",
+    texImage2D: (...args) => calls.push(["texImage2D", ...args]),
+    texParameteri: (...args) => calls.push(["texParameteri", ...args]),
+    TEXTURE_2D: "TEXTURE_2D",
+    TEXTURE_MAG_FILTER: "TEXTURE_MAG_FILTER",
+    TEXTURE_MIN_FILTER: "TEXTURE_MIN_FILTER",
+    TEXTURE_WRAP_S: "TEXTURE_WRAP_S",
+    TEXTURE_WRAP_T: "TEXTURE_WRAP_T",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+  };
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", target]]);
+  renderer.deleteRasterFramebuffer = (framebuffer) => calls.push(["unregisterFramebuffer", framebuffer?.id || framebuffer]);
+  renderer.deleteRasterTexture = (texture) => calls.push(["unregisterTexture", texture?.id || texture]);
+  renderer.registerRasterFramebuffer = () => {};
+  renderer.registerRasterTexture = () => ({ id: "registered-texture" });
+  renderer.needsCopyOnWriteDetach = () => false;
+  renderer.isSparseRasterTarget = () => false;
+  renderer.isPaintRasterLayer = () => false;
+  renderer.getRasterTarget = () => target;
+  renderer.getRasterTargetDocumentRect = (item) => ({
+    x: item.x || 0,
+    y: item.y || 0,
+    width: item.width,
+    height: item.height,
+  });
+  renderer.getRasterTargetLocalRect = () => ({
+    docRect: { x: 0, y: 0, width: 2, height: 2 },
+    localRect: { x: 0, y: 0, width: 2, height: 2 },
+    targetRect: { x: 0, y: 0, width: 2, height: 2 },
+  });
+  renderer.canRestoreRasterSnapshot = () => true;
+  renderer.markRasterTargetDirty = () => {};
+  renderer.commitVisualDirtyChange = () => {};
+
+  assert.equal(renderer.restoreRasterSnapshot("paint-1", snapshot, {
+    emit: false,
+    releaseSnapshotGpuAfterRestore: true,
+  }), true);
+  assert.equal(snapshot.state, "CPU_COLD");
+  assert.equal(snapshot.texture, null);
+  assert.equal(snapshot.framebuffer, null);
+  assert.equal(snapshot.cpuPixels, packed.bytes);
+  assert.equal(snapshot.cpuPixelsEncoding, "rle-rgba-v1");
+  assert.equal(snapshot.cpuRawBytes, rawPixels.byteLength);
+  assert.equal(snapshot.cpuBytes, packed.bytes.byteLength);
+  assert.ok(calls.some((call) => call[0] === "texImage2D" && call.at(-1)?.byteLength === rawPixels.byteLength));
+  assert.ok(calls.some((call) => call[0] === "blitFramebuffer"));
+  assert.ok(calls.some((call) => call[0] === "deleteTexture" && call[1] === "snapshot-texture"));
+  assert.ok(calls.some((call) => call[0] === "deleteFramebuffer" && call[1] === "snapshot-fb"));
 });
 
 test("copy-on-write raster targets stay shared during memory cleanup", () => {
@@ -1410,6 +1510,7 @@ test("commitCroppedRasterTransform retiles materialized sparse paint targets aft
   };
   const deletedTargets = [];
   const restoreCalls = [];
+  const snapshotLabels = [];
   let pushedEntry = null;
 
   window.CBO.documentHistory = {
@@ -1464,11 +1565,15 @@ test("commitCroppedRasterTransform retiles materialized sparse paint targets aft
   renderer.requestDraw = () => {};
   renderer.clearRasterTransformPreview = () => {};
   renderer.updateRasterTargetResourceMetadata = (target) => target;
-  renderer.createRasterSnapshot = (target, rect, label) => ({
-    framebuffer: { id: `${label}-fb` },
-    rect: rect || renderer.getRasterTargetDocumentRect(target),
-    texture: { id: `${label}-texture` },
-  });
+  renderer.createRasterSnapshot = (target, rect, label) => {
+    snapshotLabels.push(label);
+    return {
+      framebuffer: { id: `${label}-fb` },
+      label,
+      rect: rect || renderer.getRasterTargetDocumentRect(target),
+      texture: { id: `${label}-texture` },
+    };
+  };
 
   const didCommit = renderer.commitCroppedRasterTransform({
     destQuad: [
@@ -1489,6 +1594,8 @@ test("commitCroppedRasterTransform retiles materialized sparse paint targets aft
   assert.ok(sparseTarget.tiles.size > 0);
   assert.ok(deletedTargets.includes(materializedTarget));
   assert.ok(pushedEntry);
+  assert.deepEqual(snapshotLabels, ["unit-transform-before-target"]);
+  assert.equal(pushedEntry.snapshots.after, null);
 
   renderer.restoreRasterSnapshot = (layerId, snapshot, options = {}) => {
     restoreCalls.push({ layerId, options, snapshot });
@@ -1496,11 +1603,112 @@ test("commitCroppedRasterTransform retiles materialized sparse paint targets aft
   };
 
   assert.equal(pushedEntry.undo(), true);
+  assert.deepEqual(snapshotLabels, ["unit-transform-before-target", "unit-transform-after-target"]);
+  assert.equal(pushedEntry.snapshots.after.label, "unit-transform-after-target");
   assert.equal(pushedEntry.redo(), true);
   assert.deepEqual(
     restoreCalls.map((call) => [call.options.preferSparse, call.options.replaceSparse]),
     [[true, true], [true, true]],
   );
+  assert.deepEqual(
+    restoreCalls.map((call) => call.options.releaseSnapshotGpuAfterRestore),
+    [true, true],
+  );
+});
+
+test("commitRasterTransform records pure moves as placement history without pixel snapshots", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const target = {
+    framebuffer: { id: "target-fb" },
+    height: 40,
+    layerId: "paint-1",
+    texture: { id: "target-texture" },
+    width: 50,
+    x: 10,
+    y: 20,
+  };
+  const dirtyChanges = [];
+  let pushedEntry = null;
+  let snapshotCount = 0;
+
+  window.CBO.documentBounds = {
+    boundsToRect: (bounds) => ({ ...bounds }),
+    getClampedRasterBox: (rect) => ({ ...rect }),
+    getUnionRect: (first, second) => ({
+      x: Math.min(first.x, second.x),
+      y: Math.min(first.y, second.y),
+      width: Math.max(first.x + first.width, second.x + second.width) - Math.min(first.x, second.x),
+      height: Math.max(first.y + first.height, second.y + second.height) - Math.min(first.y, second.y),
+    }),
+    quadToBounds: (quad) => ({
+      x: Math.min(...quad.map((point) => point.x)),
+      y: Math.min(...quad.map((point) => point.y)),
+      width: Math.max(...quad.map((point) => point.x)) - Math.min(...quad.map((point) => point.x)),
+      height: Math.max(...quad.map((point) => point.y)) - Math.min(...quad.map((point) => point.y)),
+    }),
+    rectToBounds: (rect) => ({ ...rect }),
+  };
+  window.CBO.documentHistory = {
+    push(entry) {
+      pushedEntry = entry;
+      return true;
+    },
+  };
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", target]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.clearRasterTransformPreview = () => {};
+  renderer.commitVisualDirtyChange = (detail) => dirtyChanges.push(detail);
+  renderer.createRasterSnapshot = () => {
+    snapshotCount += 1;
+    throw new Error("pure move should not create history snapshots");
+  };
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.drawTexturedQuad = () => {
+    throw new Error("pure move should not redraw pixels");
+  };
+  renderer.getTileBasedPreviewDirtyRects = (rects) => rects.filter(Boolean).map((rect) => ({ ...rect }));
+  renderer.markRasterTargetDirty = () => {};
+  renderer.recordRasterOperation = (report) => report;
+  renderer.requestDraw = () => {};
+  renderer.updateRasterTargetResourceMetadata = () => {};
+
+  const sourceRect = { x: 10, y: 20, width: 50, height: 40 };
+  const destQuad = [
+    { x: 17, y: 29 },
+    { x: 67, y: 29 },
+    { x: 67, y: 69 },
+    { x: 17, y: 69 },
+  ];
+  const didCommit = renderer.commitRasterTransform({
+    destQuad,
+    layerId: "paint-1",
+    source: "unit-move",
+    sourceRect,
+    sourceSnapshot: { texture: { id: "preview-texture" } },
+  });
+
+  assert.equal(didCommit, true);
+  assert.equal(snapshotCount, 0);
+  assert.equal(target.x, 17);
+  assert.equal(target.y, 29);
+  assert.ok(pushedEntry);
+  assert.equal(pushedEntry.beforeSnapshot, undefined);
+  assert.equal(pushedEntry.afterSnapshot, undefined);
+  assert.equal(pushedEntry.memoryPolicy.persistentBytes, 0);
+
+  assert.equal(pushedEntry.undo(), true);
+  assert.equal(target.x, 10);
+  assert.equal(target.y, 20);
+  assert.equal(pushedEntry.redo(), true);
+  assert.equal(target.x, 17);
+  assert.equal(target.y, 29);
+  assert.ok(dirtyChanges.some((detail) => detail.source === "history-undo-unit-move"));
+  assert.ok(dirtyChanges.some((detail) => detail.source === "history-redo-unit-move"));
 });
 
 test("commitCroppedRasterTransform restores rasterized image layers as authoritative sparse targets", () => {
