@@ -4,6 +4,7 @@
   const OVERLAY_ID = "cbo-dirty-region-overlay";
   const OVERLAY_PANEL_ID = "cbo-dirty-region-panel";
   const DEFAULT_UPDATE_HZ = 4;
+  const MONITOR_ENABLED_STORAGE_KEY = "cbo:dirty-region-monitor-enabled";
 
   const state = {
     lastText: "",
@@ -40,6 +41,24 @@
     }
 
     return `${Math.round(pixels)} px`;
+  }
+
+  function readStoredMonitorEnabled(defaultValue = false) {
+    try {
+      const value = window.localStorage?.getItem?.(MONITOR_ENABLED_STORAGE_KEY);
+
+      return value == null ? defaultValue : value !== "false";
+    } catch (error) {
+      return defaultValue;
+    }
+  }
+
+  function writeStoredMonitorEnabled(enabled) {
+    try {
+      window.localStorage?.setItem?.(MONITOR_ENABLED_STORAGE_KEY, enabled ? "true" : "false");
+    } catch (error) {
+      // Private browsing or storage quotas should not break the debug controls.
+    }
   }
 
   function formatRect(rect) {
@@ -345,6 +364,7 @@
       ].join(";");
 
       const toggleText = document.createElement("span");
+      toggleText.dataset.dirtyRegionToggleLabel = "true";
       toggleText.textContent = "Dirty";
 
       toggle.append(dot, toggleText);
@@ -383,6 +403,35 @@
       const title = document.createElement("span");
       title.textContent = "Dirty regions";
 
+      const headerActions = document.createElement("div");
+      headerActions.style.cssText = [
+        "display:flex",
+        "align-items:center",
+        "gap:6px",
+      ].join(";");
+
+      const power = document.createElement("button");
+      power.type = "button";
+      power.dataset.dirtyRegionPower = "true";
+      power.setAttribute("aria-label", "Spegni monitor dirty regions");
+      power.title = "Spegni monitor dirty regions";
+      power.textContent = "Stop";
+      power.style.cssText = [
+        "appearance:none",
+        "display:inline-flex",
+        "align-items:center",
+        "justify-content:center",
+        "height:24px",
+        "min-width:42px",
+        "border:1px solid rgba(255,255,255,.16)",
+        "border-radius:6px",
+        "background:rgba(255,255,255,.08)",
+        "color:#eef3ff",
+        "font:700 11px/1 ui-monospace,SFMono-Regular,Consolas,monospace",
+        "cursor:pointer",
+        "padding:0 8px",
+      ].join(";");
+
       const close = document.createElement("button");
       close.type = "button";
       close.dataset.dirtyRegionClose = "true";
@@ -418,8 +467,20 @@
       ].join(";");
 
       toggle.addEventListener("click", () => {
+        if (!state.running) {
+          setDirtyRegionMonitorEnabled(true, {
+            visible: true,
+          });
+        }
+
         setOverlayExpanded(true);
         renderOverlay();
+      });
+
+      power.addEventListener("click", () => {
+        setDirtyRegionMonitorEnabled(false, {
+          visible: true,
+        });
       });
 
       close.addEventListener("click", () => {
@@ -432,7 +493,8 @@
         }
       });
 
-      header.append(title, close);
+      headerActions.append(power, close);
+      header.append(title, headerActions);
       panel.append(header, body);
       overlay.append(toggle, panel);
     }
@@ -447,28 +509,48 @@
       return;
     }
 
-    const telemetry = collectDirtyRegionTelemetry();
-    const debugMode = telemetry.debug.last?.mode || "";
-    const isPartial = telemetry.last.mode === "partial" || debugMode.includes("partial");
-    const color = isPartial ? "rgba(118,190,255,.9)" : "rgba(255,224,112,.72)";
+    const telemetry = state.running ? collectDirtyRegionTelemetry() : null;
+    const debugMode = telemetry?.debug.last?.mode || "";
+    const isPartial = telemetry ? telemetry.last.mode === "partial" || debugMode.includes("partial") : true;
+    const color = state.running
+      ? (isPartial ? "rgba(118,190,255,.9)" : "rgba(255,224,112,.72)")
+      : "rgba(148,163,184,.45)";
     const toggle = overlay.querySelector("[data-dirty-region-toggle]");
+    const toggleLabel = overlay.querySelector("[data-dirty-region-toggle-label]");
     const panel = overlay.querySelector("[data-dirty-region-panel]");
     const dot = overlay.querySelector("[data-dirty-region-status-dot]");
+    const power = overlay.querySelector("[data-dirty-region-power]");
 
     if (toggle) {
       toggle.hidden = state.overlayExpanded;
       toggle.setAttribute("aria-expanded", String(state.overlayExpanded));
+      toggle.setAttribute("aria-label", state.running ? "Apri monitor dirty regions" : "Accendi monitor dirty regions");
+      toggle.title = state.running ? "Apri monitor dirty regions" : "Accendi monitor dirty regions";
       toggle.style.borderColor = color;
     }
 
+    if (toggleLabel) {
+      toggleLabel.textContent = state.running ? "Dirty" : "Dirty off";
+    }
+
     if (panel) {
-      panel.hidden = !state.overlayExpanded;
+      panel.hidden = !state.overlayExpanded || !state.running;
       panel.style.borderColor = color;
     }
 
     if (dot) {
+      const dotShadow = state.running
+        ? (isPartial ? "rgba(118,190,255,.12)" : "rgba(255,224,112,.12)")
+        : "rgba(148,163,184,.12)";
+
       dot.style.background = color;
-      dot.style.boxShadow = `0 0 0 2px ${isPartial ? "rgba(118,190,255,.12)" : "rgba(255,224,112,.12)"}`;
+      dot.style.boxShadow = `0 0 0 2px ${dotShadow}`;
+    }
+
+    if (power) {
+      power.textContent = state.running ? "Stop" : "Start";
+      power.setAttribute("aria-label", state.running ? "Spegni monitor dirty regions" : "Accendi monitor dirty regions");
+      power.title = state.running ? "Spegni monitor dirty regions" : "Accendi monitor dirty regions";
     }
   }
 
@@ -489,6 +571,11 @@
   }
 
   function renderOverlay() {
+    if (!state.running) {
+      syncOverlayChrome();
+      return;
+    }
+
     const telemetry = collectDirtyRegionTelemetry();
     const overlay = ensureOverlay();
     const cache = telemetry.debug.cache;
@@ -567,6 +654,7 @@
     const overlay = ensureOverlay();
 
     overlay.hidden = visible !== true;
+    syncOverlayChrome(overlay);
     return overlay;
   }
 
@@ -587,8 +675,9 @@
     return collectDirtyRegionTelemetry();
   }
 
-  function stopDirtyRegionMonitor() {
+  function stopDirtyRegionMonitor(options = {}) {
     state.running = false;
+    state.overlayExpanded = false;
 
     if (state.updateTimer) {
       clearInterval(state.updateTimer);
@@ -601,7 +690,46 @@
       state.renderRafId = 0;
     }
 
-    showDirtyRegionOverlay(false);
+    if (options.visible === true) {
+      showDirtyRegionOverlay(true);
+    } else {
+      showDirtyRegionOverlay(false);
+    }
+
+    return getDirtyRegionMonitorStatus();
+  }
+
+  function getDirtyRegionMonitorStatus() {
+    return {
+      expanded: state.overlayExpanded,
+      running: state.running,
+      storedEnabled: readStoredMonitorEnabled(false),
+      visible: Boolean(state.overlay?.isConnected && state.overlay.hidden !== true),
+    };
+  }
+
+  function setDirtyRegionMonitorEnabled(enabled = true, options = {}) {
+    const shouldEnable = enabled !== false;
+
+    if (options.persist !== false) {
+      writeStoredMonitorEnabled(shouldEnable);
+    }
+
+    if (shouldEnable) {
+      return startDirtyRegionMonitor({
+        ...options,
+        visible: options.visible !== false,
+      });
+    }
+
+    return stopDirtyRegionMonitor({
+      ...options,
+      visible: options.visible !== false,
+    });
+  }
+
+  function toggleDirtyRegionMonitor(options = {}) {
+    return setDirtyRegionMonitorEnabled(!state.running, options);
   }
 
   function resetDirtyRegionStats() {
@@ -706,16 +834,50 @@
   });
 
   namespace.collectDirtyRegionTelemetry = collectDirtyRegionTelemetry;
+  namespace.getDirtyRegionMonitorStatus = getDirtyRegionMonitorStatus;
+  namespace.setDirtyRegionMonitorEnabled = setDirtyRegionMonitorEnabled;
   namespace.showDirtyRegionOverlay = showDirtyRegionOverlay;
   namespace.startDirtyRegionMonitor = startDirtyRegionMonitor;
   namespace.stopDirtyRegionMonitor = stopDirtyRegionMonitor;
+  namespace.toggleDirtyRegionMonitor = toggleDirtyRegionMonitor;
   namespace.resetDirtyRegionStats = resetDirtyRegionStats;
   namespace.DirtyRegions = {
     collect: collectDirtyRegionTelemetry,
+    getMonitorStatus: getDirtyRegionMonitorStatus,
     reset: resetDirtyRegionStats,
+    setMonitorEnabled: setDirtyRegionMonitorEnabled,
     show: showDirtyRegionOverlay,
     start: startDirtyRegionMonitor,
     stop: stopDirtyRegionMonitor,
+    toggleMonitor: toggleDirtyRegionMonitor,
+  };
+  namespace.DebugMonitors = {
+    ...(namespace.DebugMonitors || {}),
+    getStatus() {
+      return {
+        dirty: getDirtyRegionMonitorStatus(),
+        raster: namespace.getRasterMemoryMonitorStatus?.() || null,
+      };
+    },
+    start(options = {}) {
+      return {
+        dirty: setDirtyRegionMonitorEnabled(true, options),
+        raster: namespace.setRasterMemoryMonitorEnabled?.(true, options) || null,
+      };
+    },
+    stop(options = {}) {
+      return {
+        dirty: setDirtyRegionMonitorEnabled(false, options),
+        raster: namespace.setRasterMemoryMonitorEnabled?.(false, options) || null,
+      };
+    },
+    toggle(options = {}) {
+      const rasterRunning = namespace.getRasterMemoryMonitorStatus?.().running === true;
+
+      return state.running || rasterRunning
+        ? namespace.DebugMonitors.stop(options)
+        : namespace.DebugMonitors.start(options);
+    },
   };
 
   if (!namespace.dirtyRegionOverlay) {
@@ -728,9 +890,14 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     window.setTimeout(() => {
-      startDirtyRegionMonitor({
-        visible: true,
-      });
+      if (readStoredMonitorEnabled(false)) {
+        startDirtyRegionMonitor({
+          visible: true,
+        });
+        return;
+      }
+
+      showDirtyRegionOverlay(true);
     }, 0);
   });
 })(window.CBO = window.CBO || {});

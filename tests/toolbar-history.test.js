@@ -17,6 +17,9 @@ test("toolbar derives undo and redo enabled state from document history events",
   assert.match(source, /if \(!button \|\| button\.disabled\)/);
   assert.match(source, /function ensureHistoryBusyOverlay\(\)/);
   assert.match(source, /function clearHistoryBusy\(action\)/);
+  assert.match(source, /const busyOverlaySources = new Map\(\)/);
+  assert.match(source, /window\.addEventListener\("cbo:artboard-residency-busy"/);
+  assert.match(source, /setBusyOverlaySource\(\s*"artboard-residency"/);
   assert.match(source, /cbo-history-busy-overlay/);
   assert.match(source, /requestAnimationFrame/);
   assert.match(source, /beforeDispatched: true/);

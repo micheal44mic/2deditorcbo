@@ -3404,6 +3404,540 @@ test("preview cache scopes to the single visible artboard when zoomed out", () =
   assert.equal(dimensions.height, 2048);
 });
 
+test("preview cache scopes multiple visible artboards as whole artboards", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {
+    previewCacheMaxSize: 4096,
+    previewCacheOverscanCssPx: 256,
+    previewCacheScope: "visible-artboards",
+  };
+  renderer.width = 2200;
+  renderer.height = 1000;
+  window.CBO.getDocumentArtboards = () => [
+    { id: "left", x: 0, y: 0, width: 1000, height: 1000 },
+    { id: "right", x: 1200, y: 0, width: 1000, height: 1000 },
+  ];
+  window.CBO.getDocumentArtboardUnionRect = () => ({
+    height: 1000,
+    width: 2200,
+    x: 0,
+    y: 0,
+  });
+
+  const dimensions = renderer.getPreviewCacheDimensions({
+    camera: { x: -900, y: 0, zoom: 1 },
+    dpr: 1,
+    viewportHeight: 500,
+    viewportWidth: 500,
+  });
+
+  assert.equal(dimensions.scopeInfo.mode, "visible-artboards");
+  assert.deepEqual(Array.from(dimensions.scopeInfo.visibleArtboardIds), ["left", "right"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(dimensions.documentRect)), {
+    height: 1000,
+    width: 2200,
+    x: 0,
+    y: 0,
+  });
+});
+
+test("artboard residency cools cold artboards and hydrates them when visible", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const layers = {
+    "left-paint": { artboardId: "left", id: "left-paint", type: "paint", visible: true },
+    "right-paint": { artboardId: "right", id: "right-paint", type: "paint", visible: true },
+  };
+  const rightTarget = {
+    clearColor: [0, 0, 0, 0],
+    framebuffer: { id: "right-fb" },
+    height: 4,
+    id: "right-target",
+    layerId: "right-paint",
+    state: "GPU_HOT",
+    texture: { id: "right-texture" },
+    width: 4,
+    x: 1200,
+    y: 0,
+  };
+
+  renderer.options = {
+    enableArtboardResidency: true,
+    artboardResidencyWarmHoldMs: 0,
+  };
+  renderer.width = 2200;
+  renderer.height = 1000;
+  renderer.rasterTargetsByLayerId = new Map([
+    ["right-paint", rightTarget],
+  ]);
+  renderer.layerModel = {
+    activeLayerId: "left-paint",
+    findEntryArtboardId: (layerId) => layers[layerId]?.artboardId || "",
+    findEntryById: (layerId) => layers[layerId] || null,
+    flattenTopToBottom: () => [layers["right-paint"], layers["left-paint"]],
+  };
+  renderer.gl = {
+    FRAMEBUFFER: "framebuffer",
+    RGBA: "rgba",
+    TEXTURE_2D: "texture-2d",
+    UNSIGNED_BYTE: "unsigned-byte",
+    bindFramebuffer() {},
+    bindTexture() {},
+    deleteFramebuffer() {},
+    deleteTexture() {},
+    readPixels(_x, _y, width, height, _format, _type, pixels) {
+      assert.equal(width, 4);
+      assert.equal(height, 4);
+      pixels.fill(128);
+    },
+    texImage2D() {},
+  };
+  renderer.deleteRasterFramebuffer = () => {};
+  renderer.deleteRasterTexture = () => {};
+  renderer.markRasterTargetDirty = () => {};
+  renderer.createRasterTarget = (_clearColor, options = {}) => ({
+    clearColor: [0, 0, 0, 0],
+    framebuffer: { id: "hydrated-fb" },
+    height: options.height,
+    id: "hydrated-right-target",
+    layerId: options.layerId,
+    texture: { id: "hydrated-texture" },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+  window.CBO.getDocumentArtboards = () => [
+    { id: "left", x: 0, y: 0, width: 1000, height: 1000 },
+    { id: "right", x: 1200, y: 0, width: 1000, height: 1000 },
+  ];
+  window.CBO.getSelectedDocumentArtboardId = () => "left";
+  window.CBO.getActiveDocumentArtboardId = () => "left";
+
+  const leftResidency = renderer.resolveAndPublishArtboardResidency({
+    camera: { x: 0, y: 0, zoom: 1 },
+    dpr: 1,
+    now: 0,
+    viewportHeight: 500,
+    viewportWidth: 500,
+  });
+  const cooled = renderer.applyArtboardColdStorage(leftResidency, {
+    orderedLayers: [layers["right-paint"], layers["left-paint"]],
+    reason: "test-artboard-residency",
+  });
+
+  assert.equal(cooled.cooledLayerCount, 1);
+  assert.equal(rightTarget.state, "CPU_COLD");
+  assert.equal(rightTarget.texture, null);
+  assert.equal(rightTarget.cpuPixels?.byteLength, 4 * 4 * 4);
+
+  const rightResidency = renderer.resolveAndPublishArtboardResidency({
+    camera: { x: -1200, y: 0, zoom: 1 },
+    dpr: 1,
+    now: 5000,
+    viewportHeight: 500,
+    viewportWidth: 500,
+  });
+  const hydratedCount = renderer.hydrateHotArtboardTargets(rightResidency, [layers["right-paint"], layers["left-paint"]]);
+
+  assert.equal(hydratedCount, 1);
+  assert.equal(rightTarget.state, "GPU_HOT");
+  assert.ok(rightTarget.texture);
+  assert.equal(rightTarget.cpuPixels, null);
+});
+
+test("artboard residency uses budget pressure to cool warm LRU artboards", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const layers = {
+    "left-paint": { artboardId: "left", id: "left-paint", type: "paint", visible: true },
+    "middle-paint": { artboardId: "middle", id: "middle-paint", type: "paint", visible: true },
+    "right-paint": { artboardId: "right", id: "right-paint", type: "paint", visible: true },
+  };
+  const createTarget = (layerId, x) => ({
+    clearColor: [0, 0, 0, 0],
+    framebuffer: { id: `${layerId}-fb` },
+    height: 16,
+    id: `${layerId}-target`,
+    layerId,
+    state: "GPU_HOT",
+    texture: { id: `${layerId}-texture` },
+    width: 16,
+    x,
+    y: 0,
+  });
+  const leftTarget = createTarget("left-paint", 0);
+  const middleTarget = createTarget("middle-paint", 1200);
+  const rightTarget = createTarget("right-paint", 2400);
+
+  renderer.options = {
+    enableArtboardResidency: true,
+    enableArtboardResidencyBudget: true,
+    artboardResidencyHardBudgetBytes: 4096,
+    artboardResidencySoftBudgetBytes: 512,
+    artboardResidencyWarmHoldMs: 10000,
+  };
+  renderer.width = 3400;
+  renderer.height = 1000;
+  renderer.rasterTargetsByLayerId = new Map([
+    ["left-paint", leftTarget],
+    ["middle-paint", middleTarget],
+    ["right-paint", rightTarget],
+  ]);
+  renderer.layerModel = {
+    activeLayerId: "middle-paint",
+    findEntryArtboardId: (layerId) => layers[layerId]?.artboardId || "",
+    findEntryById: (layerId) => layers[layerId] || null,
+    flattenTopToBottom: () => [layers["right-paint"], layers["middle-paint"], layers["left-paint"]],
+  };
+  renderer.gl = {
+    FRAMEBUFFER: "framebuffer",
+    RGBA: "rgba",
+    UNSIGNED_BYTE: "unsigned-byte",
+    bindFramebuffer() {},
+    deleteFramebuffer() {},
+    deleteTexture() {},
+    readPixels(_x, _y, width, height, _format, _type, pixels) {
+      assert.equal(width, 16);
+      assert.equal(height, 16);
+      pixels.fill(21);
+    },
+  };
+  renderer.deleteRasterFramebuffer = () => {};
+  renderer.deleteRasterTexture = () => {};
+  window.CBO.getDocumentArtboards = () => [
+    { id: "left", x: 0, y: 0, width: 1000, height: 1000 },
+    { id: "middle", x: 1200, y: 0, width: 1000, height: 1000 },
+    { id: "right", x: 2400, y: 0, width: 1000, height: 1000 },
+  ];
+
+  renderer.resolveAndPublishArtboardResidency({
+    activeArtboardId: "left",
+    camera: { x: 0, y: 0, zoom: 1 },
+    dpr: 1,
+    now: 0,
+    viewportHeight: 500,
+    viewportWidth: 500,
+  });
+  const middleResidency = renderer.resolveAndPublishArtboardResidency({
+    activeArtboardId: "middle",
+    camera: { x: -1300, y: 0, zoom: 1 },
+    dpr: 1,
+    now: 100,
+    viewportHeight: 500,
+    viewportWidth: 500,
+  });
+  const report = renderer.applyArtboardColdStorage(middleResidency, {
+    orderedLayers: [layers["left-paint"], layers["middle-paint"], layers["right-paint"]],
+    reason: "test-budget-cold",
+  });
+
+  assert.equal(report.coolingPlan.pressure, "soft");
+  assert.ok(report.coolingPlan.candidateArtboardIds.includes("left"));
+  assert.ok(report.coolingPlan.candidateArtboardIds.includes("right"));
+  assert.equal(leftTarget.state, "CPU_COLD");
+  assert.equal(rightTarget.state, "CPU_COLD");
+  assert.equal(middleTarget.state, "GPU_HOT");
+});
+
+test("artboard residency predicts prefetch artboards from pan direction", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {
+    enableArtboardResidency: true,
+    enableArtboardResidencyPrefetch: true,
+    artboardResidencyPrefetchCssPx: 900,
+    artboardResidencyWarmHoldMs: 0,
+  };
+  renderer.width = 3400;
+  renderer.height = 1000;
+  renderer.layerModel = {
+    activeLayerId: "left-paint",
+    findEntryArtboardId: () => "left",
+    findEntryById: () => ({ artboardId: "left", id: "left-paint", type: "paint" }),
+  };
+  window.CBO.getDocumentArtboards = () => [
+    { id: "left", x: 0, y: 0, width: 1000, height: 1000 },
+    { id: "middle", x: 1200, y: 0, width: 1000, height: 1000 },
+    { id: "right", x: 2400, y: 0, width: 1000, height: 1000 },
+  ];
+
+  renderer.resolveAndPublishArtboardResidency({
+    activeArtboardId: "left",
+    camera: { x: 0, y: 0, zoom: 1 },
+    dpr: 1,
+    now: 0,
+    viewportHeight: 500,
+    viewportWidth: 500,
+  });
+  const residency = renderer.resolveAndPublishArtboardResidency({
+    activeArtboardId: "left",
+    camera: { x: -300, y: 0, zoom: 1 },
+    dpr: 1,
+    now: 16,
+    viewportHeight: 500,
+    viewportWidth: 500,
+  });
+
+  assert.ok(residency.prefetchArtboardIds.includes("middle"));
+  assert.ok(residency.warmArtboardIds.includes("middle"));
+  assert.ok(residency.prefetchRect.width > residency.visibleRect.width);
+});
+
+test("artboard residency shows a busy loading state before MiB cooling", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const busyEvents = [];
+  const timeouts = [];
+  let cooledAtEventCount = null;
+  let clearedTimer = null;
+
+  window.setTimeout = (callback, delay) => {
+    timeouts.push({ callback, delay });
+    return timeouts.length;
+  };
+  window.clearTimeout = (timerId) => {
+    clearedTimer = timerId;
+  };
+  window.requestAnimationFrame = (callback) => {
+    callback();
+    return 1;
+  };
+  window.dispatchEvent = (event) => {
+    if (event.type === "cbo:artboard-residency-busy") {
+      busyEvents.push(event.detail);
+    }
+  };
+  renderer.options = {
+    enableArtboardResidency: true,
+    enableArtboardResidencyBudget: true,
+    artboardResidencyIdleDelayMs: 100,
+    artboardResidencyWarmHoldMs: 500,
+  };
+  renderer.artboardResidencyLastViewOptions = null;
+  renderer.artboardResidencyIdleTimer = 0;
+  renderer.artboardResidencyWarmUntilById = new Map();
+  renderer.artboardResidencyAccessById = new Map();
+  renderer.resolveAndPublishArtboardResidency = () => ({
+    coldArtboardIds: ["right"],
+  });
+  renderer.applyArtboardColdStorage = () => {
+    cooledAtEventCount = busyEvents.length;
+    return { releasedRawBytes: 2 * 1024 * 1024 };
+  };
+
+  const didSchedule = renderer.scheduleArtboardResidencyMaintenance({
+    activeArtboardId: "left",
+    coldArtboardIds: ["right"],
+    renderArtboardIds: ["left"],
+    visibleArtboardIds: ["left"],
+    warmArtboardIds: [],
+  }, {
+    metrics: {
+      artboards: [
+        { artboardId: "left", gpuBytes: 1024 },
+        { artboardId: "right", gpuBytes: 2 * 1024 * 1024 },
+      ],
+      budget: { pressure: "ok" },
+      residentGpuBytes: 2 * 1024 * 1024,
+    },
+    orderedLayers: [],
+  });
+
+  assert.equal(didSchedule, true);
+  assert.equal(timeouts[0].delay, 500);
+
+  timeouts[0].callback();
+
+  assert.equal(busyEvents[0].active, true);
+  assert.equal(busyEvents[0].label, "OPTIMIZING");
+  assert.equal(cooledAtEventCount, 1);
+
+  timeouts[1].callback();
+
+  assert.equal(busyEvents.at(-1).active, false);
+
+  renderer.artboardResidencyIdleTimer = 42;
+  renderer.cancelArtboardResidencyIdleTimer("test-cancel");
+  assert.equal(clearedTimer, 42);
+});
+
+test("artboard flat previews are captured from preview cache and used as cold fallback", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const calls = [];
+  const layers = {
+    "left-paint": { artboardId: "left", id: "left-paint", type: "paint", visible: true },
+    "right-paint": { artboardId: "right", id: "right-paint", type: "paint", visible: true },
+  };
+
+  renderer.options = {
+    enableArtboardResidency: true,
+    enableArtboardFlatPreviews: true,
+    artboardFlatPreviewMaxSize: 2048,
+  };
+  renderer.width = 2200;
+  renderer.height = 1000;
+  renderer.previewTexture = { id: "preview-texture" };
+  renderer.previewFramebuffer = { id: "preview-framebuffer" };
+  renderer.previewCacheDocumentRect = { x: 0, y: 0, width: 2200, height: 1000 };
+  renderer.previewCacheWidth = 1100;
+  renderer.previewCacheHeight = 500;
+  renderer.previewCacheScale = 0.5;
+  renderer.previewCacheScopeInfo = {
+    cacheArtboardIds: ["left", "right"],
+    visibleArtboardIds: ["left", "right"],
+  };
+  renderer.artboardFlatPreviewsById = new Map();
+  renderer.rasterTargetsByLayerId = new Map([
+    ["left-paint", { framebuffer: {}, height: 4, layerId: "left-paint", state: "GPU_HOT", texture: {}, width: 4 }],
+    ["right-paint", { cpuPixels: new Uint8Array(4 * 4 * 4), height: 4, layerId: "right-paint", state: "CPU_COLD", width: 4 }],
+  ]);
+  renderer.layerModel = {
+    activeLayerId: "left-paint",
+    findEntryArtboardId: (layerId) => layers[layerId]?.artboardId || "",
+    findEntryById: (layerId) => layers[layerId] || null,
+  };
+  renderer.gl = {
+    CLAMP_TO_EDGE: "clamp",
+    FRAMEBUFFER: "framebuffer",
+    LINEAR: "linear",
+    RGBA: "rgba",
+    TEXTURE_2D: "texture-2d",
+    TEXTURE_MAG_FILTER: "mag",
+    TEXTURE_MIN_FILTER: "min",
+    TEXTURE_WRAP_S: "wrap-s",
+    TEXTURE_WRAP_T: "wrap-t",
+    UNSIGNED_BYTE: "unsigned-byte",
+    bindFramebuffer: (...args) => calls.push(["bindFramebuffer", ...args]),
+    bindTexture: (...args) => calls.push(["bindTexture", ...args]),
+    copyTexSubImage2D: (...args) => calls.push(["copyTexSubImage2D", ...args]),
+    createTexture: () => ({ id: `flat-${calls.length}` }),
+    deleteTexture: () => {},
+    texImage2D: (...args) => calls.push(["texImage2D", ...args]),
+    texParameteri: () => {},
+  };
+  renderer.registerRasterTexture = () => ({ id: "flat-resource" });
+  renderer.deleteRasterTexture = () => {};
+  window.CBO.getDocumentArtboards = () => [
+    { id: "left", x: 0, y: 0, width: 1000, height: 1000 },
+    { id: "right", x: 1200, y: 0, width: 1000, height: 1000 },
+  ];
+
+  const capture = renderer.captureArtboardFlatPreviewsFromPreviewCache({ reason: "test" });
+  const residency = {
+    activeArtboardId: "left",
+    visibleArtboardIds: ["left", "right"],
+  };
+  const fallbackIds = renderer.getArtboardFlatPreviewFallbackIds(
+    residency,
+    [layers["left-paint"], layers["right-paint"]],
+  );
+
+  assert.deepEqual(Array.from(capture.capturedIds), ["left", "right"]);
+  assert.ok(calls.some((call) => call[0] === "copyTexSubImage2D"));
+  assert.equal(renderer.getArtboardFlatPreview("right").width, 500);
+  assert.deepEqual(Array.from(fallbackIds), ["right"]);
+});
+
+test("artboard tile residency cools sparse tiles outside render rect and rehydrates them on demand", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const readCalls = [];
+  const sparseTarget = {
+    clearColor: [0, 0, 0, 0],
+    height: 512,
+    layerId: "paint",
+    sparse: true,
+    state: "GPU_HOT",
+    tiles: new Map(),
+    tileSize: 256,
+    width: 512,
+    x: 0,
+    y: 0,
+  };
+  const insideTile = {
+    framebuffer: { id: "inside-fb" },
+    height: 256,
+    layerId: "paint",
+    state: "GPU_HOT",
+    texture: { id: "inside-texture" },
+    width: 256,
+    x: 0,
+    y: 0,
+    tx: 0,
+    ty: 0,
+  };
+  const outsideTile = {
+    framebuffer: { id: "outside-fb" },
+    height: 256,
+    layerId: "paint",
+    state: "GPU_HOT",
+    texture: { id: "outside-texture" },
+    width: 256,
+    x: 256,
+    y: 0,
+    tx: 1,
+    ty: 0,
+  };
+
+  sparseTarget.tiles.set("0:0", insideTile);
+  sparseTarget.tiles.set("1:0", outsideTile);
+  renderer.gl = {
+    FRAMEBUFFER: "framebuffer",
+    RGBA: "rgba",
+    TEXTURE_2D: "texture-2d",
+    UNSIGNED_BYTE: "unsigned-byte",
+    bindFramebuffer() {},
+    bindTexture() {},
+    deleteFramebuffer() {},
+    deleteTexture() {},
+    readPixels(_x, _y, width, height, _format, _type, pixels) {
+      readCalls.push([width, height]);
+      pixels.fill(9);
+    },
+    texImage2D() {},
+  };
+  renderer.deleteRasterFramebuffer = () => {};
+  renderer.deleteRasterTexture = () => {};
+  renderer.markRasterTargetDirty = () => {};
+  renderer.createRasterTarget = (_clearColor, options = {}) => ({
+    framebuffer: { id: "hydrated-fb" },
+    height: options.height,
+    layerId: options.layerId,
+    texture: { id: "hydrated-texture" },
+    width: options.width,
+    x: options.x,
+    y: options.y,
+  });
+
+  const cooled = renderer.dehydrateSparseRasterTargetOutsideRect(
+    "paint",
+    sparseTarget,
+    { x: 0, y: 0, width: 256, height: 256 },
+    { reason: "test-tile-residency" },
+  );
+
+  assert.equal(cooled.cooledTileCount, 1);
+  assert.equal(insideTile.state, "GPU_HOT");
+  assert.equal(outsideTile.state, "CPU_COLD");
+  assert.equal(sparseTarget.state, "GPU_PARTIAL");
+  assert.deepEqual(readCalls, [[256, 256]]);
+
+  const hydrated = renderer.hydrateSparseRasterTargetForRect(
+    "paint",
+    sparseTarget,
+    { x: 256, y: 0, width: 256, height: 256 },
+    { reason: "test-tile-hydrate" },
+  );
+
+  assert.equal(hydrated, 1);
+  assert.equal(outsideTile.state, "GPU_HOT");
+  assert.ok(outsideTile.texture);
+});
+
 test("preview cache exact rect follows the allocated texture scale", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -3906,7 +4440,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /recordRasterOperation\(report = \{\}\)/);
   assert.match(source, /evictRasterScratchCachesForPolicy\(report = \{\}, options = \{\}\)/);
   assert.match(source, /shouldEvictRasterScratchForPolicy\(report = \{\}\)/);
-  assert.match(source, /policy === "large" \|\| policy === "huge"/);
+  assert.match(source, /policy === "large"\s*\|\|\s*policy === "huge"/);
   assert.match(source, /this\.deletePreviewCache\(\)/);
   assert.match(source, /this\.deleteLayerEffectScratchTargets\(\)/);
   assert.match(source, /this\.deleteActiveStrokeScratchTarget\(\)/);

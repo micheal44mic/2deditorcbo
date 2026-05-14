@@ -10,6 +10,7 @@
   const AUTOSAVE_OVERLAY_ID = "cbo-memory-autosave-overlay";
   const DEFAULT_UPDATE_HZ = 3;
   const DEFAULT_GPU_SAMPLE_EVERY = 10;
+  const MONITOR_ENABLED_STORAGE_KEY = "cbo:raster-memory-monitor-enabled";
 
   const patchedDrawMethods = new WeakMap();
 
@@ -68,6 +69,24 @@
     return new Promise((resolve) => {
       window.setTimeout(resolve, Math.max(0, Math.round(Number(ms) || 0)));
     });
+  }
+
+  function readStoredMonitorEnabled(defaultValue = false) {
+    try {
+      const value = window.localStorage?.getItem?.(MONITOR_ENABLED_STORAGE_KEY);
+
+      return value == null ? defaultValue : value !== "false";
+    } catch (error) {
+      return defaultValue;
+    }
+  }
+
+  function writeStoredMonitorEnabled(enabled) {
+    try {
+      window.localStorage?.setItem?.(MONITOR_ENABLED_STORAGE_KEY, enabled ? "true" : "false");
+    } catch (error) {
+      // Private browsing or storage quotas should not break the debug controls.
+    }
   }
 
   function getStatusSeverity(status) {
@@ -606,15 +625,27 @@
   function patchBrushDraw() {
     const engine = namespace.brushEngine;
 
-    if (!engine || typeof engine.draw !== "function" || patchedDrawMethods.has(engine)) {
+    if (!engine || typeof engine.draw !== "function") {
       return;
+    }
+
+    const existing = patchedDrawMethods.get(engine);
+
+    if (existing) {
+      if (engine.draw === existing.wrappedDraw) {
+        return;
+      }
+
+      patchedDrawMethods.delete(engine);
     }
 
     const originalDraw = engine.draw;
 
-    patchedDrawMethods.set(engine, originalDraw);
+    const wrappedDraw = function drawWithRasterMonitor(...args) {
+      if (!state.running) {
+        return originalDraw.apply(this, args);
+      }
 
-    engine.draw = function drawWithRasterMonitor(...args) {
       const start = now();
       const gpuTimer = ensureGpuTimer();
       const timed = gpuTimer?.begin?.() || false;
@@ -629,6 +660,28 @@
         recordRenderFrame(now() - start, now());
       }
     };
+
+    patchedDrawMethods.set(engine, {
+      originalDraw,
+      wrappedDraw,
+    });
+
+    engine.draw = wrappedDraw;
+  }
+
+  function unpatchBrushDraw() {
+    const engine = namespace.brushEngine;
+    const patched = engine ? patchedDrawMethods.get(engine) : null;
+
+    if (!engine || !patched) {
+      return;
+    }
+
+    if (engine.draw === patched.wrappedDraw) {
+      engine.draw = patched.originalDraw;
+    }
+
+    patchedDrawMethods.delete(engine);
   }
 
   function tickRaf(timestamp) {
@@ -807,6 +860,7 @@
       ].join(";");
 
       const toggleText = document.createElement("span");
+      toggleText.dataset.rasterMemoryToggleLabel = "true";
       toggleText.textContent = "Perf";
 
       toggle.append(statusDot, toggleText);
@@ -845,6 +899,35 @@
       const title = document.createElement("span");
       title.textContent = "Raster monitor";
 
+      const headerActions = document.createElement("div");
+      headerActions.style.cssText = [
+        "display:flex",
+        "align-items:center",
+        "gap:6px",
+      ].join(";");
+
+      const power = document.createElement("button");
+      power.type = "button";
+      power.dataset.rasterMemoryPower = "true";
+      power.setAttribute("aria-label", "Spegni monitor prestazioni");
+      power.title = "Spegni monitor prestazioni";
+      power.textContent = "Stop";
+      power.style.cssText = [
+        "appearance:none",
+        "display:inline-flex",
+        "align-items:center",
+        "justify-content:center",
+        "height:24px",
+        "min-width:42px",
+        "border:1px solid rgba(255,255,255,.16)",
+        "border-radius:6px",
+        "background:rgba(255,255,255,.08)",
+        "color:#eef3ff",
+        "font:700 11px/1 ui-monospace,SFMono-Regular,Consolas,monospace",
+        "cursor:pointer",
+        "padding:0 8px",
+      ].join(";");
+
       const close = document.createElement("button");
       close.type = "button";
       close.dataset.rasterMemoryClose = "true";
@@ -880,8 +963,20 @@
       ].join(";");
 
       toggle.addEventListener("click", () => {
+        if (!state.running) {
+          setRasterMemoryMonitorEnabled(true, {
+            visible: true,
+          });
+        }
+
         setOverlayExpanded(true);
         renderOverlay();
+      });
+
+      power.addEventListener("click", () => {
+        setRasterMemoryMonitorEnabled(false, {
+          visible: true,
+        });
       });
 
       close.addEventListener("click", () => {
@@ -894,7 +989,8 @@
         }
       });
 
-      header.append(title, close);
+      headerActions.append(power, close);
+      header.append(title, headerActions);
       panel.append(header, body);
       overlay.append(toggle, panel);
     }
@@ -905,7 +1001,9 @@
   }
 
   function getStatusColor(status) {
-    return status === "critical"
+    return status === "off"
+      ? "rgba(148,163,184,.45)"
+      : status === "critical"
       ? "rgba(255,95,95,.85)"
       : status === "medium"
         ? "rgba(255,196,87,.85)"
@@ -919,28 +1017,40 @@
       return;
     }
 
-    const status = overlay.dataset.status || "ok";
+    const status = state.running ? overlay.dataset.status || "ok" : "off";
     const color = getStatusColor(status);
     const toggle = overlay.querySelector("[data-raster-memory-toggle]");
+    const toggleLabel = overlay.querySelector("[data-raster-memory-toggle-label]");
     const panel = overlay.querySelector("[data-raster-memory-panel]");
     const dot = overlay.querySelector("[data-raster-memory-status-dot]");
+    const power = overlay.querySelector("[data-raster-memory-power]");
 
     if (toggle) {
       toggle.hidden = state.overlayExpanded;
       toggle.setAttribute("aria-expanded", String(state.overlayExpanded));
-      toggle.setAttribute("aria-label", "Apri monitor prestazioni");
-      toggle.title = "Apri monitor prestazioni";
+      toggle.setAttribute("aria-label", state.running ? "Apri monitor prestazioni" : "Accendi monitor prestazioni");
+      toggle.title = state.running ? "Apri monitor prestazioni" : "Accendi monitor prestazioni";
       toggle.style.borderColor = color;
     }
 
+    if (toggleLabel) {
+      toggleLabel.textContent = state.running ? "Perf" : "Perf off";
+    }
+
     if (panel) {
-      panel.hidden = !state.overlayExpanded;
+      panel.hidden = !state.overlayExpanded || !state.running;
       panel.style.borderColor = color;
     }
 
     if (dot) {
       dot.style.background = color;
       dot.style.boxShadow = `0 0 0 2px ${color.replace(/,\s*(?:0?\.)?\d+\)$/, ",.12)")}`;
+    }
+
+    if (power) {
+      power.textContent = state.running ? "Stop" : "Start";
+      power.setAttribute("aria-label", state.running ? "Spegni monitor prestazioni" : "Accendi monitor prestazioni");
+      power.title = state.running ? "Spegni monitor prestazioni" : "Accendi monitor prestazioni";
     }
   }
 
@@ -1066,6 +1176,17 @@
   }
 
   function renderOverlay() {
+    if (!state.running) {
+      const overlay = state.overlay || document.getElementById(OVERLAY_ID);
+
+      if (overlay) {
+        overlay.dataset.status = "off";
+        syncOverlayChrome(overlay);
+      }
+
+      return;
+    }
+
     patchBrushDraw();
     state.gpuTimer?.poll?.();
 
@@ -1139,6 +1260,7 @@
   function startRasterMemoryMonitor(options = {}) {
     if (state.running) {
       showRasterMemoryOverlay(options.visible !== false);
+      renderOverlay();
       return collectRasterTelemetry();
     }
 
@@ -1164,8 +1286,9 @@
     return collectRasterTelemetry();
   }
 
-  function stopRasterMemoryMonitor() {
+  function stopRasterMemoryMonitor(options = {}) {
     state.running = false;
+    state.overlayExpanded = false;
 
     if (state.rafId) {
       cancelAnimationFrame(state.rafId);
@@ -1177,14 +1300,61 @@
       state.updateTimer = 0;
     }
 
-    showRasterMemoryOverlay(false);
+    unpatchBrushDraw();
+    state.gpuTimer = null;
+    state.previousRafAt = 0;
+    state.renderCountSinceUpdate = 0;
+
+    if (options.visible === true) {
+      const overlay = showRasterMemoryOverlay(true);
+      overlay.dataset.status = "off";
+      syncOverlayChrome(overlay);
+    } else {
+      showRasterMemoryOverlay(false);
+    }
+
+    return getRasterMemoryMonitorStatus();
   }
 
   function showRasterMemoryOverlay(visible = true) {
     const overlay = ensureOverlay();
 
     overlay.hidden = visible !== true;
+    syncOverlayChrome(overlay);
     return overlay;
+  }
+
+  function getRasterMemoryMonitorStatus() {
+    return {
+      expanded: state.overlayExpanded,
+      running: state.running,
+      storedEnabled: readStoredMonitorEnabled(false),
+      visible: Boolean(state.overlay?.isConnected && state.overlay.hidden !== true),
+    };
+  }
+
+  function setRasterMemoryMonitorEnabled(enabled = true, options = {}) {
+    const shouldEnable = enabled !== false;
+
+    if (options.persist !== false) {
+      writeStoredMonitorEnabled(shouldEnable);
+    }
+
+    if (shouldEnable) {
+      return startRasterMemoryMonitor({
+        ...options,
+        visible: options.visible !== false,
+      });
+    }
+
+    return stopRasterMemoryMonitor({
+      ...options,
+      visible: options.visible !== false,
+    });
+  }
+
+  function toggleRasterMemoryMonitor(options = {}) {
+    return setRasterMemoryMonitorEnabled(!state.running, options);
   }
 
   function setRasterMemoryBudget(budget = {}) {
@@ -1611,11 +1781,14 @@
   namespace.dumpRasterTelemetry = dumpRasterTelemetry;
   namespace.getRasterMemoryBudget = getBudget;
   namespace.getRasterLayerCreationBudget = getRasterLayerCreationBudget;
+  namespace.getRasterMemoryMonitorStatus = getRasterMemoryMonitorStatus;
   namespace.setRasterMemoryBudget = setRasterMemoryBudget;
   namespace.setRasterMemoryAutoRecovery = setRasterMemoryAutoRecovery;
+  namespace.setRasterMemoryMonitorEnabled = setRasterMemoryMonitorEnabled;
   namespace.showRasterMemoryOverlay = showRasterMemoryOverlay;
   namespace.startRasterMemoryMonitor = startRasterMemoryMonitor;
   namespace.stopRasterMemoryMonitor = stopRasterMemoryMonitor;
+  namespace.toggleRasterMemoryMonitor = toggleRasterMemoryMonitor;
   namespace.trimRasterMemory = trimRasterMemory;
   namespace.runRasterMemoryAutoRecovery = runRasterMemoryAutoRecovery;
   namespace.Memory = {
@@ -1627,9 +1800,40 @@
     runAutoRecovery: runRasterMemoryAutoRecovery,
     setBudget: setRasterMemoryBudget,
     setAutoRecovery: setRasterMemoryAutoRecovery,
+    setMonitorEnabled: setRasterMemoryMonitorEnabled,
     startMonitor: startRasterMemoryMonitor,
+    getMonitorStatus: getRasterMemoryMonitorStatus,
     stopMonitor: stopRasterMemoryMonitor,
+    toggleMonitor: toggleRasterMemoryMonitor,
     trim: trimRasterMemory,
+  };
+  namespace.DebugMonitors = {
+    ...(namespace.DebugMonitors || {}),
+    getStatus() {
+      return {
+        dirty: namespace.getDirtyRegionMonitorStatus?.() || null,
+        raster: getRasterMemoryMonitorStatus(),
+      };
+    },
+    start(options = {}) {
+      return {
+        dirty: namespace.setDirtyRegionMonitorEnabled?.(true, options) || null,
+        raster: setRasterMemoryMonitorEnabled(true, options),
+      };
+    },
+    stop(options = {}) {
+      return {
+        dirty: namespace.setDirtyRegionMonitorEnabled?.(false, options) || null,
+        raster: setRasterMemoryMonitorEnabled(false, options),
+      };
+    },
+    toggle(options = {}) {
+      const dirtyRunning = namespace.getDirtyRegionMonitorStatus?.().running === true;
+
+      return state.running || dirtyRunning
+        ? namespace.DebugMonitors.stop(options)
+        : namespace.DebugMonitors.start(options);
+    },
   };
 
   window.addEventListener("cbo:document-autosave", () => {
@@ -1638,9 +1842,14 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     window.setTimeout(() => {
-      startRasterMemoryMonitor({
-        visible: true,
-      });
+      if (readStoredMonitorEnabled(false)) {
+        startRasterMemoryMonitor({
+          visible: true,
+        });
+        return;
+      }
+
+      showRasterMemoryOverlay(true);
     }, 0);
   });
 })(window.CBO = window.CBO || {});

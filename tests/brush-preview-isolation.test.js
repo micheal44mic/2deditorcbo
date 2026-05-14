@@ -31,7 +31,9 @@ test("brush studio and thumbnail previews isolate document artboard state", () =
 
   assert.match(engineSource, /isolateDocumentArtboards: options\.isolateDocumentArtboards === true/);
   assert.match(engineSource, /suppressCameraEvents: options\.suppressCameraEvents === true/);
-  assert.match(engineSource, /if \(!this\.options\.suppressCameraEvents\) \{[\s\S]*new CustomEvent\("cbo:camera-change"/);
+  assert.match(engineSource, /dispatchCameraChangeIfNeeded\(\) \{/);
+  assert.match(engineSource, /if \(this\.options\.suppressCameraEvents\) \{[\s\S]*return false/);
+  assert.match(engineSource, /new CustomEvent\("cbo:camera-change", \{ detail \}\)/);
   assert.match(engineSource, /usesIsolatedDocumentArtboards\(\) \{/);
   assert.match(engineSource, /getActiveDocumentPaintRect\(layerId = this\.strokeTargetLayerId \|\| ""\) \{[\s\S]*this\.usesIsolatedDocumentArtboards\(\)[\s\S]*return null/);
   assert.match(engineSource, /activateArtboardAtPoint\(point, source = "brush-pointer-artboard"\) \{[\s\S]*this\.usesIsolatedDocumentArtboards\(\)[\s\S]*return null/);

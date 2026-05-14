@@ -37,6 +37,7 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(editorCanvasSource, /autosave\.getLatestSummary\(\)/);
   assert.match(editorCanvasSource, /autosave\.restoreLatest\(\)/);
   assert.match(editorCanvasSource, /documentWidth: documentSize\.width/);
+  assert.match(editorCanvasSource, /enableViewportLayerCulling: true/);
   assert.match(editorCanvasSource, /function dispatchEditorCanvasReady\(documentRenderer, documentSize = \{\}, options = \{\}\)/);
   assert.match(editorCanvasSource, /window\.CBO\.emitEditorCanvasReady = function emitEditorCanvasReady/);
   assert.match(editorCanvasSource, /if \(options\.deferReadyEvent === true\)/);

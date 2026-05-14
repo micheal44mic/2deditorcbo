@@ -40,6 +40,23 @@ test("preview cache is enabled without waiting for explicit camera navigation", 
   assert.match(source, /allowPreviewCache,/);
 });
 
+test("camera change events are skipped when the viewport payload is unchanged", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+
+  assert.match(source, /this\.lastCameraChangeDetail = null/);
+  assert.match(source, /createCameraChangeDetail\(\) \{/);
+  assert.match(source, /hasCameraChangeDetailChanged\(detail\) \{/);
+  assert.match(source, /previous\.camera\?\.x !== detail\.camera\.x/);
+  assert.match(source, /previous\.camera\?\.y !== detail\.camera\.y/);
+  assert.match(source, /previous\.camera\?\.zoom !== detail\.camera\.zoom/);
+  assert.match(source, /previous\.dpr !== detail\.dpr/);
+  assert.match(source, /previous\.viewportHeight !== detail\.viewportHeight/);
+  assert.match(source, /previous\.viewportWidth !== detail\.viewportWidth/);
+  assert.match(source, /if \(!this\.hasCameraChangeDetailChanged\(detail\)\) \{[\s\S]*return false/);
+  assert.match(source, /this\.lastCameraChangeDetail = \{[\s\S]*camera: \{ \.\.\.detail\.camera \}/);
+  assert.match(source, /this\.dispatchCameraChangeIfNeeded\(\)/);
+});
+
 test("spacebar navigation cancels native browser button and toolbar behavior", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 

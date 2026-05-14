@@ -570,6 +570,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     transparentBackground: true,
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
+    enableViewportLayerCulling: true,
   });
   window.CBO.documentHistory = new window.CBO.DocumentHistory(getRasterHistoryProfile());
   let brushEngine;

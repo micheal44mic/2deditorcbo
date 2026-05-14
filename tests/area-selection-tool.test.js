@@ -152,7 +152,7 @@ test("brush and fill constrain raster edits to an active area selection", () => 
   assert.match(rendererSource, /let currentMaskClipRect = null/);
   assert.match(rendererSource, /let currentMaskClipRects = null/);
   assert.match(rendererSource, /currentMaskClipRects = activeStrokeClipRects \|\| null/);
-  assert.match(rendererSource, /isActiveStrokeLayer && activeStrokeMode !== "eraser" && !activeStrokeHasClip/);
+  assert.match(rendererSource, /const activeStrokeNeedsScratchMerge = Boolean\([\s\S]*options\.activeStrokeTexture[\s\S]*activeStrokeMode !== "eraser"[\s\S]*activeStrokeLayer[\s\S]*!activeStrokeHasClip[\s\S]*activeStrokeLayerUsesAdvancedCompositing/);
   assert.match(brushSource, /targetCoverageRects\.forEach\(\(selectionTargetRect\) => \{/);
   assert.match(brushSource, /gl\.enable\(gl\.SCISSOR_TEST\)/);
   assert.match(smudgeSource, /getActiveAreaSelectionCoverageRects\(bounds\) \{/);

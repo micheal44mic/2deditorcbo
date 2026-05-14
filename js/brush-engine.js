@@ -592,6 +592,7 @@ void main() {
       this.isSpaceHeld = false;
       this.userManipulatedCamera = false;
       this.frameRequest = 0;
+      this.lastCameraChangeDetail = null;
       this.resizeObserver = null;
       this.isDisposed = false;
       this.isBrushToolActive = this.getInitialBrushToolActive();
@@ -6719,6 +6720,51 @@ void main() {
       this.frameRequest = requestAnimationFrame(this.renderLoop);
     }
 
+    createCameraChangeDetail() {
+      return {
+        camera: {
+          x: this.camera.x,
+          y: this.camera.y,
+          zoom: this.camera.zoom,
+        },
+        dpr: this.dpr,
+        viewportHeight: this.viewportHeight,
+        viewportWidth: this.viewportWidth,
+      };
+    }
+
+    hasCameraChangeDetailChanged(detail) {
+      const previous = this.lastCameraChangeDetail;
+
+      return !previous ||
+        previous.camera?.x !== detail.camera.x ||
+        previous.camera?.y !== detail.camera.y ||
+        previous.camera?.zoom !== detail.camera.zoom ||
+        previous.dpr !== detail.dpr ||
+        previous.viewportHeight !== detail.viewportHeight ||
+        previous.viewportWidth !== detail.viewportWidth;
+    }
+
+    dispatchCameraChangeIfNeeded() {
+      if (this.options.suppressCameraEvents) {
+        return false;
+      }
+
+      const detail = this.createCameraChangeDetail();
+
+      if (!this.hasCameraChangeDetailChanged(detail)) {
+        return false;
+      }
+
+      this.lastCameraChangeDetail = {
+        ...detail,
+        camera: { ...detail.camera },
+      };
+      window.dispatchEvent(new CustomEvent("cbo:camera-change", { detail }));
+
+      return true;
+    }
+
     renderLoop() {
       if (this.isDisposed) {
         return;
@@ -6757,18 +6803,7 @@ void main() {
         viewportHeight: this.viewportHeight,
       });
 
-      if (!this.options.suppressCameraEvents) {
-        window.dispatchEvent(
-          new CustomEvent("cbo:camera-change", {
-            detail: {
-              camera: { ...this.camera },
-              dpr: this.dpr,
-              viewportHeight: this.viewportHeight,
-              viewportWidth: this.viewportWidth,
-            },
-          }),
-        );
-      }
+      this.dispatchCameraChangeIfNeeded();
     }
 
     dispose() {

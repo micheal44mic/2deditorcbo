@@ -19,6 +19,8 @@ test("raster memory recovery uses soft warning trim and hard checkpoint reset", 
   assert.match(source, /projectedLayerBytes <= limitBytes/);
   assert.match(source, /warnings\.push\("layers over budget"\)/);
   assert.match(source, /const AUTOSAVE_OVERLAY_ID = "cbo-memory-autosave-overlay"/);
+  assert.match(source, /const MONITOR_ENABLED_STORAGE_KEY = "cbo:raster-memory-monitor-enabled"/);
+  assert.match(source, /function readStoredMonitorEnabled\(defaultValue = false\)/);
   assert.match(source, /Autosaving\.\.\./);
   assert.match(source, /maybeStartAutoMemoryRecovery\(telemetry\)/);
   assert.match(source, /getStatusSeverity\(telemetry\?\.status\)/);
@@ -35,6 +37,11 @@ test("raster memory recovery uses soft warning trim and hard checkpoint reset", 
   assert.match(source, /pruneRasterHistoryGpuHotBudget\?\.\(\{[\s\S]*minProtectedEntries: 0/);
   assert.match(source, /targetGpuHotBytes: normalizedLevel === "critical" \? 0 : 64 \* MIB/);
   assert.match(source, /historyGpuBytes: deviceClass === "software" \? 0 : deviceClass === "mobile" \? 64 \* MIB : 256 \* MIB/);
+  assert.match(source, /function unpatchBrushDraw\(\)/);
+  assert.match(source, /setRasterMemoryMonitorEnabled/);
+  assert.match(source, /toggleRasterMemoryMonitor/);
+  assert.match(source, /if \(readStoredMonitorEnabled\(false\)\)/);
+  assert.match(source, /namespace\.DebugMonitors = \{/);
   assert.match(source, /getHistoryColdRasterTargetBytes/);
   assert.match(source, /layerTargetBytes/);
   assert.match(source, /state\.autoRecoveryCheckpointBlocked = true/);

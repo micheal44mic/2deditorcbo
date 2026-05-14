@@ -11,6 +11,12 @@
   const VIEWPORT_RENDER_OVERSCAN_CSS_PX = 256;
   const VIEWPORT_CULLING_DEBUG_EVENT = "cbo:viewport-culling-debug";
   const VIEWPORT_LAYER_CULL_SAFE_TYPES = new Set(["paint", "image", "raster", "bitmap"]);
+  const ARTBOARD_RESIDENCY_IDLE_DELAY_MS = 1400;
+  const ARTBOARD_RESIDENCY_WARM_HOLD_MS = 2400;
+  const ARTBOARD_RESIDENCY_SOFT_BUDGET_BYTES = 384 * 1024 * 1024;
+  const ARTBOARD_RESIDENCY_HARD_BUDGET_BYTES = 640 * 1024 * 1024;
+  const ARTBOARD_RESIDENCY_PREFETCH_CSS_PX = 640;
+  const ARTBOARD_FLAT_PREVIEW_MAX_SIZE = 2048;
   const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
   const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
   const RASTER_TRANSFORM_ARTBOARD_TRANSFER_MIN_RATIO = 0.4;
@@ -1224,6 +1230,29 @@ void main() {
         debugViewportCullingLog: options.debugViewportCullingLog === true,
         enableViewportLayerCulling: options.enableViewportLayerCulling === true,
         measureViewportLayerCulling: options.measureViewportLayerCulling === true,
+        enableArtboardResidency: options.enableArtboardResidency !== false,
+        enableArtboardResidencyBudget: options.enableArtboardResidencyBudget !== false,
+        enableArtboardResidencyPrefetch: options.enableArtboardResidencyPrefetch !== false,
+        enableArtboardFlatPreviews: options.enableArtboardFlatPreviews !== false,
+        enableArtboardTileResidency: options.enableArtboardTileResidency !== false,
+        artboardResidencyIdleDelayMs: Number.isFinite(options.artboardResidencyIdleDelayMs) && options.artboardResidencyIdleDelayMs >= 0
+          ? Math.floor(options.artboardResidencyIdleDelayMs)
+          : ARTBOARD_RESIDENCY_IDLE_DELAY_MS,
+        artboardResidencyWarmHoldMs: Number.isFinite(options.artboardResidencyWarmHoldMs) && options.artboardResidencyWarmHoldMs >= 0
+          ? Math.floor(options.artboardResidencyWarmHoldMs)
+          : ARTBOARD_RESIDENCY_WARM_HOLD_MS,
+        artboardResidencySoftBudgetBytes: Number.isFinite(options.artboardResidencySoftBudgetBytes) && options.artboardResidencySoftBudgetBytes > 0
+          ? Math.floor(options.artboardResidencySoftBudgetBytes)
+          : ARTBOARD_RESIDENCY_SOFT_BUDGET_BYTES,
+        artboardResidencyHardBudgetBytes: Number.isFinite(options.artboardResidencyHardBudgetBytes) && options.artboardResidencyHardBudgetBytes > 0
+          ? Math.floor(options.artboardResidencyHardBudgetBytes)
+          : ARTBOARD_RESIDENCY_HARD_BUDGET_BYTES,
+        artboardResidencyPrefetchCssPx: Number.isFinite(options.artboardResidencyPrefetchCssPx) && options.artboardResidencyPrefetchCssPx >= 0
+          ? Math.floor(options.artboardResidencyPrefetchCssPx)
+          : ARTBOARD_RESIDENCY_PREFETCH_CSS_PX,
+        artboardFlatPreviewMaxSize: Number.isFinite(options.artboardFlatPreviewMaxSize) && options.artboardFlatPreviewMaxSize > 0
+          ? Math.floor(options.artboardFlatPreviewMaxSize)
+          : ARTBOARD_FLAT_PREVIEW_MAX_SIZE,
         previewCacheMaxSize: Number.isFinite(options.previewCacheMaxSize) && options.previewCacheMaxSize > 0
           ? Math.floor(options.previewCacheMaxSize)
           : PREVIEW_CACHE_MAX_SIZE,
@@ -1269,6 +1298,16 @@ void main() {
       this.previewCacheReason = "init";
       this.viewportCullingStatsSequence = 0;
       this.viewportCullingLastStats = null;
+      this.artboardResidencyWarmUntilById = new Map();
+      this.artboardResidencyLast = null;
+      this.artboardResidencyLastViewOptions = null;
+      this.artboardResidencyIdleTimer = 0;
+      this.artboardResidencyLastColdStorage = null;
+      this.artboardResidencyAccessById = new Map();
+      this.artboardResidencyMetricsLast = null;
+      this.artboardResidencyPressureLast = null;
+      this.artboardFlatPreviewsById = new Map();
+      this.artboardFlatPreviewVersion = 1;
       this.texturedQuad = null;
       this.rasterWarpMesh = null;
       this.programInfo = null;
@@ -1987,7 +2026,23 @@ void main() {
     ensureWritableRasterTarget(layerId, options = {}) {
       const target = this.rasterTargetsByLayerId.get(layerId);
 
-      if (!target || !this.needsCopyOnWriteDetach(target)) {
+      if (!target) {
+        return null;
+      }
+
+      if (target.state === "CPU_COLD" && (!target.texture || !target.framebuffer)) {
+        this.hydrateRasterTarget(target, {
+          kind: this.isSparseRasterTarget(target) ? "paintTile" : "layer",
+          label: options.label || layerId,
+          layerId,
+          ownerId: layerId,
+          ownerType: "live",
+          purgeable: false,
+          reason: options.source || "ensure-writable-raster-target-hydrate",
+        });
+      }
+
+      if (!this.needsCopyOnWriteDetach(target)) {
         return target || null;
       }
 
@@ -2063,6 +2118,18 @@ void main() {
       const existingTile = sparseTarget.tiles.get(key);
 
       if (existingTile?.framebuffer && existingTile?.texture) {
+        return existingTile;
+      }
+
+      if (existingTile?.state === "CPU_COLD" && this.hydrateRasterTarget(existingTile, {
+        kind: options.kind || existingTile.kind || "paintTile",
+        label: options.label || `${layerId} tile ${tile.tx},${tile.ty}`,
+        layerId,
+        ownerId: `${layerId}:${tile.tx}:${tile.ty}`,
+        ownerType: options.ownerType || "live",
+        purgeable: options.purgeable === true,
+        reason: options.source || "sparse-tile-hydrate",
+      })) {
         return existingTile;
       }
 
@@ -4711,6 +4778,1474 @@ void main() {
         .filter(Boolean);
     }
 
+    getPreviewCacheArtboards() {
+      if (this.options?.isolateDocumentArtboards) {
+        return [];
+      }
+
+      return (namespace.getDocumentArtboards?.() || [])
+        .map((artboard, index) => {
+          const rect = this.normalizePreviewCacheDocumentRect(artboard);
+          const id = String(artboard?.id || (index === 0 ? "active-document" : `artboard-${index + 1}`)).trim();
+
+          return rect && id
+            ? {
+                id,
+                rect,
+              }
+            : null;
+        })
+        .filter(Boolean);
+    }
+
+    getArtboardResidencyNow() {
+      return typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    }
+
+    ensureArtboardResidencyState() {
+      if (!(this.artboardResidencyWarmUntilById instanceof Map)) {
+        this.artboardResidencyWarmUntilById = new Map();
+      }
+
+      return this.artboardResidencyWarmUntilById;
+    }
+
+    isArtboardResidencyEnabled(options = {}) {
+      return Boolean(
+        options.enableArtboardResidency !== false &&
+        this.options?.enableArtboardResidency !== false &&
+        namespace.enableArtboardResidency !== false
+      );
+    }
+
+    isArtboardResidencyBudgetEnabled(options = {}) {
+      return Boolean(
+        this.isArtboardResidencyEnabled(options) &&
+        options.enableArtboardResidencyBudget !== false &&
+        this.options?.enableArtboardResidencyBudget !== false &&
+        namespace.enableArtboardResidencyBudget !== false
+      );
+    }
+
+    isArtboardResidencyPrefetchEnabled(options = {}) {
+      return Boolean(
+        this.isArtboardResidencyEnabled(options) &&
+        options.enableArtboardResidencyPrefetch !== false &&
+        this.options?.enableArtboardResidencyPrefetch !== false &&
+        namespace.enableArtboardResidencyPrefetch !== false
+      );
+    }
+
+    isArtboardFlatPreviewsEnabled(options = {}) {
+      return Boolean(
+        this.isArtboardResidencyEnabled(options) &&
+        options.enableArtboardFlatPreviews !== false &&
+        this.options?.enableArtboardFlatPreviews !== false &&
+        namespace.enableArtboardFlatPreviews !== false
+      );
+    }
+
+    isArtboardTileResidencyEnabled(options = {}) {
+      return Boolean(
+        this.isArtboardResidencyEnabled(options) &&
+        options.enableArtboardTileResidency !== false &&
+        this.options?.enableArtboardTileResidency !== false &&
+        namespace.enableArtboardTileResidency !== false
+      );
+    }
+
+    getArtboardResidencySoftBudgetBytes(options = {}) {
+      const rawBudget = Number.isFinite(Number(options.artboardResidencySoftBudgetBytes))
+        ? Number(options.artboardResidencySoftBudgetBytes)
+        : Number(this.options?.artboardResidencySoftBudgetBytes);
+
+      return Math.max(0, Math.round(rawBudget || ARTBOARD_RESIDENCY_SOFT_BUDGET_BYTES));
+    }
+
+    getArtboardResidencyHardBudgetBytes(options = {}) {
+      const softBudget = this.getArtboardResidencySoftBudgetBytes(options);
+      const rawBudget = Number.isFinite(Number(options.artboardResidencyHardBudgetBytes))
+        ? Number(options.artboardResidencyHardBudgetBytes)
+        : Number(this.options?.artboardResidencyHardBudgetBytes);
+
+      return Math.max(softBudget, Math.round(rawBudget || ARTBOARD_RESIDENCY_HARD_BUDGET_BYTES));
+    }
+
+    ensureArtboardResidencyAccessState() {
+      if (!(this.artboardResidencyAccessById instanceof Map)) {
+        this.artboardResidencyAccessById = new Map();
+      }
+
+      return this.artboardResidencyAccessById;
+    }
+
+    getArtboardResidencyPrefetchDocPx(viewportRect = null, options = {}) {
+      const cssPx = Number.isFinite(Number(options.artboardResidencyPrefetchCssPx))
+        ? Math.max(0, Number(options.artboardResidencyPrefetchCssPx))
+        : Math.max(0, Number(this.options?.artboardResidencyPrefetchCssPx) || ARTBOARD_RESIDENCY_PREFETCH_CSS_PX);
+      const dpr = Number.isFinite(Number(viewportRect?.dpr || options.dpr))
+        ? Math.max(1, Number(viewportRect?.dpr || options.dpr))
+        : 1;
+      const zoom = Number.isFinite(Number(viewportRect?.zoom || options.camera?.zoom))
+        ? Math.max(0.0001, Math.abs(Number(viewportRect?.zoom || options.camera?.zoom)))
+        : 1;
+
+      return (cssPx * dpr) / zoom;
+    }
+
+    getLayerArtboardId(layerOrId = "") {
+      const layer = typeof layerOrId === "object" && layerOrId
+        ? layerOrId
+        : this.layerModel?.findEntryById?.(String(layerOrId || "").trim());
+      const layerId = String(layer?.id || (typeof layerOrId === "string" ? layerOrId : "")).trim();
+      const explicitArtboardId = String(layer?.artboardId || "").trim();
+
+      if (explicitArtboardId) {
+        return explicitArtboardId;
+      }
+
+      if (!layerId || layer?.type === "background" || layerId === "background") {
+        return "";
+      }
+
+      return String(this.layerModel?.findEntryArtboardId?.(layerId) || "").trim();
+    }
+
+    getActiveArtboardIdForResidency(options = {}) {
+      const explicitArtboardId = String(options.artboardId || options.activeArtboardId || "").trim();
+
+      if (explicitArtboardId) {
+        return explicitArtboardId;
+      }
+
+      const selectedArtboardId = String(namespace.getSelectedDocumentArtboardId?.() || "").trim();
+
+      if (selectedArtboardId) {
+        return selectedArtboardId;
+      }
+
+      const activeLayerId = String(options.activeLayerId || this.layerModel?.activeLayerId || "").trim();
+      const layerArtboardId = activeLayerId ? this.getLayerArtboardId(activeLayerId) : "";
+
+      if (layerArtboardId) {
+        return layerArtboardId;
+      }
+
+      return String(namespace.getActiveDocumentArtboardId?.({ layerId: activeLayerId }) || "").trim();
+    }
+
+    getDocumentRectUnion(rects = []) {
+      const normalizedRects = (Array.isArray(rects) ? rects : [])
+        .map((rect) => this.normalizePreviewCacheDocumentRect(rect))
+        .filter(Boolean);
+
+      if (normalizedRects.length === 0) {
+        return null;
+      }
+
+      const bounds = normalizedRects.reduce((result, rect) => {
+        if (!result) {
+          return {
+            bottom: rect.y + rect.height,
+            left: rect.x,
+            right: rect.x + rect.width,
+            top: rect.y,
+          };
+        }
+
+        return {
+          bottom: Math.max(result.bottom, rect.y + rect.height),
+          left: Math.min(result.left, rect.x),
+          right: Math.max(result.right, rect.x + rect.width),
+          top: Math.min(result.top, rect.y),
+        };
+      }, null);
+
+      return bounds
+        ? {
+            height: Math.max(1, bounds.bottom - bounds.top),
+            width: Math.max(1, bounds.right - bounds.left),
+            x: bounds.left,
+            y: bounds.top,
+          }
+        : null;
+    }
+
+    getDocumentRectIntersection(first, second) {
+      const a = this.normalizePreviewCacheDocumentRect(first);
+      const b = this.normalizePreviewCacheDocumentRect(second);
+
+      if (!a || !b) {
+        return null;
+      }
+
+      const x0 = Math.max(a.x, b.x);
+      const y0 = Math.max(a.y, b.y);
+      const x1 = Math.min(a.x + a.width, b.x + b.width);
+      const y1 = Math.min(a.y + a.height, b.y + b.height);
+
+      return x1 > x0 && y1 > y0
+        ? {
+            height: Math.max(1, y1 - y0),
+            width: Math.max(1, x1 - x0),
+            x: x0,
+            y: y0,
+          }
+        : null;
+    }
+
+    documentRectContains(outer, inner) {
+      const a = this.normalizePreviewCacheDocumentRect(outer);
+      const b = this.normalizePreviewCacheDocumentRect(inner);
+
+      return Boolean(
+        a &&
+        b &&
+        b.x >= a.x &&
+        b.y >= a.y &&
+        b.x + b.width <= a.x + a.width &&
+        b.y + b.height <= a.y + a.height
+      );
+    }
+
+    getDocumentRectCenter(rect) {
+      const normalizedRect = this.normalizePreviewCacheDocumentRect(rect);
+
+      return normalizedRect
+        ? {
+            x: normalizedRect.x + normalizedRect.width / 2,
+            y: normalizedRect.y + normalizedRect.height / 2,
+          }
+        : null;
+    }
+
+    getDocumentRectDistance(first, second) {
+      const firstCenter = this.getDocumentRectCenter(first);
+      const secondCenter = this.getDocumentRectCenter(second);
+
+      if (!firstCenter || !secondCenter) {
+        return 0;
+      }
+
+      const dx = firstCenter.x - secondCenter.x;
+      const dy = firstCenter.y - secondCenter.y;
+
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    resolveArtboardPrefetch(artboards = [], visibleRect = null, renderRect = null, viewportRect = null, options = {}) {
+      if (!this.isArtboardResidencyPrefetchEnabled(options) || !visibleRect || !Array.isArray(artboards) || artboards.length === 0) {
+        return {
+          artboardIds: [],
+          rect: null,
+        };
+      }
+
+      const previousVisibleRect = this.normalizePreviewCacheDocumentRect(this.artboardResidencyLast?.visibleRect);
+      const currentVisibleRect = this.normalizePreviewCacheDocumentRect(visibleRect);
+
+      if (!previousVisibleRect || !currentVisibleRect) {
+        return {
+          artboardIds: [],
+          rect: null,
+        };
+      }
+
+      const previousCenter = this.getDocumentRectCenter(previousVisibleRect);
+      const currentCenter = this.getDocumentRectCenter(currentVisibleRect);
+      const dx = currentCenter.x - previousCenter.x;
+      const dy = currentCenter.y - previousCenter.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < 1) {
+        return {
+          artboardIds: [],
+          rect: null,
+        };
+      }
+
+      const leadRect = this.normalizePreviewCacheDocumentRect({
+        height: currentVisibleRect.height,
+        width: currentVisibleRect.width,
+        x: currentVisibleRect.x + dx,
+        y: currentVisibleRect.y + dy,
+      });
+      const prefetchPadding = this.getArtboardResidencyPrefetchDocPx(viewportRect, options);
+      const prefetchRect = this.expandDocumentRect(
+        this.getDocumentRectUnion([renderRect || currentVisibleRect, leadRect]) || currentVisibleRect,
+        prefetchPadding,
+      ) || currentVisibleRect;
+      const artboardIds = artboards
+        .filter((artboard) => this.documentRectsIntersect(artboard.rect, prefetchRect))
+        .map((artboard) => artboard.id);
+
+      return {
+        artboardIds,
+        rect: this.normalizePreviewCacheDocumentRect(prefetchRect),
+      };
+    }
+
+    pruneExpiredArtboardWarmIds(now = this.getArtboardResidencyNow()) {
+      const warmUntilById = this.ensureArtboardResidencyState();
+      const warmIds = new Set();
+
+      warmUntilById.forEach((until, artboardId) => {
+        if (Number(until) > now) {
+          warmIds.add(artboardId);
+        } else {
+          warmUntilById.delete(artboardId);
+        }
+      });
+
+      return warmIds;
+    }
+
+    resolveArtboardResidency(options = {}) {
+      const now = Number.isFinite(Number(options.now))
+        ? Number(options.now)
+        : this.getArtboardResidencyNow();
+      const viewportRect = options.viewportRect || this.getPreviewCacheViewportRect(options);
+      const visibleRect = this.normalizePreviewCacheDocumentRect(options.visibleRect || viewportRect?.visibleRect);
+      const renderRect = this.normalizePreviewCacheDocumentRect(options.renderRect || viewportRect?.renderRect);
+      const artboards = this.getPreviewCacheArtboards();
+      const artboardById = new Map(artboards.map((artboard) => [artboard.id, artboard]));
+      const activeArtboardId = this.getActiveArtboardIdForResidency(options);
+      const visibleArtboards = visibleRect
+        ? artboards.filter((artboard) => this.documentRectsIntersect(artboard.rect, visibleRect))
+        : [];
+      const renderArtboards = renderRect
+        ? artboards.filter((artboard) => this.documentRectsIntersect(artboard.rect, renderRect))
+        : visibleArtboards;
+      const hotArtboardIds = new Set([
+        ...visibleArtboards.map((artboard) => artboard.id),
+        ...renderArtboards.map((artboard) => artboard.id),
+      ]);
+
+      if (activeArtboardId && artboardById.has(activeArtboardId)) {
+        hotArtboardIds.add(activeArtboardId);
+      }
+
+      const prefetch = this.resolveArtboardPrefetch(artboards, visibleRect, renderRect, viewportRect, options);
+      const warmArtboardIds = this.pruneExpiredArtboardWarmIds(now);
+      (prefetch.artboardIds || []).forEach((artboardId) => {
+        if (!hotArtboardIds.has(artboardId)) {
+          warmArtboardIds.add(artboardId);
+        }
+      });
+      const cacheArtboards = visibleArtboards.length > 0
+        ? visibleArtboards
+        : activeArtboardId && artboardById.has(activeArtboardId)
+          ? [artboardById.get(activeArtboardId)]
+          : [];
+      const coldArtboardIds = artboards
+        .map((artboard) => artboard.id)
+        .filter((artboardId) => !hotArtboardIds.has(artboardId) && !warmArtboardIds.has(artboardId));
+      const cacheRect = this.getDocumentRectUnion(cacheArtboards.map((artboard) => artboard.rect));
+
+      return {
+        activeArtboardId: activeArtboardId || "",
+        artboardCount: artboards.length,
+        artboards: artboards.map((artboard) => ({
+          id: artboard.id,
+          rect: { ...artboard.rect },
+        })),
+        cacheArtboardIds: cacheArtboards.map((artboard) => artboard.id),
+        cacheArtboards: cacheArtboards.map((artboard) => ({
+          id: artboard.id,
+          rect: { ...artboard.rect },
+        })),
+        cacheRect: cacheRect ? { ...cacheRect } : null,
+        coldArtboardIds,
+        hotArtboardIds: Array.from(hotArtboardIds),
+        prefetchArtboardIds: (prefetch.artboardIds || []).filter((artboardId) => !hotArtboardIds.has(artboardId)),
+        prefetchRect: prefetch.rect ? { ...prefetch.rect } : null,
+        renderArtboardIds: renderArtboards.map((artboard) => artboard.id),
+        renderRect: renderRect ? { ...renderRect } : null,
+        visibleArtboardIds: visibleArtboards.map((artboard) => artboard.id),
+        visibleRect: visibleRect ? { ...visibleRect } : null,
+        warmArtboardIds: Array.from(warmArtboardIds),
+      };
+    }
+
+    cloneArtboardResidency(residency = null) {
+      if (!residency) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(JSON.stringify(residency));
+      } catch (error) {
+        return { ...residency };
+      }
+    }
+
+    resolveAndPublishArtboardResidency(options = {}) {
+      if (!this.isArtboardResidencyEnabled(options)) {
+        this.artboardResidencyLast = null;
+        namespace.lastArtboardResidency = null;
+        return null;
+      }
+
+      const now = Number.isFinite(Number(options.now))
+        ? Number(options.now)
+        : this.getArtboardResidencyNow();
+      const firstPass = this.resolveArtboardResidency({ ...options, now });
+      const warmUntilById = this.ensureArtboardResidencyState();
+      const warmHoldMs = Number.isFinite(Number(this.options?.artboardResidencyWarmHoldMs))
+        ? Math.max(0, Number(this.options.artboardResidencyWarmHoldMs))
+        : ARTBOARD_RESIDENCY_WARM_HOLD_MS;
+      const previousHotIds = new Set(this.artboardResidencyLast?.hotArtboardIds || []);
+      const nextHotIds = new Set(firstPass.hotArtboardIds || []);
+
+      previousHotIds.forEach((artboardId) => {
+        if (!nextHotIds.has(artboardId)) {
+          warmUntilById.set(artboardId, now + warmHoldMs);
+        }
+      });
+      nextHotIds.forEach((artboardId) => warmUntilById.delete(artboardId));
+
+      const nextResidency = this.resolveArtboardResidency({ ...options, now });
+      const snapshot = this.cloneArtboardResidency(nextResidency);
+      const accessById = this.ensureArtboardResidencyAccessState();
+
+      [
+        ...(nextResidency.hotArtboardIds || []),
+        ...(nextResidency.prefetchArtboardIds || []),
+      ].forEach((artboardId) => {
+        if (artboardId) {
+          accessById.set(artboardId, now);
+        }
+      });
+
+      this.artboardResidencyLast = snapshot;
+      namespace.lastArtboardResidency = snapshot;
+
+      return nextResidency;
+    }
+
+    getArtboardResidencyViewOptions(options = {}) {
+      return {
+        activeArtboardId: options.activeArtboardId || "",
+        activeLayerId: options.activeLayerId || "",
+        camera: options.camera
+          ? {
+              x: Number(options.camera.x) || 0,
+              y: Number(options.camera.y) || 0,
+              zoom: Number(options.camera.zoom) || 1,
+            }
+          : null,
+        dpr: options.dpr,
+        viewportHeight: options.viewportHeight,
+        viewportWidth: options.viewportWidth,
+      };
+    }
+
+    getRasterTargetGpuBytes(target) {
+      if (!target) {
+        return 0;
+      }
+
+      if (this.isSparseRasterTarget(target)) {
+        let total = 0;
+
+        target.tiles?.forEach?.((tile) => {
+          total += this.getRasterTargetGpuBytes(tile);
+        });
+
+        return total;
+      }
+
+      return target.texture && target.state !== "CPU_COLD"
+        ? this.estimateRasterTargetBytes(target)
+        : 0;
+    }
+
+    getRasterTargetCpuBytes(target) {
+      if (!target) {
+        return 0;
+      }
+
+      if (this.isSparseRasterTarget(target)) {
+        let total = 0;
+
+        target.tiles?.forEach?.((tile) => {
+          total += this.getRasterTargetCpuBytes(tile);
+        });
+
+        return Math.max(total, Math.round(Number(target.cpuBytes) || 0));
+      }
+
+      return Math.max(
+        0,
+        Math.round(Number(target.cpuBytes) || Number(target.cpuPixels?.byteLength) || 0),
+      );
+    }
+
+    getSparseRasterTargetColdTileCount(target) {
+      if (!this.isSparseRasterTarget(target)) {
+        return 0;
+      }
+
+      let coldCount = 0;
+
+      target.tiles?.forEach?.((tile) => {
+        if (tile?.state === "CPU_COLD" || (!tile?.texture && tile?.cpuPixels instanceof Uint8Array)) {
+          coldCount += 1;
+        }
+      });
+
+      return coldCount;
+    }
+
+    estimateArtboardFlatPreviewBytes(preview) {
+      return preview?.texture
+        ? this.getRasterRectBytes(preview.width, preview.height)
+        : 0;
+    }
+
+    collectArtboardResidencyMetrics(residency = this.artboardResidencyLast, orderedLayers = null, options = {}) {
+      if (!residency) {
+        return null;
+      }
+
+      const accessById = this.ensureArtboardResidencyAccessState();
+      const visibleIds = new Set(residency.visibleArtboardIds || []);
+      const renderIds = new Set(residency.renderArtboardIds || []);
+      const hotIds = new Set(residency.hotArtboardIds || []);
+      const warmIds = new Set(residency.warmArtboardIds || []);
+      const coldIds = new Set(residency.coldArtboardIds || []);
+      const prefetchIds = new Set(residency.prefetchArtboardIds || []);
+      const activeArtboardId = residency.activeArtboardId || "";
+      const visibleRect = residency.visibleRect || null;
+      const metricsById = new Map((residency.artboards || []).map((artboard) => [
+        artboard.id,
+        {
+          artboardId: artboard.id,
+          coldLayerCount: 0,
+          coldTileCount: 0,
+          cpuBytes: 0,
+          cpuRawBytes: 0,
+          distanceFromVisible: this.getDocumentRectDistance(artboard.rect, visibleRect),
+          flatPreviewBytes: 0,
+          flatPreviewMiB: "0.00",
+          hasFlatPreview: false,
+          hot: hotIds.has(artboard.id),
+          layerCount: 0,
+          liveLayerCount: 0,
+          liveTileCount: 0,
+          gpuBytes: 0,
+          lastAccessedAt: Math.max(0, Number(accessById.get(artboard.id)) || 0),
+          prefetch: prefetchIds.has(artboard.id),
+          rect: { ...artboard.rect },
+          render: renderIds.has(artboard.id),
+          status: coldIds.has(artboard.id)
+            ? "cold"
+            : hotIds.has(artboard.id)
+              ? "hot"
+              : warmIds.has(artboard.id)
+                ? "warm"
+                : "idle",
+          visible: visibleIds.has(artboard.id),
+          warm: warmIds.has(artboard.id),
+        },
+      ]));
+      const layers = Array.isArray(orderedLayers)
+        ? orderedLayers
+        : this.getOrderedLayersBottomToTop();
+      let globalGpuBytes = 0;
+      let globalCpuBytes = 0;
+      let globalCpuRawBytes = 0;
+
+      for (const layer of layers) {
+        const layerId = String(layer?.id || "").trim();
+        const target = layerId ? this.rasterTargetsByLayerId?.get?.(layerId) : null;
+        const gpuBytes = this.getRasterTargetGpuBytes(target);
+        const cpuBytes = this.getRasterTargetCpuBytes(target);
+        const cpuRawBytes = this.getRasterTargetCpuRawBytes?.(target) || cpuBytes;
+        const artboardId = this.getLayerArtboardId(layer);
+        const artboardMetrics = artboardId ? metricsById.get(artboardId) : null;
+
+        if (!artboardMetrics) {
+          globalGpuBytes += gpuBytes;
+          globalCpuBytes += cpuBytes;
+          globalCpuRawBytes += cpuRawBytes;
+          continue;
+        }
+
+        artboardMetrics.layerCount += 1;
+        artboardMetrics.gpuBytes += gpuBytes;
+        artboardMetrics.cpuBytes += cpuBytes;
+        artboardMetrics.cpuRawBytes += cpuRawBytes;
+
+        if (target?.state === "CPU_COLD" || (!gpuBytes && cpuBytes > 0)) {
+          artboardMetrics.coldLayerCount += 1;
+        } else if (gpuBytes > 0) {
+          artboardMetrics.liveLayerCount += 1;
+        }
+
+        if (this.isSparseRasterTarget(target)) {
+          const coldTileCount = this.getSparseRasterTargetColdTileCount(target);
+
+          artboardMetrics.coldTileCount += coldTileCount;
+          artboardMetrics.liveTileCount += Math.max(0, (target.tiles?.size || 0) - coldTileCount);
+        }
+      }
+
+      let totalGpuBytes = globalGpuBytes;
+      let totalCpuBytes = globalCpuBytes;
+      let totalCpuRawBytes = globalCpuRawBytes;
+      let totalFlatPreviewBytes = 0;
+
+      metricsById.forEach((artboardMetrics, artboardId) => {
+        const previewBytes = this.estimateArtboardFlatPreviewBytes(this.artboardFlatPreviewsById?.get?.(artboardId));
+
+        artboardMetrics.flatPreviewBytes = previewBytes;
+        artboardMetrics.flatPreviewMiB = this.formatRasterMiB(previewBytes);
+        artboardMetrics.hasFlatPreview = previewBytes > 0;
+        artboardMetrics.gpuMiB = this.formatRasterMiB(artboardMetrics.gpuBytes);
+        artboardMetrics.cpuMiB = this.formatRasterMiB(artboardMetrics.cpuBytes);
+        artboardMetrics.cpuRawMiB = this.formatRasterMiB(artboardMetrics.cpuRawBytes);
+        totalGpuBytes += artboardMetrics.gpuBytes;
+        totalCpuBytes += artboardMetrics.cpuBytes;
+        totalCpuRawBytes += artboardMetrics.cpuRawBytes;
+        totalFlatPreviewBytes += previewBytes;
+      });
+
+      const softBudgetBytes = this.getArtboardResidencySoftBudgetBytes(options);
+      const hardBudgetBytes = this.getArtboardResidencyHardBudgetBytes(options);
+      const residentGpuBytes = totalGpuBytes + totalFlatPreviewBytes;
+      const budgetPressure = !this.isArtboardResidencyBudgetEnabled(options)
+        ? "disabled"
+        : residentGpuBytes > hardBudgetBytes
+          ? "hard"
+          : residentGpuBytes > softBudgetBytes
+            ? "soft"
+            : "ok";
+      const metrics = {
+        artboards: Array.from(metricsById.values()).sort((first, second) =>
+          (first.rect.y - second.rect.y) || (first.rect.x - second.rect.x) || first.artboardId.localeCompare(second.artboardId)
+        ),
+        budget: {
+          hardBudgetBytes,
+          hardBudgetMiB: this.formatRasterMiB(hardBudgetBytes),
+          overHardBytes: Math.max(0, residentGpuBytes - hardBudgetBytes),
+          overSoftBytes: Math.max(0, residentGpuBytes - softBudgetBytes),
+          pressure: budgetPressure,
+          softBudgetBytes,
+          softBudgetMiB: this.formatRasterMiB(softBudgetBytes),
+        },
+        globalCpuBytes,
+        globalCpuMiB: this.formatRasterMiB(globalCpuBytes),
+        globalCpuRawBytes,
+        globalGpuBytes,
+        globalGpuMiB: this.formatRasterMiB(globalGpuBytes),
+        residentGpuBytes,
+        residentGpuMiB: this.formatRasterMiB(residentGpuBytes),
+        totalCpuBytes,
+        totalCpuMiB: this.formatRasterMiB(totalCpuBytes),
+        totalCpuRawBytes,
+        totalFlatPreviewBytes,
+        totalFlatPreviewMiB: this.formatRasterMiB(totalFlatPreviewBytes),
+        totalGpuBytes,
+        totalGpuMiB: this.formatRasterMiB(totalGpuBytes),
+      };
+
+      this.artboardResidencyMetricsLast = metrics;
+      namespace.lastArtboardResidencyMetrics = metrics;
+
+      return metrics;
+    }
+
+    getArtboardResidencyCoolingPlan(residency, metrics = null, options = {}) {
+      const resolvedMetrics = metrics || this.collectArtboardResidencyMetrics(residency, options.orderedLayers, options);
+
+      if (!residency || !resolvedMetrics) {
+        return {
+          candidateArtboardIds: [],
+          pressure: "none",
+          projectedGpuBytes: 0,
+          targetGpuBytes: 0,
+        };
+      }
+
+      const protectedIds = new Set([
+        residency.activeArtboardId || "",
+        ...(residency.visibleArtboardIds || []),
+        ...(residency.renderArtboardIds || []),
+      ].filter(Boolean));
+      const coldIds = new Set(residency.coldArtboardIds || []);
+      const pressure = resolvedMetrics.budget?.pressure || "ok";
+      const shouldUseBudget = this.isArtboardResidencyBudgetEnabled(options) &&
+        (pressure === "soft" || pressure === "hard");
+      const candidateMetrics = resolvedMetrics.artboards
+        .filter((artboard) => {
+          if (protectedIds.has(artboard.artboardId)) {
+            return false;
+          }
+
+          return coldIds.has(artboard.artboardId) ||
+            (shouldUseBudget && (artboard.status === "warm" || artboard.prefetch));
+        })
+        .sort((first, second) => {
+          const firstPriority = coldIds.has(first.artboardId) ? 0 : 1;
+          const secondPriority = coldIds.has(second.artboardId) ? 0 : 1;
+
+          return (firstPriority - secondPriority) ||
+            (first.lastAccessedAt - second.lastAccessedAt) ||
+            (second.distanceFromVisible - first.distanceFromVisible) ||
+            (second.gpuBytes - first.gpuBytes);
+        });
+      const targetGpuBytes = pressure === "hard"
+        ? resolvedMetrics.budget.hardBudgetBytes
+        : resolvedMetrics.budget.softBudgetBytes;
+      let projectedGpuBytes = resolvedMetrics.residentGpuBytes;
+      const candidateArtboardIds = [];
+
+      for (const artboard of candidateMetrics) {
+        if (!coldIds.has(artboard.artboardId) && projectedGpuBytes <= targetGpuBytes) {
+          break;
+        }
+
+        candidateArtboardIds.push(artboard.artboardId);
+        projectedGpuBytes = Math.max(0, projectedGpuBytes - artboard.gpuBytes);
+      }
+
+      const plan = {
+        candidateArtboardIds,
+        pressure,
+        projectedGpuBytes,
+        projectedGpuMiB: this.formatRasterMiB(projectedGpuBytes),
+        targetGpuBytes,
+        targetGpuMiB: this.formatRasterMiB(targetGpuBytes),
+      };
+
+      this.artboardResidencyPressureLast = plan;
+      namespace.lastArtboardResidencyPressure = plan;
+
+      return plan;
+    }
+
+    deleteArtboardFlatPreview(artboardId, options = {}) {
+      const normalizedId = String(artboardId || "").trim();
+      const preview = normalizedId ? this.artboardFlatPreviewsById?.get?.(normalizedId) : null;
+
+      if (!preview) {
+        return false;
+      }
+
+      if (preview.texture || preview.textureResourceId) {
+        this.deleteRasterTexture?.(preview.texture || preview.textureResourceId);
+        this.gl?.deleteTexture?.(preview.texture);
+      }
+
+      this.artboardFlatPreviewsById.delete(normalizedId);
+
+      if (options.publish !== false) {
+        namespace.lastArtboardFlatPreviewInvalidation = {
+          artboardIds: [normalizedId],
+          reason: options.reason || "delete-artboard-flat-preview",
+        };
+      }
+
+      return true;
+    }
+
+    deleteAllArtboardFlatPreviews(reason = "delete-artboard-flat-previews") {
+      const artboardIds = Array.from(this.artboardFlatPreviewsById?.keys?.() || []);
+
+      artboardIds.forEach((artboardId) => this.deleteArtboardFlatPreview(artboardId, {
+        publish: false,
+        reason,
+      }));
+
+      namespace.lastArtboardFlatPreviewInvalidation = {
+        artboardIds,
+        reason,
+      };
+
+      return artboardIds.length;
+    }
+
+    getArtboardFlatPreview(artboardId) {
+      const normalizedId = String(artboardId || "").trim();
+      const preview = normalizedId ? this.artboardFlatPreviewsById?.get?.(normalizedId) : null;
+
+      return preview?.texture ? preview : null;
+    }
+
+    invalidateArtboardFlatPreviews(reason = "unknown", options = {}, dirtyRects = null) {
+      if (!this.artboardFlatPreviewsById?.size) {
+        return 0;
+      }
+
+      const layerArtboardId = options.layerId ? this.getLayerArtboardId(options.layerId) : "";
+
+      if (layerArtboardId && this.artboardFlatPreviewsById.has(layerArtboardId)) {
+        return this.deleteArtboardFlatPreview(layerArtboardId, {
+          reason: `${reason}:layer`,
+        }) ? 1 : 0;
+      }
+
+      const rects = Array.isArray(dirtyRects)
+        ? dirtyRects
+        : this.getDirtyRegionRectsFromOptions?.(options) || [];
+
+      if (!rects.length) {
+        return this.deleteAllArtboardFlatPreviews(`${reason}:full`);
+      }
+
+      const artboardIds = [];
+
+      this.artboardFlatPreviewsById.forEach((preview, artboardId) => {
+        if (rects.some((rect) => this.documentRectsIntersect(preview.rect, rect))) {
+          artboardIds.push(artboardId);
+        }
+      });
+      artboardIds.forEach((artboardId) => this.deleteArtboardFlatPreview(artboardId, {
+        publish: false,
+        reason: `${reason}:dirty`,
+      }));
+
+      if (artboardIds.length > 0) {
+        namespace.lastArtboardFlatPreviewInvalidation = {
+          artboardIds,
+          reason: `${reason}:dirty`,
+        };
+      }
+
+      return artboardIds.length;
+    }
+
+    captureArtboardFlatPreviewsFromPreviewCache(options = {}) {
+      if (
+        !this.isArtboardFlatPreviewsEnabled(options) ||
+        !this.previewTexture ||
+        !this.previewFramebuffer ||
+        !this.previewCacheDocumentRect ||
+        !this.previewCacheWidth ||
+        !this.previewCacheHeight
+      ) {
+        return null;
+      }
+
+      if (!(this.artboardFlatPreviewsById instanceof Map)) {
+        this.artboardFlatPreviewsById = new Map();
+      }
+
+      if (!Number.isFinite(Number(this.artboardFlatPreviewVersion))) {
+        this.artboardFlatPreviewVersion = 1;
+      }
+
+      const gl = this.gl;
+
+      if (typeof gl?.copyTexSubImage2D !== "function") {
+        return null;
+      }
+
+      const cacheRect = this.normalizePreviewCacheDocumentRect(this.previewCacheDocumentRect);
+      const cacheScale = Math.max(0.0001, Number(this.previewCacheScale) || 1);
+      const cacheWidth = Math.max(1, Math.round(this.previewCacheWidth || 1));
+      const cacheHeight = Math.max(1, Math.round(this.previewCacheHeight || 1));
+      const maxSize = Math.max(1, Math.round(Number(this.options?.artboardFlatPreviewMaxSize) || ARTBOARD_FLAT_PREVIEW_MAX_SIZE));
+      const scopeIds = new Set(this.previewCacheScopeInfo?.visibleArtboardIds || this.previewCacheScopeInfo?.cacheArtboardIds || []);
+      const artboards = this.getPreviewCacheArtboards()
+        .filter((artboard) => scopeIds.size === 0 || scopeIds.has(artboard.id))
+        .filter((artboard) => this.documentRectContains(cacheRect, artboard.rect));
+      const capturedIds = [];
+      const skippedIds = [];
+
+      if (artboards.length === 0) {
+        return null;
+      }
+
+      try {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFramebuffer);
+
+        for (const artboard of artboards) {
+          const sourceX = Math.max(0, Math.floor((artboard.rect.x - cacheRect.x) * cacheScale));
+          const sourceTop = Math.max(0, Math.floor((artboard.rect.y - cacheRect.y) * cacheScale));
+          const sourceWidth = Math.min(cacheWidth - sourceX, Math.max(1, Math.round(artboard.rect.width * cacheScale)));
+          const sourceHeight = Math.min(cacheHeight - sourceTop, Math.max(1, Math.round(artboard.rect.height * cacheScale)));
+          const sourceY = Math.max(0, cacheHeight - sourceTop - sourceHeight);
+
+          if (sourceWidth <= 0 || sourceHeight <= 0 || sourceWidth > maxSize || sourceHeight > maxSize) {
+            skippedIds.push(artboard.id);
+            continue;
+          }
+
+          const texture = gl.createTexture?.();
+
+          if (!texture) {
+            skippedIds.push(artboard.id);
+            continue;
+          }
+
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          gl.texParameteri?.(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri?.(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texParameteri?.(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri?.(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sourceWidth, sourceHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+          gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, sourceX, sourceY, sourceWidth, sourceHeight);
+
+          this.deleteArtboardFlatPreview(artboard.id, {
+            publish: false,
+            reason: "replace-artboard-flat-preview",
+          });
+
+          const textureRow = this.registerRasterTexture(texture, {
+            bbox: { ...artboard.rect },
+            height: sourceHeight,
+            kind: "artboardFlatPreview",
+            label: `flat preview ${artboard.id}`,
+            ownerId: artboard.id,
+            ownerType: "cache",
+            purgeable: true,
+            reason: "capture-artboard-flat-preview",
+            width: sourceWidth,
+          });
+
+          this.artboardFlatPreviewsById.set(artboard.id, {
+            artboardId: artboard.id,
+            bytes: this.getRasterRectBytes(sourceWidth, sourceHeight),
+            capturedAt: this.getArtboardResidencyNow(),
+            height: sourceHeight,
+            rect: { ...artboard.rect },
+            scale: cacheScale,
+            source: "preview-cache",
+            texture,
+            textureResourceId: textureRow?.id || "",
+            version: this.artboardFlatPreviewVersion++,
+            width: sourceWidth,
+          });
+          capturedIds.push(artboard.id);
+        }
+      } catch (error) {
+        console.warn?.("[CBO renderer] Impossibile catturare preview flattened per artboard.", error);
+        return null;
+      } finally {
+        gl.bindTexture?.(gl.TEXTURE_2D, null);
+        gl.bindFramebuffer?.(gl.FRAMEBUFFER, null);
+      }
+
+      const report = {
+        capturedIds,
+        skippedIds,
+        source: options.reason || "preview-cache",
+      };
+
+      namespace.lastArtboardFlatPreviewCapture = report;
+
+      return report;
+    }
+
+    artboardHasOnlyColdRasterTargets(artboardId, orderedLayers = []) {
+      let hasRasterLayer = false;
+
+      for (const layer of orderedLayers) {
+        if (layer?.visible === false || this.getLayerArtboardId(layer) !== artboardId) {
+          continue;
+        }
+
+        const target = this.rasterTargetsByLayerId?.get?.(layer.id);
+
+        if (!target) {
+          return false;
+        }
+
+        hasRasterLayer = true;
+
+        if (this.getRasterTargetGpuBytes(target) > 0) {
+          return false;
+        }
+      }
+
+      return hasRasterLayer;
+    }
+
+    getArtboardFlatPreviewFallbackIds(residency, orderedLayers = [], options = {}) {
+      if (
+        !residency ||
+        !this.isArtboardFlatPreviewsEnabled(options) ||
+        options.activeStrokeTexture ||
+        this.rasterTransformPreview ||
+        this.vectorTextTransformPreviewLayerId
+      ) {
+        return new Set();
+      }
+
+      const activeArtboardId = residency.activeArtboardId || "";
+      const candidateIds = new Set(residency.visibleArtboardIds || []);
+      const fallbackIds = new Set();
+
+      candidateIds.forEach((artboardId) => {
+        if (
+          !artboardId ||
+          artboardId === activeArtboardId ||
+          !this.getArtboardFlatPreview(artboardId) ||
+          !this.artboardHasOnlyColdRasterTargets(artboardId, orderedLayers)
+        ) {
+          return;
+        }
+
+        fallbackIds.add(artboardId);
+      });
+
+      return fallbackIds;
+    }
+
+    isLayerInColdArtboard(layerOrId = "") {
+      const artboardId = this.getLayerArtboardId(layerOrId);
+
+      return Boolean(
+        artboardId &&
+        Array.isArray(this.artboardResidencyLast?.coldArtboardIds) &&
+        this.artboardResidencyLast.coldArtboardIds.includes(artboardId)
+      );
+    }
+
+    hydrateHotArtboardTargets(residency, orderedLayers = [], options = {}) {
+      if (!residency || !this.isArtboardResidencyEnabled(options)) {
+        return 0;
+      }
+
+      const hotIds = new Set([
+        ...(residency.hotArtboardIds || []),
+        ...(residency.warmArtboardIds || []),
+      ]);
+      const skipArtboardIds = new Set(options.skipArtboardIds || []);
+      let hydratedCount = 0;
+
+      for (const layer of orderedLayers) {
+        const layerId = String(layer?.id || "").trim();
+        const artboardId = this.getLayerArtboardId(layer);
+        const target = layerId ? this.rasterTargetsByLayerId?.get?.(layerId) : null;
+
+        if (!layerId || !artboardId || !hotIds.has(artboardId) || skipArtboardIds.has(artboardId) || !target) {
+          continue;
+        }
+
+        if (this.isSparseRasterTarget(target)) {
+          hydratedCount += this.hydrateSparseRasterTargetForRect(layerId, target, options.renderRect || residency.renderRect, {
+            reason: options.reason || "artboard-residency-hot-hydrate",
+          });
+          continue;
+        }
+
+        if (target.state !== "CPU_COLD") {
+          continue;
+        }
+
+        if (this.hydrateRasterTarget(target, {
+          kind: "layer",
+          label: layerId,
+          layerId,
+          ownerId: layerId,
+          ownerType: "live",
+          purgeable: false,
+          reason: options.reason || "artboard-residency-hot-hydrate",
+        })) {
+          hydratedCount += 1;
+        }
+      }
+
+      return hydratedCount;
+    }
+
+    hydrateSparseRasterTargetForRect(layerId, target, rect = null, options = {}) {
+      if (!layerId || !this.isSparseRasterTarget(target)) {
+        return 0;
+      }
+
+      let hydratedCount = 0;
+      const renderRect = this.normalizePreviewCacheDocumentRect(rect);
+
+      target.tiles?.forEach?.((tile) => {
+        if (!tile || tile.state !== "CPU_COLD") {
+          return;
+        }
+
+        const tileRect = this.getRasterTargetDocumentRect(tile);
+
+        if (renderRect && !this.documentRectsIntersect(tileRect, renderRect)) {
+          return;
+        }
+
+        const ownerId = `${layerId}:${tile.tx}:${tile.ty}`;
+
+        if (this.hydrateRasterTarget(tile, {
+          kind: "paintTile",
+          label: `${layerId} tile ${tile.tx},${tile.ty}`,
+          layerId,
+          ownerId,
+          ownerType: "live",
+          purgeable: false,
+          reason: options.reason || "sparse-tile-render-hydrate",
+        })) {
+          hydratedCount += 1;
+        }
+      });
+
+      if (hydratedCount > 0 && target.state === "CPU_COLD") {
+        target.state = "GPU_PARTIAL";
+      }
+
+      return hydratedCount;
+    }
+
+    dehydrateSparseRasterTargetOutsideRect(layerId, target, keepRect = null, options = {}) {
+      if (!layerId || !this.isSparseRasterTarget(target)) {
+        return null;
+      }
+
+      const protectedRect = this.normalizePreviewCacheDocumentRect(keepRect);
+      let cooledTileCount = 0;
+      let releasedRawBytes = 0;
+      let storedCpuBytes = 0;
+
+      target.tiles?.forEach?.((tile) => {
+        if (!tile || tile.state === "CPU_COLD" || !tile.texture || this.needsCopyOnWriteDetach(tile)) {
+          return;
+        }
+
+        const tileRect = this.getRasterTargetDocumentRect(tile);
+
+        if (protectedRect && this.documentRectsIntersect(tileRect, protectedRect)) {
+          return;
+        }
+
+        const beforeBytes = this.estimateRasterTargetBytes(tile);
+
+        if (this.dehydrateRasterTarget(tile, {
+          layerId,
+          reason: options.reason || "artboard-tile-residency",
+        })) {
+          cooledTileCount += 1;
+          releasedRawBytes += beforeBytes;
+          storedCpuBytes += this.getRasterTargetCpuBytes(tile);
+        }
+      });
+
+      if (cooledTileCount === 0) {
+        return null;
+      }
+
+      const liveTileCount = Math.max(0, (target.tiles?.size || 0) - this.getSparseRasterTargetColdTileCount(target));
+
+      target.state = liveTileCount > 0 ? "GPU_PARTIAL" : "CPU_COLD";
+      target.cpuBytes = this.getRasterTargetCpuBytes(target);
+      target.cpuRawBytes = this.getRasterTargetCpuRawBytes?.(target) || target.cpuBytes;
+
+      return {
+        cooledTileCount,
+        layerId,
+        releasedRawBytes,
+        storedCpuBytes,
+      };
+    }
+
+    shouldDehydrateLayerForArtboardResidency(layer, target, coldArtboardIds) {
+      if (!layer?.id || !target || !coldArtboardIds?.size) {
+        return false;
+      }
+
+      if (layer.type === "group" || layer.type === "background" || layer.id === "background") {
+        return false;
+      }
+
+      const artboardId = this.getLayerArtboardId(layer);
+
+      return Boolean(
+        artboardId &&
+        coldArtboardIds.has(artboardId) &&
+        target.state !== "CPU_COLD" &&
+        !this.needsCopyOnWriteDetach(target)
+      );
+    }
+
+    applyArtboardTileResidency(residency, orderedLayers = [], options = {}) {
+      if (!residency || !this.isArtboardTileResidencyEnabled(options)) {
+        return null;
+      }
+
+      const metrics = options.metrics || this.collectArtboardResidencyMetrics(residency, orderedLayers, options);
+      const pressure = metrics?.budget?.pressure || "ok";
+
+      if (pressure !== "soft" && pressure !== "hard" && options.forceTileResidency !== true) {
+        return null;
+      }
+
+      const keepRect = residency.renderRect || residency.visibleRect;
+
+      if (!keepRect) {
+        return null;
+      }
+
+      let cooledTileCount = 0;
+      let releasedRawBytes = 0;
+      let storedCpuBytes = 0;
+      const cooledLayerIds = [];
+
+      for (const layer of orderedLayers) {
+        const layerId = String(layer?.id || "").trim();
+        const target = layerId ? this.rasterTargetsByLayerId?.get?.(layerId) : null;
+
+        if (
+          !layerId ||
+          layer?.visible === false ||
+          layer?.clippingMask === true ||
+          this.hasAdvancedLayerBlendMode(layer) ||
+          this.hasEnabledLayerEffects(layer) ||
+          this.hasPuppetLayerTransform(layer) ||
+          !this.isSparseRasterTarget(target)
+        ) {
+          continue;
+        }
+
+        const report = this.dehydrateSparseRasterTargetOutsideRect(layerId, target, keepRect, {
+          reason: options.reason || "artboard-tile-residency",
+        });
+
+        if (!report) {
+          continue;
+        }
+
+        cooledTileCount += report.cooledTileCount;
+        releasedRawBytes += report.releasedRawBytes;
+        storedCpuBytes += report.storedCpuBytes;
+        cooledLayerIds.push(layerId);
+      }
+
+      return cooledTileCount > 0
+        ? {
+            cooledLayerIds,
+            cooledTileCount,
+            releasedRawBytes,
+            releasedRawMiB: this.formatRasterMiB(releasedRawBytes),
+            storedCpuBytes,
+            storedCpuMiB: this.formatRasterMiB(storedCpuBytes),
+          }
+        : null;
+    }
+
+    applyArtboardColdStorage(residency = this.artboardResidencyLast, options = {}) {
+      if (!residency || !this.isArtboardResidencyEnabled(options)) {
+        return null;
+      }
+
+      if (options.activeStrokeTexture || options.activeStroke === true || this.rasterTransformPreview || this.hasArtboardDragPreview?.()) {
+        return null;
+      }
+
+      const orderedLayers = Array.isArray(options.orderedLayers)
+        ? options.orderedLayers
+        : this.getOrderedLayersBottomToTop();
+      const metricsBefore = options.metrics || this.collectArtboardResidencyMetrics(residency, orderedLayers, options);
+      const coolingPlan = this.getArtboardResidencyCoolingPlan(residency, metricsBefore, {
+        ...options,
+        orderedLayers,
+      });
+      const coldArtboardIds = new Set(coolingPlan.candidateArtboardIds || residency.coldArtboardIds || []);
+
+      if (orderedLayers.length === 0) {
+        return null;
+      }
+
+      let cooledLayerCount = 0;
+      let releasedRawBytes = 0;
+      let storedCpuBytes = 0;
+      const cooledLayerIds = [];
+
+      if (coldArtboardIds.size > 0) {
+        for (const layer of orderedLayers) {
+          const layerId = String(layer?.id || "").trim();
+          const target = layerId ? this.rasterTargetsByLayerId?.get?.(layerId) : null;
+
+          if (!this.shouldDehydrateLayerForArtboardResidency(layer, target, coldArtboardIds)) {
+            continue;
+          }
+
+          const beforeBytes = this.getRasterTargetGpuBytes(target) || this.estimateRasterTargetBytes(target);
+
+          if (this.dehydrateRasterTarget(target, {
+            layerId,
+            reason: options.reason || "artboard-residency-cold",
+          })) {
+            cooledLayerCount += 1;
+            releasedRawBytes += beforeBytes;
+            storedCpuBytes += this.getRasterTargetCpuBytes?.(target) || 0;
+            cooledLayerIds.push(layerId);
+          }
+        }
+      }
+
+      const tileReport = this.applyArtboardTileResidency(residency, orderedLayers, {
+        ...options,
+        metrics: metricsBefore,
+        reason: options.reason || "artboard-tile-residency",
+      });
+
+      if (cooledLayerCount === 0 && !tileReport) {
+        return null;
+      }
+
+      if (tileReport) {
+        releasedRawBytes += tileReport.releasedRawBytes;
+        storedCpuBytes += tileReport.storedCpuBytes;
+      }
+
+      const metricsAfter = this.collectArtboardResidencyMetrics(residency, orderedLayers, options);
+      const report = {
+        coldArtboardIds: Array.from(coldArtboardIds),
+        cooledLayerCount,
+        cooledLayerIds,
+        coolingPlan,
+        metricsAfter,
+        metricsBefore,
+        releasedRawBytes,
+        releasedRawMiB: this.formatRasterMiB?.(releasedRawBytes) || releasedRawBytes,
+        source: options.reason || "artboard-residency-cold",
+        storedCpuBytes,
+        storedCpuMiB: this.formatRasterMiB?.(storedCpuBytes) || storedCpuBytes,
+        tileResidency: tileReport,
+      };
+
+      this.artboardResidencyLastColdStorage = report;
+      namespace.lastArtboardResidencyColdStorage = report;
+
+      return report;
+    }
+
+    dispatchArtboardResidencyBusy(isBusy, detail = {}) {
+      if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+        return false;
+      }
+
+      try {
+        if (typeof CustomEvent === "function") {
+          window.dispatchEvent(new CustomEvent("cbo:artboard-residency-busy", {
+            detail: {
+              active: Boolean(isBusy),
+              label: "OPTIMIZING",
+              source: "artboard-residency",
+              ...detail,
+            },
+          }));
+        }
+      } catch (error) {
+        return false;
+      }
+
+      return true;
+    }
+
+    afterArtboardResidencyBusyPaint(callback) {
+      const run = typeof callback === "function" ? callback : () => {};
+      const raf = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : (handler) => window.setTimeout?.(handler, 16);
+
+      raf(() => {
+        raf(run);
+      });
+    }
+
+    finishArtboardResidencyBusy() {
+      const hide = () => this.dispatchArtboardResidencyBusy(false, {
+        reason: "artboard-residency-idle-cold",
+      });
+
+      if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+        window.setTimeout(() => this.afterArtboardResidencyBusyPaint(hide), 120);
+      } else {
+        hide();
+      }
+    }
+
+    cancelArtboardResidencyIdleTimer(reason = "cancelled") {
+      if (this.artboardResidencyIdleTimer && typeof window !== "undefined" && typeof window.clearTimeout === "function") {
+        window.clearTimeout(this.artboardResidencyIdleTimer);
+      }
+
+      this.artboardResidencyIdleTimer = 0;
+    }
+
+    scheduleArtboardResidencyMaintenance(residency, options = {}) {
+      if (!residency || !this.isArtboardResidencyEnabled(options)) {
+        this.cancelArtboardResidencyIdleTimer("disabled-or-empty-residency");
+        return false;
+      }
+
+      if (typeof window === "undefined" || typeof window.setTimeout !== "function") {
+        return false;
+      }
+
+      this.artboardResidencyLastViewOptions = this.getArtboardResidencyViewOptions(options);
+      this.cancelArtboardResidencyIdleTimer("rescheduled");
+
+      const metrics = options.metrics || this.collectArtboardResidencyMetrics(residency, options.orderedLayers, options);
+      const pressure = metrics?.budget?.pressure || "ok";
+      const overBudget = pressure === "soft" || pressure === "hard";
+      const hasColdOrWarm = (residency.coldArtboardIds?.length || 0) > 0 ||
+        (residency.warmArtboardIds?.length || 0) > 0 ||
+        overBudget;
+
+      if (!hasColdOrWarm || options.activeStrokeTexture) {
+        return false;
+      }
+
+      const idleDelay = Number.isFinite(Number(this.options?.artboardResidencyIdleDelayMs))
+        ? Math.max(0, Number(this.options.artboardResidencyIdleDelayMs))
+        : ARTBOARD_RESIDENCY_IDLE_DELAY_MS;
+      const warmHold = Number.isFinite(Number(this.options?.artboardResidencyWarmHoldMs))
+        ? Math.max(0, Number(this.options.artboardResidencyWarmHoldMs))
+        : ARTBOARD_RESIDENCY_WARM_HOLD_MS;
+      const delay = pressure === "hard"
+        ? 0
+        : pressure === "soft"
+          ? Math.min(Math.max(0, idleDelay), 250)
+          : Math.max(idleDelay, warmHold);
+
+      this.artboardResidencyIdleTimer = window.setTimeout(() => {
+        this.artboardResidencyIdleTimer = 0;
+
+        if (this.isDisposed) {
+          return;
+        }
+
+        this.dispatchArtboardResidencyBusy(true, {
+          reason: "artboard-residency-idle-cold",
+        });
+
+        this.afterArtboardResidencyBusyPaint(() => {
+          if (this.isDisposed) {
+            this.dispatchArtboardResidencyBusy(false, {
+              reason: "disposed",
+            });
+            return;
+          }
+
+          try {
+            const viewOptions = this.artboardResidencyLastViewOptions || {};
+            const nextResidency = this.resolveAndPublishArtboardResidency({
+              ...viewOptions,
+              now: this.getArtboardResidencyNow(),
+            });
+
+            this.applyArtboardColdStorage(nextResidency, {
+              reason: "artboard-residency-idle-cold",
+            });
+          } finally {
+            this.finishArtboardResidencyBusy();
+          }
+        });
+      }, delay);
+
+      return true;
+    }
+
     resolvePreviewCacheDocumentRect(options = {}) {
       const globalRect = this.getPreviewCacheGlobalDocumentRect();
       const mode = this.getPreviewCacheScopeMode(options);
@@ -4754,10 +6289,12 @@ void main() {
         };
       }
 
-      const artboardRects = this.getPreviewCacheArtboardRects();
-      const visibleArtboards = artboardRects.filter((artboardRect) =>
-        this.documentRectsIntersect(artboardRect, viewportRect.visibleRect)
-      );
+      const artboardResidency = this.resolveArtboardResidency({
+        ...options,
+        viewportRect,
+      });
+      const artboardRects = artboardResidency.artboards.map((artboard) => artboard.rect);
+      const visibleArtboards = artboardResidency.cacheArtboards.map((artboard) => artboard.rect);
 
       if (visibleArtboards.length === 1) {
         const documentRect = visibleArtboards[0];
@@ -4766,32 +6303,38 @@ void main() {
           documentRect,
           scopeInfo: {
             artboardCount: artboardRects.length,
+            cacheArtboardIds: [...artboardResidency.cacheArtboardIds],
             documentRect: { ...documentRect },
             mode: "visible-artboard",
             overscanCssPx: viewportRect.overscanCssPx,
-            reason: "single-visible-artboard",
+            reason: artboardResidency.visibleArtboardIds.length === 1
+              ? "single-visible-artboard"
+              : "active-artboard-fallback",
             renderRect: { ...viewportRect.renderRect },
             scope: mode,
-            visibleArtboardCount: 1,
+            visibleArtboardCount: artboardResidency.visibleArtboardIds.length,
+            visibleArtboardIds: [...artboardResidency.visibleArtboardIds],
             visibleRect: { ...viewportRect.visibleRect },
           },
         };
       }
 
       if (visibleArtboards.length > 1) {
-        const documentRect = viewportRect.renderRect;
+        const documentRect = this.getDocumentRectUnion(visibleArtboards) || viewportRect.renderRect;
 
         return {
           documentRect,
           scopeInfo: {
             artboardCount: artboardRects.length,
+            cacheArtboardIds: [...artboardResidency.cacheArtboardIds],
             documentRect: { ...documentRect },
-            mode: "visible-viewport-artboards",
+            mode: "visible-artboards",
             overscanCssPx: viewportRect.overscanCssPx,
             reason: "multiple-visible-artboards",
             renderRect: { ...viewportRect.renderRect },
             scope: mode,
             visibleArtboardCount: visibleArtboards.length,
+            visibleArtboardIds: [...artboardResidency.visibleArtboardIds],
             visibleRect: { ...viewportRect.visibleRect },
           },
         };
@@ -4805,6 +6348,7 @@ void main() {
           overscanCssPx: viewportRect.overscanCssPx,
           renderRect: { ...viewportRect.renderRect },
           visibleArtboardCount: 0,
+          visibleArtboardIds: [],
           visibleRect: { ...viewportRect.visibleRect },
         },
       };
@@ -5188,6 +6732,7 @@ void main() {
           safeCullCandidates: 0,
           safelyCulled: 0,
           skippedClippingBaseMissing: 0,
+          skippedFlatPreviewFallback: 0,
           skippedInvisible: 0,
           skippedVectorTransformPreview: 0,
           total: 0,
@@ -6006,6 +7551,8 @@ void main() {
       const hadFullInvalidation = this.previewCacheDirty && this.previewDirtyRects === null;
       const dirtyRects = this.getDirtyRegionRectsFromOptions(options);
       const incomingDirtyRectCount = this.getIncomingDirtyRegionRectCount(options);
+
+      this.invalidateArtboardFlatPreviews(reason, options, dirtyRects);
 
       if (!dirtyRects.length && incomingDirtyRectCount > 0) {
         this.emitPreviewDirtyRegionDebug({
@@ -12898,6 +14445,24 @@ void main() {
         if (isLiveTarget) {
           const isPaintTarget = layerId !== "background" && this.isPaintRasterLayer(layerId, target);
           const kind = layerId === "background" ? "background" : isPaintTarget ? "paintTarget" : "layer";
+          const keepColdForArtboard = this.isArtboardResidencyEnabled() &&
+            target.state === "CPU_COLD" &&
+            this.isLayerInColdArtboard(layerId);
+
+          if (keepColdForArtboard) {
+            this.updateRasterTargetResourceMetadata?.(target, {
+              kind,
+              label: layerId,
+              layerId,
+              ownerId: layerId,
+              ownerType: "liveCpuCold",
+              purgeable: true,
+              reason: "artboard-residency-cold-live",
+              state: "CPU_COLD",
+            });
+            updatedCount += 1;
+            continue;
+          }
 
           if ((!target.texture || !target.framebuffer) && target.state === "CPU_COLD") {
             this.hydrateRasterTarget(target, {
@@ -13695,6 +15260,9 @@ void main() {
         dirtyScissors,
       });
       this.previewCacheReady = true;
+      this.captureArtboardFlatPreviewsFromPreviewCache({
+        reason: this.previewCacheReason || "preview-cache-update",
+      });
 
       return true;
       } finally {
@@ -14751,6 +16319,34 @@ void main() {
       }
 
       const orderedLayers = this.getOrderedLayersBottomToTop();
+      const artboardResidency = this.resolveAndPublishArtboardResidency({
+        activeLayerId: activeStrokeLayerId,
+        camera,
+        dpr: options.dpr,
+        renderRect: viewportRenderRect,
+        viewportHeight,
+        viewportRect: {
+          dpr: options.dpr,
+          overscanCssPx: viewportRenderOverscanCssPx,
+          renderRect: viewportRenderRect,
+          visibleRect: viewportVisibleDocRect,
+          zoom: camera.zoom || 1,
+        },
+        viewportWidth,
+        visibleRect: viewportVisibleDocRect,
+      });
+      const artboardFlatPreviewFallbackIds = this.getArtboardFlatPreviewFallbackIds(artboardResidency, orderedLayers, {
+        activeStrokeTexture: Boolean(options.activeStrokeTexture),
+      });
+      const artboardResidencyHydrated = this.hydrateHotArtboardTargets(artboardResidency, orderedLayers, {
+        renderRect: viewportRenderRect,
+        reason: "draw-to-canvas-artboard-residency",
+        skipArtboardIds: artboardFlatPreviewFallbackIds,
+      });
+      const artboardResidencyMetrics = this.collectArtboardResidencyMetrics(artboardResidency, orderedLayers, {
+        camera,
+        dpr: options.dpr,
+      });
       const renderableLayers = orderedLayers.filter((layer) => layer.visible !== false);
       const hasClippingMasks = orderedLayers.some((layer) => layer?.clippingMask === true);
       const isValidClipBaseLayer = (layer) => Boolean(
@@ -14854,6 +16450,21 @@ void main() {
 
       viewportCullingStats.layers.total = orderedLayers.length;
       viewportCullingStats.layers.visible = renderableLayers.length;
+      viewportCullingStats.artboardResidency = artboardResidency
+        ? {
+            activeArtboardId: artboardResidency.activeArtboardId || "",
+            cacheArtboardIds: [...(artboardResidency.cacheArtboardIds || [])],
+            coldArtboardIds: [...(artboardResidency.coldArtboardIds || [])],
+            flatPreviewFallbackArtboardIds: Array.from(artboardFlatPreviewFallbackIds),
+            hotArtboardIds: [...(artboardResidency.hotArtboardIds || [])],
+            hydratedLayerCount: artboardResidencyHydrated,
+            metrics: artboardResidencyMetrics,
+            prefetchArtboardIds: [...(artboardResidency.prefetchArtboardIds || [])],
+            pressure: artboardResidencyMetrics?.budget?.pressure || "ok",
+            visibleArtboardIds: [...(artboardResidency.visibleArtboardIds || [])],
+            warmArtboardIds: [...(artboardResidency.warmArtboardIds || [])],
+          }
+        : null;
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("canvas.draw", {
         activeStroke: Boolean(options.activeStrokeTexture),
         canUsePreviewCache,
@@ -15222,6 +16833,29 @@ void main() {
         gl.blendEquation(gl.FUNC_ADD);
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       };
+      const drawArtboardFlatPreviewFallbacks = () => {
+        if (!artboardFlatPreviewFallbackIds.size) {
+          return 0;
+        }
+
+        let drawnCount = 0;
+
+        artboardFlatPreviewFallbackIds.forEach((artboardId) => {
+          const preview = this.getArtboardFlatPreview(artboardId);
+          const scissor = preview ? getViewportScissorForDocumentRect(preview.rect) : null;
+
+          if (!preview?.texture || !scissor) {
+            return;
+          }
+
+          withViewportScissor(scissor, () => {
+            drawTexture(preview.texture, 1, preview.rect);
+            drawnCount += 1;
+          });
+        });
+
+        return drawnCount;
+      };
       const setPreviewCut = (rect = null) => {
         currentPreviewCutRect = rect;
         if (rect) {
@@ -15310,11 +16944,14 @@ void main() {
           bindArtboardProgram();
         }
 
+        viewportCullingStats.artboardResidency.flatPreviewDrawnCount = drawArtboardFlatPreviewFallbacks();
+
         let currentClipBase = null;
 
         for (const layer of orderedLayers) {
           viewportCullingStats.layers.considered += 1;
           const rawLayerTarget = this.rasterTargetsByLayerId.get(layer.id);
+          const layerArtboardId = this.getLayerArtboardId(layer);
           const isClippingLayer = layer.clippingMask === true;
           const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
           const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
@@ -15346,6 +16983,15 @@ void main() {
             cullingStats: viewportCullingStats,
             renderRect: staticViewportRenderRect,
           };
+
+          if (layerArtboardId && artboardFlatPreviewFallbackIds.has(layerArtboardId)) {
+            if (!isClippingLayer) {
+              currentClipBase = null;
+            }
+
+            viewportCullingStats.layers.skippedFlatPreviewFallback += 1;
+            continue;
+          }
 
           if (!isClippingLayer) {
             const shouldMaterializeClipBase = hasClippingMasks && clipBaseLayerIds.has(layer.id);
@@ -15631,6 +17277,16 @@ void main() {
           layersCulled: viewportCullingStats.layers.safelyCulled,
           sparseTilesSkipped: viewportCullingStats.sparseTiles.skippedOutsideRenderRect,
         });
+        this.scheduleArtboardResidencyMaintenance(artboardResidency, {
+          activeLayerId: activeStrokeLayerId,
+          activeStrokeTexture: Boolean(options.activeStrokeTexture),
+          camera,
+          dpr: options.dpr,
+          metrics: artboardResidencyMetrics,
+          orderedLayers,
+          viewportHeight,
+          viewportWidth,
+        });
         this.finalizeViewportCullingStats(viewportCullingStats);
       }
     }
@@ -15643,6 +17299,7 @@ void main() {
       const gl = this.gl;
 
       this.isDisposed = true;
+      this.cancelArtboardResidencyIdleTimer();
       this.layerModel?.removeEventListener?.("change", this.handleLayerModelChange);
       window.removeEventListener("cbo:document-content-change", this.handleDocumentContentChange);
       window.removeEventListener("cbo:history-change", this.handleHistoryChange);
@@ -15659,6 +17316,7 @@ void main() {
       this.deleteActiveStrokeSelectionClipTexture();
       this.deleteLayerCompositeResources();
       this.deletePreviewCache();
+      this.deleteAllArtboardFlatPreviews("dispose");
 
       if (this.quad) {
         gl.deleteBuffer(this.quad.buffer);

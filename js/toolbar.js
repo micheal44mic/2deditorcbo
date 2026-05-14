@@ -9,6 +9,7 @@ window.CBO.initToolbar = function initToolbar() {
   const mobileTransformToolContainers = document.querySelectorAll("[data-mobile-transform-tools]");
   let historyActionInFlight = false;
   let historyBusyOverlay = null;
+  const busyOverlaySources = new Map();
 
   function setMobileTransformToolsOpen(isOpen) {
     const nextOpen = Boolean(isOpen) && mobileTransformToolContainers.length > 0;
@@ -160,17 +161,37 @@ window.CBO.initToolbar = function initToolbar() {
     return overlay;
   }
 
-  function setHistoryBusy(action, isBusy) {
+  function setBusyOverlaySource(source, labelText, isBusy) {
     const overlay = ensureHistoryBusyOverlay();
     const label = overlay.querySelector(".cbo-history-busy-label");
-    const normalizedAction = String(action || "").trim().toLowerCase();
+    const normalizedSource = String(source || "busy").trim().toLowerCase() || "busy";
+    const normalizedLabel = String(labelText || "LOADING").trim().toUpperCase();
 
-    if (label) {
-      label.textContent = normalizedAction === "redo" ? "REDO" : "UNDO";
+    if (isBusy) {
+      busyOverlaySources.set(normalizedSource, normalizedLabel);
+    } else {
+      busyOverlaySources.delete(normalizedSource);
     }
 
-    overlay.hidden = !isBusy;
-    document.body?.classList.toggle("cbo-history-busy-active", Boolean(isBusy));
+    const activeLabels = Array.from(busyOverlaySources.values());
+    const isAnyBusy = activeLabels.length > 0;
+
+    if (label) {
+      label.textContent = activeLabels.at(-1) || normalizedLabel;
+    }
+
+    overlay.hidden = !isAnyBusy;
+    document.body?.classList.toggle("cbo-history-busy-active", isAnyBusy);
+  }
+
+  function setHistoryBusy(action, isBusy) {
+    const normalizedAction = String(action || "").trim().toLowerCase();
+
+    setBusyOverlaySource(
+      "history",
+      normalizedAction === "redo" ? "REDO" : "UNDO",
+      isBusy,
+    );
   }
 
   function clearHistoryBusy(action) {
@@ -286,6 +307,15 @@ window.CBO.initToolbar = function initToolbar() {
 
   window.addEventListener("cbo:history-change", (event) => {
     updateHistoryButtons(event.detail || {});
+  });
+  window.addEventListener("cbo:artboard-residency-busy", (event) => {
+    const detail = event.detail || {};
+
+    setBusyOverlaySource(
+      "artboard-residency",
+      detail.label || "OPTIMIZING",
+      detail.active === true,
+    );
   });
   updateHistoryButtons({
     canRedo: window.CBO.documentHistory?.redoStack?.length > 0,

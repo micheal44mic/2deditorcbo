@@ -16,6 +16,8 @@ test("dirty region monitor exposes a separate debug menu and telemetry", () => {
   assert.match(indexSource, /<script src="\.\/js\/debug\/dirty-region-monitor\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(source, /const EVENT_NAME = "cbo:preview-dirty-region-debug"/);
   assert.match(source, /const OVERLAY_ID = "cbo-dirty-region-overlay"/);
+  assert.match(source, /const MONITOR_ENABLED_STORAGE_KEY = "cbo:dirty-region-monitor-enabled"/);
+  assert.match(source, /function readStoredMonitorEnabled\(defaultValue = false\)/);
   assert.match(source, /textContent = "Dirty"/);
   assert.match(source, /CBO DIRTY REGIONS/);
   assert.match(source, /collectDirtyRegionTelemetry/);
@@ -43,12 +45,16 @@ test("dirty region monitor exposes a separate debug menu and telemetry", () => {
   assert.match(source, /handleDirtyDebugEvent\(event\)/);
   assert.match(source, /window\.addEventListener\(EVENT_NAME, handleDirtyDebugEvent\)/);
   assert.match(source, /window\.removeEventListener\(EVENT_NAME, handleDirtyDebugEvent\)/);
+  assert.match(source, /setDirtyRegionMonitorEnabled/);
+  assert.match(source, /toggleDirtyRegionMonitor/);
+  assert.match(source, /namespace\.DebugMonitors = \{/);
   assert.match(source, /const fallbackDirtyRegionOverlay = Object\.freeze\(\{/);
   assert.match(source, /loadDirtyRegionOverlayScript\(fallbackDirtyRegionOverlay\)/);
   assert.match(source, /namespace\.dirtyRegionOverlay = fallbackDirtyRegionOverlay/);
   assert.match(source, /namespace\.dirtyRegionsOverlay = fallbackDirtyRegionOverlay/);
   assert.match(source, /namespace\.DirtyRegions = \{/);
   assert.match(source, /startDirtyRegionMonitor\(\{\s*visible: true/);
+  assert.match(source, /if \(readStoredMonitorEnabled\(false\)\)/);
 });
 
 test("dirty region overlay exposes console controls for preview dirty tiles", () => {
