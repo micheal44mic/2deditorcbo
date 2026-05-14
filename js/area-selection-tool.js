@@ -1266,7 +1266,13 @@
   }
 
   function resizeOverlayCanvas(canvas, viewportRect) {
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const dpr = Math.max(
+      1,
+      Number(namespace.brushEngine?.dpr) ||
+        namespace.DocumentRenderer?.getPerformanceDpr?.() ||
+        window.devicePixelRatio ||
+        1,
+    );
     const width = Math.max(1, Math.round(viewportRect.width));
     const height = Math.max(1, Math.round(viewportRect.height));
     const pixelWidth = Math.max(1, Math.round(width * dpr));

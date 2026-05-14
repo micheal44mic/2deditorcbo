@@ -11,9 +11,11 @@ function readRepoFile(...parts) {
 
 test("performance trace exposes console controls and an optional debug menu", () => {
   const source = readRepoFile("js", "debug", "performance-trace.js");
+  const governorSource = readRepoFile("js", "debug", "engine-governor.js");
   const indexSource = readRepoFile("index.html");
 
   assert.match(indexSource, /<script src="\.\/js\/debug\/performance-trace\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/debug\/engine-governor\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(source, /const OVERLAY_ID = "cbo-performance-trace-overlay"/);
   assert.match(source, /textContent = "Trace"/);
   assert.match(source, /CBO PERF TRACE/);
@@ -31,6 +33,18 @@ test("performance trace exposes console controls and an optional debug menu", ()
   assert.match(source, /start: startTrace/);
   assert.match(source, /stop: stopTrace/);
   assert.match(source, /reset: resetTrace/);
+  assert.match(governorSource, /const OVERLAY_ID = "cbo-engine-governor-overlay"/);
+  assert.match(governorSource, /MODE_INTERACTIVE = "interactive"/);
+  assert.match(governorSource, /beginFrame\(detail = \{\}\)/);
+  assert.match(governorSource, /beginRenderSubmit\(detail = \{\}\)/);
+  assert.match(governorSource, /instrumentWebGlContext\(gl\)/);
+  assert.match(governorSource, /recordTextureUpload/);
+  assert.match(governorSource, /recordBufferUpload/);
+  assert.match(governorSource, /wrapContextMethod\(gl, "bufferSubData"/);
+  assert.match(governorSource, /queueUpload\(callback, options = \{\}\)/);
+  assert.match(governorSource, /scheduleUploadPump\(delayMs = 0\)/);
+  assert.match(governorSource, /namespace\.EngineGovernor = api/);
+  assert.match(governorSource, /namespace\.toggleEngineGovernor = toggle/);
 });
 
 test("performance trace marks the expensive editor paths", () => {
@@ -40,6 +54,7 @@ test("performance trace marks the expensive editor paths", () => {
   const textSource = readRepoFile("js", "text", "vector-text-renderer.js");
 
   assert.match(rendererSource, /namespace\.PerfTrace\?\.enabled/);
+  assert.match(rendererSource, /namespace\.EngineGovernor\?\.instrumentWebGlContext\?\.\(gl\)/);
   assert.match(rendererSource, /namespace\.PerfTrace\.mark\("dirty\.commit"/);
   assert.match(rendererSource, /namespace\.PerfTrace\.mark\("preview\.invalidate"/);
   assert.match(rendererSource, /namespace\.PerfTrace\.begin\("preview-cache\.update"/);
@@ -47,6 +62,12 @@ test("performance trace marks the expensive editor paths", () => {
   assert.match(rendererSource, /namespace\.PerfTrace\.begin\("effects\.rasterize"/);
   assert.match(rendererSource, /namespace\.PerfTrace\.begin\("transform\.commit"/);
   assert.match(brushSource, /namespace\.PerfTrace\?\.enabled/);
+  assert.match(brushSource, /namespace\.EngineGovernor\?\.markActivity\?\.\(\{ source: "brush-pointermove" \}\)/);
+  assert.match(brushSource, /namespace\.EngineGovernor/);
+  assert.match(brushSource, /beginFrame\?\.\(\{/);
+  assert.match(brushSource, /beginRenderSubmit\?\.\(\{/);
+  assert.match(brushSource, /runOrQueueTextureUpload\("brush-shape-upload"/);
+  assert.match(brushSource, /runOrQueueTextureUpload\("brush-grain-upload"/);
   assert.match(brushSource, /namespace\.PerfTrace\.begin\("brush\.process-stamps"/);
   assert.match(brushSource, /namespace\.PerfTrace\.begin\("brush\.flush-stamps"/);
   assert.match(brushSource, /brush\.flush-stamps\.\$\{name\}/);

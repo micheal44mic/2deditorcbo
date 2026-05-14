@@ -21,11 +21,15 @@ test("brush engine maps non-pen pointer velocity to smoothed pressure", () => {
 
   assert.match(source, /const STROKE_SAMPLE_CLAMP_MIN_PADDING = 64/);
   assert.match(source, /const MAX_STAMPS_PER_FLUSH = 4096/);
+  assert.match(source, /const MOBILE_MAX_STAMPS_PER_FLUSH = 1024/);
   assert.match(source, /const VELOCITY_PRESSURE_MAX_SPEED = 5/);
   assert.match(source, /const VELOCITY_PRESSURE_SMOOTHING = 0\.02/);
   assert.match(source, /clampStrokeSamplePoint\(x, y\)/);
   assert.match(source, /const point = this\.clampStrokeSamplePoint\(docX, docY\)/);
-  assert.match(source, /this\.stampsBuffer\.length >= MAX_STAMPS_PER_FLUSH/);
+  assert.match(source, /getMaxStampsPerFlush\(\)/);
+  assert.match(source, /this\.stampsBuffer\.length >= this\.getMaxStampsPerFlush\(\)/);
+  assert.match(source, /uploadStampInstanceData\(instanceData\)/);
+  assert.match(source, /gl\.bufferSubData\(gl\.ARRAY_BUFFER, 0, instanceData\)/);
   assert.match(source, /this\.brushState\.velocityPressureEnabled === true/);
   assert.match(source, /pointerType !== "pen"/);
   assert.match(source, /this\.currentStrokeTool !== "eraser"/);

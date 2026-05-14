@@ -17,6 +17,14 @@ window.CBO = window.CBO || {};
   const ERASER_EMPTY_LAYER_TOAST_MS = 800;
   const ERASER_EMPTY_LAYER_TOAST_THROTTLE_MS = 1600;
   const MAX_STAMPS_PER_FLUSH = 4096;
+  const MOBILE_MAX_STAMPS_PER_FLUSH = 1024;
+  const DESKTOP_POINTER_SAMPLES_PER_FRAME = 96;
+  const MOBILE_POINTER_SAMPLES_PER_FRAME = 48;
+  const DESKTOP_POINTER_FRAME_BUDGET_MS = 7;
+  const MOBILE_POINTER_FRAME_BUDGET_MS = 4;
+  const POINTER_SAMPLE_BACKLOG_MULTIPLIER = 2;
+  const DESKTOP_STROKE_SEGMENT_MIN_SAMPLES = 8;
+  const MOBILE_STROKE_SEGMENT_MIN_SAMPLES = 4;
   const BRUSH_HISTORY_BATCH_IDLE_MS = 1000;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_MIB = 1024 * 1024;
@@ -582,6 +590,9 @@ void main() {
       this.taperSpacingCap = null;
       this.recordedStroke = [];
       this.lastRecordedStroke = [];
+      this.pendingPointerSamples = [];
+      this.activeTouchPointers = new Map();
+      this.touchNavigationGesture = null;
       this.isDrawing = false;
       this.activePointerId = null;
       this.isPanning = false;
@@ -650,6 +661,10 @@ void main() {
       this.grainTextureRequestId = 0;
       this.grainImageWidth = 1;
       this.grainImageHeight = 1;
+      this.stampInstanceData = null;
+      this.stampInstanceCapacity = 0;
+      this.brushInstanceVboCapacityBytes = 0;
+      this.grainRotationMatrixData = new Float32Array(4);
       this.fullscreenQuad = null;
 
       this.handleResize = this.handleResize.bind(this);
@@ -762,7 +777,7 @@ void main() {
       const rect = this.canvas.getBoundingClientRect();
       const cssWidth = Math.max(1, this.canvas.clientWidth || Math.round(rect.width) || 1);
       const cssHeight = Math.max(1, this.canvas.clientHeight || Math.round(rect.height) || 1);
-      const nextDpr = Math.max(1, window.devicePixelRatio || 1);
+      const nextDpr = namespace.DocumentRenderer?.getPerformanceDpr?.() || Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
       const nextWidth = Math.max(1, Math.round(cssWidth * nextDpr));
       const nextHeight = Math.max(1, Math.round(cssHeight * nextDpr));
       const didResize =
@@ -2149,7 +2164,7 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
 
-      return { vao, quadVBO, instanceVBO };
+      return { instanceVBO, instanceVBOCapacityBytes: 0, quadVBO, vao };
     }
 
     observeViewportSize() {
@@ -2345,13 +2360,44 @@ void main() {
             return;
           }
 
-          this.uploadShapeTexture(image);
+          this.runOrQueueTextureUpload("brush-shape-upload", image, requestId, () => {
+            if (!this.isDisposed && requestId === this.shapeTextureRequestId) {
+              this.uploadShapeTexture(image);
+            }
+          });
         })
         .catch(() => {
           if (requestId === this.shapeTextureRequestId) {
             this.shapeTextureReady = false;
           }
         });
+    }
+
+    estimateImageUploadBytes(image) {
+      const width = Math.max(1, Number(image?.naturalWidth || image?.width || 1));
+      const height = Math.max(1, Number(image?.naturalHeight || image?.height || 1));
+
+      return Math.max(4, Math.round(width * height * 4));
+    }
+
+    runOrQueueTextureUpload(label, image, version, callback) {
+      if (typeof callback !== "function") {
+        return false;
+      }
+
+      const governor = namespace.EngineGovernor;
+      const bytes = this.estimateImageUploadBytes(image);
+
+      if (!governor || governor.canUpload?.(bytes, { critical: false }) !== false) {
+        callback();
+        return true;
+      }
+
+      return governor.queueUpload?.(callback, {
+        bytes,
+        label,
+        version,
+      }) === true;
     }
 
     uploadShapeTexture(image) {
@@ -2426,7 +2472,11 @@ void main() {
             return;
           }
 
-          this.uploadGrainTexture(image);
+          this.runOrQueueTextureUpload("brush-grain-upload", image, requestId, () => {
+            if (!this.isDisposed && requestId === this.grainTextureRequestId) {
+              this.uploadGrainTexture(image);
+            }
+          });
         })
         .catch(() => {
           if (requestId === this.grainTextureRequestId) {
@@ -2571,6 +2621,135 @@ void main() {
       this.requestDraw();
     }
 
+    getTouchNavigationPointers() {
+      return Array.from(this.activeTouchPointers.values())
+        .filter((pointer) => pointer && Number.isFinite(pointer.clientX) && Number.isFinite(pointer.clientY))
+        .sort((first, second) => first.pointerId - second.pointerId);
+    }
+
+    getTouchNavigationGeometry(pointers = this.getTouchNavigationPointers()) {
+      if (!Array.isArray(pointers) || pointers.length < 2) {
+        return null;
+      }
+
+      const first = pointers[0];
+      const second = pointers[1];
+      const centerClientX = (first.clientX + second.clientX) * 0.5;
+      const centerClientY = (first.clientY + second.clientY) * 0.5;
+      const centerX = centerClientX * this.dpr;
+      const centerY = centerClientY * this.dpr;
+      const distance = Math.max(
+        1,
+        Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY) * this.dpr,
+      );
+
+      return {
+        centerClientX,
+        centerClientY,
+        centerX,
+        centerY,
+        distance,
+        pointerIds: [first.pointerId, second.pointerId],
+      };
+    }
+
+    cancelActiveStrokeForTouchNavigation() {
+      if (!this.isDrawing) {
+        return false;
+      }
+
+      const pointerId = this.activePointerId;
+
+      if (pointerId != null && this.canvas.hasPointerCapture?.(pointerId)) {
+        this.canvas.releasePointerCapture(pointerId);
+      }
+
+      this.clearStrokeLayer();
+      this.releaseStrokeLayerTarget();
+      this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+      this.clearPendingPointerSamples();
+      this.recordedStroke = [];
+      this.resetStrokeRuntimeState();
+      this.isDrawing = false;
+      this.activePointerId = null;
+      this.requestDraw();
+
+      return true;
+    }
+
+    beginTouchNavigationGesture() {
+      const geometry = this.getTouchNavigationGeometry();
+
+      if (!geometry) {
+        return false;
+      }
+
+      this.cancelActiveStrokeForTouchNavigation();
+
+      if (this.isPanning) {
+        this.endPan();
+      }
+
+      this.touchNavigationGesture = {
+        lastCenterX: geometry.centerX,
+        lastCenterY: geometry.centerY,
+        lastDistance: geometry.distance,
+        pointerIds: geometry.pointerIds,
+      };
+      namespace.EngineGovernor?.markActivity?.({ source: "touch-navigation-start" });
+
+      return true;
+    }
+
+    updateTouchNavigationGesture() {
+      if (!this.touchNavigationGesture) {
+        return false;
+      }
+
+      const pointers = this.touchNavigationGesture.pointerIds
+        .map((pointerId) => this.activeTouchPointers.get(pointerId))
+        .filter(Boolean);
+      const geometry = this.getTouchNavigationGeometry(pointers);
+
+      if (!geometry) {
+        this.touchNavigationGesture = null;
+        return false;
+      }
+
+      const oldZoom = this.camera.zoom;
+      const previousCenterX = this.touchNavigationGesture.lastCenterX;
+      const previousCenterY = this.touchNavigationGesture.lastCenterY;
+      const previousDistance = Math.max(1, this.touchNavigationGesture.lastDistance || geometry.distance);
+      const factor = geometry.distance / previousDistance;
+      const docX = (previousCenterX - this.camera.x) / oldZoom;
+      const docY = (previousCenterY - this.camera.y) / oldZoom;
+      const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom * factor));
+
+      this.camera.zoom = newZoom;
+      this.camera.x = geometry.centerX - docX * newZoom;
+      this.camera.y = geometry.centerY - docY * newZoom;
+      this.touchNavigationGesture.lastCenterX = geometry.centerX;
+      this.touchNavigationGesture.lastCenterY = geometry.centerY;
+      this.touchNavigationGesture.lastDistance = geometry.distance;
+      this.userManipulatedCamera = true;
+      namespace.EngineGovernor?.markActivity?.({ source: "touch-navigation" });
+      this.requestDraw();
+
+      return true;
+    }
+
+    forgetTouchNavigationPointer(pointerId) {
+      this.activeTouchPointers.delete(pointerId);
+
+      if (!this.touchNavigationGesture) {
+        return;
+      }
+
+      if (this.activeTouchPointers.size < 2) {
+        this.touchNavigationGesture = null;
+      }
+    }
+
     isTemporaryPanTrigger(event) {
       return event.button === 1 || (event.button === 0 && this.isSpaceHeld);
     }
@@ -2601,6 +2780,7 @@ void main() {
       const currentX = event.clientX * this.dpr;
       const currentY = event.clientY * this.dpr;
 
+      namespace.EngineGovernor?.markActivity?.({ source: "pan" });
       this.camera.x += currentX - this.panLastViewportX;
       this.camera.y += currentY - this.panLastViewportY;
       this.panLastViewportX = currentX;
@@ -2624,6 +2804,23 @@ void main() {
     }
 
     handleNavigationPointerDown(event) {
+      if (this.isDisposed) {
+        return;
+      }
+
+      if (event.pointerType === "touch") {
+        this.activeTouchPointers.set(event.pointerId, {
+          clientX: event.clientX,
+          clientY: event.clientY,
+          pointerId: event.pointerId,
+        });
+
+        if (this.activeTouchPointers.size >= 2 && this.beginTouchNavigationGesture()) {
+          this.markNavigationEvent(event);
+        }
+        return;
+      }
+
       if (this.isDisposed || !this.isTemporaryPanTrigger(event)) {
         return;
       }
@@ -2638,6 +2835,20 @@ void main() {
     }
 
     handleNavigationPointerMove(event) {
+      if (event.pointerType === "touch" && this.activeTouchPointers.has(event.pointerId)) {
+        this.activeTouchPointers.set(event.pointerId, {
+          clientX: event.clientX,
+          clientY: event.clientY,
+          pointerId: event.pointerId,
+        });
+
+        if (this.touchNavigationGesture) {
+          this.markNavigationEvent(event);
+          this.updateTouchNavigationGesture();
+        }
+        return;
+      }
+
       if (this.isDisposed || !this.isPanning || this.activePanPointerId !== event.pointerId) {
         return;
       }
@@ -2647,6 +2858,14 @@ void main() {
     }
 
     handleNavigationPointerUp(event) {
+      if (event.pointerType === "touch") {
+        if (this.touchNavigationGesture) {
+          this.markNavigationEvent(event);
+        }
+        this.forgetTouchNavigationPointer(event.pointerId);
+        return;
+      }
+
       if (this.isDisposed || !this.isPanning || this.activePanPointerId !== event.pointerId) {
         return;
       }
@@ -2656,6 +2875,14 @@ void main() {
     }
 
     handleNavigationPointerCancel(event) {
+      if (event.pointerType === "touch") {
+        if (this.touchNavigationGesture) {
+          this.markNavigationEvent(event);
+        }
+        this.forgetTouchNavigationPointer(event.pointerId);
+        return;
+      }
+
       if (!this.isPanning || this.activePanPointerId !== event.pointerId) {
         return;
       }
@@ -2705,6 +2932,8 @@ void main() {
 
     handleWindowBlur() {
       this.isSpaceHeld = false;
+      this.activeTouchPointers.clear();
+      this.touchNavigationGesture = null;
 
       if (this.isPanning) {
         this.endPan();
@@ -2767,6 +2996,7 @@ void main() {
       const { docX, docY } = this.screenToDocumentSpace(event.clientX, event.clientY);
       const isMouse = event.pointerType === "mouse";
       const point = this.clampStrokeSamplePoint(docX, docY);
+      const eventTime = Number(event.timeStamp);
 
       return {
         x: point.x,
@@ -2775,7 +3005,7 @@ void main() {
         pointerType: event.pointerType || "",
         tiltX: isMouse ? 0 : event.tiltX,
         tiltY: isMouse ? 0 : event.tiltY,
-        time: performance.now(),
+        time: Number.isFinite(eventTime) && eventTime > 0 ? eventTime : performance.now(),
       };
     }
 
@@ -2971,6 +3201,34 @@ void main() {
         y: processed.point.y,
         pressure: this.resolveSamplePressure(rawSample, processed.pressure),
       };
+    }
+
+    isMobilePerformanceMode() {
+      return namespace.DocumentRenderer?.isMobileLikeEnvironment?.() === true;
+    }
+
+    getPointerSamplesPerFrame() {
+      return this.isMobilePerformanceMode()
+        ? MOBILE_POINTER_SAMPLES_PER_FRAME
+        : DESKTOP_POINTER_SAMPLES_PER_FRAME;
+    }
+
+    getPointerFrameBudgetMs() {
+      return this.isMobilePerformanceMode()
+        ? MOBILE_POINTER_FRAME_BUDGET_MS
+        : DESKTOP_POINTER_FRAME_BUDGET_MS;
+    }
+
+    getMaxStampsPerFlush() {
+      return this.isMobilePerformanceMode()
+        ? MOBILE_MAX_STAMPS_PER_FLUSH
+        : MAX_STAMPS_PER_FLUSH;
+    }
+
+    getNow() {
+      return typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
     }
 
     shouldUseVelocityPressure(sample) {
@@ -3533,6 +3791,14 @@ void main() {
 
     lerp(start, end, t) {
       return start + (end - start) * t;
+    }
+
+    getStrokeSegmentSampleCount(segmentDistance) {
+      const minSamples = this.isMobilePerformanceMode()
+        ? MOBILE_STROKE_SEGMENT_MIN_SAMPLES
+        : DESKTOP_STROKE_SEGMENT_MIN_SAMPLES;
+
+      return Math.max(minSamples, Math.min(128, Math.ceil(segmentDistance / 4)));
     }
 
     catmullRom(p0, p1, p2, p3, t) {
@@ -4302,6 +4568,10 @@ void main() {
       if (
         this.currentStrokeTool === "eraser" ||
         !this.isDrawing ||
+        (
+          namespace.interactiveBrushPrewarmEnabled !== true &&
+          namespace.EngineGovernor?.mode === "interactive"
+        ) ||
         this.activeStrokeTargetPrewarmFrame ||
         this.isDisposed ||
         typeof this.documentRenderer?.prewarmRasterTargetsForPaintRect !== "function"
@@ -4335,6 +4605,10 @@ void main() {
       if (
         this.currentStrokeTool === "eraser" ||
         !this.isDrawing ||
+        (
+          namespace.interactiveBrushPrewarmEnabled !== true &&
+          namespace.EngineGovernor?.mode === "interactive"
+        ) ||
         typeof this.documentRenderer?.prewarmRasterTargetsForPaintRect !== "function"
       ) {
         return 0;
@@ -4433,6 +4707,8 @@ void main() {
 
     warmPreviewCacheForStroke() {
       if (
+        this.isDrawing ||
+        namespace.EngineGovernor?.mode === "interactive" ||
         namespace.smudgeEngine?.isDragging ||
         !this.documentRenderer?.updatePreviewCacheIfNeeded
       ) {
@@ -4855,11 +5131,12 @@ void main() {
       }
     }
 
-    processStamps() {
+    processStamps(options = {}) {
       if (this.currentStroke.length !== 4) {
         return;
       }
 
+      const deferFlush = options.deferFlush === true;
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.process-stamps", {
         tool: this.currentStrokeTool || "brush",
       }) : null;
@@ -4871,11 +5148,13 @@ void main() {
       if (segmentDistance <= 0) {
         this.applyPendingShapeRotation(this.getPointTangent(p2, p3));
         this.currentStroke.shift();
-        this.flushStamps();
+        if (!deferFlush) {
+          this.flushStamps();
+        }
         return;
       }
 
-      const sampleCount = Math.max(8, Math.min(128, Math.ceil(segmentDistance / 4)));
+      const sampleCount = this.getStrokeSegmentSampleCount(segmentDistance);
       let previousPoint = this.catmullRom(p0, p1, p2, p3, 0);
 
       for (let index = 1; index <= sampleCount; index += 1) {
@@ -4905,8 +5184,8 @@ void main() {
             stamp.sizeScale = 1;
             this.applyTaperToStamp(stamp);
             this.pushShapeStamps(stamp, tangent);
-            if (this.stampsBuffer.length >= MAX_STAMPS_PER_FLUSH) {
-              this.flushStamps();
+            if (this.stampsBuffer.length >= this.getMaxStampsPerFlush()) {
+              this.flushStamps({ requestDraw: !deferFlush });
             }
             this.leftoverDistance -= stampDistance;
             this.nextStampDistance = this.getStampSpacing(stamp.sizeScale);
@@ -4917,7 +5196,9 @@ void main() {
       }
 
       this.currentStroke.shift();
-      this.flushStamps();
+      if (!deferFlush) {
+        this.flushStamps();
+      }
       } finally {
         trace?.end({
           bufferedStamps: this.stampsBuffer.length,
@@ -4926,7 +5207,56 @@ void main() {
       }
     }
 
-    flushStamps() {
+    getStampInstanceData(stampCount) {
+      const requiredFloats = Math.max(14, Math.round(Number(stampCount) || 0) * 14);
+
+      if (!this.stampInstanceData || this.stampInstanceCapacity < requiredFloats) {
+        const previousCapacity = Math.max(0, Math.round(Number(this.stampInstanceCapacity) || 0));
+        const nextCapacity = Math.max(requiredFloats, Math.ceil(previousCapacity * 1.5), 14 * 256);
+
+        this.stampInstanceData = new Float32Array(nextCapacity);
+        this.stampInstanceCapacity = nextCapacity;
+      }
+
+      return this.stampInstanceData.subarray(0, requiredFloats);
+    }
+
+    uploadStampInstanceData(instanceData) {
+      if (!instanceData?.byteLength || !this.brush?.instanceVBO) {
+        return { allocatedBytes: 0, uploadedBytes: 0, vboCapacityBytes: 0 };
+      }
+
+      const gl = this.gl;
+      const requiredBytes = Math.max(0, Math.round(instanceData.byteLength));
+      const previousCapacity = Math.max(
+        0,
+        Math.round(Number(this.brush.instanceVBOCapacityBytes || this.brushInstanceVboCapacityBytes) || 0),
+      );
+      let nextCapacity = previousCapacity;
+      let allocatedBytes = 0;
+
+      if (requiredBytes > previousCapacity) {
+        nextCapacity = Math.max(
+          requiredBytes,
+          Math.ceil(previousCapacity * 1.5),
+          56 * 256,
+        );
+        gl.bufferData(gl.ARRAY_BUFFER, nextCapacity, gl.DYNAMIC_DRAW);
+        this.brush.instanceVBOCapacityBytes = nextCapacity;
+        this.brushInstanceVboCapacityBytes = nextCapacity;
+        allocatedBytes = nextCapacity;
+      }
+
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, instanceData);
+
+      return {
+        allocatedBytes,
+        uploadedBytes: requiredBytes,
+        vboCapacityBytes: nextCapacity,
+      };
+    }
+
+    flushStamps(options = {}) {
       if (this.stampsBuffer.length === 0) {
         return;
       }
@@ -4961,7 +5291,7 @@ void main() {
         stampCount,
       });
       // 14 float per istanza: base dab + colore + dati grain Moving.
-      const instanceData = new Float32Array(stampCount * 14);
+      const instanceData = this.getStampInstanceData(stampCount);
       const brushSize = this.getBrushSize();
       const fallbackColor = this.getCurrentStrokeColorRgb();
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
@@ -5018,7 +5348,13 @@ void main() {
         const grainRotation = grainMode === "moving" ? 0 : this.getGrainRotationRadians();
         const cos = Math.cos(grainRotation);
         const sin = Math.sin(grainRotation);
-        const rotationMatrix = new Float32Array([cos, sin, -sin, cos]);
+        const rotationMatrix = this.grainRotationMatrixData || new Float32Array(4);
+
+        rotationMatrix[0] = cos;
+        rotationMatrix[1] = sin;
+        rotationMatrix[2] = -sin;
+        rotationMatrix[3] = cos;
+        this.grainRotationMatrixData = rotationMatrix;
 
         gl.uniform2f(this.brushProgramInfo.uniforms.grainTexSize, this.grainImageWidth, this.grainImageHeight);
         gl.uniform1i(this.brushProgramInfo.uniforms.grainMode, grainMode === "moving" ? 1 : 0);
@@ -5044,10 +5380,8 @@ void main() {
         bytes: instanceData.byteLength,
         stampCount,
       });
-      gl.bufferData(gl.ARRAY_BUFFER, instanceData, gl.DYNAMIC_DRAW);
-      uploadTrace?.end({
-        bytes: instanceData.byteLength,
-      });
+      const uploadReport = this.uploadStampInstanceData(instanceData);
+      uploadTrace?.end(uploadReport);
 
       const drawTrace = beginFlushTrace("draw-stamps", {
         scissor: Boolean(flushScissor),
@@ -5104,7 +5438,9 @@ void main() {
       this.stampsBuffer.length = 0;
       this.strokeStampCount += stampCount;
       this.maybeBakeStrokeIncrementally("flush-stamps-scratch-pressure");
-      this.requestDraw();
+      if (options.requestDraw !== false) {
+        this.requestDraw();
+      }
       } finally {
         trace?.end({
           scissor: flushUsedScissor,
@@ -5250,19 +5586,33 @@ void main() {
       const triggeredByBytes = scratchBytes >= STROKE_SCRATCH_SOFT_EVICT_BYTES;
       const triggeredByCoverage = coverage >= STROKE_INCREMENTAL_BAKE_COVERAGE;
       const safety = this.getIncrementalStrokeBakeSafety();
-      const shouldBake = Boolean((triggeredByBytes || triggeredByCoverage) && safety.allowed);
+      const deferredByInteractiveFrame = Boolean(
+        this.isDrawing &&
+        namespace.EngineGovernor?.mode === "interactive" &&
+        scratchBytes < STROKE_SCRATCH_HARD_WARN_BYTES
+      );
+      const shouldBake = Boolean(
+        !deferredByInteractiveFrame &&
+        (triggeredByBytes || triggeredByCoverage) &&
+        safety.allowed
+      );
       const skipReason = shouldBake
         ? ""
         : (
-            triggeredByBytes || triggeredByCoverage
-              ? safety.reason
-              : "below-threshold"
+            deferredByInteractiveFrame
+              ? "interactive-frame"
+              : (
+                  triggeredByBytes || triggeredByCoverage
+                    ? safety.reason
+                    : "below-threshold"
+                )
           );
       const decision = {
         allowed: Boolean(safety.allowed),
         buildUp: safety.buildUp,
         coverage,
         coveragePercent: Number((coverage * 100).toFixed(2)),
+        deferredByInteractiveFrame,
         forced: Boolean(safety.forced),
         reason,
         renderingMode: safety.renderingMode || "",
@@ -6511,6 +6861,129 @@ void main() {
       this.replayStroke(this.lastRecordedStroke);
     }
 
+    getPointerEventSamples(event) {
+      const events = typeof event.getCoalescedEvents === "function"
+        ? event.getCoalescedEvents()
+        : null;
+      const sourceEvents = Array.isArray(events) && events.length > 0 ? events : [event];
+
+      return sourceEvents.map((sourceEvent) => this.createPointerSample(sourceEvent));
+    }
+
+    enqueuePointerMoveSamples(event) {
+      const samples = this.getPointerEventSamples(event);
+
+      if (samples.length === 0) {
+        return false;
+      }
+
+      if (!Array.isArray(this.pendingPointerSamples)) {
+        this.pendingPointerSamples = [];
+      }
+
+      if (!Array.isArray(this.recordedStroke)) {
+        this.recordedStroke = [];
+      }
+
+      this.recordedStroke.push(...samples);
+      this.pendingPointerSamples.push(...samples);
+
+      return true;
+    }
+
+    takePointerSamplesForFrame(options = {}) {
+      if (!Array.isArray(this.pendingPointerSamples) || this.pendingPointerSamples.length === 0) {
+        return [];
+      }
+
+      if (options.drainAll === true) {
+        return this.pendingPointerSamples.splice(0);
+      }
+
+      const budget = Math.max(1, Math.round(Number(options.maxSamples) || this.getPointerSamplesPerFrame()));
+
+      if (this.pendingPointerSamples.length <= budget) {
+        return this.pendingPointerSamples.splice(0);
+      }
+
+      const backlogLimit = budget * POINTER_SAMPLE_BACKLOG_MULTIPLIER;
+
+      if (this.pendingPointerSamples.length <= backlogLimit) {
+        return this.pendingPointerSamples.splice(0, budget);
+      }
+
+      const backlog = this.pendingPointerSamples.splice(0);
+      const result = [];
+      const lastIndex = backlog.length - 1;
+
+      for (let index = 0; index < budget; index += 1) {
+        const sourceIndex = Math.round((index / Math.max(1, budget - 1)) * lastIndex);
+
+        result.push(backlog[sourceIndex]);
+      }
+
+      namespace.lastBrushPointerBacklogDrop = {
+        droppedSamples: Math.max(0, backlog.length - result.length),
+        keptSamples: result.length,
+        pendingSamples: backlog.length,
+        timestamp: Date.now(),
+      };
+
+      return result;
+    }
+
+    processPendingPointerSamples(options = {}) {
+      if (!this.isDrawing || !Array.isArray(this.pendingPointerSamples) || this.pendingPointerSamples.length === 0) {
+        return false;
+      }
+
+      const samples = this.takePointerSamplesForFrame(options);
+      const frameBudgetMs = options.drainAll === true ? Infinity : this.getPointerFrameBudgetMs();
+      const startedAt = this.getNow();
+      let processedCount = 0;
+
+      for (let index = 0; index < samples.length; index += 1) {
+        const sample = samples[index];
+
+        this.currentStroke.push(this.applyStabilization(sample));
+        this.processStamps({ deferFlush: true });
+        processedCount += 1;
+
+        if (
+          index < samples.length - 1 &&
+          Number.isFinite(frameBudgetMs) &&
+          this.getNow() - startedAt >= frameBudgetMs
+        ) {
+          this.pendingPointerSamples.unshift(...samples.slice(index + 1));
+          namespace.lastBrushPointerFrameBudget = {
+            budgetMs: frameBudgetMs,
+            processedSamples: processedCount,
+            remainingSamples: this.pendingPointerSamples.length,
+            timestamp: Date.now(),
+          };
+          break;
+        }
+      }
+
+      if (processedCount > 0 && options.flush !== false) {
+        this.flushStamps({ requestDraw: options.requestDraw !== false });
+      }
+
+      if (this.pendingPointerSamples.length > 0) {
+        this.requestDraw();
+      }
+
+      return processedCount > 0;
+    }
+
+    clearPendingPointerSamples() {
+      if (Array.isArray(this.pendingPointerSamples)) {
+        this.pendingPointerSamples.length = 0;
+      } else {
+        this.pendingPointerSamples = [];
+      }
+    }
+
     handlePointerDown(event) {
       if (event.__cboNavigationHandled) {
         return;
@@ -6546,6 +7019,7 @@ void main() {
       }
 
       event.preventDefault();
+      namespace.EngineGovernor?.markActivity?.({ source: "brush-pointerdown" });
       this.clearPendingBrushHistoryTimer();
       const strokeTool = this.activeStrokeTool || "brush";
       let strokeTarget = null;
@@ -6573,6 +7047,7 @@ void main() {
       this.activeStrokeTilePatchRects = null;
       this.strokePreviewDirtyRects = null;
       this.lastStrokePreviewDirtyRects = null;
+      this.clearPendingPointerSamples();
       this.warmPreviewCacheForStroke();
       this.currentStrokeTool = strokeTool;
       this.strokeTargetLayerId = strokeTarget?.layerId || null;
@@ -6612,11 +7087,8 @@ void main() {
       }
 
       event.preventDefault();
-      const rawSample = this.createPointerSample(event);
-
-      this.recordedStroke.push(rawSample);
-      this.currentStroke.push(this.applyStabilization(rawSample));
-      this.processStamps();
+      namespace.EngineGovernor?.markActivity?.({ source: "brush-pointermove" });
+      this.enqueuePointerMoveSamples(event);
       this.requestDraw();
     }
 
@@ -6636,8 +7108,13 @@ void main() {
       }
 
       event.preventDefault();
+      namespace.EngineGovernor?.markActivity?.({ source: "brush-pointerup" });
 
       try {
+        this.processPendingPointerSamples({
+          drainAll: true,
+          requestDraw: false,
+        });
         const rawSample = this.createPointerSample(event);
 
         this.recordedStroke.push(rawSample);
@@ -6670,6 +7147,7 @@ void main() {
 
         this.releaseStrokeLayerTarget();
         this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+        this.clearPendingPointerSamples();
         if (this.pendingBrushHistory) {
           this.schedulePendingBrushHistoryCommit();
         }
@@ -6701,6 +7179,7 @@ void main() {
 
       this.releaseStrokeLayerTarget();
       this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+      this.clearPendingPointerSamples();
       this.recordedStroke = [];
       this.resetStrokeRuntimeState();
       this.isDrawing = false;
@@ -6765,25 +7244,56 @@ void main() {
       return true;
     }
 
-    renderLoop() {
+    renderLoop(frameTimestamp = 0) {
       if (this.isDisposed) {
         return;
       }
 
+      const governor = namespace.EngineGovernor;
+      const frameMode = this.isDrawing || this.isPanning || this.touchNavigationGesture || namespace.smudgeEngine?.isDragging
+        ? "interactive"
+        : undefined;
+
       this.frameRequest = 0;
+      governor?.beginFrame?.({
+        activeStroke: this.isDrawing,
+        dpr: this.dpr,
+        frameTimestamp,
+        mode: frameMode,
+        pendingPointerSamples: Array.isArray(this.pendingPointerSamples) ? this.pendingPointerSamples.length : 0,
+        source: "brush-engine",
+      });
 
-      if (this.resizeViewport() && !this.userManipulatedCamera) {
-        this.centerCamera();
+      try {
+        if (this.resizeViewport() && !this.userManipulatedCamera) {
+          this.centerCamera();
+        }
+
+        this.draw();
+      } finally {
+        governor?.endFrame?.({
+          activeStroke: this.isDrawing,
+          dpr: this.dpr,
+        });
       }
-
-      this.draw();
     }
 
     draw() {
+      this.processPendingPointerSamples({
+        requestDraw: false,
+      });
       const target = this.getDocumentDrawTarget();
       const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
       const allowPreviewCache = !namespace.smudgeEngine?.isDragging;
+      const deferPreviewCacheUpdate = this.isDrawing || this.isPanning || this.touchNavigationGesture || namespace.smudgeEngine?.isDragging;
+      const endRenderSubmit = namespace.EngineGovernor?.beginRenderSubmit?.({
+        activeStroke: this.isDrawing,
+        allowPreviewCache,
+        deferPreviewCacheUpdate,
+        source: "document-renderer",
+      });
 
+      try {
       this.documentRenderer.drawToCanvas({
         allowPreviewCache,
         activeStrokeClipRect: namespace.areaSelection?.hasSelection?.()
@@ -6798,10 +7308,19 @@ void main() {
           : null,
         activeStrokeTexture: this.isDrawing ? this.strokeTexture : null,
         camera: this.camera,
+        deferPreviewCacheUpdate,
         dpr: this.dpr,
         viewportWidth: this.viewportWidth,
         viewportHeight: this.viewportHeight,
       });
+      } finally {
+        const viewportStats = this.documentRenderer?.getLastViewportCullingStats?.() || namespace.lastViewportCullingStats || null;
+
+        endRenderSubmit?.({
+          cacheMisses: allowPreviewCache && this.documentRenderer?.previewCacheDirty ? 1 : 0,
+          visibleTiles: Number(viewportStats?.sparseTiles?.drawn) || 0,
+        });
+      }
 
       this.dispatchCameraChangeIfNeeded();
     }
@@ -6848,6 +7367,8 @@ void main() {
       this.canvas.style.cursor = "";
       document.body?.classList.remove("cbo-canvas-pan-active", "cbo-canvas-pan-ready");
       this.discardPendingBrushHistory();
+      this.activeTouchPointers.clear();
+      this.touchNavigationGesture = null;
       if (this.emptyEraserLayerToastTimer) {
         window.clearTimeout?.(this.emptyEraserLayerToastTimer);
         this.emptyEraserLayerToastTimer = 0;

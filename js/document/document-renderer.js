@@ -32,9 +32,15 @@
   const RASTER_SCRATCH_SOFT_EVICT_BYTES = 96 * RASTER_MIB;
   const RASTER_SCRATCH_HARD_WARN_BYTES = 128 * RASTER_MIB;
   const RASTER_SCRATCH_TOP_RESOURCE_LIMIT = 8;
+  const DESKTOP_RENDER_DPR_CAP = 2;
+  const MOBILE_RENDER_DPR_CAP = 1.5;
+  const LOW_MEMORY_MOBILE_RENDER_DPR_CAP = 1.25;
+  const MOBILE_PREVIEW_CACHE_MAX_SIZE = 1536;
+  const MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX = 128;
+  const MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 128;
   const WEBGL2_CONTEXT_ATTRIBUTES = Object.freeze({
     alpha: true,
-    antialias: true,
+    antialias: false,
     premultipliedAlpha: true,
   });
 
@@ -1056,6 +1062,69 @@ void main() {
   const PREVIEW_CACHE_SCOPE_DEFAULT = "visible-artboards";
   const PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX = 256;
 
+  function isMobileLikeEnvironment() {
+    if (typeof navigator === "undefined" || typeof window === "undefined") {
+      return false;
+    }
+
+    const hasTouch = Number(navigator.maxTouchPoints) > 0;
+    const hasCoarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches || false;
+    const userAgent = navigator.userAgent || "";
+    const hasMobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+
+    return hasTouch || hasCoarsePointer || hasMobileUserAgent;
+  }
+
+  function getNavigatorDeviceMemory() {
+    const memory = typeof navigator !== "undefined" ? Number(navigator.deviceMemory) : 0;
+
+    return Number.isFinite(memory) && memory > 0 ? memory : 0;
+  }
+
+  function getCanvasPerformanceDpr(options = {}) {
+    const rawDpr = Number.isFinite(Number(options.dpr))
+      ? Number(options.dpr)
+      : (
+          typeof window !== "undefined" && Number.isFinite(Number(window.devicePixelRatio))
+            ? Number(window.devicePixelRatio)
+            : 1
+        );
+    const isMobile = options.mobileLike === true || (options.mobileLike !== false && isMobileLikeEnvironment());
+    const memory = Number.isFinite(Number(options.deviceMemory))
+      ? Number(options.deviceMemory)
+      : getNavigatorDeviceMemory();
+    const defaultCap = isMobile
+      ? (memory > 0 && memory <= 4 ? LOW_MEMORY_MOBILE_RENDER_DPR_CAP : MOBILE_RENDER_DPR_CAP)
+      : DESKTOP_RENDER_DPR_CAP;
+    const namespaceCap = isMobile
+      ? Number(namespace.mobileRenderDprCap ?? namespace.maxRenderDpr)
+      : Number(namespace.desktopRenderDprCap ?? namespace.maxRenderDpr);
+    const optionCap = Number(options.maxRenderDpr);
+    const cap = Number.isFinite(optionCap) && optionCap > 0
+      ? optionCap
+      : Number.isFinite(namespaceCap) && namespaceCap > 0
+        ? namespaceCap
+        : defaultCap;
+
+    return Math.max(1, Math.min(Math.max(1, rawDpr), cap));
+  }
+
+  function getDefaultPreviewCacheMaxSize() {
+    return isMobileLikeEnvironment() ? MOBILE_PREVIEW_CACHE_MAX_SIZE : PREVIEW_CACHE_MAX_SIZE;
+  }
+
+  function getDefaultPreviewCacheOverscanCssPx() {
+    return isMobileLikeEnvironment()
+      ? MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX
+      : PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX;
+  }
+
+  function getDefaultViewportRenderOverscanCssPx() {
+    return isMobileLikeEnvironment()
+      ? MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX
+      : VIEWPORT_RENDER_OVERSCAN_CSS_PX;
+  }
+
   function normalizeAngle(value) {
     const number = Number(value);
 
@@ -1180,7 +1249,17 @@ void main() {
         throw new TypeError("DocumentRenderer richiede un HTMLCanvasElement per creare WebGL2.");
       }
 
-      return canvas.getContext("webgl2", WEBGL2_CONTEXT_ATTRIBUTES);
+      const gl = canvas.getContext("webgl2", WEBGL2_CONTEXT_ATTRIBUTES);
+
+      return namespace.EngineGovernor?.instrumentWebGlContext?.(gl) || gl;
+    }
+
+    static getPerformanceDpr(options = {}) {
+      return getCanvasPerformanceDpr(options);
+    }
+
+    static isMobileLikeEnvironment() {
+      return isMobileLikeEnvironment();
     }
 
     static resizeCanvasViewport(canvas, gl) {
@@ -1195,7 +1274,7 @@ void main() {
       const rect = canvas.getBoundingClientRect();
       const cssWidth = Math.max(1, canvas.clientWidth || Math.round(rect.width) || 1);
       const cssHeight = Math.max(1, canvas.clientHeight || Math.round(rect.height) || 1);
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const dpr = getCanvasPerformanceDpr();
       const width = Math.max(1, Math.round(cssWidth * dpr));
       const height = Math.max(1, Math.round(cssHeight * dpr));
       const didResize = canvas.width !== width || canvas.height !== height;
@@ -1255,10 +1334,10 @@ void main() {
           : ARTBOARD_FLAT_PREVIEW_MAX_SIZE,
         previewCacheMaxSize: Number.isFinite(options.previewCacheMaxSize) && options.previewCacheMaxSize > 0
           ? Math.floor(options.previewCacheMaxSize)
-          : PREVIEW_CACHE_MAX_SIZE,
+          : getDefaultPreviewCacheMaxSize(),
         previewCacheOverscanCssPx: Number.isFinite(options.previewCacheOverscanCssPx) && options.previewCacheOverscanCssPx >= 0
           ? Math.floor(options.previewCacheOverscanCssPx)
-          : PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX,
+          : getDefaultPreviewCacheOverscanCssPx(),
         previewCacheScope: typeof options.previewCacheScope === "string" && options.previewCacheScope.trim()
           ? options.previewCacheScope.trim()
           : PREVIEW_CACHE_SCOPE_DEFAULT,
@@ -2462,6 +2541,30 @@ void main() {
       }
 
       return Math.max(16, Math.min(1024, Math.round(requested)));
+    }
+
+    getPreviewCacheMaxSize() {
+      const fallback = this.isMobileLikeDevice?.() ? MOBILE_PREVIEW_CACHE_MAX_SIZE : PREVIEW_CACHE_MAX_SIZE;
+      const requested = Number(this.options?.previewCacheMaxSize ?? fallback);
+
+      return Math.max(1, Math.floor(Number.isFinite(requested) && requested > 0 ? requested : fallback));
+    }
+
+    getPreviewCacheOverscanCssPx() {
+      const fallback = this.isMobileLikeDevice?.()
+        ? MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX
+        : PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX;
+      const requested = Number(this.options?.previewCacheOverscanCssPx ?? fallback);
+
+      return Math.max(0, Math.floor(Number.isFinite(requested) && requested >= 0 ? requested : fallback));
+    }
+
+    getViewportRenderOverscanCssPx(options = {}) {
+      if (Number.isFinite(Number(options.viewportRenderOverscanCssPx))) {
+        return Math.max(0, Number(options.viewportRenderOverscanCssPx));
+      }
+
+      return getDefaultViewportRenderOverscanCssPx();
     }
 
     getRasterHistoryTileBounds(tx, ty, options = {}) {
@@ -4749,12 +4852,10 @@ void main() {
         : 1;
       const dpr = Number.isFinite(Number(options.dpr))
         ? Math.max(1, Number(options.dpr))
-        : (typeof window !== "undefined" && Number.isFinite(Number(window.devicePixelRatio))
-          ? Math.max(1, Number(window.devicePixelRatio))
-          : 1);
+        : getCanvasPerformanceDpr();
       const overscanCssPx = Number.isFinite(Number(options.previewCacheOverscanCssPx))
         ? Math.max(0, Number(options.previewCacheOverscanCssPx))
-        : Math.max(0, Number(this.options?.previewCacheOverscanCssPx) || PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX);
+        : this.getPreviewCacheOverscanCssPx();
       const visibleRect = this.resolveCanvasVisibleDocRect(camera, viewportWidth, viewportHeight);
       const overscanDoc = (overscanCssPx * dpr) / zoom;
       const renderRect = this.expandDocumentRect(visibleRect, overscanDoc) || visibleRect;
@@ -6192,7 +6293,7 @@ void main() {
         (residency.warmArtboardIds?.length || 0) > 0 ||
         overBudget;
 
-      if (!hasColdOrWarm || options.activeStrokeTexture) {
+      if (!hasColdOrWarm || options.activeStrokeTexture || options.deferPreviewCacheUpdate === true) {
         return false;
       }
 
@@ -6363,7 +6464,7 @@ void main() {
       const documentRect = resolvedPreviewRect.documentRect;
       const documentWidth = documentRect.width;
       const documentHeight = documentRect.height;
-      const maxSize = Math.max(1, Math.floor(Number(this.options.previewCacheMaxSize) || PREVIEW_CACHE_MAX_SIZE));
+      const maxSize = this.getPreviewCacheMaxSize();
       const scale = Math.min(1, maxSize / Math.max(documentWidth, documentHeight));
       const width = Math.max(1, Math.floor(documentWidth * scale));
       const height = Math.max(1, Math.floor(documentHeight * scale));
@@ -9818,17 +9919,18 @@ void main() {
       }));
     }
 
-    getLayerRenderResult(layer, layerTarget) {
+    getLayerRenderResult(layer, layerTarget, options = {}) {
       if (!layerTarget?.texture) {
         return null;
       }
 
+      const skipLayerEffects = options.skipLayerEffects === true;
       const targetRect = this.getRasterTargetDocumentRect(layerTarget);
       let width = Math.max(1, Math.round(layerTarget.width || this.width || 1));
       let height = Math.max(1, Math.round(layerTarget.height || this.height || 1));
       let rect = this.isCroppedRasterTarget(layerTarget) ? targetRect : null;
       let texture = layerTarget.texture;
-      const paddedRect = this.isCroppedRasterTarget(layerTarget)
+      const paddedRect = !skipLayerEffects && this.isCroppedRasterTarget(layerTarget)
         ? this.getLayerEffectOutputRect(layer, targetRect)
         : targetRect;
 
@@ -9843,7 +9945,9 @@ void main() {
         }
       }
 
-      texture = this.applyLayerEffectsToTexture(layer, texture, { height, rect, sourceRect: targetRect, width });
+      if (!skipLayerEffects) {
+        texture = this.applyLayerEffectsToTexture(layer, texture, { height, rect, sourceRect: targetRect, width });
+      }
 
       return {
         height,
@@ -9908,7 +10012,7 @@ void main() {
 
         const results = visibleTileTargets
           .sort((first, second) => (first.ty - second.ty) || (first.tx - second.tx))
-          .map((tileTarget) => this.getLayerRenderResult(layer, tileTarget))
+          .map((tileTarget) => this.getLayerRenderResult(layer, tileTarget, options))
           .filter(Boolean);
 
         if (cullingStats?.renderResults) {
@@ -9918,7 +10022,7 @@ void main() {
         return results;
       }
 
-      const result = this.getLayerRenderResult(layer, layerTarget);
+      const result = this.getLayerRenderResult(layer, layerTarget, options);
 
       if (result && cullingStats?.renderResults) {
         cullingStats.renderResults.returned += 1;
@@ -9940,7 +10044,7 @@ void main() {
         (
           options.forceSingleTexture === true ||
           this.hasPuppetLayerTransform(layer) ||
-          this.hasEnabledLayerEffects(layer)
+          (!options.skipLayerEffects && this.hasEnabledLayerEffects(layer))
         )
       );
     }
@@ -9960,8 +10064,8 @@ void main() {
       }) || layerTarget;
     }
 
-    getLayerRenderTexture(layer, layerTarget) {
-      return this.getLayerRenderResult(layer, layerTarget)?.texture || null;
+    getLayerRenderTexture(layer, layerTarget, options = {}) {
+      return this.getLayerRenderResult(layer, layerTarget, options)?.texture || null;
     }
 
     resolveLayerVisualTexture(layer, layerTarget, options = {}) {
@@ -10060,12 +10164,7 @@ void main() {
     }
 
     isMobileLikeDevice() {
-      const hasTouch = navigator.maxTouchPoints > 0;
-      const hasCoarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches || false;
-      const userAgent = navigator.userAgent || "";
-      const hasMobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
-
-      return hasTouch || hasCoarsePointer || hasMobileUserAgent;
+      return isMobileLikeEnvironment();
     }
 
     createProceduralBackgroundTarget() {
@@ -16274,9 +16373,7 @@ void main() {
       const camera = options.camera || { x: 0, y: 0, zoom: 1 };
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
-      const viewportRenderOverscanCssPx = Number.isFinite(Number(options.viewportRenderOverscanCssPx))
-        ? Math.max(0, Number(options.viewportRenderOverscanCssPx))
-        : VIEWPORT_RENDER_OVERSCAN_CSS_PX;
+      const viewportRenderOverscanCssPx = this.getViewportRenderOverscanCssPx(options);
       const viewportVisibleDocRect = this.resolveCanvasVisibleDocRect(camera, viewportWidth, viewportHeight);
       const viewportRenderRect = this.getViewportRenderRect(
         camera,
@@ -16341,11 +16438,17 @@ void main() {
       const artboardFlatPreviewFallbackIds = this.getArtboardFlatPreviewFallbackIds(artboardResidency, orderedLayers, {
         activeStrokeTexture: Boolean(options.activeStrokeTexture),
       });
-      const artboardResidencyHydrated = this.hydrateHotArtboardTargets(artboardResidency, orderedLayers, {
-        renderRect: viewportRenderRect,
-        reason: "draw-to-canvas-artboard-residency",
-        skipArtboardIds: artboardFlatPreviewFallbackIds,
-      });
+      const deferInteractiveResidencyHydration = Boolean(
+        options.activeStrokeTexture ||
+        options.deferPreviewCacheUpdate === true
+      );
+      const artboardResidencyHydrated = deferInteractiveResidencyHydration
+        ? 0
+        : this.hydrateHotArtboardTargets(artboardResidency, orderedLayers, {
+            renderRect: viewportRenderRect,
+            reason: "draw-to-canvas-artboard-residency",
+            skipArtboardIds: artboardFlatPreviewFallbackIds,
+          });
       const artboardResidencyMetrics = this.collectArtboardResidencyMetrics(artboardResidency, orderedLayers, {
         camera,
         dpr: options.dpr,
@@ -16372,16 +16475,28 @@ void main() {
       });
       const activeStrokeLayerIndex = renderableLayers.findIndex((layer) => layer?.id === activeStrokeLayerId);
       const activeStrokeLayer = activeStrokeLayerIndex >= 0 ? renderableLayers[activeStrokeLayerIndex] : null;
+      const activeStrokeLayerHasBlendMode = Boolean(activeStrokeLayer && this.hasAdvancedLayerBlendMode(activeStrokeLayer));
+      const activeStrokeLayerHasEffects = Boolean(activeStrokeLayer && this.hasEnabledLayerEffects(activeStrokeLayer));
       const activeStrokeUsesClippingMask = Boolean(
         options.activeStrokeTexture &&
         hasClippingMasks &&
         activeStrokeLayer?.clippingMask === true
       );
+      const activeStrokeDefersLayerEffects = Boolean(
+        options.activeStrokeTexture &&
+        options.deferPreviewCacheUpdate === true &&
+        activeStrokeLayerHasEffects
+      );
+      const activeStrokeDefersLayerBlend = Boolean(
+        options.activeStrokeTexture &&
+        options.deferPreviewCacheUpdate === true &&
+        activeStrokeLayerHasBlendMode
+      );
       const activeStrokeLayerUsesAdvancedCompositing = Boolean(
         activeStrokeLayer &&
         (
-          this.hasAdvancedLayerBlendMode(activeStrokeLayer) ||
-          this.hasEnabledLayerEffects(activeStrokeLayer) ||
+          (!activeStrokeDefersLayerBlend && activeStrokeLayerHasBlendMode) ||
+          (!activeStrokeDefersLayerEffects && activeStrokeLayerHasEffects) ||
           this.hasPuppetLayerTransform(activeStrokeLayer)
         )
       );
@@ -16435,6 +16550,10 @@ void main() {
         !activeStrokeNeedsFullStack &&
         activeStrokeCanOverlayPreview
       );
+      const deferPreviewCacheUpdate = Boolean(
+        options.deferPreviewCacheUpdate === true ||
+        options.activeStrokeTexture
+      );
       const viewportCullingDebug = this.isViewportCullingDebugEnabled(options);
       const viewportLayerCullingEnabled = this.isViewportLayerCullingEnabled(options);
       const viewportLayerCullingMeasured = this.isViewportLayerCullingAuditEnabled(options);
@@ -16469,8 +16588,11 @@ void main() {
           }
         : null;
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("canvas.draw", {
+        activeStrokeDefersLayerBlend,
+        activeStrokeDefersLayerEffects,
         activeStroke: Boolean(options.activeStrokeTexture),
         canUsePreviewCache,
+        deferPreviewCacheUpdate,
         layers: renderableLayers.length,
         zoom: camera.zoom || 1,
       }) : null;
@@ -16901,11 +17023,17 @@ void main() {
         bindArtboardProgram();
       };
       const didUpdatePreviewCache = canUsePreviewCache
-        ? this.updatePreviewCacheIfNeeded(previewCacheOptions)
+        ? (
+            deferPreviewCacheUpdate
+              ? Boolean(this.previewCacheReady && !this.previewCacheDirty && this.previewTexture)
+              : this.updatePreviewCacheIfNeeded(previewCacheOptions)
+          )
         : false;
       const usePreviewCache = canUsePreviewCache && didUpdatePreviewCache && this.previewCacheReady;
       const canvasNeedsLayerComposite = !usePreviewCache && orderedLayers.some((layer) =>
-        layer?.visible !== false && this.hasAdvancedLayerBlendMode(layer)
+        layer?.visible !== false &&
+        !(activeStrokeDefersLayerBlend && layer?.id === activeStrokeLayerId) &&
+        this.hasAdvancedLayerBlendMode(layer)
       );
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -16964,8 +17092,19 @@ void main() {
             ? options.activeStrokeTexture
             : null;
           const clipBase = isClippingLayer ? currentClipBase : null;
+          const skipLayerEffectsForInteractiveStroke = Boolean(
+            isActiveStrokeLayer &&
+            activeStrokeDefersLayerEffects &&
+            activeStrokeMode !== "eraser"
+          );
+          const skipLayerBlendForInteractiveStroke = Boolean(
+            isActiveStrokeLayer &&
+            activeStrokeDefersLayerBlend &&
+            activeStrokeMode !== "eraser"
+          );
           let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
             forceSingleTexture: Boolean(eraserMaskTexture),
+            skipLayerEffects: skipLayerEffectsForInteractiveStroke,
             source: "canvas-sparse-layer",
           });
           const canCullSparseTilesForViewport = Boolean(
@@ -16985,6 +17124,7 @@ void main() {
             cullSparseTiles: canCullSparseTilesForViewport,
             cullingStats: viewportCullingStats,
             renderRect: staticViewportRenderRect,
+            skipLayerEffects: skipLayerEffectsForInteractiveStroke,
           };
 
           if (layerArtboardId && artboardFlatPreviewFallbackIds.has(layerArtboardId)) {
@@ -17081,7 +17221,7 @@ void main() {
               }
             }
 
-            const blendModeId = this.getLayerBlendModeId(layer);
+            const blendModeId = skipLayerBlendForInteractiveStroke ? 0 : this.getLayerBlendModeId(layer);
 
             if (eraserMaskTexture) {
               gl.activeTexture(gl.TEXTURE1);
@@ -17190,7 +17330,7 @@ void main() {
             }
           } else if (this.isSparseRasterTarget(layerTarget)) {
             viewportCullingStats.layers.drawPasses += 1;
-            const blendModeId = this.getLayerBlendModeId(layer);
+            const blendModeId = skipLayerBlendForInteractiveStroke ? 0 : this.getLayerBlendModeId(layer);
 
             for (const renderResult of this.getLayerRenderResults(layer, layerTarget, viewportLayerRenderOptions)) {
               const layerTexture = renderResult?.texture;
@@ -17284,6 +17424,7 @@ void main() {
           activeLayerId: activeStrokeLayerId,
           activeStrokeTexture: Boolean(options.activeStrokeTexture),
           camera,
+          deferPreviewCacheUpdate,
           dpr: options.dpr,
           metrics: artboardResidencyMetrics,
           orderedLayers,

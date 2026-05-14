@@ -36,8 +36,54 @@ test("preview cache is enabled without waiting for explicit camera navigation", 
   assert.match(source, /this\.userManipulatedCamera = true;\s*this\.requestDraw\(\);/);
   assert.doesNotMatch(source, /const allowPreviewCache = this\.userManipulatedCamera && !namespace\.smudgeEngine\?\.isDragging/);
   assert.match(source, /const allowPreviewCache = !namespace\.smudgeEngine\?\.isDragging/);
+  assert.match(source, /const deferPreviewCacheUpdate = this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.smudgeEngine\?\.isDragging/);
   assert.match(source, /this\.documentRenderer\.shouldUsePreviewCacheForCamera\(this\.camera, previewCacheDimensions\)/);
   assert.match(source, /allowPreviewCache,/);
+  assert.match(source, /deferPreviewCacheUpdate,/);
+});
+
+test("two-finger touch navigation pinches and pans without continuing the brush stroke", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+
+  assert.match(source, /this\.activeTouchPointers = new Map\(\)/);
+  assert.match(source, /this\.touchNavigationGesture = null/);
+  assert.match(source, /getTouchNavigationGeometry\(pointers = this\.getTouchNavigationPointers\(\)\)/);
+  assert.match(source, /beginTouchNavigationGesture\(\)/);
+  assert.match(source, /updateTouchNavigationGesture\(\)/);
+  assert.match(source, /cancelActiveStrokeForTouchNavigation\(\)/);
+  assert.match(source, /this\.clearStrokeLayer\(\)/);
+  assert.match(source, /this\.activeTouchPointers\.set\(event\.pointerId/);
+  assert.match(source, /this\.activeTouchPointers\.size >= 2 && this\.beginTouchNavigationGesture\(\)/);
+  assert.match(source, /this\.markNavigationEvent\(event\)/);
+  assert.match(source, /this\.touchNavigationGesture\.lastDistance/);
+  assert.match(source, /this\.camera\.zoom = newZoom/);
+  assert.match(source, /this\.forgetTouchNavigationPointer\(event\.pointerId\)/);
+  assert.match(source, /this\.activeTouchPointers\.clear\(\)/);
+  assert.match(source, /this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.smudgeEngine\?\.isDragging/);
+});
+
+test("brush pointer moves are coalesced into the render frame", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const moveBody = source.match(/handlePointerMove\(event\) \{([\s\S]*?)\n    handlePointerUp\(event\)/)?.[1] || "";
+
+  assert.match(source, /pendingPointerSamples = \[\]/);
+  assert.match(source, /getCoalescedEvents/);
+  assert.match(source, /enqueuePointerMoveSamples\(event\)/);
+  assert.match(source, /takePointerSamplesForFrame\(options = \{\}\)/);
+  assert.match(source, /processPendingPointerSamples\(options = \{\}\)/);
+  assert.match(source, /const MOBILE_POINTER_SAMPLES_PER_FRAME = 48/);
+  assert.match(source, /const MOBILE_POINTER_FRAME_BUDGET_MS = 4/);
+  assert.match(source, /const POINTER_SAMPLE_BACKLOG_MULTIPLIER = 2/);
+  assert.match(source, /getPointerFrameBudgetMs\(\)/);
+  assert.match(source, /this\.processStamps\(\{ deferFlush: true \}\)/);
+  assert.match(source, /this\.flushStamps\(\{ requestDraw: options\.requestDraw !== false \}\)/);
+  assert.match(source, /this\.pendingPointerSamples\.unshift\(\.\.\.samples\.slice\(index \+ 1\)\)/);
+  assert.match(source, /this\.pendingPointerSamples\.length > 0[\s\S]*this\.requestDraw\(\)/);
+  assert.match(source, /drainAll: true/);
+  assert.match(source, /const MOBILE_STROKE_SEGMENT_MIN_SAMPLES = 4/);
+  assert.match(source, /getStrokeSegmentSampleCount\(segmentDistance\)/);
+  assert.doesNotMatch(moveBody, /this\.processStamps\(\)/);
+  assert.doesNotMatch(moveBody, /this\.flushStamps\(\)/);
 });
 
 test("camera change events are skipped when the viewport payload is unchanged", () => {

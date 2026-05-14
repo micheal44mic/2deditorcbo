@@ -15,6 +15,7 @@ function loadDocumentRenderer(options = {}) {
   const window = {
     CBO: {},
     addEventListener() {},
+    devicePixelRatio: Number.isFinite(options.devicePixelRatio) ? options.devicePixelRatio : 1,
     dispatchEvent() {},
     matchMedia: () => ({ matches: matchCoarsePointer }),
     removeEventListener() {},
@@ -36,6 +37,7 @@ function loadDocumentRenderer(options = {}) {
     Set,
     String,
     navigator: {
+      deviceMemory: Number.isFinite(options.deviceMemory) ? options.deviceMemory : undefined,
       maxTouchPoints: Number.isFinite(options.maxTouchPoints) ? options.maxTouchPoints : 0,
       userAgent: options.userAgent || "",
     },
@@ -2920,6 +2922,34 @@ test("raster history uses smaller default tiles on mobile-like devices", () => {
   assert.equal(mobile.getRasterHistoryTileSize({ tileSize: 256 }), 256);
 });
 
+test("renderer caps DPR and cache size for mobile-like devices", () => {
+  const desktopLoad = loadDocumentRenderer({ devicePixelRatio: 3 });
+  const mobileLoad = loadDocumentRenderer({
+    coarsePointer: true,
+    deviceMemory: 6,
+    devicePixelRatio: 3,
+    maxTouchPoints: 5,
+    userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile",
+  });
+  const lowMemoryMobileLoad = loadDocumentRenderer({
+    coarsePointer: true,
+    deviceMemory: 4,
+    devicePixelRatio: 3,
+    maxTouchPoints: 5,
+    userAgent: "Mozilla/5.0 (Linux; Android 12) Mobile",
+  });
+  const mobileRenderer = Object.create(mobileLoad.DocumentRenderer.prototype);
+
+  mobileRenderer.options = {};
+
+  assert.equal(desktopLoad.DocumentRenderer.getPerformanceDpr(), 2);
+  assert.equal(mobileLoad.DocumentRenderer.getPerformanceDpr(), 1.5);
+  assert.equal(lowMemoryMobileLoad.DocumentRenderer.getPerformanceDpr(), 1.25);
+  assert.equal(mobileRenderer.getPreviewCacheMaxSize(), 1536);
+  assert.equal(mobileRenderer.getPreviewCacheOverscanCssPx(), 128);
+  assert.equal(mobileRenderer.getViewportRenderOverscanCssPx(), 128);
+});
+
 test("document renderer exposes mipmapped preview cache helpers", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "document", "document-renderer.js"),
@@ -2927,11 +2957,19 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   );
 
   assert.match(source, /const PREVIEW_CACHE_MAX_SIZE = 2048/);
+  assert.match(source, /const MOBILE_PREVIEW_CACHE_MAX_SIZE = 1536/);
   assert.match(source, /const PREVIEW_CACHE_SCOPE_DEFAULT = "visible-artboards"/);
   assert.match(source, /const PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX = 256/);
-  assert.match(source, /antialias: true/);
+  assert.match(source, /const MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX = 128/);
+  assert.match(source, /const MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 128/);
+  assert.match(source, /const MOBILE_RENDER_DPR_CAP = 1\.5/);
+  assert.match(source, /antialias: false/);
+  assert.match(source, /static getPerformanceDpr\(options = \{\}\)/);
   assert.match(source, /createPreviewCache\(options = \{\}\)/);
   assert.match(source, /getPreviewCacheDimensions\(options = \{\}\)/);
+  assert.match(source, /getPreviewCacheMaxSize\(\)/);
+  assert.match(source, /getPreviewCacheOverscanCssPx\(\)/);
+  assert.match(source, /getViewportRenderOverscanCssPx\(options = \{\}\)/);
   assert.match(source, /previewCacheMaxSize/);
   assert.match(source, /previewCacheScope/);
   assert.match(source, /previewCacheOverscanCssPx/);
@@ -2958,10 +2996,23 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /const previewCacheDimensions = this\.getPreviewCacheDimensions\(previewCacheOptions\)/);
   assert.match(source, /const canUsePreviewCacheAtCurrentZoom = this\.shouldUsePreviewCacheForCamera\(camera, previewCacheDimensions\)/);
   assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true/);
+  assert.match(source, /const deferPreviewCacheUpdate = Boolean\(/);
+  assert.match(source, /options\.deferPreviewCacheUpdate === true/);
+  assert.match(source, /const activeStrokeDefersLayerEffects = Boolean\(/);
+  assert.match(source, /const activeStrokeDefersLayerBlend = Boolean\(/);
+  assert.match(source, /const deferInteractiveResidencyHydration = Boolean\(/);
+  assert.match(source, /deferInteractiveResidencyHydration\s*\?\s*0\s*:\s*this\.hydrateHotArtboardTargets/);
+  assert.match(source, /skipLayerEffectsForInteractiveStroke/);
+  assert.match(source, /skipLayerBlendForInteractiveStroke/);
+  assert.match(source, /skipLayerEffects: skipLayerEffectsForInteractiveStroke/);
+  assert.match(source, /skipLayerBlendForInteractiveStroke \? 0 : this\.getLayerBlendModeId\(layer\)/);
+  assert.match(source, /!options\.skipLayerEffects && this\.hasEnabledLayerEffects\(layer\)/);
+  assert.match(source, /!hasColdOrWarm \|\| options\.activeStrokeTexture \|\| options\.deferPreviewCacheUpdate === true/);
   assert.match(source, /const previewCacheDocumentRect = previewCacheDimensions\.documentRect/);
   assert.match(source, /const exactCacheDocRect = this\.getPreviewCacheExactDocumentRect\(cacheDocRect\)/);
   assert.doesNotMatch(source, /previewCacheCoversDocumentBounds/);
   assert.match(source, /allowPreviewCache &&\s*canUsePreviewCacheAtCurrentZoom/);
+  assert.match(source, /this\.previewCacheReady && !this\.previewCacheDirty && this\.previewTexture/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
 });
@@ -4405,7 +4456,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /getLayerNoise\(layer\)/);
   assert.match(source, /getLayerThreshold\(layer\)/);
   assert.match(source, /getLayerCurves\(layer\)/);
-  assert.match(source, /getLayerRenderTexture\(layer, layerTarget\)/);
+  assert.match(source, /getLayerRenderTexture\(layer, layerTarget, options = \{\}\)/);
   assert.match(source, /for \(const effect of layer\.effects\)/);
   assert.match(source, /u_directionTexelStep/);
   assert.match(source, /u_pins\[8\]/);

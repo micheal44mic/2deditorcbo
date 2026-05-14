@@ -161,6 +161,8 @@ test("brush stroke history records memory policy and disables redo for huge stro
   assert.match(source, /historyMode === "gpu-before-no-redo"/);
   assert.match(source, /memoryPolicy: memoryReport/);
   assert.match(source, /shouldKeepPreviewCacheForDirtyBake\(previewDirtyRects/);
+  assert.match(source, /deferredByInteractiveFrame/);
+  assert.match(source, /skipReason[\s\S]*"interactive-frame"/);
   assert.match(source, /STROKE_PREVIEW_DIRTY_KEEP_CACHE_MAX_COVERAGE = 0\.45/);
   assert.match(source, /this\.documentRenderer\?\.evictRasterScratchCachesForPolicy\?\.\(memoryReport,/);
   assert.match(source, /deletePreviewCache: !keepPreviewCacheForDirtyBake/);
@@ -172,6 +174,8 @@ test("brush stroke history records memory policy and disables redo for huge stro
   assert.match(source, /namespace\.selectDocumentArtboardAtPoint\?\.\(point/);
   assert.match(source, /queueStrokeTargetPrewarm\(\)/);
   assert.match(source, /prewarmStrokePaintTargets\(maxNewTiles = STROKE_TARGET_PREWARM_MAX_TILES\)/);
+  assert.match(source, /namespace\.interactiveBrushPrewarmEnabled !== true/);
+  assert.match(source, /namespace\.EngineGovernor\?\.mode === "interactive"/);
   assert.match(source, /prewarmRasterTargetsForPaintRect\(layerId, effectiveStrokeRect/);
 });
 
