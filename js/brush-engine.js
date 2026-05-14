@@ -2569,6 +2569,7 @@ void main() {
       const navigationTarget = this.stage || this.canvas;
 
       this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
+      navigationTarget.style.touchAction = "none";
       navigationTarget.addEventListener("pointerdown", this.handleNavigationPointerDown, true);
       navigationTarget.addEventListener("pointermove", this.handleNavigationPointerMove, true);
       navigationTarget.addEventListener("pointerup", this.handleNavigationPointerUp, true);
@@ -2601,9 +2602,9 @@ void main() {
         return;
       }
 
-      const rect = this.canvas.getBoundingClientRect();
-      const cursorViewportX = (clientX - rect.left) * this.dpr;
-      const cursorViewportY = (clientY - rect.top) * this.dpr;
+      const cursorViewport = this.clientToCanvasViewportPoint(clientX, clientY);
+      const cursorViewportX = cursorViewport.x;
+      const cursorViewportY = cursorViewport.y;
       const oldZoom = this.camera.zoom;
       const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom * factor));
 
@@ -2622,6 +2623,15 @@ void main() {
       this.requestDraw();
     }
 
+    clientToCanvasViewportPoint(clientX, clientY) {
+      const rect = this.canvas.getBoundingClientRect();
+
+      return {
+        x: (clientX - rect.left) * this.dpr,
+        y: (clientY - rect.top) * this.dpr,
+      };
+    }
+
     getTouchNavigationPointers() {
       return Array.from(this.activeTouchPointers.values())
         .filter((pointer) => pointer && Number.isFinite(pointer.clientX) && Number.isFinite(pointer.clientY))
@@ -2637,11 +2647,13 @@ void main() {
       const second = pointers[1];
       const centerClientX = (first.clientX + second.clientX) * 0.5;
       const centerClientY = (first.clientY + second.clientY) * 0.5;
-      const centerX = centerClientX * this.dpr;
-      const centerY = centerClientY * this.dpr;
+      const firstViewport = this.clientToCanvasViewportPoint(first.clientX, first.clientY);
+      const secondViewport = this.clientToCanvasViewportPoint(second.clientX, second.clientY);
+      const centerX = (firstViewport.x + secondViewport.x) * 0.5;
+      const centerY = (firstViewport.y + secondViewport.y) * 0.5;
       const distance = Math.max(
         1,
-        Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY) * this.dpr,
+        Math.hypot(secondViewport.x - firstViewport.x, secondViewport.y - firstViewport.y),
       );
 
       return {
@@ -2652,6 +2664,31 @@ void main() {
         distance,
         pointerIds: [first.pointerId, second.pointerId],
       };
+    }
+
+    captureTouchNavigationPointer(event) {
+      const captureElement = event.currentTarget || this.stage || this.canvas;
+
+      try {
+        captureElement?.setPointerCapture?.(event.pointerId);
+      } catch (error) {
+        // Android puo' rifiutare capture su pointer gia' cancellati: il gesto continua se arrivano gli eventi.
+      }
+
+      return captureElement || null;
+    }
+
+    releaseTouchNavigationPointer(pointerId) {
+      const pointer = this.activeTouchPointers.get(pointerId);
+      const captureElement = pointer?.captureElement || this.stage || this.canvas;
+
+      if (pointerId != null && captureElement?.hasPointerCapture?.(pointerId)) {
+        try {
+          captureElement.releasePointerCapture(pointerId);
+        } catch (error) {
+          // Capture gia' rilasciata dal browser.
+        }
+      }
     }
 
     cancelActiveStrokeForTouchNavigation() {
@@ -2745,6 +2782,7 @@ void main() {
     }
 
     forgetTouchNavigationPointer(pointerId) {
+      this.releaseTouchNavigationPointer(pointerId);
       this.activeTouchPointers.delete(pointerId);
 
       if (this.touchNavigationGesture && this.activeTouchPointers.size < 2) {
@@ -2827,7 +2865,10 @@ void main() {
       }
 
       if (event.pointerType === "touch") {
+        const captureElement = this.captureTouchNavigationPointer(event);
+
         this.activeTouchPointers.set(event.pointerId, {
+          captureElement,
           clientX: event.clientX,
           clientY: event.clientY,
           pointerId: event.pointerId,
@@ -2856,7 +2897,10 @@ void main() {
 
     handleNavigationPointerMove(event) {
       if (event.pointerType === "touch" && this.activeTouchPointers.has(event.pointerId)) {
+        const previousPointer = this.activeTouchPointers.get(event.pointerId) || {};
+
         this.activeTouchPointers.set(event.pointerId, {
+          captureElement: previousPointer.captureElement,
           clientX: event.clientX,
           clientY: event.clientY,
           pointerId: event.pointerId,

@@ -49,6 +49,10 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /this\.touchNavigationGesture = null/);
   assert.match(source, /this\.touchNavigationExclusive = false/);
   assert.match(source, /getTouchNavigationGeometry\(pointers = this\.getTouchNavigationPointers\(\)\)/);
+  assert.match(source, /clientToCanvasViewportPoint\(clientX, clientY\)/);
+  assert.match(source, /const rect = this\.canvas\.getBoundingClientRect\(\)/);
+  assert.match(source, /\(clientX - rect\.left\) \* this\.dpr/);
+  assert.match(source, /\(clientY - rect\.top\) \* this\.dpr/);
   assert.match(source, /beginTouchNavigationGesture\(\)/);
   assert.match(source, /updateTouchNavigationGesture\(\)/);
   assert.match(source, /cancelActiveStrokeForTouchNavigation\(\)/);
@@ -62,6 +66,9 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /this\.markNavigationEvent\(event\)/);
   assert.match(source, /event\.stopImmediatePropagation\?\.\(\)/);
   assert.match(source, /this\.touchNavigationGesture\.lastDistance/);
+  assert.match(source, /captureTouchNavigationPointer\(event\)/);
+  assert.match(source, /captureElement\?\.setPointerCapture\?\.\(event\.pointerId\)/);
+  assert.match(source, /releaseTouchNavigationPointer\(pointerId\)/);
   assert.match(source, /this\.camera\.zoom = newZoom/);
   assert.match(source, /this\.forgetTouchNavigationPointer\(event\.pointerId\)/);
   assert.match(source, /this\.activeTouchPointers\.clear\(\)/);
