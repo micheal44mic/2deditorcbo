@@ -35,6 +35,7 @@
   const DESKTOP_RENDER_DPR_CAP = 2;
   const MOBILE_RENDER_DPR_CAP = 1.5;
   const LOW_MEMORY_MOBILE_RENDER_DPR_CAP = 1.25;
+  const ANDROID_RENDER_DPR_CAP = 1;
   const MOBILE_PREVIEW_CACHE_MAX_SIZE = 1536;
   const MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX = 128;
   const MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 128;
@@ -1075,6 +1076,29 @@ void main() {
     return hasTouch || hasCoarsePointer || hasMobileUserAgent;
   }
 
+  function isAndroidEnvironment() {
+    if (namespace.deviceIsAndroid === true) {
+      return true;
+    }
+
+    if (typeof namespace.isAndroidDevice === "function") {
+      return namespace.isAndroidDevice() === true;
+    }
+
+    if (typeof navigator === "undefined") {
+      return false;
+    }
+
+    const androidHints = [
+      navigator.userAgentData?.platform,
+      navigator.platform,
+      navigator.userAgent,
+      navigator.vendor,
+    ];
+
+    return androidHints.some((value) => /android/i.test(String(value || "")));
+  }
+
   function getNavigatorDeviceMemory() {
     const memory = typeof navigator !== "undefined" ? Number(navigator.deviceMemory) : 0;
 
@@ -1089,16 +1113,25 @@ void main() {
             ? Number(window.devicePixelRatio)
             : 1
         );
-    const isMobile = options.mobileLike === true || (options.mobileLike !== false && isMobileLikeEnvironment());
+    const isAndroid = options.androidPixelPreview !== false && isAndroidEnvironment();
+    const isMobile = isAndroid || options.mobileLike === true || (options.mobileLike !== false && isMobileLikeEnvironment());
     const memory = Number.isFinite(Number(options.deviceMemory))
       ? Number(options.deviceMemory)
       : getNavigatorDeviceMemory();
-    const defaultCap = isMobile
-      ? (memory > 0 && memory <= 4 ? LOW_MEMORY_MOBILE_RENDER_DPR_CAP : MOBILE_RENDER_DPR_CAP)
-      : DESKTOP_RENDER_DPR_CAP;
-    const namespaceCap = isMobile
-      ? Number(namespace.mobileRenderDprCap ?? namespace.maxRenderDpr)
-      : Number(namespace.desktopRenderDprCap ?? namespace.maxRenderDpr);
+    const defaultCap = isAndroid
+      ? ANDROID_RENDER_DPR_CAP
+      : (
+          isMobile
+            ? (memory > 0 && memory <= 4 ? LOW_MEMORY_MOBILE_RENDER_DPR_CAP : MOBILE_RENDER_DPR_CAP)
+            : DESKTOP_RENDER_DPR_CAP
+        );
+    const namespaceCap = isAndroid
+      ? Number(namespace.androidRenderDprCap ?? namespace.mobileRenderDprCap ?? namespace.maxRenderDpr)
+      : (
+          isMobile
+            ? Number(namespace.mobileRenderDprCap ?? namespace.maxRenderDpr)
+            : Number(namespace.desktopRenderDprCap ?? namespace.maxRenderDpr)
+        );
     const optionCap = Number(options.maxRenderDpr);
     const cap = Number.isFinite(optionCap) && optionCap > 0
       ? optionCap
@@ -1262,6 +1295,10 @@ void main() {
       return isMobileLikeEnvironment();
     }
 
+    static isAndroidEnvironment() {
+      return isAndroidEnvironment();
+    }
+
     static resizeCanvasViewport(canvas, gl) {
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new TypeError("DocumentRenderer richiede un HTMLCanvasElement per misurare il viewport.");
@@ -1314,6 +1351,7 @@ void main() {
         enableArtboardResidencyPrefetch: options.enableArtboardResidencyPrefetch !== false,
         enableArtboardFlatPreviews: options.enableArtboardFlatPreviews !== false,
         enableArtboardTileResidency: options.enableArtboardTileResidency !== false,
+        androidPixelPreview: options.androidPixelPreview !== false,
         artboardResidencyIdleDelayMs: Number.isFinite(options.artboardResidencyIdleDelayMs) && options.artboardResidencyIdleDelayMs >= 0
           ? Math.floor(options.artboardResidencyIdleDelayMs)
           : ARTBOARD_RESIDENCY_IDLE_DELAY_MS,
@@ -4508,7 +4546,23 @@ void main() {
       }
     }
 
+    isAndroidPixelPreviewMode() {
+      return this.options?.androidPixelPreview !== false && isAndroidEnvironment();
+    }
+
+    getViewportTextureMinFilter(camera = {}) {
+      if (this.isAndroidPixelPreviewMode()) {
+        return this.gl.NEAREST;
+      }
+
+      return this.gl.LINEAR;
+    }
+
     getViewportTextureMagFilter(camera = {}) {
+      if (this.isAndroidPixelPreviewMode()) {
+        return this.gl.NEAREST;
+      }
+
       const zoom = Math.abs(Number(camera?.zoom) || 1);
 
       return zoom >= PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD
@@ -4517,12 +4571,20 @@ void main() {
     }
 
     shouldDrawPixelGrid(camera = {}) {
+      if (this.isAndroidPixelPreviewMode()) {
+        return false;
+      }
+
       const zoom = Math.abs(Number(camera?.zoom) || 1);
 
       return zoom >= PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD;
     }
 
     shouldUsePreviewCacheForCamera(camera = {}, previewCacheDimensions = null) {
+      if (this.isAndroidPixelPreviewMode()) {
+        return false;
+      }
+
       const zoom = Math.abs(Number(camera?.zoom) || 1);
       const dimensions = previewCacheDimensions || this.getPreviewCacheDimensions();
       const cacheScale = Math.max(0.0001, Number(dimensions?.scale) || 1);
@@ -6504,6 +6566,14 @@ void main() {
     }
 
     createPreviewCache(options = {}) {
+      if (this.isAndroidPixelPreviewMode()) {
+        if (this.previewTexture || this.previewFramebuffer) {
+          this.deletePreviewCache();
+        }
+
+        return false;
+      }
+
       const dimensions = this.getPreviewCacheDimensions(options);
 
       if (
@@ -8350,6 +8420,9 @@ void main() {
       const maskTexture = options.maskTexture || null;
       const maskRect = options.maskRect || null;
       const previewCutRect = options.previewCutRect || null;
+      const textureMinFilter = Number.isFinite(options.textureMinFilter)
+        ? options.textureMinFilter
+        : this.getViewportTextureMinFilter(camera);
       const textureMagFilter = Number.isFinite(options.textureMagFilter)
         ? options.textureMagFilter
         : this.getViewportTextureMagFilter(camera);
@@ -8406,7 +8479,7 @@ void main() {
         const clipOrigin = this.getClipBaseOrigin(clipBase);
 
         gl.activeTexture(gl.TEXTURE2);
-        this.setRasterTextureSampling(clipBase.target.texture, gl.LINEAR, textureMagFilter);
+        this.setRasterTextureSampling(clipBase.target.texture, textureMinFilter, textureMagFilter);
         gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
         gl.uniform1f(uniforms.clipMode, 1.0);
         gl.uniform1f(uniforms.clipOpacity, clipOpacity);
@@ -8445,7 +8518,7 @@ void main() {
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, backdropTexture);
       gl.activeTexture(gl.TEXTURE0);
-      this.setRasterTextureSampling(sourceTexture, gl.LINEAR, textureMagFilter);
+      this.setRasterTextureSampling(sourceTexture, textureMinFilter, textureMagFilter);
       gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindVertexArray(null);
@@ -15375,6 +15448,10 @@ void main() {
     }
 
     drawPreviewCacheToCanvas(options = {}) {
+      if (this.isAndroidPixelPreviewMode()) {
+        return false;
+      }
+
       if (!this.previewTexture || !this.previewCacheReady || !this.programInfo || !this.quad) {
         return false;
       }
@@ -15971,6 +16048,9 @@ void main() {
       const sourceTexture = options.sourceTexture || target.texture;
       const { program, uniforms } = this.ensurePuppetProgramInfo();
       const signature = this.getPuppetMeshSignature(layer, target);
+      const textureMinFilter = Number.isFinite(options.textureMinFilter)
+        ? options.textureMinFilter
+        : this.getViewportTextureMinFilter(camera);
       const textureMagFilter = Number.isFinite(options.textureMagFilter)
         ? options.textureMagFilter
         : this.getViewportTextureMagFilter(camera);
@@ -15990,7 +16070,7 @@ void main() {
       gl.uniform1i(uniforms.texture, 0);
 
       gl.activeTexture(gl.TEXTURE0);
-      this.setRasterTextureSampling(sourceTexture, gl.LINEAR, textureMagFilter);
+      this.setRasterTextureSampling(sourceTexture, textureMinFilter, textureMagFilter);
       gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
       gl.bindVertexArray(resource.vao);
       gl.drawElements(gl.TRIANGLES, resource.indexCount, gl.UNSIGNED_INT, 0);
@@ -16606,6 +16686,7 @@ void main() {
       let currentPreviewCutRect = null;
       let canvasCompositeState = null;
       let preserveCompositeOutsideScissor = false;
+      const viewportTextureMinFilter = this.getViewportTextureMinFilter(camera);
       const viewportTextureMagFilter = this.getViewportTextureMagFilter(camera);
       const setDocumentProjection = (documentWidth, documentHeight, cameraX, cameraY) => {
         gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
@@ -16838,7 +16919,7 @@ void main() {
           const clipOrigin = this.getClipBaseOrigin(clipBase);
 
           gl.activeTexture(gl.TEXTURE2);
-          this.setRasterTextureSampling(clipBase.target.texture, gl.LINEAR, viewportTextureMagFilter);
+          this.setRasterTextureSampling(clipBase.target.texture, viewportTextureMinFilter, viewportTextureMagFilter);
           gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
           gl.uniform1i(uniforms.clipTexture, 2);
           gl.uniform1f(uniforms.clipMode, 1.0);
@@ -16864,7 +16945,7 @@ void main() {
         if (texture === this.previewTexture) {
           this.setRasterTextureSampling(texture, gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR);
         } else {
-          this.setRasterTextureSampling(texture, gl.LINEAR, viewportTextureMagFilter);
+          this.setRasterTextureSampling(texture, viewportTextureMinFilter, viewportTextureMagFilter);
         }
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, opacity);
@@ -16919,6 +17000,7 @@ void main() {
           previewCutRect: currentPreviewCutRect,
           rect,
           texture,
+          textureMinFilter: viewportTextureMinFilter,
           textureMagFilter: viewportTextureMagFilter,
           viewportHeight,
           viewportWidth,
@@ -17001,7 +17083,7 @@ void main() {
           edgeFeatherPixels: rasterTransformPreview.edgeFeatherPixels,
           framebuffer: canvasCompositeState?.read?.framebuffer || null,
           opacity: rasterTransformPreview.opacity * layerOpacity,
-          textureFilter: gl.LINEAR,
+          textureFilter: viewportTextureMinFilter,
           viewportHeight,
           viewportWidth,
         };
@@ -17287,6 +17369,7 @@ void main() {
                     const didDrawPuppet = this.drawPuppetLayer(this.getArtboardDragVisualLayer(layer), puppetTarget, opacity, {
                       camera,
                       sourceTexture: layerTexture,
+                      textureMinFilter: viewportTextureMinFilter,
                       textureMagFilter: viewportTextureMagFilter,
                       viewportHeight,
                       viewportWidth,

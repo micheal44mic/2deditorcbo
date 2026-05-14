@@ -98,7 +98,8 @@ test("raster transform samples snapshots linearly while resizing", () => {
   assert.match(source, /this\.setRasterTextureSampling\(texture, textureFilter\)/);
   assert.match(source, /this\.setRasterTextureSampling\(texture, restoreTextureFilter\)/);
   assert.match(source, /textureFilter: this\.gl\?\.LINEAR/);
-  assert.match(source, /textureFilter: gl\.LINEAR/);
+  assert.match(source, /const viewportTextureMinFilter = this\.getViewportTextureMinFilter\(camera\)/);
+  assert.match(source, /textureFilter: viewportTextureMinFilter/);
 });
 
 test("resize tool transforms vector text as metadata instead of raster pixels", () => {
