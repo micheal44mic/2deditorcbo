@@ -10,10 +10,10 @@
   --right-sidebar-section-gap: 16px;
 
   position: absolute;
-  top: 12px;
-  bottom: 12px;
+  top: calc(12px + var(--cbo-safe-top));
+  bottom: calc(12px + var(--cbo-safe-bottom));
   left: 12px;
-  right: 12px;
+  right: max(12px, var(--cbo-safe-right));
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;

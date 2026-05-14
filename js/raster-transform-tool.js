@@ -483,6 +483,7 @@
       this.handleBeforeHistoryAction = this.handleBeforeHistoryAction.bind(this);
       this.handleCameraChange = this.handleCameraChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
+      this.handleTouchNavigationStart = this.handleTouchNavigationStart.bind(this);
       this.handleResize = this.handleResize.bind(this);
       this.handleWheel = this.handleWheel.bind(this);
       this.handlePointerDown = this.handlePointerDown.bind(this);
@@ -631,6 +632,7 @@
       window.addEventListener("cbo:camera-change", this.handleCameraChange);
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
       window.addEventListener("cbo:document-content-change", this.handleDocumentChange);
+      window.addEventListener("cbo:touch-navigation-start", this.handleTouchNavigationStart);
       window.addEventListener("keydown", this.handleKeyDown);
       window.addEventListener("resize", this.handleResize, { passive: true });
       this.svg.addEventListener("wheel", this.handleWheel, { passive: false });
@@ -1882,7 +1884,7 @@
     }
 
     handlePointerDown(event) {
-      if (!this.isOverlayActive() || event.button !== 0) {
+      if (namespace.isTouchNavigationExclusive?.() || !this.isOverlayActive() || event.button !== 0) {
         return;
       }
 
@@ -2076,6 +2078,15 @@
       }
 
       if (this.dragState?.pointerId === event.pointerId) {
+        this.cancelPendingDragUpdate();
+        this.cancelTransform();
+      }
+    }
+
+    handleTouchNavigationStart() {
+      this.clearSelectionMoveHold({ releaseCapture: true });
+
+      if (this.dragState) {
         this.cancelPendingDragUpdate();
         this.cancelTransform();
       }

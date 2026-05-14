@@ -241,6 +241,7 @@
       this.handleBeforeHistoryAction = this.handleBeforeHistoryAction.bind(this);
       this.handleCameraChange = this.handleCameraChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
+      this.handleTouchNavigationStart = this.handleTouchNavigationStart.bind(this);
       this.handlePointerDown = this.handlePointerDown.bind(this);
       this.handlePointerMove = this.handlePointerMove.bind(this);
       this.handlePointerUp = this.handlePointerUp.bind(this);
@@ -285,6 +286,7 @@
       window.addEventListener("cbo:camera-change", this.handleCameraChange);
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
       window.addEventListener("cbo:document-content-change", this.handleDocumentChange);
+      window.addEventListener("cbo:touch-navigation-start", this.handleTouchNavigationStart);
       window.addEventListener("resize", this.handleResize, { passive: true });
       this.svg.addEventListener("wheel", this.handleWheel, { passive: false });
       this.svg.addEventListener("pointerdown", this.handlePointerDown);
@@ -666,7 +668,7 @@
     }
 
     handlePointerDown(event) {
-      if (!this.isActive() || event.button !== 0) {
+      if (namespace.isTouchNavigationExclusive?.() || !this.isActive() || event.button !== 0) {
         return;
       }
 
@@ -833,6 +835,10 @@
 
     handlePointerCancel(event) {
       this.finishDrag(event);
+    }
+
+    handleTouchNavigationStart() {
+      this.finishDrag();
     }
 
     createPinNode(pin) {

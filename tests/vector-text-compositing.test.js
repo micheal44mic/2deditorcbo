@@ -337,7 +337,7 @@ test("mobile text tool exposes ADD TEXT as the layer creation action", () => {
   assert.match(topToolbarSource, /window\.CBO\.createVectorTextLayer\?\.\(\s*centerAt \? \{ centerAt \} : undefined,\s*\)/);
   assert.match(topToolbarSource, /editorPage\.appendChild\(textAddToolbar\)/);
   assert.match(topToolbarSource, /textAddToolbar\?\.querySelector\("\[data-text-add-button\]"\)/);
-  assert.match(topToolbarCss, /\.text-add-toolbar:not\(\[hidden\]\) \{[\s\S]*bottom: 88px;/);
+  assert.match(topToolbarCss, /\.text-add-toolbar:not\(\[hidden\]\) \{[\s\S]*bottom: var\(--cbo-mobile-floating-bottom\);/);
   assert.match(topToolbarCss, /\.text-add-toolbar \{[\s\S]*min-width: 156px;/);
   assert.match(topToolbarCss, /\.text-add-button \{[\s\S]*color: #dfe3ea;[\s\S]*font-size: 16px;[\s\S]*font-weight: 900;/);
   assert.match(toolbarSource, /function isTextToolButton\(button\)/);
@@ -393,7 +393,7 @@ test("mobile text layer switches the bottom dock to icon settings panels", () =>
   assert.match(topToolbarCss, /\.toolbar-dock\.mobile-text-settings-active \.main-tools-toolbar \{\s*display: none;/);
   assert.match(topToolbarCss, /\.toolbar-dock \.mobile-text-settings-toolbar:not\(\[hidden\]\) \{\s*display: flex;/);
   assert.doesNotMatch(topToolbarCss, /\.top-toolbar-dock \{\s*z-index: 9050;/);
-  assert.match(topToolbarCss, /\.mobile-text-panel:not\(\[hidden\]\) \{[\s\S]*bottom: 88px;/);
+  assert.match(topToolbarCss, /\.mobile-text-panel:not\(\[hidden\]\) \{[\s\S]*bottom: var\(--cbo-mobile-floating-bottom\);/);
   assert.match(topToolbarCss, /\.mobile-text-content-input \{[\s\S]*background: #242832;[\s\S]*color: #ffffff;/);
   assert.match(topToolbarCss, /\.mobile-text-select \{[\s\S]*color-scheme: dark;/);
   assert.match(topToolbarCss, /\.mobile-text-select option \{[\s\S]*background: #242832;[\s\S]*color: #ffffff;/);

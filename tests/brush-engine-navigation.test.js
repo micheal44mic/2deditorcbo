@@ -47,19 +47,57 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
 
   assert.match(source, /this\.activeTouchPointers = new Map\(\)/);
   assert.match(source, /this\.touchNavigationGesture = null/);
+  assert.match(source, /this\.touchNavigationExclusive = false/);
   assert.match(source, /getTouchNavigationGeometry\(pointers = this\.getTouchNavigationPointers\(\)\)/);
   assert.match(source, /beginTouchNavigationGesture\(\)/);
   assert.match(source, /updateTouchNavigationGesture\(\)/);
   assert.match(source, /cancelActiveStrokeForTouchNavigation\(\)/);
   assert.match(source, /this\.clearStrokeLayer\(\)/);
+  assert.match(source, /namespace\.setTouchNavigationExclusive\?\.\(true/);
+  assert.match(source, /namespace\.setTouchNavigationExclusive\?\.\(false/);
+  assert.match(source, /this\.touchNavigationExclusive && this\.activeTouchPointers\.size === 0/);
   assert.match(source, /this\.activeTouchPointers\.set\(event\.pointerId/);
   assert.match(source, /this\.activeTouchPointers\.size >= 2 && this\.beginTouchNavigationGesture\(\)/);
+  assert.match(source, /else if \(this\.touchNavigationExclusive\)/);
   assert.match(source, /this\.markNavigationEvent\(event\)/);
+  assert.match(source, /event\.stopImmediatePropagation\?\.\(\)/);
   assert.match(source, /this\.touchNavigationGesture\.lastDistance/);
   assert.match(source, /this\.camera\.zoom = newZoom/);
   assert.match(source, /this\.forgetTouchNavigationPointer\(event\.pointerId\)/);
   assert.match(source, /this\.activeTouchPointers\.clear\(\)/);
   assert.match(source, /this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.smudgeEngine\?\.isDragging/);
+});
+
+test("touch navigation exposes an exclusive mobile gesture guard", () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
+
+  assert.match(appSource, /TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 420/);
+  assert.match(appSource, /namespace\.isTouchNavigationExclusive = isTouchNavigationExclusive/);
+  assert.match(appSource, /namespace\.setTouchNavigationExclusive = setTouchNavigationExclusive/);
+  assert.match(appSource, /"cbo:touch-navigation-start"/);
+  assert.match(appSource, /"cbo:touch-navigation-end"/);
+  assert.match(appSource, /document\.body\?\.classList\.toggle\("cbo-touch-navigation-active", nextActive\)/);
+  assert.match(appSource, /event\.pointerType === "touch"[\s\S]*!isStageEvent\(event\)/);
+  assert.match(appSource, /event\.stopImmediatePropagation\(\)/);
+});
+
+test("mobile pinch navigation cancels active touch tool interactions", () => {
+  const areaSource = fs.readFileSync(path.join(repoRoot, "js", "area-selection-tool.js"), "utf8");
+  const rasterSource = fs.readFileSync(path.join(repoRoot, "js", "raster-transform-tool.js"), "utf8");
+  const puppetSource = fs.readFileSync(path.join(repoRoot, "js", "puppet-transform-tool.js"), "utf8");
+  const smudgeSource = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
+  const textSource = fs.readFileSync(path.join(repoRoot, "js", "text", "vector-text-renderer.js"), "utf8");
+
+  assert.match(areaSource, /window\.addEventListener\("cbo:touch-navigation-start", cancelActiveAreaSelectionForTouchNavigation\)/);
+  assert.match(areaSource, /namespace\.isTouchNavigationExclusive\?\.\(\) \|\| !isAreaSelectionToolActive\(\)/);
+  assert.match(rasterSource, /window\.addEventListener\("cbo:touch-navigation-start", this\.handleTouchNavigationStart\)/);
+  assert.match(rasterSource, /namespace\.isTouchNavigationExclusive\?\.\(\) \|\| !this\.isOverlayActive\(\)/);
+  assert.match(puppetSource, /window\.addEventListener\("cbo:touch-navigation-start", this\.handleTouchNavigationStart\)/);
+  assert.match(puppetSource, /namespace\.isTouchNavigationExclusive\?\.\(\) \|\| !this\.isActive\(\)/);
+  assert.match(smudgeSource, /window\.addEventListener\("cbo:touch-navigation-start", this\.handleTouchNavigationStart\)/);
+  assert.match(smudgeSource, /namespace\.isTouchNavigationExclusive\?\.\(\) \|\|[\s\S]*this\.shouldIgnorePointer\(event\)/);
+  assert.match(textSource, /window\.addEventListener\("cbo:touch-navigation-start", this\.handleTouchNavigationStart\)/);
+  assert.match(textSource, /namespace\.isTouchNavigationExclusive\?\.\(\)/);
 });
 
 test("brush pointer moves are coalesced into the render frame", () => {

@@ -1,18 +1,19 @@
 .editor-page {
-  --left-rail-width: 72px;
+  --left-rail-content-width: 72px;
+  --left-rail-width: calc(var(--left-rail-content-width) + var(--cbo-safe-left));
   --left-drawer-width: 265px;
   --left-panel-width: var(--left-rail-width);
   --right-panel-width: 245px;
 
   position: relative;
   width: 100%;
-  min-height: 100vh;
+  min-height: var(--cbo-visual-viewport-height);
 }
 
 .editor-stage {
   position: relative;
-  height: 100vh;
-  min-height: 100vh;
+  height: var(--cbo-visual-viewport-height);
+  min-height: var(--cbo-visual-viewport-height);
   margin: 0 var(--right-panel-width) 0 var(--left-panel-width);
   display: grid;
   place-items: stretch;
@@ -1134,7 +1135,7 @@ body.cbo-document-restore-active .editor-stage {
   top: 0;
   bottom: 0;
   z-index: 1000;
-  height: 100vh;
+  height: var(--cbo-visual-viewport-height);
   background: #181a1f;
 }
 

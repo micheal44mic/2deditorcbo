@@ -1,7 +1,7 @@
 .top-toolbar-dock {
   position: fixed;
-  top: 28px;
-  right: calc(var(--right-panel-width) + 12px);
+  top: calc(28px + var(--cbo-safe-top));
+  right: calc(var(--right-panel-width) + max(12px, var(--cbo-safe-right)));
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -812,7 +812,7 @@
 @media (max-width: 900px) {
   .text-add-toolbar:not([hidden]) {
     position: fixed;
-    bottom: 88px;
+    bottom: var(--cbo-mobile-floating-bottom);
     left: 50%;
     z-index: 9020;
     display: flex;
@@ -836,12 +836,13 @@
 
   .mobile-text-panel:not([hidden]) {
     position: fixed;
-    right: 12px;
-    bottom: 88px;
-    left: 12px;
+    right: var(--cbo-mobile-edge-right);
+    bottom: var(--cbo-mobile-floating-bottom);
+    left: var(--cbo-mobile-edge-left);
     z-index: 9021;
     display: block;
     max-height: min(52vh, 360px);
+    max-height: min(52dvh, calc(var(--cbo-visual-viewport-height) - var(--cbo-mobile-floating-bottom) - 24px), 360px);
     padding: 10px;
     overflow: auto;
     border-radius: 9px;
@@ -862,7 +863,7 @@
   .area-selection-operation-toolbar,
   .transform-mode-toolbar {
     top: auto;
-    bottom: 88px;
+    bottom: var(--cbo-mobile-floating-bottom);
     left: 50%;
     z-index: 9020;
     justify-content: center;
@@ -890,9 +891,9 @@
 
   .brush-quick-controls:not([hidden]) {
     position: fixed;
-    top: 88px;
+    top: calc(88px + var(--cbo-safe-top));
     left: calc(var(--left-panel-width) + 12px);
-    right: 12px;
+    right: var(--cbo-mobile-edge-right);
     z-index: 8990;
     display: grid;
     grid-template-columns: 1fr;

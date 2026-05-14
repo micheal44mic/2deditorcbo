@@ -1,6 +1,6 @@
 .drawer-title {
   position: absolute;
-  top: 12px;
+  top: calc(12px + var(--cbo-safe-top));
   left: 32px;
   right: 16px;
   display: flex;
@@ -17,7 +17,7 @@
 
 .drawer-panel-header {
   position: absolute;
-  top: 64px;
+  top: calc(64px + var(--cbo-safe-top));
   left: 16px;
   right: 16px;
   display: none;
@@ -92,7 +92,7 @@
 
 .drawer-search {
   position: absolute;
-  top: 72px;
+  top: calc(72px + var(--cbo-safe-top));
   left: 16px;
   right: 16px;
   display: flex;
@@ -159,10 +159,10 @@
 
 .drawer-content {
   position: absolute;
-  top: 136px;
+  top: calc(136px + var(--cbo-safe-top));
   left: 16px;
   right: 16px;
-  bottom: 16px;
+  bottom: calc(16px + var(--cbo-safe-bottom));
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 0;
@@ -179,9 +179,9 @@
 .drawer-custom-scrollbar {
   display: none !important;
   position: absolute;
-  top: 136px;
+  top: calc(136px + var(--cbo-safe-top));
   right: 8px;
-  bottom: 16px;
+  bottom: calc(16px + var(--cbo-safe-bottom));
   z-index: 3;
   width: 4px;
   border-radius: 999px;

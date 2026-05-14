@@ -151,7 +151,7 @@
 .layer-effects-menu {
   display: grid;
   gap: 12px;
-  max-height: min(460px, calc(100vh - 180px));
+  max-height: min(460px, calc(var(--cbo-visual-viewport-height) - 180px));
   overflow: auto;
   padding-right: 2px;
 }
@@ -715,12 +715,13 @@
 
   .mobile-layer-effects-panel:not([hidden]) {
     position: fixed;
-    right: 12px;
-    bottom: 88px;
-    left: 12px;
+    right: var(--cbo-mobile-edge-right);
+    bottom: var(--cbo-mobile-floating-bottom);
+    left: var(--cbo-mobile-edge-left);
     z-index: 9021;
     display: block;
     max-height: min(54vh, 372px);
+    max-height: min(54dvh, calc(var(--cbo-visual-viewport-height) - var(--cbo-mobile-floating-bottom) - 24px), 372px);
     padding: 10px;
     overflow: auto;
     border-radius: 9px;

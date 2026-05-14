@@ -6,7 +6,7 @@
   display: grid;
   grid-template-columns: 245px 245px 400px;
   width: min(892px, calc(100vw - var(--left-panel-width) - var(--right-panel-width) - 48px));
-  height: min(560px, calc(100vh - 96px));
+  height: min(560px, calc(var(--cbo-visual-viewport-height) - 96px));
   overflow: hidden;
   border: 1px solid rgba(223, 227, 234, 0.32);
   border-radius: 8px;
@@ -877,7 +877,7 @@
 .brush-studio-shape-editor-image {
   display: block;
   grid-area: 1 / 1;
-  width: min(calc(100% - 32px), calc(100vh - 180px), 480px);
+  width: min(calc(100% - 32px), calc(var(--cbo-visual-viewport-height) - 180px), 480px);
   max-width: 100%;
   aspect-ratio: 1;
   object-fit: contain;
@@ -890,7 +890,7 @@
 
 .brush-studio-shape-editor-stage::before {
   content: "";
-  width: min(calc(100% - 32px), calc(100vh - 180px), 480px);
+  width: min(calc(100% - 32px), calc(var(--cbo-visual-viewport-height) - 180px), 480px);
   max-width: 100%;
   aspect-ratio: 1;
   grid-area: 1 / 1;

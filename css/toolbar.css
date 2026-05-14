@@ -189,12 +189,12 @@
   .toolbar-dock {
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: var(--cbo-mobile-dock-bottom);
     z-index: 9000;
     justify-content: flex-start;
-    height: 76px;
+    height: var(--cbo-mobile-dock-outer-height);
     max-width: none;
-    padding: 12px;
+    padding: 12px var(--cbo-mobile-edge-right) calc(12px + var(--cbo-safe-bottom)) var(--cbo-mobile-edge-left);
     overflow-x: auto;
     overflow-y: hidden;
     background: #181a1f;
@@ -270,9 +270,9 @@
 
   .toolbar-dock .tool-popover {
     position: fixed;
-    left: 12px;
-    right: 12px;
-    bottom: 88px;
+    left: var(--cbo-mobile-edge-left);
+    right: var(--cbo-mobile-edge-right);
+    bottom: var(--cbo-mobile-floating-bottom);
     width: auto;
     min-width: 0;
     transform: none;

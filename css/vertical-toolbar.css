@@ -1,7 +1,7 @@
 .right-vertical-toolbar-dock {
   position: fixed;
-  top: 91px;
-  right: calc(var(--right-panel-width) + 12px);
+  top: calc(91px + var(--cbo-safe-top));
+  right: calc(var(--right-panel-width) + max(12px, var(--cbo-safe-right)));
   z-index: 1000;
   display: flex;
   align-items: flex-end;
@@ -49,8 +49,8 @@
   .right-vertical-toolbar-dock {
     display: none;
     top: auto;
-    right: 12px;
-    bottom: 88px;
+    right: var(--cbo-mobile-edge-right);
+    bottom: var(--cbo-mobile-floating-bottom);
     z-index: 9010;
   }
 

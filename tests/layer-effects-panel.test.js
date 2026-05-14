@@ -42,7 +42,7 @@ test("layer effects panel is loaded after the vertical toolbar", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
   const cssSource = fs.readFileSync(path.join(repoRoot, "css", "layer-effects-panel.css"), "utf8");
 
-  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layer-effects-panel\.css" \/>/);
+  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layer-effects-panel\.css(?:\?v=[^"]+)?" \/>/);
   assert.match(
     indexSource,
     /<script src="\.\/js\/vertical-toolbar\.js"><\/script>\s*<script src="\.\/js\/layer-effects-panel\.js(?:\?v=[^"]+)?"><\/script>/,
@@ -264,7 +264,7 @@ test("mobile adjustment layer exposes implemented effects as bottom toolbar pane
   assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-threshold"/);
   assert.match(cssSource, /\.toolbar-dock\.mobile-layer-effects-active \.main-tools-toolbar \{\s*display: none;/);
   assert.match(cssSource, /\.toolbar-dock \.mobile-layer-effects-toolbar:not\(\[hidden\]\) \{\s*display: flex;/);
-  assert.match(cssSource, /\.mobile-layer-effects-panel:not\(\[hidden\]\) \{[\s\S]*bottom: 88px;/);
+  assert.match(cssSource, /\.mobile-layer-effects-panel:not\(\[hidden\]\) \{[\s\S]*bottom: var\(--cbo-mobile-floating-bottom\);/);
   assert.match(cssSource, /\.field-blur-pin-overlay \{[\s\S]*touch-action: none;/);
   assert.match(cssSource, /\.field-blur-pin \{[\s\S]*width: 56px;[\s\S]*height: 56px;/);
   assert.match(appSource, /"\.mobile-layer-effects-panel"/);

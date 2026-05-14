@@ -20,7 +20,7 @@
 
 .panel-toggle-bg {
   position: fixed;
-  top: 12px;
+  top: calc(12px + var(--cbo-safe-top));
   left: calc(var(--left-rail-width) + var(--left-drawer-width) - 22px);
   z-index: 999;
   width: 44px;
@@ -37,7 +37,7 @@
 
 .panel-toggle {
   position: absolute;
-  top: 12px;
+  top: calc(12px + var(--cbo-safe-top));
   right: calc(0px - var(--left-drawer-width) - 22px);
   z-index: 2;
   display: inline-flex;
@@ -71,9 +71,9 @@
 
 .panel-title {
   position: absolute;
-  top: 12px;
+  top: calc(12px + var(--cbo-safe-top));
   z-index: 1;
-  left: 9px;
+  left: calc(9px + var(--cbo-safe-left));
   right: 9px;
   display: flex;
   align-items: center;
@@ -100,8 +100,8 @@
 
 .rail-tools {
   position: absolute;
-  top: 72px;
-  left: 0;
+  top: calc(72px + var(--cbo-safe-top));
+  left: var(--cbo-safe-left);
   right: 0;
   display: flex;
   flex-direction: column;

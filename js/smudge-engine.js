@@ -212,9 +212,11 @@ void main() {
       this.handlePointerMove = this.handlePointerMove.bind(this);
       this.handlePointerUp = this.handlePointerUp.bind(this);
       this.handlePointerCancel = this.handlePointerCancel.bind(this);
+      this.handleTouchNavigationStart = this.handleTouchNavigationStart.bind(this);
 
       window.addEventListener("cbo:tool-change", this.handleToolChange);
       window.addEventListener("cbo:paint-settings-change", this.handleSettingsChange);
+      window.addEventListener("cbo:touch-navigation-start", this.handleTouchNavigationStart);
       this.canvas.addEventListener("pointerdown", this.handlePointerDown);
       this.canvas.addEventListener("pointermove", this.handlePointerMove);
       this.canvas.addEventListener("pointerup", this.handlePointerUp);
@@ -1999,6 +2001,7 @@ void main() {
         !this.isSmudgeToolActive ||
         this.isDragging ||
         event.button !== 0 ||
+        namespace.isTouchNavigationExclusive?.() ||
         this.shouldIgnorePointer(event)
       ) {
         return;
@@ -2038,6 +2041,12 @@ void main() {
       }
 
       this.cancelStroke(event);
+    }
+
+    handleTouchNavigationStart() {
+      if (this.isDragging) {
+        this.cancelStroke();
+      }
     }
 
     moveStroke(x, y, pressure = 1) {
@@ -2585,6 +2594,7 @@ void main() {
       this.isDisposed = true;
       window.removeEventListener("cbo:tool-change", this.handleToolChange);
       window.removeEventListener("cbo:paint-settings-change", this.handleSettingsChange);
+      window.removeEventListener("cbo:touch-navigation-start", this.handleTouchNavigationStart);
       this.canvas.removeEventListener("pointerdown", this.handlePointerDown);
       this.canvas.removeEventListener("pointermove", this.handlePointerMove);
       this.canvas.removeEventListener("pointerup", this.handlePointerUp);

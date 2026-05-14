@@ -1034,6 +1034,7 @@
       this.handleDragEnd = this.handleDragEnd.bind(this);
       this.handleEnvelopeDragMove = this.handleEnvelopeDragMove.bind(this);
       this.handleEnvelopeDragEnd = this.handleEnvelopeDragEnd.bind(this);
+      this.handleTouchNavigationStart = this.handleTouchNavigationStart.bind(this);
       this.handleKeyDown = this.handleKeyDown.bind(this);
 
       this.mount();
@@ -1080,6 +1081,7 @@
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
       window.addEventListener("cbo:document-content-change", this.handleDocumentChange);
       window.addEventListener("cbo:tool-change", this.handleToolChange);
+      window.addEventListener("cbo:touch-navigation-start", this.handleTouchNavigationStart);
       window.addEventListener("keydown", this.handleKeyDown);
       window.addEventListener("resize", () => {
         this.updateViewportSize();
@@ -2534,6 +2536,10 @@
     }
 
     handlePointerDown(event) {
+      if (namespace.isTouchNavigationExclusive?.()) {
+        return;
+      }
+
       if (event.button === 0 && event.target === this.hitArea) {
         const envelopeHit = this.getEnvelopeHandleHitAtClient(
           event.clientX,
@@ -2564,6 +2570,10 @@
     }
 
     handleTextLayerPointerDown(event, layerId) {
+      if (namespace.isTouchNavigationExclusive?.()) {
+        return;
+      }
+
       const layer = this.layerModel?.findEntryById?.(layerId);
 
       if (!layer) {
@@ -2601,6 +2611,10 @@
     }
 
     handleEnvelopePointerDown(event, layerId, nodeId) {
+      if (namespace.isTouchNavigationExclusive?.()) {
+        return;
+      }
+
       const layer = this.layerModel?.findEntryById?.(layerId);
 
       if (!layer?.envelopeGrid || layer.locked === true) {
@@ -2740,6 +2754,38 @@
       }
 
       event.preventDefault();
+    }
+
+    handleTouchNavigationStart() {
+      if (this.envelopeDragState) {
+        window.removeEventListener("pointermove", this.handleEnvelopeDragMove);
+        window.removeEventListener("pointerup", this.handleEnvelopeDragEnd);
+        window.removeEventListener("pointercancel", this.handleEnvelopeDragEnd);
+        namespace.documentHistory?.endGroup?.(this.envelopeDragState.historyGroup);
+        this.envelopeDragState = null;
+        this.endTextEditPreview();
+        this.endContinuousInteraction();
+      }
+
+      if (!this.dragState) {
+        return;
+      }
+
+      if (this.dragFrameRequest) {
+        cancelAnimationFrame(this.dragFrameRequest);
+        this.dragFrameRequest = 0;
+      }
+
+      const { group, layerId, pointerId } = this.dragState;
+
+      group?.releasePointerCapture?.(pointerId);
+      window.removeEventListener("pointermove", this.handleDragMove);
+      window.removeEventListener("pointerup", this.handleDragEnd);
+      window.removeEventListener("pointercancel", this.handleDragEnd);
+      namespace.documentRenderer?.clearVectorTextTransformPreviewLayer?.(layerId);
+      this.dragState = null;
+      this.endContinuousInteraction();
+      this.endTextEditPreview();
     }
 
     clientToDocumentPoint(clientX, clientY) {

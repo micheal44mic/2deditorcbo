@@ -2035,7 +2035,7 @@
   }
 
   function handlePointerDown(event) {
-    if (!isAreaSelectionToolActive() || event.button !== 0 || state.pointerId != null) {
+    if (namespace.isTouchNavigationExclusive?.() || !isAreaSelectionToolActive() || event.button !== 0 || state.pointerId != null) {
       return;
     }
 
@@ -2157,6 +2157,27 @@
         historyBeforeRegion: state.baseRegion,
         source: "area-selection-commit",
       });
+    }
+
+    state.pointerId = null;
+    state.startPoint = null;
+    state.baseRegion = null;
+    state.dragOperationMode = "replace";
+    state.lassoPoints = [];
+    stopOverlayLoop();
+  }
+
+  function cancelActiveAreaSelectionForTouchNavigation() {
+    if (state.pointerId == null) {
+      return;
+    }
+
+    if (state.pointerTarget?.hasPointerCapture?.(state.pointerId)) {
+      state.pointerTarget.releasePointerCapture(state.pointerId);
+    }
+
+    if (state.baseRegion) {
+      setRegion(state.baseRegion, { source: "area-selection-touch-navigation-cancel" });
     }
 
     state.pointerId = null;
@@ -2795,6 +2816,7 @@
       pointerTarget.addEventListener("wheel", handleOverlayActivity, true);
       window.addEventListener("cbo:tool-change", handleToolChange);
       window.addEventListener("cbo:camera-change", handleOverlayCameraChange);
+      window.addEventListener("cbo:touch-navigation-start", cancelActiveAreaSelectionForTouchNavigation);
       window.addEventListener("keydown", handleKeyDown, true);
       window.addEventListener("resize", handleOverlayResize);
     }

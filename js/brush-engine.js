@@ -593,6 +593,7 @@ void main() {
       this.pendingPointerSamples = [];
       this.activeTouchPointers = new Map();
       this.touchNavigationGesture = null;
+      this.touchNavigationExclusive = false;
       this.isDrawing = false;
       this.activePointerId = null;
       this.isPanning = false;
@@ -2696,6 +2697,11 @@ void main() {
         lastDistance: geometry.distance,
         pointerIds: geometry.pointerIds,
       };
+      this.touchNavigationExclusive = true;
+      namespace.setTouchNavigationExclusive?.(true, {
+        pointerIds: geometry.pointerIds,
+        source: "brush-touch-navigation",
+      });
       namespace.EngineGovernor?.markActivity?.({ source: "touch-navigation-start" });
 
       return true;
@@ -2741,13 +2747,24 @@ void main() {
     forgetTouchNavigationPointer(pointerId) {
       this.activeTouchPointers.delete(pointerId);
 
-      if (!this.touchNavigationGesture) {
+      if (this.touchNavigationGesture && this.activeTouchPointers.size < 2) {
+        this.touchNavigationGesture = null;
+      }
+
+      if (this.touchNavigationExclusive && this.activeTouchPointers.size === 0) {
+        this.endTouchNavigationExclusive();
+      }
+    }
+
+    endTouchNavigationExclusive() {
+      if (!this.touchNavigationExclusive) {
         return;
       }
 
-      if (this.activeTouchPointers.size < 2) {
-        this.touchNavigationGesture = null;
-      }
+      this.touchNavigationExclusive = false;
+      namespace.setTouchNavigationExclusive?.(false, {
+        source: "brush-touch-navigation",
+      });
     }
 
     isTemporaryPanTrigger(event) {
@@ -2758,6 +2775,7 @@ void main() {
       event.__cboNavigationHandled = true;
       event.preventDefault();
       event.stopPropagation();
+      event.stopImmediatePropagation?.();
     }
 
     beginPan(event, captureElement = this.canvas) {
@@ -2817,6 +2835,8 @@ void main() {
 
         if (this.activeTouchPointers.size >= 2 && this.beginTouchNavigationGesture()) {
           this.markNavigationEvent(event);
+        } else if (this.touchNavigationExclusive) {
+          this.markNavigationEvent(event);
         }
         return;
       }
@@ -2845,6 +2865,8 @@ void main() {
         if (this.touchNavigationGesture) {
           this.markNavigationEvent(event);
           this.updateTouchNavigationGesture();
+        } else if (this.touchNavigationExclusive) {
+          this.markNavigationEvent(event);
         }
         return;
       }
@@ -2859,7 +2881,7 @@ void main() {
 
     handleNavigationPointerUp(event) {
       if (event.pointerType === "touch") {
-        if (this.touchNavigationGesture) {
+        if (this.touchNavigationGesture || this.touchNavigationExclusive) {
           this.markNavigationEvent(event);
         }
         this.forgetTouchNavigationPointer(event.pointerId);
@@ -2876,7 +2898,7 @@ void main() {
 
     handleNavigationPointerCancel(event) {
       if (event.pointerType === "touch") {
-        if (this.touchNavigationGesture) {
+        if (this.touchNavigationGesture || this.touchNavigationExclusive) {
           this.markNavigationEvent(event);
         }
         this.forgetTouchNavigationPointer(event.pointerId);
@@ -2934,6 +2956,7 @@ void main() {
       this.isSpaceHeld = false;
       this.activeTouchPointers.clear();
       this.touchNavigationGesture = null;
+      this.endTouchNavigationExclusive();
 
       if (this.isPanning) {
         this.endPan();
@@ -7369,6 +7392,7 @@ void main() {
       this.discardPendingBrushHistory();
       this.activeTouchPointers.clear();
       this.touchNavigationGesture = null;
+      this.endTouchNavigationExclusive();
       if (this.emptyEraserLayerToastTimer) {
         window.clearTimeout?.(this.emptyEraserLayerToastTimer);
         this.emptyEraserLayerToastTimer = 0;
