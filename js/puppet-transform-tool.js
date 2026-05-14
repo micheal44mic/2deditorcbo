@@ -96,6 +96,7 @@
       history,
       layerId,
       layerModel,
+      puppet,
       renderer,
     } = options;
 
@@ -105,6 +106,7 @@
 
     const before = cloneValue(beforeState);
     const after = cloneValue(afterState);
+    const puppetForRedo = puppet ? cloneValue(puppet) : null;
 
     return {
       type: "custom",
@@ -131,6 +133,64 @@
         return didRestorePixels;
       },
       redo() {
+        if (!afterSnapshot) {
+          const didRestoreBeforeState = history.restoreLayerState(layerModel, before, {
+            source: "history-redo-puppet-rasterize-prepare",
+          });
+
+          if (!didRestoreBeforeState) {
+            return false;
+          }
+
+          const didRestoreBeforePixels = renderer.restoreRasterSnapshot?.(layerId, beforeSnapshot, {
+            preferSparse: beforePreferSparse,
+            replaceSparse: beforePreferSparse,
+            source: "history-redo-puppet-rasterize-prepare",
+          }) !== false;
+
+          if (!didRestoreBeforePixels) {
+            return false;
+          }
+
+          const redoLayer = layerModel.findEntryById?.(layerId);
+          const redoPuppet = puppetForRedo || redoLayer?.puppet || before.entries?.find?.((entry) => entry?.id === layerId)?.puppet;
+          const layerForRedo = redoPuppet
+            ? { ...redoLayer, puppet: cloneValue(redoPuppet) }
+            : redoLayer;
+          const redoResult = renderer.rasterizePuppetLayer?.(layerForRedo, {
+            captureAfterSnapshot: false,
+            emit: false,
+            source: "history-redo-puppet-rasterize",
+          });
+
+          renderer.deleteRasterSnapshot?.(redoResult?.beforeSnapshot);
+          renderer.deleteRasterSnapshot?.(redoResult?.afterSnapshot);
+
+          if (!redoResult) {
+            return false;
+          }
+
+          const didRestoreAfterState = history.restoreLayerState(layerModel, after, {
+            source: "history-redo-puppet-rasterize",
+          });
+
+          if (!didRestoreAfterState) {
+            history.restoreLayerState(layerModel, before, {
+              source: "history-redo-puppet-rasterize-rollback",
+            });
+            renderer.restoreRasterSnapshot?.(layerId, beforeSnapshot, {
+              preferSparse: beforePreferSparse,
+              replaceSparse: beforePreferSparse,
+              source: "history-redo-puppet-rasterize-rollback",
+            });
+            namespace.brushEngine?.requestDraw?.();
+            return false;
+          }
+
+          namespace.brushEngine?.requestDraw?.();
+          return true;
+        }
+
         const didRestoreState = history.restoreLayerState(layerModel, after, {
           source: "history-redo-puppet-rasterize",
         });
@@ -160,6 +220,8 @@
       },
     };
   }
+
+  namespace.createPuppetRasterizeHistoryEntry = createPuppetRasterizeHistoryEntry;
 
   class PuppetTransformTool {
     constructor(options = {}) {
@@ -444,6 +506,7 @@
 
       runAfterNextPaint(() => {
         const snapshots = renderer?.rasterizePuppetLayer?.({ ...layer, puppet }, {
+          captureAfterSnapshot: false,
           emit: false,
           source: "puppet-rasterize",
         });
@@ -482,6 +545,7 @@
           history,
           layerId: layer.id,
           layerModel: this.layerModel,
+          puppet,
           renderer,
         });
 

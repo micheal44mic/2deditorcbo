@@ -4479,10 +4479,11 @@ test("puppet rasterize commits the deformed mesh through snapshots", () => {
   );
 
   assert.match(rendererSource, /rasterizePuppetLayer\(layer, options = \{\}\)/);
+  assert.match(rendererSource, /const captureAfterSnapshot = options\.captureAfterSnapshot !== false/);
   assert.match(rendererSource, /this\.createRasterSnapshot\(target, null, "puppet-rasterize-before"\)/);
   assert.match(rendererSource, /const outputRect = this\.getPuppetDeformedBounds\(layer, target\)/);
   assert.match(rendererSource, /this\.createRasterTargetForRect\(outputRect\)/);
-  assert.match(rendererSource, /this\.createRasterSnapshot\(destinationTarget, null, "puppet-rasterize-after"\)/);
+  assert.match(rendererSource, /captureAfterSnapshot[\s\S]*this\.createRasterSnapshot\(destinationTarget, null, "puppet-rasterize-after"\)/);
   assert.match(rendererSource, /puppet-rasterize"\}\-retile/);
   assert.match(rendererSource, /beforePreferSparse: preferSparseRestore/);
   assert.match(rendererSource, /afterPreferSparse/);
@@ -4498,6 +4499,9 @@ test("puppet rasterize commits the deformed mesh through snapshots", () => {
   assert.match(puppetToolSource, /namespace\.documentHistory\?\.flushLayerState\?\.\(this\.layerModel\)/);
   assert.match(puppetToolSource, /source: "puppet-rasterize-preview-clear"/);
   assert.match(puppetToolSource, /runAfterNextPaint\(\(\) => \{/);
+  assert.match(puppetToolSource, /captureAfterSnapshot: false/);
+  assert.match(puppetToolSource, /history-redo-puppet-rasterize-prepare/);
+  assert.match(puppetToolSource, /renderer\.rasterizePuppetLayer\?\.?\(layerForRedo,/);
   assert.match(puppetToolSource, /source: "puppet-rasterize-rollback"/);
   assert.match(puppetToolSource, /source: "history-undo-puppet-rasterize"/);
   assert.match(puppetToolSource, /source: "history-redo-puppet-rasterize"/);

@@ -15906,6 +15906,7 @@ void main() {
         return null;
       }
 
+      const captureAfterSnapshot = options.captureAfterSnapshot !== false;
       let target = this.ensureWritableRasterTarget(layer.id, {
         source: options.source || "puppet-copy-on-write-detach",
       }) || this.rasterTargetsByLayerId.get(layer.id);
@@ -15986,9 +15987,11 @@ void main() {
 
       this.markRasterTargetDirty(destinationTarget);
 
-      const rasterizedSnapshot = this.createRasterSnapshot(destinationTarget, null, "puppet-rasterize-after");
+      const rasterizedSnapshot = captureAfterSnapshot
+        ? this.createRasterSnapshot(destinationTarget, null, "puppet-rasterize-after")
+        : null;
 
-      if (!rasterizedSnapshot?.texture) {
+      if (captureAfterSnapshot && !rasterizedSnapshot?.texture) {
         if (needsTargetSwap) {
           this.deleteRasterTargetObject(destinationTarget);
         }
