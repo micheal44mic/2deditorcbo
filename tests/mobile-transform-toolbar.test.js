@@ -72,13 +72,21 @@ test("mobile layout accounts for iOS safe areas and visual viewport changes", ()
 
   assert.match(indexSource, /viewport-fit=cover/);
   assert.match(indexSource, /interactive-widget=resizes-visual/);
+  assert.match(indexSource, /id="android-device-indicator"[\s\S]*>android<\/div>/);
   assert.match(baseCss, /--cbo-safe-bottom: env\(safe-area-inset-bottom, 0px\);/);
   assert.match(baseCss, /--cbo-visual-viewport-height: 100dvh;/);
   assert.match(baseCss, /--cbo-keyboard-inset-bottom: 0px;/);
+  assert.match(baseCss, /\.android-device-indicator \{[\s\S]*top: calc\(8px \+ var\(--cbo-safe-top\)\);/);
+  assert.match(baseCss, /\.android-device-indicator \{[\s\S]*pointer-events: none;/);
   assert.match(baseCss, /input:not\(\[type="range"\]\):not\(\[type="color"\]\):not\(\[type="checkbox"\]\):not\(\[type="radio"\]\),[\s\S]*font-size: 16px;/);
   assert.match(layoutCss, /\.editor-stage \{[\s\S]*height: var\(--cbo-visual-viewport-height\);/);
   assert.match(toolbarCss, /\.toolbar-dock \{[\s\S]*bottom: var\(--cbo-mobile-dock-bottom\);/);
   assert.match(toolbarCss, /padding: 12px var\(--cbo-mobile-edge-right\) calc\(12px \+ var\(--cbo-safe-bottom\)\) var\(--cbo-mobile-edge-left\);/);
+  assert.match(appSource, /function isAndroidDevice\(\)/);
+  assert.match(appSource, /navigator\.userAgentData\?\.platform/);
+  assert.match(appSource, /navigator\.userAgent/);
+  assert.match(appSource, /androidIndicator\.hidden = !isAndroid/);
+  assert.match(appSource, /cbo-device-android/);
   assert.match(appSource, /window\.visualViewport/);
   assert.match(appSource, /--cbo-visual-viewport-height/);
   assert.match(appSource, /--cbo-keyboard-inset-bottom/);

@@ -140,6 +140,31 @@ body {
     "Segoe UI", sans-serif;
 }
 
+.android-device-indicator {
+  position: fixed;
+  top: calc(8px + var(--cbo-safe-top));
+  left: calc(8px + var(--cbo-safe-left));
+  z-index: 20000;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 6px;
+  background: #1e8f4d;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
+  pointer-events: none;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.24);
+}
+
+.android-device-indicator[hidden] {
+  display: none !important;
+}
+
 button,
 input {
   font: inherit;

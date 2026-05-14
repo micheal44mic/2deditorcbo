@@ -7,6 +7,32 @@ document.addEventListener(
 );
 
 (() => {
+  const namespace = window.CBO = window.CBO || {};
+  const androidIndicator = document.getElementById("android-device-indicator");
+
+  function isAndroidDevice() {
+    const platformHints = [
+      navigator.userAgentData?.platform,
+      navigator.platform,
+      navigator.userAgent,
+      navigator.vendor,
+    ];
+
+    return platformHints.some((value) => /android/i.test(String(value || "")));
+  }
+
+  const isAndroid = isAndroidDevice();
+
+  namespace.isAndroidDevice = isAndroidDevice;
+  namespace.deviceIsAndroid = isAndroid;
+  document.body?.classList.toggle("cbo-device-android", isAndroid);
+
+  if (androidIndicator) {
+    androidIndicator.hidden = !isAndroid;
+  }
+})();
+
+(() => {
   const guardedOptions = { capture: true, passive: false };
   const editableSelector = 'input, textarea, select, [contenteditable="true"]';
   const interactiveSelector = [

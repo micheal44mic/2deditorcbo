@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Editor 2D</title>
-    <link rel="stylesheet" href="./css/base.css?v=mobile-ios-gesture-lock" />
+    <link rel="stylesheet" href="./css/base.css?v=mobile-android-indicator" />
     <link rel="stylesheet" href="./css/layout.css?v=mobile-ios-gesture-lock" />
     <link rel="stylesheet" href="./css/left-sidebar.css?v=mobile-ios-gesture-lock" />
     <link rel="stylesheet" href="./css/right-sidebar.css?v=mobile-ios-gesture-lock" />
@@ -21,6 +21,7 @@
     <link rel="stylesheet" href="./css/tooltips.css" />
   </head>
   <body>
+    <div id="android-device-indicator" class="android-device-indicator" hidden>android</div>
     <main class="editor-page left-panel-collapsed" aria-label="Editor 2D">
       <div class="panel-toggle-bg" aria-hidden="true"></div>
 
@@ -413,7 +414,7 @@
     <script src="./js/artboard-preview.js"></script>
     <script src="./js/debug/raster-resource-manager.js"></script>
     <script src="./js/debug/raster-memory-report.js"></script>
-    <script src="./js/app.js?v=mobile-ios-gesture-lock"></script>
+    <script src="./js/app.js?v=mobile-android-indicator"></script>
     <script src="./js/debug/raster-memory-monitor.js"></script>
     <script src="./js/debug/dirty-region-monitor.js?v=dirty-monitor-pending"></script>
     <script src="./js/debug/dirty-region-overlay.js?v=dirty-overlay-keep-live"></script>
