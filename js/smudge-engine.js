@@ -1,7 +1,7 @@
 window.CBO = window.CBO || {};
 
 (function registerSmudgeEngine(namespace) {
-  const SMUDGE_RASTER_DEBUG = true;
+  const SMUDGE_RASTER_DEBUG = false;
   const CROPPED_SMUDGE_SCRATCH = true;
   const SMUDGE_EMPTY_LAYER_TOAST_MS = 800;
   const SMUDGE_EMPTY_LAYER_TOAST_THROTTLE_MS = 1600;
@@ -2500,13 +2500,6 @@ void main() {
       const target = this.strokeTarget;
       const layerId = this.activeHistoryLayerId || target?.layerId || null;
       const memoryReport = this.activeSmudgeMemoryReport;
-      const debugInfo = {
-        historyBytes: this.activeHistoryTileCapture
-          ? rectBytes(this.activeHistoryTileCapture.rect) * 2
-          : this.activeHistoryBeforeSnapshot
-          ? this.getSnapshotBytes(this.activeHistoryBeforeSnapshot)
-          : this.getHistoryDabsBytes(this.activeHistoryDabs),
-      };
 
       this.isDragging = false;
       this.activePointerId = null;
@@ -2533,7 +2526,15 @@ void main() {
           rect: smudgeRect,
         });
       }
-      this.debugSmudgeRaster(smudgeRect, finalTarget, layerId, debugInfo);
+      if (SMUDGE_RASTER_DEBUG) {
+        this.debugSmudgeRaster(smudgeRect, finalTarget, layerId, {
+          historyBytes: this.activeHistoryTileCapture
+            ? rectBytes(this.activeHistoryTileCapture.rect) * 2
+            : this.activeHistoryBeforeSnapshot
+            ? this.getSnapshotBytes(this.activeHistoryBeforeSnapshot)
+            : this.getHistoryDabsBytes(this.activeHistoryDabs),
+        });
+      }
       this.releaseScratchTarget();
       this.activeSmudgeBounds = null;
       this.strokeTarget = null;

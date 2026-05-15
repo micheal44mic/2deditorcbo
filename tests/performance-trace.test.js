@@ -9,13 +9,13 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
-test("performance trace exposes console controls and an optional debug menu", () => {
+test("performance trace stays available but is not loaded by default", () => {
   const source = readRepoFile("js", "debug", "performance-trace.js");
   const governorSource = readRepoFile("js", "debug", "engine-governor.js");
   const indexSource = readRepoFile("index.html");
 
-  assert.match(indexSource, /<script src="\.\/js\/debug\/performance-trace\.js(?:\?v=[^"]+)?"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/debug\/engine-governor\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.doesNotMatch(indexSource, /<script src="\.\/js\/debug\/performance-trace\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.doesNotMatch(indexSource, /<script src="\.\/js\/debug\/engine-governor\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(source, /const OVERLAY_ID = "cbo-performance-trace-overlay"/);
   assert.match(source, /textContent = "Trace"/);
   assert.match(source, /CBO PERF TRACE/);

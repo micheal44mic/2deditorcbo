@@ -9,16 +9,16 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
-test("raster history tile debug overlay is loaded by the app", () => {
+test("raster history tile debug overlay is not loaded by default", () => {
   const indexSource = readRepoFile("index.html");
 
-  assert.match(indexSource, /js\/debug\/raster-history-tile-overlay\.js/);
+  assert.doesNotMatch(indexSource, /js\/debug\/raster-history-tile-overlay\.js/);
 });
 
-test("raster layer tile debug overlay is loaded by the app", () => {
+test("raster layer tile debug overlay is not loaded by default", () => {
   const indexSource = readRepoFile("index.html");
 
-  assert.match(indexSource, /js\/debug\/raster-layer-tile-overlay\.js/);
+  assert.doesNotMatch(indexSource, /js\/debug\/raster-layer-tile-overlay\.js/);
 });
 
 test("document renderer emits tile history debug events only behind the debug flag", () => {

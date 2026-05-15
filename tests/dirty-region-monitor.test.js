@@ -9,11 +9,11 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
-test("dirty region monitor exposes a separate debug menu and telemetry", () => {
+test("dirty region monitor stays available but is not loaded by default", () => {
   const source = readRepoFile("js", "debug", "dirty-region-monitor.js");
   const indexSource = readRepoFile("index.html");
 
-  assert.match(indexSource, /<script src="\.\/js\/debug\/dirty-region-monitor\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.doesNotMatch(indexSource, /<script src="\.\/js\/debug\/dirty-region-monitor\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(source, /const EVENT_NAME = "cbo:preview-dirty-region-debug"/);
   assert.match(source, /const OVERLAY_ID = "cbo-dirty-region-overlay"/);
   assert.match(source, /const MONITOR_ENABLED_STORAGE_KEY = "cbo:dirty-region-monitor-enabled"/);
@@ -57,12 +57,12 @@ test("dirty region monitor exposes a separate debug menu and telemetry", () => {
   assert.match(source, /if \(readStoredMonitorEnabled\(false\)\)/);
 });
 
-test("dirty region overlay exposes console controls for preview dirty tiles", () => {
+test("dirty region overlay stays available but is not loaded by default", () => {
   const source = readRepoFile("js", "debug", "dirty-region-overlay.js");
   const rendererSource = readRepoFile("js", "document", "document-renderer.js");
   const indexSource = readRepoFile("index.html");
 
-  assert.match(indexSource, /<script src="\.\/js\/debug\/dirty-region-overlay\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.doesNotMatch(indexSource, /<script src="\.\/js\/debug\/dirty-region-overlay\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(source, /const EVENT_NAME = "cbo:preview-dirty-region-debug"/);
   assert.match(source, /const OVERLAY_CLASS = "cbo-dirty-region-tile-overlay"/);
   assert.match(source, /namespace\.debugPreviewDirtyRegions = true/);

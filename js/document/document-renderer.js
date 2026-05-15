@@ -2869,17 +2869,19 @@ void main() {
         delta.before = nextBefore;
         delta.rect = nextBefore.rect ? { ...nextBefore.rect } : { ...unionRect };
 
-        this.emitRasterHistoryTileDebug({
-          bytes: nextBefore.bytes,
-          layerId,
-          patchRect: delta.rect,
-          phase: "before-expand-empty",
-          source: label,
-          tileRect: delta.tileRect,
-          tileSize: capture.tileSize,
-          tx: delta.tx,
-          ty: delta.ty,
-        });
+        if (namespace.debugRasterHistoryTiles === true) {
+          this.emitRasterHistoryTileDebug({
+            bytes: nextBefore.bytes,
+            layerId,
+            patchRect: delta.rect,
+            phase: "before-expand-empty",
+            source: label,
+            tileRect: delta.tileRect,
+            tileSize: capture.tileSize,
+            tx: delta.tx,
+            ty: delta.ty,
+          });
+        }
 
         return true;
       }
@@ -2905,17 +2907,19 @@ void main() {
       delta.before = nextBefore;
       delta.rect = nextBefore.rect ? { ...nextBefore.rect } : { ...unionRect };
 
-      this.emitRasterHistoryTileDebug({
-        bytes: nextBefore.bytes,
-        layerId,
-        patchRect: delta.rect,
-        phase: "before-expand",
-        source: label,
-        tileRect: delta.tileRect,
-        tileSize: capture.tileSize,
-        tx: delta.tx,
-        ty: delta.ty,
-      });
+      if (namespace.debugRasterHistoryTiles === true) {
+        this.emitRasterHistoryTileDebug({
+          bytes: nextBefore.bytes,
+          layerId,
+          patchRect: delta.rect,
+          phase: "before-expand",
+          source: label,
+          tileRect: delta.tileRect,
+          tileSize: capture.tileSize,
+          tx: delta.tx,
+          ty: delta.ty,
+        });
+      }
 
       return true;
     }
@@ -2987,17 +2991,19 @@ void main() {
           tx: tile.tx,
           ty: tile.ty,
         });
-        this.emitRasterHistoryTileDebug({
-          bytes: before.bytes,
-          layerId,
-          patchRect: before.rect ? { ...before.rect } : { ...tile.rect },
-          phase: "before",
-          source: label,
-          tileRect: tile.tileRect || tile.rect,
-          tileSize,
-          tx: tile.tx,
-          ty: tile.ty,
-        });
+        if (namespace.debugRasterHistoryTiles === true) {
+          this.emitRasterHistoryTileDebug({
+            bytes: before.bytes,
+            layerId,
+            patchRect: before.rect ? { ...before.rect } : { ...tile.rect },
+            phase: "before",
+            source: label,
+            tileRect: tile.tileRect || tile.rect,
+            tileSize,
+            tx: tile.tx,
+            ty: tile.ty,
+          });
+        }
         existingDeltas.set(key, capture.tileDeltas[capture.tileDeltas.length - 1]);
       }
 
@@ -3108,17 +3114,19 @@ void main() {
 
         delta.after = after;
         createdDeltas.push(delta);
-        this.emitRasterHistoryTileDebug({
-          bytes: after.bytes,
-          layerId: delta.layerId || entry.layerId,
-          patchRect: after.rect ? { ...after.rect } : { ...delta.rect },
-          phase: "after",
-          source: label,
-          tileRect: delta.tileRect,
-          tileSize: entry.tileSize,
-          tx: delta.tx,
-          ty: delta.ty,
-        });
+        if (namespace.debugRasterHistoryTiles === true) {
+          this.emitRasterHistoryTileDebug({
+            bytes: after.bytes,
+            layerId: delta.layerId || entry.layerId,
+            patchRect: after.rect ? { ...after.rect } : { ...delta.rect },
+            phase: "after",
+            source: label,
+            tileRect: delta.tileRect,
+            tileSize: entry.tileSize,
+            tx: delta.tx,
+            ty: delta.ty,
+          });
+        }
       }
 
       return true;
@@ -3206,17 +3214,19 @@ void main() {
           return false;
         }
 
-        this.emitRasterHistoryTileDebug({
-          bytes: delta[snapshotKey]?.bytes,
-          layerId,
-          patchRect: delta[snapshotKey]?.rect || delta.rect,
-          phase: `restore-${snapshotKey}`,
-          source: options.source || "raster-tile-history-restore",
-          tileRect: delta.tileRect,
-          tileSize: entry.tileSize,
-          tx: delta.tx,
-          ty: delta.ty,
-        });
+        if (namespace.debugRasterHistoryTiles === true) {
+          this.emitRasterHistoryTileDebug({
+            bytes: delta[snapshotKey]?.bytes,
+            layerId,
+            patchRect: delta[snapshotKey]?.rect || delta.rect,
+            phase: `restore-${snapshotKey}`,
+            source: options.source || "raster-tile-history-restore",
+            tileRect: delta.tileRect,
+            tileSize: entry.tileSize,
+            tx: delta.tx,
+            ty: delta.ty,
+          });
+        }
       }
 
       if (options.emit !== false) {
@@ -7656,20 +7666,22 @@ void main() {
       this.invalidateArtboardFlatPreviews(reason, options, dirtyRects);
 
       if (!dirtyRects.length && incomingDirtyRectCount > 0) {
-        this.emitPreviewDirtyRegionDebug({
-          layerId: options.layerId || "",
-          meta: {
-            forcedFullCause: "dirty-outside-visible-artboards",
-            incomingDirtyRectCount,
-            incomingDirtyRectsLength: dirtyRects.length,
-            incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
-            previewCacheDirty: this.previewCacheDirty,
-            previewCacheReady: this.previewCacheReady,
-          },
-          mode: "skipped",
-          reason,
-          rects: [],
-        });
+        if (namespace.debugPreviewDirtyRegions === true) {
+          this.emitPreviewDirtyRegionDebug({
+            layerId: options.layerId || "",
+            meta: {
+              forcedFullCause: "dirty-outside-visible-artboards",
+              incomingDirtyRectCount,
+              incomingDirtyRectsLength: dirtyRects.length,
+              incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
+              previewCacheDirty: this.previewCacheDirty,
+              previewCacheReady: this.previewCacheReady,
+            },
+            mode: "skipped",
+            reason,
+            rects: [],
+          });
+        }
         return;
       }
 
@@ -7680,44 +7692,47 @@ void main() {
         const forcedFullCause = !dirtyRects.length
           ? "no-dirty-rects"
           : "preview-cache-not-ready";
-        const debugRects = forcedFullCause === "preview-cache-not-ready"
-          ? dirtyRects.map((rect) => ({ ...rect }))
-          : [];
 
         this.previewDirtyRects = null;
         this.previewDirtyCompactOptions = null;
-        this.emitPreviewDirtyRegionDebug({
-          layerId: options.layerId || "",
-          meta: {
-            forcedFullCause,
-            incomingDirtyRectCount,
-            incomingDirtyRectsLength: dirtyRects.length,
-            incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
-            previewCacheDirty: this.previewCacheDirty,
-            previewCacheReady: this.previewCacheReady,
-          },
-          mode: "full",
-          reason,
-          rects: debugRects,
-        });
+        if (namespace.debugPreviewDirtyRegions === true) {
+          this.emitPreviewDirtyRegionDebug({
+            layerId: options.layerId || "",
+            meta: {
+              forcedFullCause,
+              incomingDirtyRectCount,
+              incomingDirtyRectsLength: dirtyRects.length,
+              incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
+              previewCacheDirty: this.previewCacheDirty,
+              previewCacheReady: this.previewCacheReady,
+            },
+            mode: "full",
+            reason,
+            rects: forcedFullCause === "preview-cache-not-ready"
+              ? dirtyRects.map((rect) => ({ ...rect }))
+              : [],
+          });
+        }
         return;
       }
 
       if (hadFullInvalidation) {
-        this.emitPreviewDirtyRegionDebug({
-          layerId: options.layerId || "",
-          meta: {
-            forcedFullCause: "full-invalidation-pending",
-            incomingDirtyRectCount,
-            incomingDirtyRectsLength: dirtyRects.length,
-            incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
-            previewCacheDirty: this.previewCacheDirty,
-            previewCacheReady: this.previewCacheReady,
-          },
-          mode: "full-pending",
-          reason,
-          rects: dirtyRects.map((rect) => ({ ...rect })),
-        });
+        if (namespace.debugPreviewDirtyRegions === true) {
+          this.emitPreviewDirtyRegionDebug({
+            layerId: options.layerId || "",
+            meta: {
+              forcedFullCause: "full-invalidation-pending",
+              incomingDirtyRectCount,
+              incomingDirtyRectsLength: dirtyRects.length,
+              incomingOptionsRectsLength: Array.isArray(options.rects) ? options.rects.length : null,
+              previewCacheDirty: this.previewCacheDirty,
+              previewCacheReady: this.previewCacheReady,
+            },
+            mode: "full-pending",
+            reason,
+            rects: dirtyRects.map((rect) => ({ ...rect })),
+          });
+        }
         return;
       }
 
@@ -7743,12 +7758,14 @@ void main() {
 
       this.previewDirtyCompactOptions = nextCompactOptions;
       this.previewDirtyRects = nextDirtyRects.length > 0 ? nextDirtyRects : null;
-      this.emitPreviewDirtyRegionDebug({
-        layerId: options.layerId || "",
-        mode: "partial",
-        reason,
-        rects: nextDirtyRects.map((rect) => ({ ...rect })),
-      });
+      if (namespace.debugPreviewDirtyRegions === true) {
+        this.emitPreviewDirtyRegionDebug({
+          layerId: options.layerId || "",
+          mode: "partial",
+          reason,
+          rects: nextDirtyRects.map((rect) => ({ ...rect })),
+        });
+      }
     }
 
     getLayerOpacity(layerId, layers = this.getRenderableLayers()) {

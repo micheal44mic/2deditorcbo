@@ -3084,7 +3084,8 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(source, /invalidatePreviewCache\(reason = "unknown", options = \{\}\)/);
   assert.match(source, /forcedFullCause/);
   assert.match(source, /preview-cache-not-ready/);
-  assert.match(source, /const debugRects = forcedFullCause === "preview-cache-not-ready"/);
+  assert.match(source, /namespace\.debugPreviewDirtyRegions === true/);
+  assert.match(source, /rects: forcedFullCause === "preview-cache-not-ready"/);
   assert.match(source, /no-dirty-rects/);
   assert.match(source, /incomingDirtyRectsLength: dirtyRects\.length/);
   assert.match(source, /preserveDirtyRects === true/);
