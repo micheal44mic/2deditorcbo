@@ -229,6 +229,9 @@ test("mobile adjustment layer exposes implemented effects as bottom toolbar pane
   assert.match(source, /function getImplementedEffectItems\(\)/);
   assert.match(source, /effect\.implemented === true && effect\.mobile !== false/);
   assert.match(source, /data-mobile-layer-effects-toolbar/);
+  assert.match(source, /data-mobile-layer-effects-back/);
+  assert.match(source, /function activateMainSelectionTool\(source = "mobile-layer-effects-back"\)/);
+  assert.match(source, /mobileLayerEffectsBackButton\?\.addEventListener\("click", returnFromMobileLayerEffectsToolbar\)/);
   assert.match(source, /data-mobile-layer-effect-trigger="\$\{effect\.type\}"/);
   assert.match(source, /data-mobile-layer-effects-panel/);
   assert.match(source, /data-mobile-layer-effects-editor="gaussian-blur"/);

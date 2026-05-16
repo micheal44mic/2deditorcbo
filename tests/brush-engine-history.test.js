@@ -179,6 +179,25 @@ test("brush stroke history records memory policy and disables redo for huge stro
   assert.match(source, /prewarmRasterTargetsForPaintRect\(layerId, effectiveStrokeRect/);
 });
 
+test("brush live stroke skips mixed buildup targets for plateau and accumulation modes", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+
+  assert.match(source, /const STROKE_BUILDUP_EPSILON = 0\.001/);
+  assert.match(source, /const STROKE_RENDER_MODE_PLATEAU = "plateau"/);
+  assert.match(source, /const STROKE_RENDER_MODE_ACCUM = "accum"/);
+  assert.match(source, /const STROKE_RENDER_MODE_MIXED = "mixed"/);
+  assert.match(source, /getBrushStrokeRenderMode\(\) \{[\s\S]*return STROKE_RENDER_MODE_PLATEAU/);
+  assert.match(source, /getStrokeScratchTextureCount\(\) \{[\s\S]*return this\.usesMixedStrokeBuildup\(\) \? 3 : 1/);
+  assert.match(source, /if \(renderMode === STROKE_RENDER_MODE_MIXED\) \{[\s\S]*Stroke plateau FBO[\s\S]*Stroke accumulation FBO/);
+  assert.match(source, /drawStampBatchToFramebuffer\(this\.strokeFBO, gl\.MAX, gl\.ONE, gl\.ONE\)/);
+  assert.match(source, /drawStampBatchToFramebuffer\(this\.strokeFBO, gl\.FUNC_ADD, gl\.ONE, gl\.ONE_MINUS_SRC_ALPHA\)/);
+  assert.match(source, /if \(renderMode === STROKE_RENDER_MODE_MIXED\) \{[\s\S]*this\.composeStrokeBuildUp\(flushDirtyRect\)/);
+  assert.match(source, /this\.warmPreviewCacheForStroke\(\{ force: true \}\)/);
+  assert.match(source, /this\.strokeRenderMode = this\.getBrushStrokeRenderMode\(\)/);
+  assert.match(source, /this\.strokeRenderMode = null/);
+  assert.doesNotMatch(source, /STROKE_SCRATCH_TEXTURE_COUNT/);
+});
+
 test("brush first paint stroke can defer full live target materialization", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
 

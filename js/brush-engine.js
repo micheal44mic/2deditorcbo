@@ -28,7 +28,6 @@ window.CBO = window.CBO || {};
   const BRUSH_HISTORY_BATCH_IDLE_MS = 1000;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_MIB = 1024 * 1024;
-  const STROKE_SCRATCH_TEXTURE_COUNT = 3;
   const STROKE_MEMORY_POLICY = Object.freeze({
     normalMaxBytes: 5 * RASTER_MIB,
     mediumMaxBytes: 32 * RASTER_MIB,
@@ -52,6 +51,10 @@ window.CBO = window.CBO || {};
     "uniform-blending": { strokeBuildUp: 0.8 },
     "intense-blending": { strokeBuildUp: 1 },
   });
+  const STROKE_BUILDUP_EPSILON = 0.001;
+  const STROKE_RENDER_MODE_PLATEAU = "plateau";
+  const STROKE_RENDER_MODE_ACCUM = "accum";
+  const STROKE_RENDER_MODE_MIXED = "mixed";
   const COLOR_GOLDEN_RATIO = 0.618033988749895;
 
   const BRUSH_VERTEX_SHADER_SOURCE = `#version 300 es
@@ -620,6 +623,7 @@ void main() {
       this.documentRenderer = options.documentRenderer;
       this.strokeTexture = null;
       this.strokeFBO = null;
+      this.strokeRenderMode = null;
       this.strokePlateauTexture = null;
       this.strokePlateauFBO = null;
       this.strokeAccumTexture = null;
@@ -1149,9 +1153,14 @@ void main() {
           reason: "create-stroke-layer-target",
         };
 
+        const renderMode = this.getStrokeRenderMode();
+
         targets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height, resourceMetadata));
-        targets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height, resourceMetadata));
-        targets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height, resourceMetadata));
+
+        if (renderMode === STROKE_RENDER_MODE_MIXED) {
+          targets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height, resourceMetadata));
+          targets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height, resourceMetadata));
+        }
       } catch (error) {
         this.deleteStrokeTargets(targets);
 
@@ -1160,10 +1169,10 @@ void main() {
 
       this.strokeTexture = targets[0].texture;
       this.strokeFBO = targets[0].framebuffer;
-      this.strokePlateauTexture = targets[1].texture;
-      this.strokePlateauFBO = targets[1].framebuffer;
-      this.strokeAccumTexture = targets[2].texture;
-      this.strokeAccumFBO = targets[2].framebuffer;
+      this.strokePlateauTexture = targets[1]?.texture || null;
+      this.strokePlateauFBO = targets[1]?.framebuffer || null;
+      this.strokeAccumTexture = targets[2]?.texture || null;
+      this.strokeAccumFBO = targets[2]?.framebuffer || null;
       this.strokeBufferRect = { ...nextRect };
       this.strokeTargetAllocationCount += 1;
       this.updateStrokeScratchDiagnostics(nextRect, documentTarget);
@@ -1236,7 +1245,7 @@ void main() {
     }
 
     getStrokeScratchBytes(strokeBufferRect = this.strokeBufferRect) {
-      return this.getRasterRectBytes(strokeBufferRect) * STROKE_SCRATCH_TEXTURE_COUNT;
+      return this.getRasterRectBytes(strokeBufferRect) * this.getStrokeScratchTextureCount();
     }
 
     resetStrokeAllocationDiagnostics() {
@@ -1278,7 +1287,7 @@ void main() {
         peakScratchMiB: this.formatRasterMiB(this.strokeTargetPeakScratchBytes || 0),
         scratchBytes,
         scratchMiB: this.formatRasterMiB(scratchBytes),
-        scratchTextureCount: STROKE_SCRATCH_TEXTURE_COUNT,
+        scratchTextureCount: this.getStrokeScratchTextureCount(),
         softEvictBytes: STROKE_SCRATCH_SOFT_EVICT_BYTES,
         softEvictMiB: this.formatRasterMiB(STROKE_SCRATCH_SOFT_EVICT_BYTES),
         strokeBufferRect: rect ? { ...rect } : null,
@@ -1420,7 +1429,7 @@ void main() {
         ...this.getRendererScratchPresence(),
         scratchBytes,
         scratchMiB: this.formatRasterMiB(scratchBytes),
-        scratchTextureCount: STROKE_SCRATCH_TEXTURE_COUNT,
+        scratchTextureCount: this.getStrokeScratchTextureCount(),
         strokeScratchPressureEvictionCount: this.strokeScratchPressureEvictionCount || 0,
         ...this.getIncrementalStrokeBakeTelemetry(),
         scratchBudgetExceeded: scratchBytes >= STROKE_SCRATCH_SOFT_EVICT_BYTES,
@@ -1516,7 +1525,7 @@ void main() {
           : "brush stroke memory estimate",
         scratchBytes,
         scratchMiB: this.formatRasterMiB(scratchBytes),
-        scratchTextureCount: STROKE_SCRATCH_TEXTURE_COUNT,
+        scratchTextureCount: this.getStrokeScratchTextureCount(),
         strokeScratchPressureEvictionCount: this.strokeScratchPressureEvictionCount || 0,
         ...this.getIncrementalStrokeBakeTelemetry(),
         scratchBudgetExceeded: scratchBytes >= STROKE_SCRATCH_SOFT_EVICT_BYTES,
@@ -1908,11 +1917,34 @@ void main() {
         return null;
       }
 
-      return [
-        { texture: this.strokeTexture, framebuffer: this.strokeFBO, width: this.strokeBufferRect?.width || 1, height: this.strokeBufferRect?.height || 1 },
-        { texture: this.strokePlateauTexture, framebuffer: this.strokePlateauFBO, width: this.strokeBufferRect?.width || 1, height: this.strokeBufferRect?.height || 1 },
-        { texture: this.strokeAccumTexture, framebuffer: this.strokeAccumFBO, width: this.strokeBufferRect?.width || 1, height: this.strokeBufferRect?.height || 1 },
+      const targets = [
+        {
+          texture: this.strokeTexture,
+          framebuffer: this.strokeFBO,
+          width: this.strokeBufferRect?.width || 1,
+          height: this.strokeBufferRect?.height || 1,
+        },
       ];
+
+      if (this.strokePlateauTexture && this.strokePlateauFBO) {
+        targets.push({
+          texture: this.strokePlateauTexture,
+          framebuffer: this.strokePlateauFBO,
+          width: this.strokeBufferRect?.width || 1,
+          height: this.strokeBufferRect?.height || 1,
+        });
+      }
+
+      if (this.strokeAccumTexture && this.strokeAccumFBO) {
+        targets.push({
+          texture: this.strokeAccumTexture,
+          framebuffer: this.strokeAccumFBO,
+          width: this.strokeBufferRect?.width || 1,
+          height: this.strokeBufferRect?.height || 1,
+        });
+      }
+
+      return targets;
     }
 
     deleteStrokeTargets(targets = this.getCurrentStrokeTargets()) {
@@ -2017,9 +2049,14 @@ void main() {
           strokeTargetReplaceCount: (this.strokeTargetReplaceCount || 0) + 1,
         };
 
+        const renderMode = this.getStrokeRenderMode();
+
         nextTargets.push(this.createTransparentRenderTarget("Stroke FBO", nextRect.width, nextRect.height, resourceMetadata));
-        nextTargets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height, resourceMetadata));
-        nextTargets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height, resourceMetadata));
+
+        if (renderMode === STROKE_RENDER_MODE_MIXED) {
+          nextTargets.push(this.createTransparentRenderTarget("Stroke plateau FBO", nextRect.width, nextRect.height, resourceMetadata));
+          nextTargets.push(this.createTransparentRenderTarget("Stroke accumulation FBO", nextRect.width, nextRect.height, resourceMetadata));
+        }
       } catch (error) {
         this.deleteStrokeTargets(nextTargets);
         throw error;
@@ -2030,10 +2067,10 @@ void main() {
 
       this.strokeTexture = nextTargets[0].texture;
       this.strokeFBO = nextTargets[0].framebuffer;
-      this.strokePlateauTexture = nextTargets[1].texture;
-      this.strokePlateauFBO = nextTargets[1].framebuffer;
-      this.strokeAccumTexture = nextTargets[2].texture;
-      this.strokeAccumFBO = nextTargets[2].framebuffer;
+      this.strokePlateauTexture = nextTargets[1]?.texture || null;
+      this.strokePlateauFBO = nextTargets[1]?.framebuffer || null;
+      this.strokeAccumTexture = nextTargets[2]?.texture || null;
+      this.strokeAccumFBO = nextTargets[2]?.framebuffer || null;
       this.strokeBufferRect = { ...nextRect };
       this.strokeTargetAllocationCount += 1;
       this.strokeTargetReplaceCount += 1;
@@ -3750,6 +3787,32 @@ void main() {
       return Number.isFinite(value) ? this.clamp(value, 0, 1) : 0;
     }
 
+    getBrushStrokeRenderMode() {
+      const buildUp = this.getStrokeBuildUp();
+
+      if (buildUp <= STROKE_BUILDUP_EPSILON) {
+        return STROKE_RENDER_MODE_PLATEAU;
+      }
+
+      if (buildUp >= 1 - STROKE_BUILDUP_EPSILON) {
+        return STROKE_RENDER_MODE_ACCUM;
+      }
+
+      return STROKE_RENDER_MODE_MIXED;
+    }
+
+    getStrokeRenderMode() {
+      return this.strokeRenderMode || this.getBrushStrokeRenderMode();
+    }
+
+    usesMixedStrokeBuildup() {
+      return this.getStrokeRenderMode() === STROKE_RENDER_MODE_MIXED;
+    }
+
+    getStrokeScratchTextureCount() {
+      return this.usesMixedStrokeBuildup() ? 3 : 1;
+    }
+
     getWetEdges() {
       const value = Number(this.brushState.wetEdges);
 
@@ -4085,7 +4148,6 @@ void main() {
         this.activeStrokeBounds.maxY = Math.max(this.activeStrokeBounds.maxY, clampedBounds.maxY);
       }
 
-      this.updateStrokePreviewDirtyRects();
       this.queueActiveStrokeDirtyRegionDebug();
       this.queueStrokeTargetPrewarm();
     }
@@ -4728,10 +4790,10 @@ void main() {
         : (effectiveStrokeRect ? [{ ...effectiveStrokeRect }] : []);
     }
 
-    warmPreviewCacheForStroke() {
+    warmPreviewCacheForStroke({ force = false } = {}) {
       if (
         this.isDrawing ||
-        namespace.EngineGovernor?.mode === "interactive" ||
+        (!force && namespace.EngineGovernor?.mode === "interactive") ||
         namespace.smudgeEngine?.isDragging ||
         !this.documentRenderer?.updatePreviewCacheIfNeeded
       ) {
@@ -5320,6 +5382,7 @@ void main() {
       const useShapeTexture = this.shapeTextureReady && this.shapeTexture ? 1 : 0;
       const useGrainTexture = this.isGrainEnabled();
       const brushOpacity = this.getOpacity01();
+      const renderMode = this.getStrokeRenderMode();
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
@@ -5411,27 +5474,32 @@ void main() {
         stampCount,
       });
       const didSetFlushScissor = this.setStrokeBufferScissor(flushScissor);
+      const drawStampBatchToFramebuffer = (framebuffer, blendEquation, srcFactor, dstFactor) => {
+        if (!framebuffer) {
+          return;
+        }
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.viewport(0, 0, strokeBufferRect.width, strokeBufferRect.height);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(blendEquation);
+        gl.blendFunc(srcFactor, dstFactor);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
+      };
 
       try {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokePlateauFBO);
-      gl.viewport(0, 0, strokeBufferRect.width, strokeBufferRect.height);
-      gl.enable(gl.BLEND);
-      // Plateau reale: Light Glaze non somma ne' opacità ne' colore nello stesso stroke.
-      gl.blendEquation(gl.MAX);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.strokeAccumFBO);
-      gl.viewport(0, 0, strokeBufferRect.width, strokeBufferRect.height);
-      gl.enable(gl.BLEND);
-      // Accumulo pieno: gli stamp dello stesso tratto si stratificano con SrcOver pre-moltiplicato.
-      gl.blendEquation(gl.FUNC_ADD);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, stampCount);
+        if (renderMode === STROKE_RENDER_MODE_PLATEAU) {
+          drawStampBatchToFramebuffer(this.strokeFBO, gl.MAX, gl.ONE, gl.ONE);
+        } else if (renderMode === STROKE_RENDER_MODE_ACCUM) {
+          drawStampBatchToFramebuffer(this.strokeFBO, gl.FUNC_ADD, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        } else {
+          drawStampBatchToFramebuffer(this.strokePlateauFBO, gl.MAX, gl.ONE, gl.ONE);
+          drawStampBatchToFramebuffer(this.strokeAccumFBO, gl.FUNC_ADD, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        }
       } finally {
-      if (didSetFlushScissor) {
-        gl.disable(gl.SCISSOR_TEST);
-      }
+        if (didSetFlushScissor) {
+          gl.disable(gl.SCISSOR_TEST);
+        }
       }
       drawTrace?.end({
         scissorHeight: Math.max(0, Math.round(flushScissor?.height || 0)),
@@ -5450,14 +5518,18 @@ void main() {
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      const composeTrace = beginFlushTrace("compose", {
-        scissor: Boolean(flushScissor),
-      });
-      this.composeStrokeBuildUp(flushDirtyRect);
-      composeTrace?.end({
-        scissorHeight: Math.max(0, Math.round(flushScissor?.height || 0)),
-        scissorWidth: Math.max(0, Math.round(flushScissor?.width || 0)),
-      });
+      if (renderMode === STROKE_RENDER_MODE_MIXED) {
+        const composeTrace = beginFlushTrace("compose", {
+          scissor: Boolean(flushScissor),
+        });
+
+        this.composeStrokeBuildUp(flushDirtyRect);
+
+        composeTrace?.end({
+          scissorHeight: Math.max(0, Math.round(flushScissor?.height || 0)),
+          scissorWidth: Math.max(0, Math.round(flushScissor?.width || 0)),
+        });
+      }
       this.stampsBuffer.length = 0;
       this.strokeStampCount += stampCount;
       this.maybeBakeStrokeIncrementally("flush-stamps-scratch-pressure");
@@ -6713,6 +6785,7 @@ void main() {
       this.strokePreviewDirtyRects = null;
       this.lastStrokePreviewDirtyRects = null;
       this.strokeTargetLayerId = null;
+      this.strokeRenderMode = null;
       this.currentStrokeTool = this.activeStrokeTool || "brush";
     }
 
@@ -7042,7 +7115,6 @@ void main() {
       }
 
       event.preventDefault();
-      namespace.EngineGovernor?.markActivity?.({ source: "brush-pointerdown" });
       this.clearPendingBrushHistoryTimer();
       const strokeTool = this.activeStrokeTool || "brush";
       let strokeTarget = null;
@@ -7071,8 +7143,10 @@ void main() {
       this.strokePreviewDirtyRects = null;
       this.lastStrokePreviewDirtyRects = null;
       this.clearPendingPointerSamples();
-      this.warmPreviewCacheForStroke();
+      this.warmPreviewCacheForStroke({ force: true });
+      namespace.EngineGovernor?.markActivity?.({ source: "brush-pointerdown" });
       this.currentStrokeTool = strokeTool;
+      this.strokeRenderMode = this.getBrushStrokeRenderMode();
       this.strokeTargetLayerId = strokeTarget?.layerId || null;
       const rawSample = this.createPointerSample(event);
 

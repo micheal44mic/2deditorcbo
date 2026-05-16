@@ -210,6 +210,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     previewPad.appendChild(previewCanvas);
 
     const gl = window.CBO.DocumentRenderer.createContext(previewCanvas);
+    const previewDocumentSizeCap =
+      window.CBO.DocumentRenderer?.isMobileLikeEnvironment?.() === true ? 1024 : 2048;
 
     if (!gl) {
       previewCanvas.remove();
@@ -226,7 +228,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         viewportHeight: viewport.height,
         isolateDocumentArtboards: true,
         transparentBackground: true,
-        documentSizeCap: 2048,
+        documentSizeCap: previewDocumentSizeCap,
       });
       previewEngine = new window.CBO.BrushEngine(previewCanvas, {
         gl,
@@ -237,7 +239,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         transparentBackground: true,
         singleStrokeMode: true,
         disableNavigation: true,
-        documentSizeCap: 2048,
+        documentSizeCap: previewDocumentSizeCap,
       });
     } catch (error) {
       previewDocumentRenderer?.dispose?.();
@@ -1330,7 +1332,9 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   }
 
   function createGrainDataUrlFromImage(image, { invert = false } = {}) {
-    const exportSize = Math.max(1, grainTextureExportSize || 2048);
+    const mobileGrainCap =
+      window.CBO.DocumentRenderer?.isMobileLikeEnvironment?.() === true ? 1024 : grainTextureExportSize;
+    const exportSize = Math.max(1, mobileGrainCap || 2048);
     const sourceWidth = Math.max(1, image.naturalWidth || image.width || exportSize);
     const sourceHeight = Math.max(1, image.naturalHeight || image.height || exportSize);
     const tempCanvas = document.createElement("canvas");

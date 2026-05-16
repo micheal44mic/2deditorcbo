@@ -356,6 +356,9 @@ test("mobile text layer switches the bottom dock to icon settings panels", () =>
   const topToolbarCss = fs.readFileSync(path.join(repoRoot, "css", "top-toolbar.css"), "utf8");
 
   assert.match(topToolbarSource, /data-mobile-text-settings-toolbar/);
+  assert.match(topToolbarSource, /data-mobile-text-toolbar-back/);
+  assert.match(topToolbarSource, /function activateMainSelectionTool\(source = "mobile-text-toolbar-back"\)/);
+  assert.match(topToolbarSource, /mobileTextBackButton\?\.addEventListener\("click", returnFromMobileTextToolbar\)/);
   assert.ok((topToolbarSource.match(/data-mobile-text-panel-trigger/g) || []).length >= 2);
   assert.match(topToolbarSource, /key: "color", label: "TEXT COLOR"/);
   assert.match(topToolbarSource, /key: "border", label: "BORDER"/);

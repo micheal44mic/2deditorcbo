@@ -138,6 +138,13 @@ const MOBILE_TEXT_PANEL_ICONS = Object.freeze({
   `,
 });
 
+const MOBILE_TEXT_BACK_ICON = `
+  <svg class="lucide lucide-arrow-left-icon lucide-arrow-left" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M19 12H5" />
+    <path d="m12 19-7-7 7-7" />
+  </svg>
+`;
+
 const MOBILE_TEXT_PANEL_BUTTONS = Object.freeze([
   { key: "color", label: "TEXT COLOR" },
   { key: "border", label: "BORDER" },
@@ -149,6 +156,9 @@ const MOBILE_TEXT_PANEL_BUTTONS = Object.freeze([
 function createMobileTextSettingsToolbar() {
   return `
     <nav class="bottom-toolbar mobile-text-settings-toolbar" aria-label="Text settings toolbar" data-mobile-text-settings-toolbar hidden>
+      <button class="tool-button mobile-context-back-button mobile-text-settings-back-button" type="button" aria-label="BACK" aria-pressed="false" data-tooltip="BACK" data-mobile-text-toolbar-back>
+        ${MOBILE_TEXT_BACK_ICON}
+      </button>
       ${MOBILE_TEXT_PANEL_BUTTONS.map(({ key, label }) => `
         <button class="tool-button mobile-text-settings-button" type="button" aria-label="${label}" aria-pressed="false" data-tooltip="${label}" data-mobile-text-panel-trigger="${key}">
           ${MOBILE_TEXT_PANEL_ICONS[key]}
@@ -497,6 +507,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const rasterTransformActionDivider = dock.querySelector("[data-raster-transform-action-divider]");
   const rasterTransformActionButtons = dock.querySelectorAll("[data-raster-transform-action]");
   const textAddButton = textAddToolbar?.querySelector("[data-text-add-button]");
+  const mobileTextBackButton = mobileTextToolbar?.querySelector("[data-mobile-text-toolbar-back]");
   const mobileTextPanelSections = mobileTextPanel?.querySelectorAll("[data-mobile-text-panel-section]") || [];
   const mobileTextPanelButtons = mobileTextToolbar?.querySelectorAll("[data-mobile-text-panel-trigger]") || [];
   const mobileTextFillInput = mobileTextPanel?.querySelector("[data-mobile-text-fill]");
@@ -1261,6 +1272,31 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   }
 
+  function activateMainSelectionTool(source = "mobile-text-toolbar-back") {
+    const selectionButton = mainToolsToolbar?.querySelector('[data-tool][data-toolset-primary="selection"], [data-tool][data-tool-mode="selection"]') ||
+      toolbarDock?.querySelector('[data-tool][data-toolset-primary="selection"], [data-tool][data-tool-mode="selection"]');
+
+    if (selectionButton) {
+      selectionButton.click();
+      return;
+    }
+
+    window.dispatchEvent(new CustomEvent("cbo:tool-change", {
+      detail: {
+        label: "SELECTION",
+        source,
+        toolMode: "selection",
+      },
+    }));
+  }
+
+  function returnFromMobileTextToolbar() {
+    closeMobileTextPanel();
+    showMobileTextToolbar(false);
+    showTextAddToolbar(false);
+    activateMainSelectionTool("mobile-text-toolbar-back");
+  }
+
   function updateMobileRangeProgress(input, valueElement, formatValue) {
     if (!input) {
       return;
@@ -1800,6 +1836,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       openMobileTextPanel(button.dataset.mobileTextPanelTrigger);
     });
   });
+
+  mobileTextBackButton?.addEventListener("click", returnFromMobileTextToolbar);
 
   mobileTextFillInput?.addEventListener("input", () => {
     syncMobileHexColor(mobileTextFillInput, mobileTextFillHex, mobileTextFillSwatch);

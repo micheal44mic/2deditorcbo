@@ -16,6 +16,12 @@ window.CBO = window.CBO || {};
   const MAX_NOISE_SCALE = 100;
   const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
+  const MOBILE_LAYER_EFFECTS_BACK_ICON = `
+    <svg class="lucide lucide-arrow-left-icon lucide-arrow-left" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M19 12H5" />
+      <path d="m12 19-7-7 7-7" />
+    </svg>
+  `;
   const DEFAULT_THRESHOLD_VALUE = 128;
   const RASTERIZABLE_EFFECT_TYPES = Object.freeze([
     "curves",
@@ -253,6 +259,9 @@ window.CBO = window.CBO || {};
   function getMobileLayerEffectsToolbarMarkup() {
     return `
       <nav class="bottom-toolbar mobile-layer-effects-toolbar" aria-label="Adjustment effects toolbar" data-mobile-layer-effects-toolbar hidden>
+        <button class="tool-button mobile-context-back-button mobile-layer-effects-back-button" type="button" aria-label="BACK" aria-pressed="false" data-tooltip="BACK" data-mobile-layer-effects-back>
+          ${MOBILE_LAYER_EFFECTS_BACK_ICON}
+        </button>
         ${getImplementedEffectItems().map((effect) => `
           <button
             class="tool-button mobile-layer-effect-button"
@@ -1652,6 +1661,7 @@ window.CBO = window.CBO || {};
     const thresholdResetButton = panel.querySelector("[data-layer-threshold-reset]");
     const closeButton = panel.querySelector("[data-layer-effects-close]");
     const panelCloseButton = panel.querySelector("[data-layer-effects-panel-close]");
+    const mobileLayerEffectsBackButton = mobileLayerEffectsToolbar?.querySelector("[data-mobile-layer-effects-back]");
     const mobileLayerEffectButtons = mobileLayerEffectsToolbar?.querySelectorAll("[data-mobile-layer-effect-trigger]") || [];
     const mobileLayerEffectSections = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effects-editor]") || [];
     const mobileLayerEffectInputs = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-input]") || [];
@@ -2101,6 +2111,29 @@ window.CBO = window.CBO || {};
         finalizeMobileLayerEffectsSession();
         closeMobileLayerEffectsPanel();
       }
+    }
+
+    function activateMainSelectionTool(source = "mobile-layer-effects-back") {
+      const selectionButton = mainToolsToolbar?.querySelector('[data-tool][data-toolset-primary="selection"], [data-tool][data-tool-mode="selection"]') ||
+        toolbarDock?.querySelector('[data-tool][data-toolset-primary="selection"], [data-tool][data-tool-mode="selection"]');
+
+      if (selectionButton) {
+        selectionButton.click();
+        return;
+      }
+
+      window.dispatchEvent(new CustomEvent("cbo:tool-change", {
+        detail: {
+          label: "SELECTION",
+          source,
+          toolMode: "selection",
+        },
+      }));
+    }
+
+    function returnFromMobileLayerEffectsToolbar() {
+      showMobileLayerEffectsToolbar(false);
+      activateMainSelectionTool("mobile-layer-effects-back");
     }
 
     function getMobileFieldBlurPins(layer, blur) {
@@ -3542,6 +3575,8 @@ window.CBO = window.CBO || {};
         openMobileLayerEffectPanel(effectButton.dataset.mobileLayerEffectTrigger);
       });
     });
+
+    mobileLayerEffectsBackButton?.addEventListener("click", returnFromMobileLayerEffectsToolbar);
 
     mobileLayerEffectInputs.forEach((input) => {
       input.addEventListener("input", () => {

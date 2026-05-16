@@ -128,11 +128,16 @@ window.CBO = window.CBO || {};
     return { width: 188, height: 52 };
   }
 
+  function isMobilePerformanceMode() {
+    return namespace.DocumentRenderer?.isMobileLikeEnvironment?.() === true;
+  }
+
   function resolveSize(canvas, options = {}) {
     const fallback = getVariantSize(options.variant);
     const width = Math.max(1, Math.round(options.width || canvas.clientWidth || fallback.width));
     const height = Math.max(1, Math.round(options.height || canvas.clientHeight || fallback.height));
-    const dpr = Math.max(1, Math.min(maxDpr, window.devicePixelRatio || 1));
+    const dprCap = isMobilePerformanceMode() ? 1 : maxDpr;
+    const dpr = Math.max(1, Math.min(dprCap, window.devicePixelRatio || 1));
 
     return { width, height, dpr };
   }
@@ -403,6 +408,10 @@ window.CBO = window.CBO || {};
   }
 
   async function renderToCanvasWithBestRenderer(settings, size) {
+    if (isMobilePerformanceMode()) {
+      return renderToCanvas(settings, size);
+    }
+
     try {
       const webglCanvas = await renderWebglPreview(settings, size);
 
