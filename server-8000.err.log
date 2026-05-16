@@ -217,3 +217,10 @@
 192.168.0.5 - - [16/May/2026 23:39:06] "GET /js/brush-preview.js?v=brush-fastpath HTTP/1.1" 304 -
 192.168.0.5 - - [16/May/2026 23:39:06] "GET /js/brush-studio.js?v=brush-fastpath HTTP/1.1" 304 -
 192.168.0.5 - - [16/May/2026 23:39:06] "GET /js/brush-engine.js?v=brush-fastpath HTTP/1.1" 304 -
+127.0.0.1 - - [16/May/2026 23:43:22] "GET / HTTP/1.1" 200 -
+192.168.0.16 - - [16/May/2026 23:44:11] "GET / HTTP/1.1" 200 -
+192.168.0.16 - - [16/May/2026 23:44:11] "GET /js/top-toolbar.js?v=mobile-context-back HTTP/1.1" 200 -
+192.168.0.16 - - [16/May/2026 23:44:11] "GET /js/layer-effects-panel.js?v=mobile-context-back HTTP/1.1" 200 -
+192.168.0.16 - - [16/May/2026 23:44:11] "GET /js/brush-preview.js?v=brush-fastpath HTTP/1.1" 304 -
+192.168.0.16 - - [16/May/2026 23:44:11] "GET /js/brush-engine.js?v=brush-fastpath HTTP/1.1" 304 -
+192.168.0.16 - - [16/May/2026 23:44:11] "GET /js/brush-studio.js?v=brush-fastpath HTTP/1.1" 304 -
