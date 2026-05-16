@@ -10,6 +10,12 @@ window.CBO = window.CBO || {};
   const outlineColor = [223, 227, 234, 255];
   let brushSettingsOverride = null;
 
+  function isAndroidPerformanceMode() {
+    return namespace.androidPerformanceMode === true ||
+      namespace.deviceIsAndroid === true ||
+      namespace.DocumentRenderer?.isAndroidLikeEnvironment?.() === true;
+  }
+
   function loadImage(src) {
     if (!src) {
       return Promise.reject(new Error("Shape alpha source mancante."));
@@ -224,6 +230,10 @@ window.CBO = window.CBO || {};
   }
 
   namespace.initBrushShapeOutlinePreview = function initBrushShapeOutlinePreview() {
+    if (isAndroidPerformanceMode()) {
+      return;
+    }
+
     const stage = document.querySelector(".editor-stage");
 
     if (!stage) {

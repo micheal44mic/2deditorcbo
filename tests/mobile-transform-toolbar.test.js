@@ -72,7 +72,7 @@ test("mobile layout accounts for iOS safe areas and visual viewport changes", ()
 
   assert.match(indexSource, /viewport-fit=cover/);
   assert.match(indexSource, /interactive-widget=resizes-visual/);
-  assert.match(indexSource, /id="android-device-indicator"[\s\S]*>android<\/div>/);
+  assert.match(indexSource, /id="android-device-indicator"[\s\S]*>android v1\.9<\/div>/);
   assert.match(baseCss, /--cbo-safe-bottom: env\(safe-area-inset-bottom, 0px\);/);
   assert.match(baseCss, /--cbo-visual-viewport-height: 100dvh;/);
   assert.match(baseCss, /--cbo-keyboard-inset-bottom: 0px;/);
@@ -87,6 +87,11 @@ test("mobile layout accounts for iOS safe areas and visual viewport changes", ()
   assert.match(appSource, /navigator\.userAgent/);
   assert.match(appSource, /androidIndicator\.hidden = !isAndroid/);
   assert.match(appSource, /cbo-device-android/);
+  assert.match(appSource, /namespace\.androidPixelPerfectEnabled = false/);
+  assert.match(appSource, /namespace\.pixelPerfectRenderingEnabled = false/);
+  assert.match(appSource, /namespace\.androidHistoryEnabled = true/);
+  assert.match(appSource, /namespace\.documentHistoryDisabled = false/);
+  assert.doesNotMatch(appSource, /disableDocumentHistoryForPerformance/);
   assert.match(appSource, /window\.visualViewport/);
   assert.match(appSource, /--cbo-visual-viewport-height/);
   assert.match(appSource, /--cbo-keyboard-inset-bottom/);

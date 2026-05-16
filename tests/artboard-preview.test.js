@@ -96,8 +96,8 @@ test("left rail exposes a visual artboard tool below layers", () => {
   assert.ok(artboardButtonIndex > layerButtonIndex);
   assert.match(indexSource, /data-tooltip="ARTBOARD"/);
   assert.match(indexSource, /class="lucide lucide-dice1-icon lucide-dice-1"/);
-  assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js\?v=android-v1\.9"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js\?v=android-v1\.9"><\/script>/);
 });
 
 test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
@@ -112,6 +112,8 @@ test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
   assert.match(source, /data-artboard-create-popover/);
   assert.match(source, /data-artboard-width-input/);
   assert.match(source, /function positionArtboardCreatePopover\(\)/);
+  assert.match(source, /const toolbarRect = document\.querySelector\("\.toolbar-dock"\)\?\.getBoundingClientRect\?\.\(\)/);
+  assert.match(source, /const bottomLimit = Math\.min\(window\.innerHeight - 12, toolbarTop - gap\)/);
   assert.match(source, /namespace\.getDocumentArtboards\?\.\(\)/);
   assert.match(source, /namespace\.createDocumentArtboard\?\.\(/);
   assert.match(source, /namespace\.initArtboardPreview = function initArtboardPreview\(\)/);
@@ -127,6 +129,7 @@ test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
   assert.match(cssSource, /\.editor-artboard-preview-layer[\s\S]*pointer-events: none/);
   assert.match(cssSource, /\.editor-artboard-frame/);
   assert.match(cssSource, /\.artboard-create-popover/);
+  assert.match(cssSource, /\.artboard-create-popover \{[\s\S]*z-index: 20050;/);
   assert.match(cssSource, /\.artboard-create-preset\.active/);
   assert.match(cssSource, /\.editor-artboard-paper[\s\S]*background: #f7f7f2/);
   assert.match(cssSource, /\.editor-artboard-paper\.is-transparent[\s\S]*background: transparent/);
@@ -163,6 +166,7 @@ test("selection tool highlights the clicked artboard and its layer group only", 
 
   assert.match(previewSource, /const SELECTION_TOOL_MODE = "selection"/);
   assert.match(previewSource, /function handleStagePointerDown\(event\)/);
+  assert.match(previewSource, /if \(!isArtboardSelectionEnabled\(\)\) \{/);
   assert.match(previewSource, /cbo:artboard-selection-change/);
   assert.match(previewSource, /frame\.classList\.toggle\("is-selected", isSelected\)/);
   assert.match(previewSource, /namespace\.selectPreviewArtboard = function selectPreviewArtboard/);
@@ -174,6 +178,7 @@ test("selection tool highlights the clicked artboard and its layer group only", 
   assert.match(layoutSource, /\.editor-artboard-frame\.is-selected/);
 
   assert.match(layersSource, /let selectedArtboardGroupId = ""/);
+  assert.match(layersSource, /function isArtboardSelectionEnabled\(\)/);
   assert.match(layersSource, /function applyArtboardGroupActivationById\(groupId, options = \{\}\)/);
   assert.match(layersSource, /function deleteSelectedArtboardGroup\(\)/);
   assert.match(layersSource, /row\.classList\.toggle\("artboard-active", isActiveArtboard\)/);
@@ -183,6 +188,7 @@ test("selection tool highlights the clicked artboard and its layer group only", 
   assert.match(layersSource, /window\.CBO\.clearPreviewArtboardSelection\?\.\(/);
   assert.match(layersSource, /window\.CBO\.deletePreviewArtboard\?\.\(artboardId/);
   assert.match(layersSource, /artboardId === "active-document"/);
+  assert.match(layersSource, /!getSelectedRootEntries\(\)\.length && selectedArtboardGroupId/);
   assert.match(layerCssSource, /\.layer-artboard-row\.artboard-active/);
 });
 
@@ -235,6 +241,8 @@ test("document artboard model owns artboard records and persistence hooks", () =
   assert.match(modelSource, /namespace\.deleteDocumentArtboard = function deleteDocumentArtboard/);
   assert.match(modelSource, /namespace\.getDocumentArtboardAtPoint = function getDocumentArtboardAtPoint/);
   assert.match(modelSource, /namespace\.selectDocumentArtboardAtPoint = function selectDocumentArtboardAtPoint/);
+  assert.match(modelSource, /namespace\.artboardSelectionEnabled = true/);
+  assert.match(modelSource, /function isArtboardSelectionEnabled\(\)/);
   assert.match(modelSource, /namespace\.getActiveDocumentArtboardRect = function getActiveDocumentArtboardRect/);
   assert.match(modelSource, /namespace\.getDocumentArtboardUnionRect = function getDocumentArtboardUnionRect/);
   assert.match(modelSource, /namespace\.getActiveDocumentArtboardCoverageRects = function getActiveDocumentArtboardCoverageRects/);
@@ -439,6 +447,7 @@ test("new artboard creation uses requested size and skips occupied slots", () =>
     documentWidth: 100,
     source: "unit-artboard-create-placement",
   });
+  namespace.artboardSelectionEnabled = true;
   namespace.selectDocumentArtboard("selected", { emit: false });
 
   const copied = namespace.createDocumentArtboard({

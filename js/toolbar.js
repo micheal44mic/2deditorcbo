@@ -11,6 +11,15 @@ window.CBO.initToolbar = function initToolbar() {
   let historyBusyOverlay = null;
   const busyOverlaySources = new Map();
 
+  function isDocumentHistoryDisabled() {
+    return Boolean(
+      window.CBO?.isDocumentHistoryDisabled?.() === true ||
+      window.CBO?.documentHistoryDisabled === true ||
+      window.CBO?.androidHistoryDisabled === true ||
+      window.CBO?.androidHistoryEnabled === false
+    );
+  }
+
   function setMobileTransformToolsOpen(isOpen) {
     const nextOpen = Boolean(isOpen) && mobileTransformToolContainers.length > 0;
 
@@ -229,6 +238,11 @@ window.CBO.initToolbar = function initToolbar() {
       return;
     }
 
+    if (isDocumentHistoryDisabled()) {
+      clearHistoryBusy(normalizedAction);
+      return;
+    }
+
     window.dispatchEvent(
       new CustomEvent("cbo:before-history-action", {
         detail: {
@@ -274,7 +288,29 @@ window.CBO.initToolbar = function initToolbar() {
     }
   }
 
+  function syncHistoryControlsDisabled() {
+    const historyDisabled = isDocumentHistoryDisabled();
+
+    historyButtons.forEach((button) => {
+      button.hidden = historyDisabled;
+
+      if (historyDisabled) {
+        setHistoryButtonState(button, false);
+      }
+    });
+
+    document.querySelectorAll(".top-history-toolbar").forEach((toolbar) => {
+      toolbar.hidden = historyDisabled;
+    });
+
+    return historyDisabled;
+  }
+
   function updateHistoryButtons(detail = {}) {
+    if (syncHistoryControlsDisabled()) {
+      return;
+    }
+
     historyButtons.forEach((button) => {
       const action = String(button.dataset.historyAction || "").toLowerCase();
 
@@ -308,6 +344,9 @@ window.CBO.initToolbar = function initToolbar() {
   window.addEventListener("cbo:history-change", (event) => {
     updateHistoryButtons(event.detail || {});
   });
+  window.addEventListener("cbo:history-disabled", () => {
+    syncHistoryControlsDisabled();
+  });
   window.addEventListener("cbo:artboard-residency-busy", (event) => {
     const detail = event.detail || {};
 
@@ -317,10 +356,12 @@ window.CBO.initToolbar = function initToolbar() {
       detail.active === true,
     );
   });
-  updateHistoryButtons({
-    canRedo: window.CBO.documentHistory?.redoStack?.length > 0,
-    canUndo: window.CBO.documentHistory?.undoStack?.length > 0,
-  });
+  if (!syncHistoryControlsDisabled()) {
+    updateHistoryButtons({
+      canRedo: window.CBO.documentHistory?.redoStack?.length > 0,
+      canUndo: window.CBO.documentHistory?.undoStack?.length > 0,
+    });
+  }
 
   toolsetOptions.forEach((option) => {
     option.addEventListener("click", (event) => {

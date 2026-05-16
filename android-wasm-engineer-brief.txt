@@ -1,0 +1,136 @@
+BRIEF PER INGEGNERE - Android lag, WebGL/Canvas, possibile Worker/WASM
+
+Repository locale:
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush
+
+Contesto
+Stiamo lavorando su un editor 2D web/canvas/WebGL. Su PC e iPhone la performance e' accettabile, ma su Android l'app lagga molto. Il lag non succede solo mentre disegniamo: succede anche quando spostiamo/trasformiamo qualcosa e confermiamo. L'effetto percepito e' come un caricamento continuo/infinito dopo quasi ogni azione.
+
+Abbiamo gia' applicato varie patch Android-only:
+- Android performance mode attivo da js/app.js.
+- DPR Android cappato a 1.
+- preview cache e overscan Android ridotti.
+- brush engine Android ridotto: meno samples per frame, meno stamps per flush, budget frame piu' basso.
+- mixed stroke disabilitato su Android: evita 3 scratch texture/FBO per tratto.
+- preview bordo pennello disattivata su Android.
+- Brush Studio live preview disattivata su Android.
+- history era stata disattivata per test, poi riattivata: non era la causa principale.
+- pixel perfect disattivato su Android: ha migliorato, ma il lag resta.
+- artboard selection e' stata riattivata.
+- badge UI corrente: android v1.9.
+
+Ipotesi attuale
+Il collo di bottiglia sembra essere piu' vicino a renderer/dirty/artboard residency/transform commit che al solo brush.
+
+Punti sospetti principali:
+1. Artboard residency / dirty / hydrate / cooling
+   Il renderer gestisce residency, prefetch, flat previews, tile residency, budget memoria e stati busy tipo "OPTIMIZING". Su Android questo puo' causare cicli continui di unload/reload/hydrate/cooling, con sensazione di caricamento a ogni azione.
+
+2. Commit transform
+   Quando l'utente sposta/scala/trasforma e conferma, il codice passa da RasterTransformTool.commitTransform() a DocumentRenderer.commitRasterTransform().
+   Questa path puo' creare snapshot before/after, tile history, texture/FBO temporanei, bake del raster trasformato, update sparse target, ecc. Su Android queste operazioni possono stallare GPU/main thread.
+
+3. History/snapshot/tile history
+   History non sembra la causa unica, perche' disattivarla non ha risolto. Pero' resta un candidato per ottimizzazioni CPU/WASM, soprattutto compressione/copia/diff dei dati pixel o tile.
+
+Cosa serve dall'ingegnere
+Vorrei una valutazione tecnica su dove Worker/WASM puo' aiutare davvero e dove invece non puo' aiutare per limiti WebGL/browser.
+
+Domande specifiche:
+1. Quali parti di questa pipeline possono essere spostate in Worker/WASM senza rompere WebGL?
+   - compressione history?
+   - diff tile?
+   - dirty-region merge?
+   - snapshot encode/decode?
+   - raster CPU operations?
+
+2. Quali parti non conviene provare a mettere in WASM perche' restano GPU/main-thread bound?
+   - readPixels?
+   - texture upload/download?
+   - framebuffer blit/copy?
+   - draw shader/bake transform?
+   - DOM/UI state?
+
+3. Per il caso Android, conviene prima fare una patch "disable artboard residency" solo su Android?
+   Flags candidate:
+   - namespace.enableArtboardResidency = false
+   - namespace.enableArtboardResidencyBudget = false
+   - namespace.enableArtboardResidencyPrefetch = false
+   - namespace.enableArtboardFlatPreviews = false
+   - namespace.enableArtboardTileResidency = false
+
+4. Per le trasformazioni, conviene fare un "Android fast transform commit"?
+   Idea:
+   - per pure move, deve restare metadata/placement-only, senza snapshot pixel;
+   - per resize/rotate/warp, mostrare subito la trasformazione visiva ma rimandare il bake pesante a idle;
+   - ridurre o differire afterSnapshot/beforeSnapshot su Android;
+   - eventualmente salvare una operazione procedurale in history invece di salvare subito pixel completi.
+
+5. Se proponi WASM:
+   - quale modulo minimo creeresti?
+   - API JS suggerita?
+   - struttura memoria suggerita?
+   - come evitare copie inutili tra JS, WASM e Worker?
+   - come misurare se migliora davvero su Android?
+
+File principali da guardare
+1. Entry Android flags/version:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\app.js
+
+2. Renderer principale, artboard residency, dirty, snapshots, tile history, commit transform:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\document\document-renderer.js
+
+3. Tool trasformazione raster, commitTransform:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\raster-transform-tool.js
+
+4. Brush engine, Android performance mode, stroke render mode, tile history durante tratto:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\brush-engine.js
+
+5. Smudge engine, altra path pesante con tile history/snapshot:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\smudge-engine.js
+
+6. Fill/selection, altre operazioni raster con snapshot e tile history:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\color-fill.js
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\area-selection-tool.js
+
+7. History/compression/layer model:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\document\document-history.js
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\document\document-history-compression.js
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\document\document-layer-model.js
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\document\document-artboard-model.js
+
+8. UI busy/loading/toolbar:
+   C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\toolbar.js
+
+Test utili
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\tests\document-renderer-pruning.test.js
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\tests\raster-transform-tool.test.js
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\tests\brush-engine-history.test.js
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\tests\document-history.test.js
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\tests\document-history-compression.test.js
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\tests\performance-trace.test.js
+
+Note tecniche trovate nel codice
+- js/app.js contiene androidBuildVersion = "v1.9".
+- document-renderer.js ha flag e metodi per artboard residency:
+  isArtboardResidencyEnabled
+  isArtboardResidencyBudgetEnabled
+  isArtboardResidencyPrefetchEnabled
+  isArtboardFlatPreviewsEnabled
+  isArtboardTileResidencyEnabled
+- document-renderer.js invia evento cbo:artboard-residency-busy con label "OPTIMIZING".
+- toolbar.js ascolta cbo:artboard-residency-busy e mostra busy/loading.
+- raster-transform-tool.js chiama commitTransform().
+- commitTransform() chiama documentRenderer.commitRasterTransform().
+- document-renderer.js ha createRasterSnapshot(), beginRasterTileHistory(), commitRasterTransform().
+- Esiste gia' un test che dice che le pure move dovrebbero essere placement history senza snapshot pixel. Bisogna verificare che su Android questa path sia davvero usata sempre quando l'utente sposta soltanto.
+
+Richiesta finale
+Proponi un piano tecnico concreto in ordine:
+1. patch piu' veloce per confermare causa lag;
+2. patch Android-only per ridurre lag senza cambiare architettura;
+3. eventuale modulo Worker/WASM minimo con API;
+4. metriche da loggare su Android per capire se il collo e' CPU, GPU, readback, snapshot o residency.
+
+Obiettivo
+Rendere Android fluido senza cambiare tutta l'infrastruttura. Accettiamo una qualita' piu' bassa o commit differiti su Android, purche' l'editor non sembri bloccato dopo ogni azione.

@@ -9,11 +9,16 @@ test("toolbar derives undo and redo enabled state from document history events",
   const source = fs.readFileSync(path.join(repoRoot, "js", "toolbar.js"), "utf8");
 
   assert.match(source, /function updateHistoryButtons\(detail = \{\}\)/);
+  assert.match(source, /function isDocumentHistoryDisabled\(\)/);
+  assert.match(source, /function syncHistoryControlsDisabled\(\)/);
   assert.match(source, /window\.addEventListener\("cbo:history-change"/);
+  assert.match(source, /window\.addEventListener\("cbo:history-disabled"/);
   assert.match(source, /detail\.canUndo === true/);
   assert.match(source, /detail\.canRedo === true/);
   assert.match(source, /button\.disabled = !isEnabled/);
+  assert.match(source, /button\.hidden = historyDisabled/);
   assert.match(source, /new CustomEvent\("cbo:before-history-action"/);
+  assert.match(source, /if \(isDocumentHistoryDisabled\(\)\) \{/);
   assert.match(source, /if \(!button \|\| button\.disabled\)/);
   assert.match(source, /function ensureHistoryBusyOverlay\(\)/);
   assert.match(source, /function clearHistoryBusy\(action\)/);
@@ -24,6 +29,7 @@ test("toolbar derives undo and redo enabled state from document history events",
   assert.match(source, /requestAnimationFrame/);
   assert.match(source, /beforeDispatched: true/);
   assert.match(source, /setHistoryBusy\(normalizedAction, true\)/);
+  assert.match(source, /if \(!syncHistoryControlsDisabled\(\)\) \{\s*updateHistoryButtons\(\{/);
 
   const triggerStart = source.indexOf("function triggerHistoryAction(action)");
   const triggerEnd = source.indexOf("function setHistoryButtonState", triggerStart);

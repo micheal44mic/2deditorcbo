@@ -48,10 +48,22 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /this\.activeTouchPointers = new Map\(\)/);
   assert.match(source, /this\.touchNavigationGesture = null/);
   assert.match(source, /this\.touchNavigationExclusive = false/);
+  assert.match(source, /this\.touchNavigationLastActivityAt = 0/);
+  assert.match(source, /const TOUCH_NAVIGATION_STALE_POINTER_MS = 900/);
   assert.match(source, /getTouchNavigationGeometry\(pointers = this\.getTouchNavigationPointers\(\)\)/);
+  assert.match(source, /rememberTouchNavigationPointer\(event\)/);
+  assert.match(source, /pruneStaleTouchNavigationPointers\(now = this\.getNow\(\)\)/);
+  assert.match(source, /resetTouchNavigationState\(source = "touch-navigation-reset"\)/);
+  assert.match(source, /getCanvasViewportPoint\(clientX, clientY\)/);
+  assert.match(source, /safeClientX - rect\.left/);
+  assert.match(source, /const centerViewport = this\.getCanvasViewportPoint\(centerClientX, centerClientY\)/);
   assert.match(source, /beginTouchNavigationGesture\(\)/);
   assert.match(source, /updateTouchNavigationGesture\(\)/);
   assert.match(source, /cancelActiveStrokeForTouchNavigation\(\)/);
+  assert.match(source, /shouldStartTouchCanvasPan\(event, point\)/);
+  assert.match(source, /!this\.isDocumentPointOnAnyArtboard\(point\)/);
+  assert.match(source, /touch-empty-canvas-pan-start/);
+  assert.match(source, /this\.isPanning && this\.activePanPointerId === event\.pointerId/);
   assert.match(source, /this\.clearStrokeLayer\(\)/);
   assert.match(source, /namespace\.setTouchNavigationExclusive\?\.\(true/);
   assert.match(source, /namespace\.setTouchNavigationExclusive\?\.\(false/);
@@ -62,9 +74,17 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /this\.markNavigationEvent\(event\)/);
   assert.match(source, /event\.stopImmediatePropagation\?\.\(\)/);
   assert.match(source, /this\.touchNavigationGesture\.lastDistance/);
+  assert.match(source, /const rawFactor = geometry\.distance \/ previousDistance/);
+  assert.match(source, /touch-navigation-invalid-factor/);
+  assert.match(source, /ANDROID_PINCH_ZOOM_STEP_MIN/);
+  assert.match(source, /ANDROID_PINCH_ZOOM_STEP_MAX/);
   assert.match(source, /this\.camera\.zoom = newZoom/);
   assert.match(source, /this\.forgetTouchNavigationPointer\(event\.pointerId\)/);
   assert.match(source, /this\.activeTouchPointers\.clear\(\)/);
+  assert.match(source, /handleWindowTouchNavigationPointerRelease\(event\)/);
+  assert.match(source, /handleWindowTouchNavigationEnd\(event\)/);
+  assert.match(source, /touch-navigation-touchend-reset/);
+  assert.match(source, /window\.addEventListener\("touchend", this\.handleWindowTouchNavigationEnd, \{ passive: true \}\)/);
   assert.match(source, /this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.smudgeEngine\?\.isDragging/);
 });
 
@@ -72,7 +92,11 @@ test("touch navigation exposes an exclusive mobile gesture guard", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
 
   assert.match(appSource, /TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 420/);
+  assert.match(appSource, /function isTouchNavigationGuardActive\(\)/);
+  assert.match(appSource, /function isTouchNavigationInteractiveTarget\(target\)/);
+  assert.match(appSource, /isTouchNavigationInteractiveTarget\(event\.target\)/);
   assert.match(appSource, /namespace\.isTouchNavigationExclusive = isTouchNavigationExclusive/);
+  assert.match(appSource, /namespace\.isTouchNavigationGuardActive = isTouchNavigationGuardActive/);
   assert.match(appSource, /namespace\.setTouchNavigationExclusive = setTouchNavigationExclusive/);
   assert.match(appSource, /"cbo:touch-navigation-start"/);
   assert.match(appSource, /"cbo:touch-navigation-end"/);

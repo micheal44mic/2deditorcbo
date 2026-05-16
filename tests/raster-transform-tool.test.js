@@ -227,11 +227,14 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /handleTextTransformEditRequest\(event\) \{[\s\S]*this\.activeTool = "text-transform";[\s\S]*this\.deactivateLayer\(\);/);
   assert.match(source, /const RASTER_TRANSFORM_BOUNDS_ALPHA_THRESHOLD = 0;/);
   assert.match(source, /const RASTER_TRANSFORM_BOUNDS_PADDING = 2;/);
-  assert.match(source, /const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object\.freeze\(\{/);
+  assert.match(source, /const RASTER_TRANSFORM_BOUNDS_OPTIONS = Object\.freeze\(\{/);
   assert.match(source, /alphaThreshold: RASTER_TRANSFORM_BOUNDS_ALPHA_THRESHOLD,/);
   assert.match(source, /clampToDocument: false,/);
   assert.match(source, /padding: RASTER_TRANSFORM_BOUNDS_PADDING,/);
-  assert.match(source, /pixelPerfect: true,/);
+  assert.match(source, /function isPixelPerfectTransformEnabled\(\)/);
+  assert.match(source, /namespace\.androidPixelPerfectEnabled !== true/);
+  assert.match(source, /function getRasterTransformBoundsOptions\(\)/);
+  assert.match(source, /pixelPerfect: isPixelPerfectTransformEnabled\(\),/);
   assert.match(source, /const TOUCH_SELECTION_HIT_RADIUS_PX = 8;/);
   assert.match(source, /const SELECTION_MOVE_HOLD_MS = 120;/);
   assert.match(source, /selectionMoveHoldState/);
@@ -243,7 +246,7 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(source, /function isRotateToolDetail\(detail = \{\}\)/);
   assert.match(source, /function getTransformToolMode\(detail = \{\}\)/);
   assert.match(source, /getPixelTightRasterContentBounds\(layerId\)/);
-  assert.match(source, /this\.documentRenderer\?\.getRasterContentBounds\?\.\(layerId, PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS\)/);
+  assert.match(source, /this\.documentRenderer\?\.getRasterContentBounds\?\.\(layerId, getRasterTransformBoundsOptions\(\)\)/);
   assert.match(source, /const bounds = this\.getPixelTightRasterContentBounds\(layer\.id\)/);
   assert.match(source, /this\.documentRenderer\?\.width/);
   assert.match(source, /this\.documentRenderer\?\.height/);

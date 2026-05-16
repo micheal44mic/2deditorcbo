@@ -13,6 +13,7 @@ test("essential brush pack includes the Soft brush preset", () => {
   assert.match(source, /const hardness = 3;/);
   assert.match(source, /Math\.pow\(Math\.max\(0, 1 - r \* r\), hardness\)/);
   assert.match(source, /const softCircleAlphaName = "SOFT";/);
+  assert.match(source, /const hardBlendSettings = normalizeSettings\(\{[\s\S]*renderingMode: "light-glaze"/);
   assert.match(source, /flow: 0\.1/);
   assert.match(source, /spacing: 0\.04/);
   assert.match(source, /name: "SOFT"/);

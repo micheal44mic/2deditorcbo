@@ -5,6 +5,9 @@ window.CBO = window.CBO || {};
   const MAX_ZOOM = 32;
   const WHEEL_ZOOM_INTENSITY = 0.0015;
   const PINCH_ZOOM_INTENSITY = 0.01;
+  const ANDROID_PINCH_ZOOM_STEP_MIN = 0.75;
+  const ANDROID_PINCH_ZOOM_STEP_MAX = 1.333;
+  const TOUCH_NAVIGATION_STALE_POINTER_MS = 900;
   const CROPPED_BRUSH_STROKES = true;
   const STROKE_ALLOCATION_QUANTUM = 128;
   const STROKE_FINAL_PADDING = 6;
@@ -18,13 +21,20 @@ window.CBO = window.CBO || {};
   const ERASER_EMPTY_LAYER_TOAST_THROTTLE_MS = 1600;
   const MAX_STAMPS_PER_FLUSH = 4096;
   const MOBILE_MAX_STAMPS_PER_FLUSH = 1024;
+  const ANDROID_MAX_STAMPS_PER_FLUSH = 384;
   const DESKTOP_POINTER_SAMPLES_PER_FRAME = 96;
   const MOBILE_POINTER_SAMPLES_PER_FRAME = 48;
+  const ANDROID_POINTER_SAMPLES_PER_FRAME = 24;
   const DESKTOP_POINTER_FRAME_BUDGET_MS = 7;
   const MOBILE_POINTER_FRAME_BUDGET_MS = 4;
+  const ANDROID_POINTER_FRAME_BUDGET_MS = 2.5;
   const POINTER_SAMPLE_BACKLOG_MULTIPLIER = 2;
   const DESKTOP_STROKE_SEGMENT_MIN_SAMPLES = 8;
   const MOBILE_STROKE_SEGMENT_MIN_SAMPLES = 4;
+  const ANDROID_STROKE_SEGMENT_MIN_SAMPLES = 2;
+  const ANDROID_STROKE_SEGMENT_MAX_SAMPLES = 48;
+  const ANDROID_STROKE_SEGMENT_DISTANCE_STEP = 6;
+  const ANDROID_STROKE_ALLOCATION_QUANTUM = 256;
   const BRUSH_HISTORY_BATCH_IDLE_MS = 1000;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_MIB = 1024 * 1024;
@@ -597,6 +607,7 @@ void main() {
       this.activeTouchPointers = new Map();
       this.touchNavigationGesture = null;
       this.touchNavigationExclusive = false;
+      this.touchNavigationLastActivityAt = 0;
       this.isDrawing = false;
       this.activePointerId = null;
       this.isPanning = false;
@@ -686,6 +697,8 @@ void main() {
       this.handleNavigationPointerMove = this.handleNavigationPointerMove.bind(this);
       this.handleNavigationPointerUp = this.handleNavigationPointerUp.bind(this);
       this.handleNavigationPointerCancel = this.handleNavigationPointerCancel.bind(this);
+      this.handleWindowTouchNavigationPointerRelease = this.handleWindowTouchNavigationPointerRelease.bind(this);
+      this.handleWindowTouchNavigationEnd = this.handleWindowTouchNavigationEnd.bind(this);
       this.handleAuxClick = this.handleAuxClick.bind(this);
       this.handleWheel = this.handleWheel.bind(this);
       this.handleKeyDown = this.handleKeyDown.bind(this);
@@ -1859,7 +1872,9 @@ void main() {
         return this.getFullDocumentRect(target);
       }
 
-      const quantum = STROKE_ALLOCATION_QUANTUM;
+      const quantum = this.isAndroidPerformanceMode()
+        ? ANDROID_STROKE_ALLOCATION_QUANTUM
+        : STROKE_ALLOCATION_QUANTUM;
       const padding = Math.max(16, Math.ceil(this.getBrushSize()));
       const bounds = this.getStrokeAllocationBounds(target);
       const minX = Math.max(bounds.x, Math.floor((rect.x - padding) / quantum) * quantum);
@@ -2611,6 +2626,10 @@ void main() {
       navigationTarget.addEventListener("pointerup", this.handleNavigationPointerUp, true);
       navigationTarget.addEventListener("pointercancel", this.handleNavigationPointerCancel, true);
       navigationTarget.addEventListener("auxclick", this.handleAuxClick, true);
+      window.addEventListener("pointerup", this.handleWindowTouchNavigationPointerRelease);
+      window.addEventListener("pointercancel", this.handleWindowTouchNavigationPointerRelease);
+      window.addEventListener("touchend", this.handleWindowTouchNavigationEnd, { passive: true });
+      window.addEventListener("touchcancel", this.handleWindowTouchNavigationEnd, { passive: true });
       window.addEventListener("keydown", this.handleKeyDown, true);
       window.addEventListener("keyup", this.handleKeyUp, true);
       window.addEventListener("blur", this.handleWindowBlur);
@@ -2633,14 +2652,25 @@ void main() {
       this.zoomAtClient(event.clientX, event.clientY, factor);
     }
 
+    getCanvasViewportPoint(clientX, clientY) {
+      const rect = this.canvas.getBoundingClientRect();
+      const safeClientX = Number.isFinite(Number(clientX)) ? Number(clientX) : rect.left;
+      const safeClientY = Number.isFinite(Number(clientY)) ? Number(clientY) : rect.top;
+
+      return {
+        x: (safeClientX - rect.left) * this.dpr,
+        y: (safeClientY - rect.top) * this.dpr,
+      };
+    }
+
     zoomAtClient(clientX, clientY, factor) {
       if (!Number.isFinite(factor) || factor <= 0) {
         return;
       }
 
-      const rect = this.canvas.getBoundingClientRect();
-      const cursorViewportX = (clientX - rect.left) * this.dpr;
-      const cursorViewportY = (clientY - rect.top) * this.dpr;
+      const cursor = this.getCanvasViewportPoint(clientX, clientY);
+      const cursorViewportX = cursor.x;
+      const cursorViewportY = cursor.y;
       const oldZoom = this.camera.zoom;
       const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom * factor));
 
@@ -2665,6 +2695,72 @@ void main() {
         .sort((first, second) => first.pointerId - second.pointerId);
     }
 
+    rememberTouchNavigationPointer(event) {
+      const now = this.getNow();
+
+      this.touchNavigationLastActivityAt = now;
+      this.activeTouchPointers.set(event.pointerId, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        pointerId: event.pointerId,
+        updatedAt: now,
+      });
+    }
+
+    pruneStaleTouchNavigationPointers(now = this.getNow()) {
+      let didPrune = false;
+
+      this.activeTouchPointers.forEach((pointer, pointerId) => {
+        const updatedAt = Number(pointer?.updatedAt) || 0;
+
+        if (updatedAt > 0 && now - updatedAt <= TOUCH_NAVIGATION_STALE_POINTER_MS) {
+          return;
+        }
+
+        this.activeTouchPointers.delete(pointerId);
+        didPrune = true;
+      });
+
+      if (!didPrune) {
+        return false;
+      }
+
+      if (this.isPanning && this.activePanPointerId != null && !this.activeTouchPointers.has(this.activePanPointerId)) {
+        this.endPan();
+      }
+
+      if (this.touchNavigationGesture && this.activeTouchPointers.size < 2) {
+        this.touchNavigationGesture = null;
+      }
+
+      if (this.touchNavigationExclusive && this.activeTouchPointers.size === 0) {
+        this.endTouchNavigationExclusive();
+      }
+
+      return true;
+    }
+
+    resetTouchNavigationState(source = "touch-navigation-reset") {
+      const hadState = this.activeTouchPointers.size > 0 ||
+        this.touchNavigationGesture ||
+        this.touchNavigationExclusive ||
+        (this.isPanning && this.activePanPointerId != null);
+
+      this.activeTouchPointers.clear();
+      this.touchNavigationGesture = null;
+      this.touchNavigationLastActivityAt = 0;
+
+      if (this.isPanning && this.activePanPointerId != null) {
+        this.endPan();
+      }
+
+      this.endTouchNavigationExclusive();
+
+      if (hadState) {
+        namespace.EngineGovernor?.markActivity?.({ source });
+      }
+    }
+
     getTouchNavigationGeometry(pointers = this.getTouchNavigationPointers()) {
       if (!Array.isArray(pointers) || pointers.length < 2) {
         return null;
@@ -2674,18 +2770,19 @@ void main() {
       const second = pointers[1];
       const centerClientX = (first.clientX + second.clientX) * 0.5;
       const centerClientY = (first.clientY + second.clientY) * 0.5;
-      const centerX = centerClientX * this.dpr;
-      const centerY = centerClientY * this.dpr;
+      const firstViewport = this.getCanvasViewportPoint(first.clientX, first.clientY);
+      const secondViewport = this.getCanvasViewportPoint(second.clientX, second.clientY);
+      const centerViewport = this.getCanvasViewportPoint(centerClientX, centerClientY);
       const distance = Math.max(
         1,
-        Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY) * this.dpr,
+        Math.hypot(secondViewport.x - firstViewport.x, secondViewport.y - firstViewport.y),
       );
 
       return {
         centerClientX,
         centerClientY,
-        centerX,
-        centerY,
+        centerX: centerViewport.x,
+        centerY: centerViewport.y,
         distance,
         pointerIds: [first.pointerId, second.pointerId],
       };
@@ -2716,6 +2813,7 @@ void main() {
     }
 
     beginTouchNavigationGesture() {
+      this.pruneStaleTouchNavigationPointers();
       const geometry = this.getTouchNavigationGeometry();
 
       if (!geometry) {
@@ -2763,7 +2861,16 @@ void main() {
       const previousCenterX = this.touchNavigationGesture.lastCenterX;
       const previousCenterY = this.touchNavigationGesture.lastCenterY;
       const previousDistance = Math.max(1, this.touchNavigationGesture.lastDistance || geometry.distance);
-      const factor = geometry.distance / previousDistance;
+      const rawFactor = geometry.distance / previousDistance;
+
+      if (!Number.isFinite(rawFactor) || rawFactor <= 0) {
+        this.resetTouchNavigationState("touch-navigation-invalid-factor");
+        return false;
+      }
+
+      const factor = this.isAndroidPerformanceMode()
+        ? this.clamp(rawFactor, ANDROID_PINCH_ZOOM_STEP_MIN, ANDROID_PINCH_ZOOM_STEP_MAX)
+        : rawFactor;
       const docX = (previousCenterX - this.camera.x) / oldZoom;
       const docY = (previousCenterY - this.camera.y) / oldZoom;
       const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom * factor));
@@ -2864,11 +2971,8 @@ void main() {
       }
 
       if (event.pointerType === "touch") {
-        this.activeTouchPointers.set(event.pointerId, {
-          clientX: event.clientX,
-          clientY: event.clientY,
-          pointerId: event.pointerId,
-        });
+        this.pruneStaleTouchNavigationPointers();
+        this.rememberTouchNavigationPointer(event);
 
         if (this.activeTouchPointers.size >= 2 && this.beginTouchNavigationGesture()) {
           this.markNavigationEvent(event);
@@ -2893,13 +2997,12 @@ void main() {
 
     handleNavigationPointerMove(event) {
       if (event.pointerType === "touch" && this.activeTouchPointers.has(event.pointerId)) {
-        this.activeTouchPointers.set(event.pointerId, {
-          clientX: event.clientX,
-          clientY: event.clientY,
-          pointerId: event.pointerId,
-        });
+        this.rememberTouchNavigationPointer(event);
 
-        if (this.touchNavigationGesture) {
+        if (this.isPanning && this.activePanPointerId === event.pointerId) {
+          this.markNavigationEvent(event);
+          this.updatePan(event);
+        } else if (this.touchNavigationGesture) {
           this.markNavigationEvent(event);
           this.updateTouchNavigationGesture();
         } else if (this.touchNavigationExclusive) {
@@ -2918,7 +3021,10 @@ void main() {
 
     handleNavigationPointerUp(event) {
       if (event.pointerType === "touch") {
-        if (this.touchNavigationGesture || this.touchNavigationExclusive) {
+        if (this.isPanning && this.activePanPointerId === event.pointerId) {
+          this.markNavigationEvent(event);
+          this.endPan(event);
+        } else if (this.touchNavigationGesture || this.touchNavigationExclusive) {
           this.markNavigationEvent(event);
         }
         this.forgetTouchNavigationPointer(event.pointerId);
@@ -2935,7 +3041,10 @@ void main() {
 
     handleNavigationPointerCancel(event) {
       if (event.pointerType === "touch") {
-        if (this.touchNavigationGesture || this.touchNavigationExclusive) {
+        if (this.isPanning && this.activePanPointerId === event.pointerId) {
+          this.markNavigationEvent(event);
+          this.endPan(event);
+        } else if (this.touchNavigationGesture || this.touchNavigationExclusive) {
           this.markNavigationEvent(event);
         }
         this.forgetTouchNavigationPointer(event.pointerId);
@@ -2948,6 +3057,40 @@ void main() {
 
       this.markNavigationEvent(event);
       this.endPan(event);
+    }
+
+    handleWindowTouchNavigationPointerRelease(event) {
+      if (event.pointerType !== "touch") {
+        return;
+      }
+
+      if (
+        !this.activeTouchPointers.has(event.pointerId) &&
+        this.activePanPointerId !== event.pointerId &&
+        !this.touchNavigationGesture &&
+        !this.touchNavigationExclusive
+      ) {
+        return;
+      }
+
+      if (this.isPanning && this.activePanPointerId === event.pointerId) {
+        this.endPan(event);
+      }
+
+      this.forgetTouchNavigationPointer(event.pointerId);
+    }
+
+    handleWindowTouchNavigationEnd(event) {
+      const touchCount = Number(event.touches?.length) || 0;
+
+      if ((this.touchNavigationGesture || this.touchNavigationExclusive) && touchCount < 2) {
+        this.resetTouchNavigationState("touch-navigation-touchend-reset");
+        return;
+      }
+
+      if (this.isPanning && this.activePanPointerId != null && touchCount === 0) {
+        this.resetTouchNavigationState("touch-navigation-pan-touchend-reset");
+      }
     }
 
     handleAuxClick(event) {
@@ -2991,9 +3134,7 @@ void main() {
 
     handleWindowBlur() {
       this.isSpaceHeld = false;
-      this.activeTouchPointers.clear();
-      this.touchNavigationGesture = null;
-      this.endTouchNavigationExclusive();
+      this.resetTouchNavigationState("touch-navigation-window-blur-reset");
 
       if (this.isPanning) {
         this.endPan();
@@ -3028,9 +3169,9 @@ void main() {
     }
 
     screenToDocumentSpace(clientX, clientY) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = (clientX - rect.left) * this.dpr;
-      const viewportY = (clientY - rect.top) * this.dpr;
+      const viewportPoint = this.getCanvasViewportPoint(clientX, clientY);
+      const viewportX = viewportPoint.x;
+      const viewportY = viewportPoint.y;
 
       return {
         docX: (viewportX - this.camera.x) / this.camera.zoom,
@@ -3079,6 +3220,29 @@ void main() {
         point.docY >= paintRect.y &&
         point.docX <= paintRect.x + paintRect.width &&
         point.docY <= paintRect.y + paintRect.height
+      );
+    }
+
+    isDocumentPointOnAnyArtboard(point) {
+      if (!point) {
+        return false;
+      }
+
+      if (namespace.getDocumentArtboardAtPoint?.(point)) {
+        return true;
+      }
+
+      return this.isDocumentPointInside(point);
+    }
+
+    shouldStartTouchCanvasPan(event, point) {
+      return (
+        event.pointerType === "touch" &&
+        event.button === 0 &&
+        !this.isDrawing &&
+        !this.isPanning &&
+        !this.touchNavigationGesture &&
+        !this.isDocumentPointOnAnyArtboard(point)
       );
     }
 
@@ -3267,19 +3431,59 @@ void main() {
       return namespace.DocumentRenderer?.isMobileLikeEnvironment?.() === true;
     }
 
+    isAndroidPerformanceMode() {
+      return namespace.androidPerformanceMode === true ||
+        namespace.deviceIsAndroid === true ||
+        namespace.DocumentRenderer?.isAndroidLikeEnvironment?.() === true;
+    }
+
+    isAndroidFullRenderMode() {
+      return this.isAndroidPerformanceMode() && namespace.androidFullRenderMode === true;
+    }
+
+    isAndroidPreviewCacheDisabled() {
+      return this.isAndroidPerformanceMode() &&
+        (
+          namespace.androidFullRenderMode === true ||
+          namespace.androidPreviewCacheEnabled === false ||
+          namespace.DocumentRenderer?.isAndroidPreviewCacheDisabled?.() === true
+        );
+    }
+
+    isAndroidDirtyRegionsDisabled() {
+      return this.isAndroidPerformanceMode() &&
+        (
+          namespace.androidFullRenderMode === true ||
+          namespace.androidDirtyRegionsEnabled === false ||
+          namespace.DocumentRenderer?.isAndroidDirtyRegionsDisabled?.() === true
+        );
+    }
+
     getPointerSamplesPerFrame() {
+      if (this.isAndroidPerformanceMode()) {
+        return ANDROID_POINTER_SAMPLES_PER_FRAME;
+      }
+
       return this.isMobilePerformanceMode()
         ? MOBILE_POINTER_SAMPLES_PER_FRAME
         : DESKTOP_POINTER_SAMPLES_PER_FRAME;
     }
 
     getPointerFrameBudgetMs() {
+      if (this.isAndroidPerformanceMode()) {
+        return ANDROID_POINTER_FRAME_BUDGET_MS;
+      }
+
       return this.isMobilePerformanceMode()
         ? MOBILE_POINTER_FRAME_BUDGET_MS
         : DESKTOP_POINTER_FRAME_BUDGET_MS;
     }
 
     getMaxStampsPerFlush() {
+      if (this.isAndroidPerformanceMode()) {
+        return ANDROID_MAX_STAMPS_PER_FLUSH;
+      }
+
       return this.isMobilePerformanceMode()
         ? MOBILE_MAX_STAMPS_PER_FLUSH
         : MAX_STAMPS_PER_FLUSH;
@@ -3790,6 +3994,12 @@ void main() {
     getBrushStrokeRenderMode() {
       const buildUp = this.getStrokeBuildUp();
 
+      // Android: avoid mixed mode because it creates 3 FBO/scratch textures.
+      // To re-enable for quality tests: window.CBO.androidMixedStrokeBuildup = true;
+      if (this.isAndroidPerformanceMode() && namespace.androidMixedStrokeBuildup !== true) {
+        return buildUp <= 0.25 ? STROKE_RENDER_MODE_PLATEAU : STROKE_RENDER_MODE_ACCUM;
+      }
+
       if (buildUp <= STROKE_BUILDUP_EPSILON) {
         return STROKE_RENDER_MODE_PLATEAU;
       }
@@ -3880,6 +4090,16 @@ void main() {
     }
 
     getStrokeSegmentSampleCount(segmentDistance) {
+      if (this.isAndroidPerformanceMode()) {
+        return Math.max(
+          ANDROID_STROKE_SEGMENT_MIN_SAMPLES,
+          Math.min(
+            ANDROID_STROKE_SEGMENT_MAX_SAMPLES,
+            Math.ceil(segmentDistance / ANDROID_STROKE_SEGMENT_DISTANCE_STEP),
+          ),
+        );
+      }
+
       const minSamples = this.isMobilePerformanceMode()
         ? MOBILE_STROKE_SEGMENT_MIN_SAMPLES
         : DESKTOP_STROKE_SEGMENT_MIN_SAMPLES;
@@ -4790,8 +5010,26 @@ void main() {
         : (effectiveStrokeRect ? [{ ...effectiveStrokeRect }] : []);
     }
 
+    getStrokePreviewDirtyRectsForBake(effectiveStrokeRect, tilePatchRects = null) {
+      if (this.isAndroidDirtyRegionsDisabled()) {
+        this.strokePreviewDirtyRects = null;
+        this.lastStrokePreviewDirtyRects = null;
+        return [];
+      }
+
+      const computedPreviewDirtyRects = this.updateStrokePreviewDirtyRects(
+        effectiveStrokeRect,
+        tilePatchRects,
+      );
+
+      return computedPreviewDirtyRects.length > 0
+        ? computedPreviewDirtyRects
+        : this.getFallbackStrokePreviewDirtyRects(effectiveStrokeRect);
+    }
+
     warmPreviewCacheForStroke({ force = false } = {}) {
       if (
+        this.isAndroidPreviewCacheDisabled() ||
         this.isDrawing ||
         (!force && namespace.EngineGovernor?.mode === "interactive") ||
         namespace.smudgeEngine?.isDragging ||
@@ -5898,13 +6136,10 @@ void main() {
               selectionCoverageRects,
             )
           : this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
-        const computedPreviewDirtyRects = this.updateStrokePreviewDirtyRects(
+        const previewDirtyRects = this.getStrokePreviewDirtyRectsForBake(
           effectiveStrokeRect,
           activeStrokeTilePatchRects,
         );
-        const previewDirtyRects = computedPreviewDirtyRects.length > 0
-          ? computedPreviewDirtyRects
-          : this.getFallbackStrokePreviewDirtyRects(effectiveStrokeRect);
         const paintTargets = isEraserStroke
           ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
               source: "brush-incremental-eraser-target",
@@ -6111,13 +6346,10 @@ void main() {
             selectionCoverageRects,
           )
         : this.getActiveStrokeTilePatchRects(effectiveStrokeRect);
-      const computedPreviewDirtyRects = this.updateStrokePreviewDirtyRects(
+      const previewDirtyRects = this.getStrokePreviewDirtyRectsForBake(
         effectiveStrokeRect,
         activeStrokeTilePatchRects,
       );
-      const previewDirtyRects = computedPreviewDirtyRects.length > 0
-        ? computedPreviewDirtyRects
-        : this.getFallbackStrokePreviewDirtyRects(effectiveStrokeRect);
       const paintTargets = isEraserStroke
         ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
             source: "brush-eraser-target",
@@ -7103,6 +7335,13 @@ void main() {
 
       const documentPoint = this.screenToDocumentSpace(event.clientX, event.clientY);
 
+      if (this.shouldStartTouchCanvasPan(event, documentPoint)) {
+        this.markNavigationEvent(event);
+        this.beginPan(event, event.currentTarget || this.stage || this.canvas);
+        namespace.EngineGovernor?.markActivity?.({ source: "touch-empty-canvas-pan-start" });
+        return;
+      }
+
       this.activateArtboardAtPoint(documentPoint);
 
       if (!this.isDocumentPointInside(documentPoint)) {
@@ -7457,6 +7696,10 @@ void main() {
         navigationTarget.removeEventListener("pointerup", this.handleNavigationPointerUp, true);
         navigationTarget.removeEventListener("pointercancel", this.handleNavigationPointerCancel, true);
         navigationTarget.removeEventListener("auxclick", this.handleAuxClick, true);
+        window.removeEventListener("pointerup", this.handleWindowTouchNavigationPointerRelease);
+        window.removeEventListener("pointercancel", this.handleWindowTouchNavigationPointerRelease);
+        window.removeEventListener("touchend", this.handleWindowTouchNavigationEnd);
+        window.removeEventListener("touchcancel", this.handleWindowTouchNavigationEnd);
       }
       window.removeEventListener("keydown", this.handleKeyDown, true);
       window.removeEventListener("keyup", this.handleKeyUp, true);

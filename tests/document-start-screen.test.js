@@ -30,6 +30,10 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(editorCanvasSource, /maxRasterHistoryMiB: 400/);
   assert.match(editorCanvasSource, /maxRasterHistoryMiB: 600/);
   assert.match(editorCanvasSource, /minRasterHistoryGpuHotEntries: 0/);
+  assert.match(editorCanvasSource, /function isDocumentHistoryDisabled\(\)/);
+  assert.match(editorCanvasSource, /window\.CBO\?\.androidHistoryEnabled === false/);
+  assert.match(editorCanvasSource, /window\.CBO\.documentHistory = historyDisabled[\s\S]*\? null[\s\S]*: new window\.CBO\.DocumentHistory\(getRasterHistoryProfile\(\)\)/);
+  assert.match(editorCanvasSource, /enableHistory: !historyDisabled/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorDocumentStart = function initEditorDocumentStart\(\)/);
   assert.match(editorCanvasSource, /button\.dataset\.documentPreset = preset\.id/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorCanvas\(\{[\s\S]*documentHeight: preset\.height,[\s\S]*documentWidth: preset\.width/);

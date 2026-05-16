@@ -35,9 +35,14 @@
   const DESKTOP_RENDER_DPR_CAP = 2;
   const MOBILE_RENDER_DPR_CAP = 1.5;
   const LOW_MEMORY_MOBILE_RENDER_DPR_CAP = 1.25;
+  const ANDROID_RENDER_DPR_CAP = 1;
+  const LOW_MEMORY_ANDROID_RENDER_DPR_CAP = 1;
   const MOBILE_PREVIEW_CACHE_MAX_SIZE = 1536;
   const MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX = 128;
   const MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 128;
+  const ANDROID_PREVIEW_CACHE_MAX_SIZE = 1024;
+  const ANDROID_PREVIEW_CACHE_OVERSCAN_CSS_PX = 64;
+  const ANDROID_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 64;
   const WEBGL2_CONTEXT_ATTRIBUTES = Object.freeze({
     alpha: true,
     antialias: false,
@@ -1075,6 +1080,54 @@ void main() {
     return hasTouch || hasCoarsePointer || hasMobileUserAgent;
   }
 
+  function isAndroidLikeEnvironment() {
+    if (typeof navigator === "undefined") {
+      return false;
+    }
+
+    const platformHints = [
+      navigator.userAgentData?.platform ||
+        "",
+      navigator.platform,
+      navigator.userAgent,
+      navigator.vendor,
+    ];
+
+    return platformHints.some((value) => /Android/i.test(String(value || "")));
+  }
+
+  function isAndroidPerformanceMode() {
+    return namespace.androidPerformanceMode === true ||
+      namespace.deviceIsAndroid === true ||
+      isAndroidLikeEnvironment();
+  }
+
+  function isAndroidFullRenderMode() {
+    return isAndroidPerformanceMode() && namespace.androidFullRenderMode === true;
+  }
+
+  function isAndroidPreviewCacheDisabled() {
+    return isAndroidPerformanceMode() &&
+      (namespace.androidFullRenderMode === true || namespace.androidPreviewCacheEnabled === false);
+  }
+
+  function isAndroidDirtyRegionsDisabled() {
+    return isAndroidPerformanceMode() &&
+      (namespace.androidFullRenderMode === true || namespace.androidDirtyRegionsEnabled === false);
+  }
+
+  function isPixelPerfectRenderingEnabled() {
+    if (namespace.pixelPerfectRenderingEnabled === false) {
+      return false;
+    }
+
+    if (isAndroidPerformanceMode() && namespace.androidPixelPerfectEnabled !== true) {
+      return false;
+    }
+
+    return true;
+  }
+
   function getNavigatorDeviceMemory() {
     const memory = typeof navigator !== "undefined" ? Number(navigator.deviceMemory) : 0;
 
@@ -1089,17 +1142,30 @@ void main() {
             ? Number(window.devicePixelRatio)
             : 1
         );
-    const isMobile = options.mobileLike === true || (options.mobileLike !== false && isMobileLikeEnvironment());
+
+    const isAndroid = options.androidLike === true ||
+      (options.androidLike !== false && isAndroidLikeEnvironment());
+    const isMobile = options.mobileLike === true ||
+      (options.mobileLike !== false && isMobileLikeEnvironment());
+
     const memory = Number.isFinite(Number(options.deviceMemory))
       ? Number(options.deviceMemory)
       : getNavigatorDeviceMemory();
-    const defaultCap = isMobile
-      ? (memory > 0 && memory <= 4 ? LOW_MEMORY_MOBILE_RENDER_DPR_CAP : MOBILE_RENDER_DPR_CAP)
-      : DESKTOP_RENDER_DPR_CAP;
-    const namespaceCap = isMobile
-      ? Number(namespace.mobileRenderDprCap ?? namespace.maxRenderDpr)
-      : Number(namespace.desktopRenderDprCap ?? namespace.maxRenderDpr);
+
+    const defaultCap = isAndroid
+      ? (memory > 0 && memory <= 4 ? LOW_MEMORY_ANDROID_RENDER_DPR_CAP : ANDROID_RENDER_DPR_CAP)
+      : isMobile
+        ? (memory > 0 && memory <= 4 ? LOW_MEMORY_MOBILE_RENDER_DPR_CAP : MOBILE_RENDER_DPR_CAP)
+        : DESKTOP_RENDER_DPR_CAP;
+
+    const namespaceCap = isAndroid
+      ? Number(namespace.androidRenderDprCap ?? namespace.mobileRenderDprCap)
+      : isMobile
+        ? Number(namespace.mobileRenderDprCap ?? namespace.maxRenderDpr)
+        : Number(namespace.desktopRenderDprCap ?? namespace.maxRenderDpr);
+
     const optionCap = Number(options.maxRenderDpr);
+
     const cap = Number.isFinite(optionCap) && optionCap > 0
       ? optionCap
       : Number.isFinite(namespaceCap) && namespaceCap > 0
@@ -1110,16 +1176,28 @@ void main() {
   }
 
   function getDefaultPreviewCacheMaxSize() {
+    if (isAndroidLikeEnvironment()) {
+      return ANDROID_PREVIEW_CACHE_MAX_SIZE;
+    }
+
     return isMobileLikeEnvironment() ? MOBILE_PREVIEW_CACHE_MAX_SIZE : PREVIEW_CACHE_MAX_SIZE;
   }
 
   function getDefaultPreviewCacheOverscanCssPx() {
+    if (isAndroidLikeEnvironment()) {
+      return ANDROID_PREVIEW_CACHE_OVERSCAN_CSS_PX;
+    }
+
     return isMobileLikeEnvironment()
       ? MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX
       : PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX;
   }
 
   function getDefaultViewportRenderOverscanCssPx() {
+    if (isAndroidLikeEnvironment()) {
+      return ANDROID_VIEWPORT_RENDER_OVERSCAN_CSS_PX;
+    }
+
     return isMobileLikeEnvironment()
       ? MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX
       : VIEWPORT_RENDER_OVERSCAN_CSS_PX;
@@ -1260,6 +1338,22 @@ void main() {
 
     static isMobileLikeEnvironment() {
       return isMobileLikeEnvironment();
+    }
+
+    static isAndroidLikeEnvironment() {
+      return isAndroidLikeEnvironment();
+    }
+
+    static isAndroidFullRenderMode() {
+      return isAndroidFullRenderMode();
+    }
+
+    static isAndroidPreviewCacheDisabled() {
+      return isAndroidPreviewCacheDisabled();
+    }
+
+    static isAndroidDirtyRegionsDisabled() {
+      return isAndroidDirtyRegionsDisabled();
     }
 
     static resizeCanvasViewport(canvas, gl) {
@@ -2544,16 +2638,14 @@ void main() {
     }
 
     getPreviewCacheMaxSize() {
-      const fallback = this.isMobileLikeDevice?.() ? MOBILE_PREVIEW_CACHE_MAX_SIZE : PREVIEW_CACHE_MAX_SIZE;
+      const fallback = getDefaultPreviewCacheMaxSize();
       const requested = Number(this.options?.previewCacheMaxSize ?? fallback);
 
       return Math.max(1, Math.floor(Number.isFinite(requested) && requested > 0 ? requested : fallback));
     }
 
     getPreviewCacheOverscanCssPx() {
-      const fallback = this.isMobileLikeDevice?.()
-        ? MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX
-        : PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX;
+      const fallback = getDefaultPreviewCacheOverscanCssPx();
       const requested = Number(this.options?.previewCacheOverscanCssPx ?? fallback);
 
       return Math.max(0, Math.floor(Number.isFinite(requested) && requested >= 0 ? requested : fallback));
@@ -4519,6 +4611,10 @@ void main() {
     }
 
     getViewportTextureMagFilter(camera = {}) {
+      if (!isPixelPerfectRenderingEnabled()) {
+        return this.gl.LINEAR;
+      }
+
       const zoom = Math.abs(Number(camera?.zoom) || 1);
 
       return zoom >= PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD
@@ -4527,6 +4623,10 @@ void main() {
     }
 
     shouldDrawPixelGrid(camera = {}) {
+      if (!isPixelPerfectRenderingEnabled()) {
+        return false;
+      }
+
       const zoom = Math.abs(Number(camera?.zoom) || 1);
 
       return zoom >= PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD;
@@ -6514,6 +6614,21 @@ void main() {
     }
 
     createPreviewCache(options = {}) {
+      if (isAndroidPreviewCacheDisabled()) {
+        if (this.previewTexture || this.previewFramebuffer) {
+          this.deletePreviewCache();
+        }
+
+        this.previewCacheDirty = true;
+        this.previewCacheReason = "android-preview-cache-disabled";
+        this.previewDirtyRects = null;
+        this.previewDirtyCompactOptions = null;
+        this.previewLastDirtyMode = "android-full-render";
+        this.previewLastDirtyRect = null;
+        this.previewCacheReady = false;
+        return false;
+      }
+
       const dimensions = this.getPreviewCacheDimensions(options);
 
       if (
@@ -7381,6 +7496,36 @@ void main() {
           source: options.source || "visual-dirty",
         });
       }
+
+      if (isAndroidDirtyRegionsDisabled()) {
+        const detail = {
+          androidDirtyRegionsDisabled: true,
+          dirtyRectInputCount: 0,
+          layerId: options.layerId || "",
+          maxDirtyRects: Math.max(
+            1,
+            Math.round(Number(options.maxDirtyRects) || PREVIEW_DIRTY_MAX_RECTS),
+          ),
+          preserveDirtyRects: false,
+          rect: null,
+          rects: null,
+          source: options.source || "visual-change",
+        };
+        const shouldEmit = options.emit !== false;
+
+        if (shouldEmit) {
+          this.emitContentChange(detail);
+        } else if (options.invalidate !== false) {
+          this.invalidatePreviewCache(detail.source, detail);
+        }
+
+        if (options.requestDraw === true) {
+          this.requestDraw();
+        }
+
+        return detail;
+      }
+
       const detail = this.createVisualDirtyChange(options);
       const shouldEmit = options.emit !== false;
 
@@ -7659,6 +7804,36 @@ void main() {
           rectCount: Array.isArray(options.rects) ? options.rects.length : (options.rect ? 1 : 0),
         });
       }
+
+      if (isAndroidPreviewCacheDisabled() || isAndroidDirtyRegionsDisabled()) {
+        this.invalidateArtboardFlatPreviews(reason, options, []);
+
+        if (isAndroidPreviewCacheDisabled() && (this.previewTexture || this.previewFramebuffer)) {
+          this.deletePreviewCache();
+        }
+
+        this.previewCacheDirty = true;
+        this.previewCacheReason = reason;
+        this.previewDirtyRects = null;
+        this.previewDirtyCompactOptions = null;
+        this.previewLastDirtyMode = "android-full-render";
+        this.previewLastDirtyRect = null;
+
+        if (namespace.debugPreviewDirtyRegions === true) {
+          this.emitPreviewDirtyRegionDebug({
+            layerId: options.layerId || "",
+            meta: {
+              androidDirtyRegionsDisabled: isAndroidDirtyRegionsDisabled(),
+              androidPreviewCacheDisabled: isAndroidPreviewCacheDisabled(),
+            },
+            mode: "android-full-render",
+            reason,
+            rects: [],
+          });
+        }
+        return;
+      }
+
       const hadFullInvalidation = this.previewCacheDirty && this.previewDirtyRects === null;
       const dirtyRects = this.getDirtyRegionRectsFromOptions(options);
       const incomingDirtyRectCount = this.getIncomingDirtyRegionRectCount(options);
@@ -12368,7 +12543,7 @@ void main() {
         return null;
       }
 
-      if (pixelPerfect || cpuPixels) {
+      if (pixelPerfect) {
         coarseRect = { x: 0, y: 0, width: targetWidth, height: targetHeight };
       } else {
         const samples = this.getPuppetAlphaSamples(target, sampleCols, sampleRows);
@@ -16545,7 +16720,7 @@ void main() {
             .slice(activeStrokeLayerIndex + 1)
             .some((layer) => this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id)))
         );
-      const allowPreviewCache = options.allowPreviewCache === true;
+      const allowPreviewCache = options.allowPreviewCache === true && !isAndroidPreviewCacheDisabled();
       const previewCacheOptions = {
         camera,
         dpr: options.dpr,

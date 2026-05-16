@@ -154,7 +154,7 @@
 
 .artboard-create-popover {
   position: fixed;
-  z-index: 5200;
+  z-index: 20050;
   width: 286px;
   max-width: calc(100vw - 24px);
   padding: 12px;

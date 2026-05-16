@@ -70,6 +70,20 @@ function getRasterHistoryProfile() {
   };
 }
 
+function isDocumentHistoryDisabled() {
+  const namespaceValue = window.CBO?.isDocumentHistoryDisabled?.();
+
+  if (typeof namespaceValue === "boolean") {
+    return namespaceValue;
+  }
+
+  return Boolean(
+    window.CBO?.documentHistoryDisabled === true ||
+    window.CBO?.androidHistoryDisabled === true ||
+    window.CBO?.androidHistoryEnabled === false
+  );
+}
+
 function getDocumentPreset(id) {
   const defaultPresetId = getDefaultDocumentPresetId();
 
@@ -515,7 +529,9 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     throw new Error("DocumentArtboardModel non caricato: impossibile inizializzare gli artboard documento.");
   }
 
-  if (!window.CBO.DocumentHistory) {
+  const historyDisabled = isDocumentHistoryDisabled();
+
+  if (!historyDisabled && !window.CBO.DocumentHistory) {
     throw new Error("DocumentHistory non caricato: impossibile inizializzare la history documento.");
   }
 
@@ -572,12 +588,16 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     viewportHeight: viewport.height,
     enableViewportLayerCulling: true,
   });
-  window.CBO.documentHistory = new window.CBO.DocumentHistory(getRasterHistoryProfile());
+  window.CBO.documentHistoryDisabled = historyDisabled;
+  window.CBO.documentHistory = historyDisabled
+    ? null
+    : new window.CBO.DocumentHistory(getRasterHistoryProfile());
   let brushEngine;
   let smudgeEngine;
 
   try {
     brushEngine = new window.CBO.BrushEngine(canvas, {
+      enableHistory: !historyDisabled,
       gl,
       documentRenderer,
     });

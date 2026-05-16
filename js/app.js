@@ -8,6 +8,7 @@ document.addEventListener(
 
 (() => {
   const namespace = window.CBO = window.CBO || {};
+  const androidBuildVersion = "v1.9";
   const androidIndicator = document.getElementById("android-device-indicator");
 
   function isAndroidDevice() {
@@ -23,12 +24,47 @@ document.addEventListener(
 
   const isAndroid = isAndroidDevice();
 
+  function isDocumentHistoryDisabled() {
+    return Boolean(
+      namespace.documentHistoryDisabled === true ||
+      namespace.androidHistoryDisabled === true ||
+      namespace.androidHistoryEnabled === false
+    );
+  }
+
   namespace.isAndroidDevice = isAndroidDevice;
   namespace.deviceIsAndroid = isAndroid;
+  namespace.androidBuildVersion = androidBuildVersion;
+  namespace.artboardSelectionEnabled = true;
+  namespace.isDocumentHistoryDisabled = isDocumentHistoryDisabled;
+
+  if (isAndroid) {
+    namespace.androidPerformanceMode = true;
+
+    // Android WebGL: start low. Raise to 1.15 later if quality needs it.
+    namespace.androidRenderDprCap = 1;
+    namespace.mobileRenderDprCap = 1;
+
+    // Reuse renderer-side culling and avoid GPU work at stroke start.
+    namespace.viewportLayerCullingEnabled = true;
+    namespace.interactiveBrushPrewarmEnabled = false;
+
+    // Android v1.9 test: keep history and artboard selection enabled, but bypass pixel-perfect preview/transform work.
+    namespace.androidFullRenderMode = true;
+    namespace.androidPreviewCacheEnabled = false;
+    namespace.androidDirtyRegionsEnabled = false;
+    namespace.androidPixelPerfectEnabled = false;
+    namespace.pixelPerfectRenderingEnabled = false;
+    namespace.androidHistoryEnabled = true;
+    namespace.androidHistoryDisabled = false;
+    namespace.documentHistoryDisabled = false;
+  }
+
   document.body?.classList.toggle("cbo-device-android", isAndroid);
 
   if (androidIndicator) {
     androidIndicator.hidden = !isAndroid;
+    androidIndicator.textContent = `android ${androidBuildVersion}`;
   }
 })();
 
@@ -110,6 +146,23 @@ document.addEventListener(
 (() => {
   const namespace = window.CBO = window.CBO || {};
   const TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 420;
+  const touchNavigationInteractiveSelector = [
+    "a[href]",
+    "button",
+    "input",
+    "textarea",
+    "select",
+    "[contenteditable='true']",
+    "[role='button']",
+    ".side-panel",
+    ".toolbar-dock",
+    ".top-toolbar-dock",
+    ".right-vertical-toolbar-dock",
+    ".brush-studio-panel",
+    ".brushes-gallery-popout",
+    ".artboard-create-popover",
+    ".layer-effects-popover",
+  ].join(", ");
   const state = {
     active: false,
     blockUntil: 0,
@@ -119,8 +172,18 @@ document.addEventListener(
     return event.target instanceof Element && Boolean(event.target.closest(".editor-stage"));
   }
 
-  function isTouchNavigationExclusive() {
+  function isTouchNavigationInteractiveTarget(target) {
+    return target instanceof Element && Boolean(target.closest(touchNavigationInteractiveSelector));
+  }
+
+  function isTouchNavigationGuardActive() {
     return state.active || Date.now() < state.blockUntil;
+  }
+
+  function isTouchNavigationExclusive(options = {}) {
+    return options.includeGuard === true
+      ? isTouchNavigationGuardActive()
+      : state.active;
   }
 
   function setTouchNavigationExclusive(active, detail = {}) {
@@ -147,7 +210,11 @@ document.addEventListener(
   }
 
   function suppressTouchNavigationEvent(event) {
-    if (event.__cboNavigationHandled || !isTouchNavigationExclusive()) {
+    if (event.__cboNavigationHandled || !isTouchNavigationGuardActive()) {
+      return;
+    }
+
+    if (isTouchNavigationInteractiveTarget(event.target)) {
       return;
     }
 
@@ -168,6 +235,7 @@ document.addEventListener(
   }
 
   namespace.isTouchNavigationExclusive = isTouchNavigationExclusive;
+  namespace.isTouchNavigationGuardActive = isTouchNavigationGuardActive;
   namespace.setTouchNavigationExclusive = setTouchNavigationExclusive;
 
   ["pointerdown", "pointermove", "pointerup", "pointercancel", "click", "dblclick", "contextmenu", "auxclick"]

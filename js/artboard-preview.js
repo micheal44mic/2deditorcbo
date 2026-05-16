@@ -281,8 +281,13 @@ window.CBO = window.CBO || {};
     const buttonRect = button.getBoundingClientRect();
     const popoverRect = popover.getBoundingClientRect();
     const gap = 12;
+    const toolbarRect = document.querySelector(".toolbar-dock")?.getBoundingClientRect?.();
+    const toolbarTop = toolbarRect && toolbarRect.height > 0
+      ? Math.max(12, Number(toolbarRect.top) || window.innerHeight)
+      : window.innerHeight;
+    const bottomLimit = Math.min(window.innerHeight - 12, toolbarTop - gap);
     const maxLeft = Math.max(12, window.innerWidth - popoverRect.width - 12);
-    const maxTop = Math.max(12, window.innerHeight - popoverRect.height - 12);
+    const maxTop = Math.max(12, bottomLimit - popoverRect.height);
     const left = Math.min(maxLeft, Math.max(12, buttonRect.right + gap));
     const top = Math.min(maxTop, Math.max(12, buttonRect.top - 6));
 
@@ -844,7 +849,17 @@ window.CBO = window.CBO || {};
     )) || null;
   }
 
+  function isArtboardSelectionEnabled() {
+    return namespace.artboardSelectionEnabled === true;
+  }
+
   function selectArtboard(artboardId, options = {}) {
+    if (!isArtboardSelectionEnabled() && options.force !== true) {
+      selectedArtboardId = "";
+      renderArtboardPreviews();
+      return null;
+    }
+
     const didUseDocumentModel = typeof namespace.selectDocumentArtboard === "function";
     const artboard = didUseDocumentModel
       ? namespace.selectDocumentArtboard(artboardId, options)
@@ -1087,10 +1102,6 @@ window.CBO = window.CBO || {};
     event.preventDefault();
     event.stopPropagation();
 
-    selectArtboard(artboard.id, {
-      source: "artboard-preview-label-pointer",
-    });
-
     return true;
   }
 
@@ -1196,6 +1207,10 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    if (!isArtboardSelectionEnabled()) {
+      return;
+    }
+
     const artboard = getArtboardAtDocumentPoint(getEventDocumentPoint(event));
 
     if (!artboard) {
@@ -1254,7 +1269,9 @@ window.CBO = window.CBO || {};
         ))
       : allArtboards;
 
-    selectedArtboardId = namespace.getSelectedDocumentArtboardId?.() || selectedArtboardId || "";
+    selectedArtboardId = isArtboardSelectionEnabled()
+      ? namespace.getSelectedDocumentArtboardId?.() || selectedArtboardId || ""
+      : "";
     syncSelectedArtboardId(allArtboards);
     const artboardViews = artboards.map((artboard) => {
       const left = ((Number(camera.x) || 0) + artboard.x * zoom) / dpr;
@@ -1282,7 +1299,7 @@ window.CBO = window.CBO || {};
     layer.replaceChildren(...artboardViews.map(({ artboard, height, left, top, width }) => {
       const frame = document.createElement("div");
       const label = document.createElement("span");
-      const isSelected = selectedArtboardId === artboard.id;
+      const isSelected = isArtboardSelectionEnabled() && selectedArtboardId === artboard.id;
 
       frame.className = artboard.type === "active"
         ? "editor-artboard-frame is-active"
@@ -1425,7 +1442,7 @@ window.CBO = window.CBO || {};
       renderArtboardPreviews();
     });
     window.addEventListener("cbo:document-artboard-selection-change", (event) => {
-      selectedArtboardId = event.detail?.artboardId || "";
+      selectedArtboardId = isArtboardSelectionEnabled() ? event.detail?.artboardId || "" : "";
       renderArtboardPreviews();
     });
     window.addEventListener("cbo:editor-canvas-ready", (event) => {

@@ -508,6 +508,24 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const rasterTransformActionButtons = dock.querySelectorAll("[data-raster-transform-action]");
   const textAddButton = textAddToolbar?.querySelector("[data-text-add-button]");
   const mobileTextBackButton = mobileTextToolbar?.querySelector("[data-mobile-text-toolbar-back]");
+
+  function isDocumentHistoryDisabled() {
+    return Boolean(
+      window.CBO?.isDocumentHistoryDisabled?.() === true ||
+      window.CBO?.documentHistoryDisabled === true ||
+      window.CBO?.androidHistoryDisabled === true ||
+      window.CBO?.androidHistoryEnabled === false
+    );
+  }
+
+  function syncTopHistoryToolbar() {
+    document.querySelectorAll(".top-history-toolbar").forEach((toolbar) => {
+      toolbar.hidden = isDocumentHistoryDisabled();
+    });
+  }
+
+  syncTopHistoryToolbar();
+  window.addEventListener("cbo:history-disabled", syncTopHistoryToolbar);
   const mobileTextPanelSections = mobileTextPanel?.querySelectorAll("[data-mobile-text-panel-section]") || [];
   const mobileTextPanelButtons = mobileTextToolbar?.querySelectorAll("[data-mobile-text-panel-trigger]") || [];
   const mobileTextFillInput = mobileTextPanel?.querySelector("[data-mobile-text-fill]");
@@ -1772,7 +1790,9 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
   layersButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      if (window.CBO.openDrawerPanel) {
+      if (window.CBO.toggleDrawerPanel) {
+        window.CBO.toggleDrawerPanel("layers");
+      } else if (window.CBO.openDrawerPanel) {
         window.CBO.openDrawerPanel("layers");
       }
     });

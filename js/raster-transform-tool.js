@@ -7,11 +7,10 @@
   const RASTER_ALPHA_HIT_THRESHOLD = 2;
   const RASTER_TRANSFORM_BOUNDS_ALPHA_THRESHOLD = 0;
   const RASTER_TRANSFORM_BOUNDS_PADDING = 2;
-  const PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS = Object.freeze({
+  const RASTER_TRANSFORM_BOUNDS_OPTIONS = Object.freeze({
     alphaThreshold: RASTER_TRANSFORM_BOUNDS_ALPHA_THRESHOLD,
     clampToDocument: false,
     padding: RASTER_TRANSFORM_BOUNDS_PADDING,
-    pixelPerfect: true,
   });
   const HANDLE_SIZE = 10;
   const WARP_POINT_SIZE = 5;
@@ -26,6 +25,32 @@
   const ROTATION_FREE_SNAP_THRESHOLD_RADIANS = Math.PI / 90;
   const TRIG_EPSILON = 1e-10;
   const AXIS_ALIGNED_QUAD_EPSILON = 0.001;
+
+  function isAndroidPerformanceMode() {
+    return namespace.androidPerformanceMode === true ||
+      namespace.deviceIsAndroid === true ||
+      namespace.DocumentRenderer?.isAndroidLikeEnvironment?.() === true;
+  }
+
+  function isPixelPerfectTransformEnabled() {
+    if (namespace.pixelPerfectRenderingEnabled === false) {
+      return false;
+    }
+
+    if (isAndroidPerformanceMode() && namespace.androidPixelPerfectEnabled !== true) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function getRasterTransformBoundsOptions() {
+    return {
+      ...RASTER_TRANSFORM_BOUNDS_OPTIONS,
+      pixelPerfect: isPixelPerfectTransformEnabled(),
+    };
+  }
+
   const HANDLE_DEFS = Object.freeze([
     { dir: "nw", cursor: "nwse-resize" },
     { dir: "n", cursor: "ns-resize" },
@@ -957,7 +982,7 @@
     }
 
     getPixelTightRasterContentBounds(layerId) {
-      return this.documentRenderer?.getRasterContentBounds?.(layerId, PIXEL_TIGHT_RASTER_BOUNDS_OPTIONS) || null;
+      return this.documentRenderer?.getRasterContentBounds?.(layerId, getRasterTransformBoundsOptions()) || null;
     }
 
     getSelectionHitRadius(pointerType = "") {

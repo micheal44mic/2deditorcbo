@@ -9,7 +9,7 @@ test("brush shape outline preview is loaded and initialized after the editor can
   const indexSource = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
   const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
 
-  assert.match(indexSource, /<script src="\.\/js\/brush-engine\.js(?:\?v=[^"]+)?"><\/script>\s*<script src="\.\/js\/brush-shape-outline-preview\.js"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/brush-engine\.js(?:\?v=[^"]+)?"><\/script>\s*<script src="\.\/js\/brush-shape-outline-preview\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(appSource, /function initCanvasDependentTools\(\) \{[\s\S]*window\.CBO\.initBrushShapeOutlinePreview\?\.\(\);/);
   assert.match(appSource, /window\.addEventListener\("cbo:editor-canvas-ready", initCanvasDependentTools\);/);
 });

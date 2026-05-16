@@ -186,7 +186,13 @@ test("brush live stroke skips mixed buildup targets for plateau and accumulation
   assert.match(source, /const STROKE_RENDER_MODE_PLATEAU = "plateau"/);
   assert.match(source, /const STROKE_RENDER_MODE_ACCUM = "accum"/);
   assert.match(source, /const STROKE_RENDER_MODE_MIXED = "mixed"/);
+  assert.match(source, /const ANDROID_MAX_STAMPS_PER_FLUSH = 384/);
+  assert.match(source, /const ANDROID_POINTER_SAMPLES_PER_FRAME = 24/);
+  assert.match(source, /const ANDROID_POINTER_FRAME_BUDGET_MS = 2\.5/);
   assert.match(source, /getBrushStrokeRenderMode\(\) \{[\s\S]*return STROKE_RENDER_MODE_PLATEAU/);
+  assert.match(source, /isAndroidPerformanceMode\(\) \{/);
+  assert.match(source, /namespace\.androidMixedStrokeBuildup !== true/);
+  assert.match(source, /return buildUp <= 0\.25 \? STROKE_RENDER_MODE_PLATEAU : STROKE_RENDER_MODE_ACCUM/);
   assert.match(source, /getStrokeScratchTextureCount\(\) \{[\s\S]*return this\.usesMixedStrokeBuildup\(\) \? 3 : 1/);
   assert.match(source, /if \(renderMode === STROKE_RENDER_MODE_MIXED\) \{[\s\S]*Stroke plateau FBO[\s\S]*Stroke accumulation FBO/);
   assert.match(source, /drawStampBatchToFramebuffer\(this\.strokeFBO, gl\.MAX, gl\.ONE, gl\.ONE\)/);
@@ -212,8 +218,10 @@ test("brush first paint stroke can defer full live target materialization", () =
   assert.match(source, /const hasEmptySelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length === 0/);
   assert.match(source, /const activeStrokeTilePatchRects = hasSelectionCoverage/);
   assert.match(source, /this\.getActiveStrokeTilePatchRects\(effectiveStrokeRect\)/);
+  assert.match(source, /getStrokePreviewDirtyRectsForBake\(effectiveStrokeRect, tilePatchRects = null\)/);
+  assert.match(source, /this\.isAndroidDirtyRegionsDisabled\(\)/);
   assert.match(source, /const computedPreviewDirtyRects = this\.updateStrokePreviewDirtyRects\(/);
-  assert.match(source, /const previewDirtyRects = computedPreviewDirtyRects\.length > 0/);
+  assert.match(source, /const previewDirtyRects = this\.getStrokePreviewDirtyRectsForBake\(/);
   assert.match(source, /this\.getFallbackStrokePreviewDirtyRects\(effectiveStrokeRect\)/);
   assert.match(source, /selectionCoverageRects/);
   assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);

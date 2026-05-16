@@ -39,6 +39,7 @@ function loadDocumentRenderer(options = {}) {
     navigator: {
       deviceMemory: Number.isFinite(options.deviceMemory) ? options.deviceMemory : undefined,
       maxTouchPoints: Number.isFinite(options.maxTouchPoints) ? options.maxTouchPoints : 0,
+      platform: options.platform || "",
       userAgent: options.userAgent || "",
     },
     window,
@@ -2922,32 +2923,55 @@ test("raster history uses smaller default tiles on mobile-like devices", () => {
   assert.equal(mobile.getRasterHistoryTileSize({ tileSize: 256 }), 256);
 });
 
-test("renderer caps DPR and cache size for mobile-like devices", () => {
+test("renderer caps DPR and cache size for mobile-like and Android devices", () => {
   const desktopLoad = loadDocumentRenderer({ devicePixelRatio: 3 });
   const mobileLoad = loadDocumentRenderer({
     coarsePointer: true,
     deviceMemory: 6,
     devicePixelRatio: 3,
     maxTouchPoints: 5,
-    userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile",
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile",
   });
   const lowMemoryMobileLoad = loadDocumentRenderer({
     coarsePointer: true,
     deviceMemory: 4,
     devicePixelRatio: 3,
     maxTouchPoints: 5,
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) Mobile",
+  });
+  const androidLoad = loadDocumentRenderer({
+    coarsePointer: true,
+    deviceMemory: 6,
+    devicePixelRatio: 3,
+    maxTouchPoints: 5,
+    platform: "Linux armv8l",
+    userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile",
+  });
+  const lowMemoryAndroidLoad = loadDocumentRenderer({
+    coarsePointer: true,
+    deviceMemory: 4,
+    devicePixelRatio: 3,
+    maxTouchPoints: 5,
+    platform: "Linux armv8l",
     userAgent: "Mozilla/5.0 (Linux; Android 12) Mobile",
   });
+  const androidRenderer = Object.create(androidLoad.DocumentRenderer.prototype);
   const mobileRenderer = Object.create(mobileLoad.DocumentRenderer.prototype);
 
   mobileRenderer.options = {};
+  androidRenderer.options = {};
 
   assert.equal(desktopLoad.DocumentRenderer.getPerformanceDpr(), 2);
   assert.equal(mobileLoad.DocumentRenderer.getPerformanceDpr(), 1.5);
   assert.equal(lowMemoryMobileLoad.DocumentRenderer.getPerformanceDpr(), 1.25);
+  assert.equal(androidLoad.DocumentRenderer.getPerformanceDpr(), 1);
+  assert.equal(lowMemoryAndroidLoad.DocumentRenderer.getPerformanceDpr(), 1);
   assert.equal(mobileRenderer.getPreviewCacheMaxSize(), 1536);
   assert.equal(mobileRenderer.getPreviewCacheOverscanCssPx(), 128);
   assert.equal(mobileRenderer.getViewportRenderOverscanCssPx(), 128);
+  assert.equal(androidRenderer.getPreviewCacheMaxSize(), 1024);
+  assert.equal(androidRenderer.getPreviewCacheOverscanCssPx(), 64);
+  assert.equal(androidRenderer.getViewportRenderOverscanCssPx(), 64);
 });
 
 test("document renderer exposes mipmapped preview cache helpers", () => {
@@ -2963,8 +2987,15 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /const MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX = 128/);
   assert.match(source, /const MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 128/);
   assert.match(source, /const MOBILE_RENDER_DPR_CAP = 1\.5/);
+  assert.match(source, /const ANDROID_RENDER_DPR_CAP = 1/);
+  assert.match(source, /const ANDROID_PREVIEW_CACHE_MAX_SIZE = 1024/);
+  assert.match(source, /const ANDROID_PREVIEW_CACHE_OVERSCAN_CSS_PX = 64/);
+  assert.match(source, /const ANDROID_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 64/);
+  assert.match(source, /function isAndroidPreviewCacheDisabled\(\)/);
+  assert.match(source, /function isAndroidDirtyRegionsDisabled\(\)/);
   assert.match(source, /antialias: false/);
   assert.match(source, /static getPerformanceDpr\(options = \{\}\)/);
+  assert.match(source, /static isAndroidLikeEnvironment\(\)/);
   assert.match(source, /createPreviewCache\(options = \{\}\)/);
   assert.match(source, /getPreviewCacheDimensions\(options = \{\}\)/);
   assert.match(source, /getPreviewCacheMaxSize\(\)/);
@@ -2991,11 +3022,13 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /smoothstep\(10\.01, 12\.0, safeZoom\)/);
   assert.match(source, /getViewportTextureMagFilter\(camera = \{\}\)/);
   assert.match(source, /shouldDrawPixelGrid\(camera = \{\}\)/);
+  assert.match(source, /function isPixelPerfectRenderingEnabled\(\)/);
+  assert.match(source, /namespace\.androidPixelPerfectEnabled !== true/);
   assert.match(source, /shouldUsePreviewCacheForCamera\(camera = \{\}, previewCacheDimensions = null\)/);
   assert.match(source, /const previewCacheOptions = \{/);
   assert.match(source, /const previewCacheDimensions = this\.getPreviewCacheDimensions\(previewCacheOptions\)/);
   assert.match(source, /const canUsePreviewCacheAtCurrentZoom = this\.shouldUsePreviewCacheForCamera\(camera, previewCacheDimensions\)/);
-  assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true/);
+  assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true && !isAndroidPreviewCacheDisabled\(\)/);
   assert.match(source, /const deferPreviewCacheUpdate = Boolean\(/);
   assert.match(source, /options\.deferPreviewCacheUpdate === true/);
   assert.match(source, /const activeStrokeDefersLayerEffects = Boolean\(/);
@@ -3047,6 +3080,26 @@ test("document renderer switches raster magnification to nearest only at high zo
   assert.equal(renderer.getViewportTextureMagFilter({ zoom: 16 }), "nearest");
 });
 
+test("document renderer disables pixel-perfect preview on Android performance mode", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.gl = {
+    LINEAR: "linear",
+    NEAREST: "nearest",
+  };
+  window.CBO.androidPerformanceMode = true;
+  window.CBO.androidPixelPerfectEnabled = false;
+
+  assert.equal(renderer.getViewportTextureMagFilter({ zoom: 16 }), "linear");
+  assert.equal(renderer.shouldDrawPixelGrid({ zoom: 16 }), false);
+
+  window.CBO.androidPixelPerfectEnabled = true;
+
+  assert.equal(renderer.getViewportTextureMagFilter({ zoom: 16 }), "nearest");
+  assert.equal(renderer.shouldDrawPixelGrid({ zoom: 16 }), true);
+});
+
 test("document renderer uses preview cache only when downsampling zoom-out", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -3078,6 +3131,8 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(source, /getTileBasedPreviewDirtyRects\(rects = \[\], options = \{\}\)/);
   assert.match(source, /createVisualDirtyChange\(options = \{\}\)/);
   assert.match(source, /commitVisualDirtyChange\(options = \{\}\)/);
+  assert.match(source, /androidDirtyRegionsDisabled: true/);
+  assert.match(source, /android-preview-cache-disabled/);
   assert.match(source, /compactDirtyRegionRects\(rects = \[\], options = \{\}\)/);
   assert.match(source, /getPreviewDirtyRegionScissor\(rect, cacheWidth, cacheHeight, cacheScale, options = \{\}\)/);
   assert.match(source, /getPreviewDirtyRegionScissors\(rects, cacheWidth, cacheHeight, cacheScale, options = \{\}\)/);

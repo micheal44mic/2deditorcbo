@@ -164,6 +164,21 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   let previewEngine = null;
   let replayFrame = 0;
 
+  function isAndroidPerformanceMode() {
+    return window.CBO.androidPerformanceMode === true ||
+      window.CBO.deviceIsAndroid === true ||
+      window.CBO.DocumentRenderer?.isAndroidLikeEnvironment?.() === true;
+  }
+
+  function createAndroidLitePreviewNotice() {
+    const notice = document.createElement("div");
+
+    notice.className = "brush-studio-android-lite-preview";
+    notice.textContent = "Live preview disattivata su Android per evitare lag. Le modifiche vengono applicate quando confermi.";
+
+    return notice;
+  }
+
   function pushDraftToEngine() {
     window.dispatchEvent(
       new CustomEvent("cbo:brush-settings-preview-change", {
@@ -199,6 +214,12 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       return;
     }
 
+    if (isAndroidPerformanceMode()) {
+      destroyPreviewCanvas();
+      previewPad.replaceChildren(createAndroidLitePreviewNotice());
+      return;
+    }
+
     if (previewEngine) {
       pushDraftToEngine();
       return;
@@ -211,7 +232,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     const gl = window.CBO.DocumentRenderer.createContext(previewCanvas);
     const previewDocumentSizeCap =
-      window.CBO.DocumentRenderer?.isMobileLikeEnvironment?.() === true ? 1024 : 2048;
+      window.CBO.DocumentRenderer?.isMobileLikeEnvironment?.() === true ? 512 : 2048;
 
     if (!gl) {
       previewCanvas.remove();

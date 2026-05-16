@@ -8,6 +8,14 @@ window.CBO = window.CBO || {};
   const DEFAULT_SECONDARY_ARTBOARD_COUNT = 0;
   const PRIMARY_ARTBOARD_ID = "active-document";
 
+  if (typeof namespace.artboardSelectionEnabled === "undefined") {
+    namespace.artboardSelectionEnabled = true;
+  }
+
+  function isArtboardSelectionEnabled() {
+    return namespace.artboardSelectionEnabled === true;
+  }
+
   function toPositiveInt(value, fallback = 1) {
     const number = Number(value);
 
@@ -660,6 +668,10 @@ window.CBO = window.CBO || {};
     }
 
     selectArtboard(artboardId, options = {}) {
+      if (!isArtboardSelectionEnabled() && options.force !== true) {
+        return null;
+      }
+
       const artboard = this.getArtboardById(artboardId);
 
       if (!artboard) {
@@ -1116,6 +1128,10 @@ window.CBO = window.CBO || {};
 
   namespace.selectDocumentArtboardAtPoint = function selectDocumentArtboardAtPoint(point, options = {}) {
     const artboard = namespace.documentArtboardModel.getArtboardAtPoint(point);
+
+    if (artboard && !isArtboardSelectionEnabled() && options.force !== true) {
+      return cloneArtboard(artboard);
+    }
 
     return artboard
       ? namespace.documentArtboardModel.selectArtboard(artboard.id, options)

@@ -65,12 +65,31 @@ test("right sidebar shows layer controls for the selection tool", () => {
 test("layers panel serializes layers without resetting opacity", () => {
   const source = fs.readFileSync(path.join(repoRoot, "js", "layers-panel.js"), "utf8");
   const serializeBody = source.match(
-    /function serializeLayerEntry\(entry\) \{([\s\S]*?)\n  function syncLayerModelFromDom/,
+    /function serializeLayerEntry\(entry, inheritedArtboardId = ""\) \{([\s\S]*?)\n  function syncLayerModelFromDom/,
   )?.[1] || "";
 
   assert.match(source, /function normalizeLayerOpacity\(value, fallback = 1\)/);
   assert.doesNotMatch(serializeBody, /\.filter\(\(\[key\]\) => !\[[^\]]*"opacity"/);
   assert.match(serializeBody, /opacity: normalizeLayerOpacity\(existingEntry\?\.opacity\)/);
+});
+
+test("layers panel keeps artboard metadata stable after cross-artboard drag", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "layers-panel.js"), "utf8");
+
+  assert.match(source, /function serializeLayerEntry\(entry, inheritedArtboardId = ""\)/);
+  assert.match(source, /const artboardGroupId = type === "group"/);
+  assert.match(source, /serialized\.artboardId = resolvedArtboardId/);
+  assert.match(source, /\.map\(\(childEntry\) => serializeLayerEntry\(childEntry, resolvedArtboardId\)\)/);
+});
+
+test("mobile layers button toggles the layers drawer", () => {
+  const sidebarSource = fs.readFileSync(path.join(repoRoot, "js", "sidebar.js"), "utf8");
+  const topToolbarSource = fs.readFileSync(path.join(repoRoot, "js", "top-toolbar.js"), "utf8");
+
+  assert.match(sidebarSource, /window\.CBO\.toggleDrawerPanel = function toggleDrawerPanel/);
+  assert.match(sidebarSource, /isDrawerOpen\(\) && getActiveDrawerPanel\(\) === panelName/);
+  assert.match(sidebarSource, /setDrawerOpen\(false\)/);
+  assert.match(topToolbarSource, /window\.CBO\.toggleDrawerPanel\("layers"\)/);
 });
 
 test("layers panel has mobile-sized touch controls and long-press context menu", () => {

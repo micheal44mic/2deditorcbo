@@ -24,6 +24,14 @@ window.CBO.initSidebar = function initSidebar() {
     toggle.setAttribute("aria-label", isOpen ? "Close left panel" : "Open left panel");
   }
 
+  function isDrawerOpen() {
+    return !editorPage.classList.contains("left-panel-collapsed");
+  }
+
+  function getActiveDrawerPanel() {
+    return document.querySelector(".left-drawer")?.dataset.drawerPanel || "";
+  }
+
   window.CBO.openDrawerPanel = function openDrawerPanel(panelName = "elements") {
     setDrawerTriggerActive(panelName);
 
@@ -32,6 +40,19 @@ window.CBO.initSidebar = function initSidebar() {
     }
 
     setDrawerOpen(true);
+  };
+
+  window.CBO.closeDrawerPanel = function closeDrawerPanel() {
+    setDrawerOpen(false);
+  };
+
+  window.CBO.toggleDrawerPanel = function toggleDrawerPanel(panelName = "elements") {
+    if (isDrawerOpen() && getActiveDrawerPanel() === panelName) {
+      setDrawerOpen(false);
+      return;
+    }
+
+    window.CBO.openDrawerPanel(panelName);
   };
 
   window.CBO.setDrawerTriggerActive = setDrawerTriggerActive;

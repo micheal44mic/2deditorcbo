@@ -37,6 +37,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
   window.CBO.documentLayerModel = layerModel;
 
+  function isArtboardSelectionEnabled() {
+    return window.CBO.artboardSelectionEnabled === true;
+  }
+
   function getLayerRows() {
     return Array.from(panel.querySelectorAll("[data-layer-row]"));
   }
@@ -351,6 +355,12 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   }
 
   function applyArtboardGroupActivationById(groupId, options = {}) {
+    if (!isArtboardSelectionEnabled() && options.force !== true) {
+      clearArtboardGroupActivation();
+      syncActiveLayerUi();
+      return null;
+    }
+
     const normalizedGroupId = String(groupId || "").trim();
     const rows = getLayerRows();
     const activeRow = normalizedGroupId
@@ -388,6 +398,11 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   }
 
   function selectArtboardGroupRow(row, options = {}) {
+    if (!isArtboardSelectionEnabled() && options.force !== true) {
+      clearArtboardGroupActivation();
+      return null;
+    }
+
     if (!isArtboardGroupRow(row)) {
       return null;
     }
@@ -556,13 +571,15 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   }
 
   function getCurrentArtboardGroupId() {
-    if (selectedArtboardGroupId) {
+    if (isArtboardSelectionEnabled() && selectedArtboardGroupId) {
       return selectedArtboardGroupId;
     }
 
-    const selectedArtboardId = window.CBO.getSelectedDocumentArtboardId?.() ||
-      window.CBO.getSelectedPreviewArtboardId?.() ||
-      "";
+    const selectedArtboardId = isArtboardSelectionEnabled()
+      ? window.CBO.getSelectedDocumentArtboardId?.() ||
+        window.CBO.getSelectedPreviewArtboardId?.() ||
+        ""
+      : "";
 
     return selectedArtboardId
       ? getArtboardLayerGroupId(selectedArtboardId)
@@ -704,7 +721,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return selectedRows.includes(focusedLayer) ? focusedLayer : selectedRows[0];
   }
 
-  function serializeLayerEntry(entry) {
+  function serializeLayerEntry(entry, inheritedArtboardId = "") {
     const row = entry.querySelector(":scope > [data-layer-row]");
     const type = row?.dataset.layerType || entry.dataset.layerType || "layer";
     const isBackground = type === "background";
@@ -728,6 +745,21 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       locked: isBackground || row?.classList.contains("locked") === true,
       opacity: normalizeLayerOpacity(existingEntry?.opacity),
     };
+    const inheritedId = String(inheritedArtboardId || "").trim();
+    const artboardGroupId = type === "group" && (
+      row?.dataset.artboardGroup === "true" ||
+      entry.dataset.artboardGroup === "true" ||
+      preservedEntry.artboardGroup === true
+    )
+      ? getArtboardIdFromGroupId(id) || String(preservedEntry.artboardId || "").trim()
+      : "";
+    const resolvedArtboardId = artboardGroupId || inheritedId || String(preservedEntry.artboardId || "").trim();
+
+    if (resolvedArtboardId) {
+      serialized.artboardId = resolvedArtboardId;
+    } else {
+      delete serialized.artboardId;
+    }
 
     if (type === "group") {
       const children = getLayerChildren(entry);
@@ -735,7 +767,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       serialized.children = children
         ? Array.from(children.children)
             .filter((childEntry) => childEntry.matches("[data-layer-entry]"))
-            .map(serializeLayerEntry)
+            .map((childEntry) => serializeLayerEntry(childEntry, resolvedArtboardId))
         : [];
     }
 
@@ -1039,7 +1071,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       const activeRow =
         layerModel?.activeLayerId &&
         getLayerRows().find((row) => getLayerId(row) === layerModel.activeLayerId);
-      const activeArtboardRow = selectedArtboardGroupId
+      const activeArtboardRow = isArtboardSelectionEnabled() && selectedArtboardGroupId
         ? applyArtboardGroupActivationById(selectedArtboardGroupId, { preserveMissing: true })
         : null;
 
@@ -1562,6 +1594,11 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   }
 
   function deleteSelectedArtboardGroup() {
+    if (!isArtboardSelectionEnabled()) {
+      selectedArtboardGroupId = "";
+      return false;
+    }
+
     const groupId = selectedArtboardGroupId;
     const artboardId = getArtboardIdFromGroupId(groupId);
 
@@ -1887,6 +1924,11 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   }
 
   function handleArtboardSelectionChange(event) {
+    if (!isArtboardSelectionEnabled()) {
+      clearArtboardGroupActivation();
+      return;
+    }
+
     const artboardId = event.detail?.artboardId || event.detail?.artboard?.id;
     const groupId = getArtboardLayerGroupId(artboardId);
 
@@ -1931,7 +1973,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
-    if (selectedArtboardGroupId && deleteSelectedArtboardGroup()) {
+    if (!getSelectedRootEntries().length && selectedArtboardGroupId && deleteSelectedArtboardGroup()) {
       event.preventDefault();
       return;
     }

@@ -782,6 +782,19 @@
   touch-action: none;
 }
 
+.brush-studio-android-lite-preview {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  padding: 16px;
+  color: #c3c8d1;
+  font-size: 12px;
+  letter-spacing: 0;
+  line-height: 1.4;
+  opacity: 0.8;
+  text-align: center;
+}
+
 .brush-studio-drawing-actions {
   display: flex;
   align-items: center;

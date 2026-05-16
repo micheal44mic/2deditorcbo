@@ -70,7 +70,7 @@ window.CBO = window.CBO || {};
   const hardBlendSettings = normalizeSettings({
     radius: 48,
     opacity: 1,
-    renderingMode: "intense-blending",
+    renderingMode: "light-glaze",
     flow: 1,
     hardness: 1,
     wetEdges: 0,
