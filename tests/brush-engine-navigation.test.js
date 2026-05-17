@@ -5,8 +5,23 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..");
 
+const brushEngineModulePaths = [
+  ["js", "brush-engine-shader-grain.js"],
+  ["js", "brush-engine-target-gpu.js"],
+  ["js", "brush-engine-history.js"],
+  ["js", "brush-engine-sampler.js"],
+  ["js", "brush-engine-stroke-input.js"],
+  ["js", "brush-engine.js"],
+];
+
+function readBrushEngineSources() {
+  return brushEngineModulePaths
+    .map((parts) => fs.readFileSync(path.join(repoRoot, ...parts), "utf8"))
+    .join("\n");
+}
+
 test("temporary pan is captured from the editor stage before tool overlays", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /this\.stage = canvas\.closest\("\.editor-stage"\)/);
   assert.match(source, /navigationTarget\.addEventListener\("pointerdown", this\.handleNavigationPointerDown, true\)/);
@@ -16,7 +31,7 @@ test("temporary pan is captured from the editor stage before tool overlays", () 
 });
 
 test("temporary pan owns the cursor and blocks other tool handlers while active", () => {
-  const brushSource = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const brushSource = readBrushEngineSources();
   const cssSource = fs.readFileSync(path.join(repoRoot, "css", "base.css"), "utf8");
 
   assert.match(brushSource, /event\.__cboNavigationHandled = true/);
@@ -30,7 +45,7 @@ test("temporary pan owns the cursor and blocks other tool handlers while active"
 });
 
 test("preview cache is enabled without waiting for explicit camera navigation", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /this\.userManipulatedCamera = false/);
   assert.match(source, /this\.userManipulatedCamera = true;\s*this\.requestDraw\(\);/);
@@ -43,7 +58,7 @@ test("preview cache is enabled without waiting for explicit camera navigation", 
 });
 
 test("two-finger touch navigation pinches and pans without continuing the brush stroke", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /this\.activeTouchPointers = new Map\(\)/);
   assert.match(source, /this\.touchNavigationGesture = null/);
@@ -129,7 +144,7 @@ test("mobile pinch navigation cancels active touch tool interactions", () => {
 });
 
 test("brush pointer moves are coalesced into the render frame", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
   const moveBody = source.match(/handlePointerMove\(event\) \{([\s\S]*?)\n    handlePointerUp\(event\)/)?.[1] || "";
 
   assert.match(source, /pendingPointerSamples = \[\]/);
@@ -153,7 +168,7 @@ test("brush pointer moves are coalesced into the render frame", () => {
 });
 
 test("camera change events are skipped when the viewport payload is unchanged", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /this\.lastCameraChangeDetail = null/);
   assert.match(source, /createCameraChangeDetail\(\) \{/);
@@ -170,7 +185,7 @@ test("camera change events are skipped when the viewport payload is unchanged", 
 });
 
 test("spacebar navigation cancels native browser button and toolbar behavior", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /window\.addEventListener\("keydown", this\.handleKeyDown, true\)/);
   assert.match(source, /window\.addEventListener\("keyup", this\.handleKeyUp, true\)/);

@@ -9,6 +9,19 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+const brushEngineModulePaths = [
+  ["js", "brush-engine-shader-grain.js"],
+  ["js", "brush-engine-target-gpu.js"],
+  ["js", "brush-engine-history.js"],
+  ["js", "brush-engine-sampler.js"],
+  ["js", "brush-engine-stroke-input.js"],
+  ["js", "brush-engine.js"],
+];
+
+function readBrushEngineSources() {
+  return brushEngineModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 const documentRendererModulePaths = [
   ["js", "document", "document-renderer-shaders.js"],
   ["js", "document", "document-renderer-raster-targets.js"],
@@ -64,7 +77,7 @@ test("performance trace stays available but is not loaded by default", () => {
 
 test("performance trace marks the expensive editor paths", () => {
   const rendererSource = readDocumentRendererSources();
-  const brushSource = readRepoFile("js", "brush-engine.js");
+  const brushSource = readBrushEngineSources();
   const historySource = readRepoFile("js", "document", "document-history.js");
   const textSource = readRepoFile("js", "text", "vector-text-renderer.js");
 

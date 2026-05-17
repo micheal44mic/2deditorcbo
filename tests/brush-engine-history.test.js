@@ -6,8 +6,23 @@ const vm = require("node:vm");
 
 const repoRoot = path.resolve(__dirname, "..");
 
+const brushEngineModulePaths = [
+  ["js", "brush-engine-shader-grain.js"],
+  ["js", "brush-engine-target-gpu.js"],
+  ["js", "brush-engine-history.js"],
+  ["js", "brush-engine-sampler.js"],
+  ["js", "brush-engine-stroke-input.js"],
+  ["js", "brush-engine.js"],
+];
+
+function readBrushEngineSources() {
+  return brushEngineModulePaths
+    .map((parts) => fs.readFileSync(path.join(repoRoot, ...parts), "utf8"))
+    .join("\n");
+}
+
 function loadBrushEngine() {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
   const window = {
     CBO: {},
     addEventListener() {},
@@ -61,7 +76,7 @@ function loadBrushEngine() {
 }
 
 test("brush stroke history prefers tile-memento before and after snapshots", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /beginRasterTileHistory\?\.\(layerId, effectiveStrokeRect/);
   assert.match(source, /commitRasterTileHistory\?\.\(tileHistory,/);
@@ -104,7 +119,7 @@ test("brush stroke history prefers tile-memento before and after snapshots", () 
 });
 
 test("brush live stroke targets sample linearly at zoom intermediates", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
   const createTransparentTargetBody = source.match(
     /createTransparentRenderTarget\(label, width, height, resourceMetadata = \{\}\) \{([\s\S]*?)\n    releaseStrokeLayerTarget/,
   )?.[1] || "";
@@ -153,7 +168,7 @@ test("brush artboard clipping accepts stamps outside the primary document rect",
 });
 
 test("brush stroke history records memory policy and disables redo for huge strokes", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /const STROKE_MEMORY_POLICY = Object\.freeze/);
   assert.match(source, /createStrokeMemoryReport\(/);
@@ -180,7 +195,7 @@ test("brush stroke history records memory policy and disables redo for huge stro
 });
 
 test("brush live stroke skips mixed buildup targets for plateau and accumulation modes", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /const STROKE_BUILDUP_EPSILON = 0\.001/);
   assert.match(source, /const STROKE_RENDER_MODE_PLATEAU = "plateau"/);
@@ -205,7 +220,7 @@ test("brush live stroke skips mixed buildup targets for plateau and accumulation
 });
 
 test("brush first paint stroke can defer full live target materialization", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /ensurePaintLayerForBrush\?\.\(\{ materialize: false \}\)/);
   assert.match(source, /if \(!this\.isDocumentPointInside\(documentPoint\)\) \{\s*event\.preventDefault\(\);\s*return;\s*\}/);
@@ -528,7 +543,7 @@ test("brush stroke history batches tile captures until the idle commit", () => {
 });
 
 test("brush batch history flushes before other raster history captures", () => {
-  const brushSource = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const brushSource = readBrushEngineSources();
   const documentRendererModulePaths = [
     ["js", "document", "document-renderer-shaders.js"],
     ["js", "document", "document-renderer-raster-targets.js"],

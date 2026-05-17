@@ -9,6 +9,19 @@ function readSource(...segments) {
   return fs.readFileSync(path.join(repoRoot, ...segments), "utf8");
 }
 
+const brushEngineModulePaths = [
+  ["js", "brush-engine-shader-grain.js"],
+  ["js", "brush-engine-target-gpu.js"],
+  ["js", "brush-engine-history.js"],
+  ["js", "brush-engine-sampler.js"],
+  ["js", "brush-engine-stroke-input.js"],
+  ["js", "brush-engine.js"],
+];
+
+function readBrushEngineSources() {
+  return brushEngineModulePaths.map((segments) => readSource(...segments)).join("\n");
+}
+
 const documentRendererModulePaths = [
   ["js", "document", "document-renderer-shaders.js"],
   ["js", "document", "document-renderer-raster-targets.js"],
@@ -28,7 +41,7 @@ test("brush studio and thumbnail previews isolate document artboard state", () =
   const studioSource = readSource("js", "brush-studio.js");
   const previewSource = readSource("js", "brush-preview.js");
   const rendererSource = readDocumentRendererSources();
-  const engineSource = readSource("js", "brush-engine.js");
+  const engineSource = readBrushEngineSources();
   const layerModelSource = readSource("js", "document", "document-layer-model.js");
 
   assert.match(studioSource, /new window\.CBO\.DocumentRenderer\(\{[\s\S]*isolateDocumentArtboards: true/);

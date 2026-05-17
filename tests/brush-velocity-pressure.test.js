@@ -5,6 +5,21 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..");
 
+const brushEngineModulePaths = [
+  ["js", "brush-engine-shader-grain.js"],
+  ["js", "brush-engine-target-gpu.js"],
+  ["js", "brush-engine-history.js"],
+  ["js", "brush-engine-sampler.js"],
+  ["js", "brush-engine-stroke-input.js"],
+  ["js", "brush-engine.js"],
+];
+
+function readBrushEngineSources() {
+  return brushEngineModulePaths
+    .map((parts) => fs.readFileSync(path.join(repoRoot, ...parts), "utf8"))
+    .join("\n");
+}
+
 test("brush studio exposes auto pressure as a persisted stroke setting", () => {
   const defaultsSource = fs.readFileSync(path.join(repoRoot, "js", "brush-defaults.js"), "utf8");
   const studioSource = fs.readFileSync(path.join(repoRoot, "js", "brush-studio.js"), "utf8");
@@ -17,7 +32,7 @@ test("brush studio exposes auto pressure as a persisted stroke setting", () => {
 });
 
 test("brush engine maps non-pen pointer velocity to smoothed pressure", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
 
   assert.match(source, /const STROKE_SAMPLE_CLAMP_MIN_PADDING = 64/);
   assert.match(source, /const MAX_STAMPS_PER_FLUSH = 4096/);

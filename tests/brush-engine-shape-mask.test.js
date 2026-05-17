@@ -5,8 +5,23 @@ const test = require("node:test");
 
 const repoRoot = path.resolve(__dirname, "..");
 
+const brushEngineModulePaths = [
+  ["js", "brush-engine-shader-grain.js"],
+  ["js", "brush-engine-target-gpu.js"],
+  ["js", "brush-engine-history.js"],
+  ["js", "brush-engine-sampler.js"],
+  ["js", "brush-engine-stroke-input.js"],
+  ["js", "brush-engine.js"],
+];
+
+function readBrushEngineSources() {
+  return brushEngineModulePaths
+    .map((parts) => fs.readFileSync(path.join(repoRoot, ...parts), "utf8"))
+    .join("\n");
+}
+
 test("brush engine keeps shape textures alpha-only without mipmaps", () => {
-  const source = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
+  const source = readBrushEngineSources();
   const uploadShapeBody = source.match(/uploadShapeTexture\(image\) \{[\s\S]*?\n    \}/)?.[0] || "";
 
   assert.match(source, /float coreShape = texture\(u_shapeTexture, v_uv\)\.a;/);
