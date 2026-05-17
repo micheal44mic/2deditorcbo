@@ -9,6 +9,21 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+
+function readDocumentRendererSources() {
+  return documentRendererModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 test("rect area selection is loaded and wired to the side toolbar", () => {
   const indexSource = readRepoFile("index.html");
   const appSource = readRepoFile("js", "app.js");
@@ -118,7 +133,7 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
 
 test("brush and fill constrain raster edits to an active area selection", () => {
   const brushSource = readRepoFile("js", "brush-engine.js");
-  const rendererSource = readRepoFile("js", "document", "document-renderer.js");
+  const rendererSource = readDocumentRendererSources();
   const fillSource = readRepoFile("js", "color-fill.js");
   const smudgeSource = readRepoFile("js", "smudge-engine.js");
 

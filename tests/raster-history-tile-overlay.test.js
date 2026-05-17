@@ -9,6 +9,21 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+
+function readDocumentRendererSources() {
+  return documentRendererModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 test("raster history tile debug overlay is not loaded by default", () => {
   const indexSource = readRepoFile("index.html");
 
@@ -22,7 +37,7 @@ test("raster layer tile debug overlay is not loaded by default", () => {
 });
 
 test("document renderer emits tile history debug events only behind the debug flag", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
 
   assert.match(source, /intersectRasterHistoryRects\(a, b\)/);
   assert.match(source, /containsRasterHistoryRect\(container, rect\)/);

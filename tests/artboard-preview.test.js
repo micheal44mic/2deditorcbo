@@ -10,6 +10,21 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+
+function readDocumentRendererSources() {
+  return documentRendererModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 function loadDocumentArtboardNamespace() {
   const source = readRepoFile("js", "document", "document-artboard-model.js");
   const window = {
@@ -223,7 +238,7 @@ test("document artboard model owns artboard records and persistence hooks", () =
   const modelSource = readRepoFile("js", "document", "document-artboard-model.js");
   const editorCanvasSource = readRepoFile("js", "editor-canvas.js");
   const autosaveSource = readRepoFile("js", "document", "document-autosave.js");
-  const rendererSource = readRepoFile("js", "document", "document-renderer.js");
+  const rendererSource = readDocumentRendererSources();
 
   assert.match(modelSource, /class DocumentArtboardModel extends EventTarget/);
   assert.match(modelSource, /const PRIMARY_ARTBOARD_ID = "active-document"/);

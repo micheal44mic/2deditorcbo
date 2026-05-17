@@ -9,6 +9,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const documentRendererModulePaths = [
   ["js", "document", "document-renderer-shaders.js"],
   ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
   ["js", "document", "document-renderer-webgl-programs.js"],
   ["js", "document", "document-renderer-viewport-culling.js"],
   ["js", "document", "document-renderer-layer-effects.js"],

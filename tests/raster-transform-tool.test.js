@@ -9,6 +9,21 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+
+function readDocumentRendererSources() {
+  return documentRendererModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 test("raster transform tool is wired after the document renderer and canvas init", () => {
   const indexSource = readRepoFile("index.html");
   const appSource = readRepoFile("js", "app.js");
@@ -38,7 +53,7 @@ test("document bounds exposes shared bbox helpers", () => {
 });
 
 test("document renderer supports raster transform preview and history commit", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
 
   assert.match(source, /getRasterContentBounds\(layerId, options = \{\}\)/);
   assert.match(source, /getPuppetAlphaSamples\(target, sampleCols, sampleRows\)/);
@@ -75,7 +90,7 @@ test("document renderer supports raster transform preview and history commit", (
 
 test("raster transform supports Photoshop-style warp mesh preview and commit", () => {
   const toolSource = readRepoFile("js", "raster-transform-tool.js");
-  const rendererSource = readRepoFile("js", "document", "document-renderer.js");
+  const rendererSource = readDocumentRendererSources();
   const cssSource = readRepoFile("css", "layout.css");
 
   assert.match(toolSource, /const WARP_TRANSFORM_MODE = "warp";/);
@@ -99,7 +114,7 @@ test("raster transform supports Photoshop-style warp mesh preview and commit", (
 });
 
 test("raster transform samples snapshots linearly while resizing", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
 
   assert.match(source, /setRasterTextureSampling\(texture, minFilter, magFilter = minFilter\)/);
   assert.match(source, /const textureFilter = Number\.isFinite\(options\.textureFilter\) \? options\.textureFilter : null/);
@@ -125,7 +140,7 @@ test("resize tool transforms vector text as metadata instead of raster pixels", 
 
 test("vector text resize hides the stale raster cache while SVG preview is active", () => {
   const transformSource = readRepoFile("js", "raster-transform-tool.js");
-  const rendererSource = readRepoFile("js", "document", "document-renderer.js");
+  const rendererSource = readDocumentRendererSources();
   const textSource = readRepoFile("js", "text", "vector-text-renderer.js");
   const previewBody = transformSource.match(/setVectorTextPreviewLayer\(layer\) \{[\s\S]*?\n    \}/)?.[0] || "";
 
@@ -158,7 +173,7 @@ test("raster transform preview coalesces pointermove updates with requestAnimati
 });
 
 test("document renderer uses analytic anti-aliased quad edge coverage for raster transforms", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
 
   assert.match(source, /const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1/);
   assert.match(source, /TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE/);
@@ -175,7 +190,7 @@ test("document renderer uses analytic anti-aliased quad edge coverage for raster
 });
 
 test("drawTexturedQuad draws an expanded maskable rectangle instead of hard quad triangles", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
   const drawBody = source.match(/drawTexturedQuad\(texture, quad, options = \{\}\) \{[\s\S]*?\n    \}/)?.[0] || "";
 
   assert.match(drawBody, /ensureTexturedQuadProgramInfo\(\)/);
@@ -190,7 +205,7 @@ test("drawTexturedQuad draws an expanded maskable rectangle instead of hard quad
 });
 
 test("drawPerspectiveTexturedQuad uses soft geometric coverage and clamps edge UVs", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
   const drawBody = source.match(/drawPerspectiveTexturedQuad\(texture, quad, options = \{\}\) \{[\s\S]*?\n    \}/)?.[0] || "";
 
   assert.match(drawBody, /createExpandedQuadDrawVertices\(/);
@@ -201,7 +216,7 @@ test("drawPerspectiveTexturedQuad uses soft geometric coverage and clamps edge U
 });
 
 test("raster transform commits pad dirty rectangles for edge anti-aliasing", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
 
   assert.match(source, /RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING/);
   assert.match(source, /padRasterRect\(rect, padding = 0\)/);

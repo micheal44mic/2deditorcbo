@@ -1710,6 +1710,7 @@
 
   [
     "rasterTargets",
+    "historySnapshots",
     "webglPrograms",
     "viewportCulling",
     "layerEffects",

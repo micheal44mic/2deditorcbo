@@ -10,6 +10,21 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+
+function readDocumentRendererSources() {
+  return documentRendererModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 function loadDocumentLayerModel() {
   const source = readRepoFile("js", "document", "document-layer-model.js");
   const window = {
@@ -74,7 +89,7 @@ test("layers panel exposes clipping mask context action and row indicator", () =
 });
 
 test("document renderer composites clipping masks from the layer below", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
 
   assert.match(source, /uniform sampler2D u_clipTexture;/);
   assert.match(source, /uniform float u_clipMode;/);
@@ -102,7 +117,7 @@ test("document renderer composites clipping masks from the layer below", () => {
 });
 
 test("document renderer treats image upload metadata as visual for clipping masks", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
   const nonVisualBody = source.match(/const nonVisualSources = new Set\(\[([\s\S]*?)\]\);/)?.[1] || "";
 
   assert.doesNotMatch(nonVisualBody, /"image-upload-metadata"/);
@@ -115,7 +130,7 @@ test("document renderer treats image upload metadata as visual for clipping mask
 });
 
 test("document renderer samples transform preview clipping bases without scratch targets", () => {
-  const source = readRepoFile("js", "document", "document-renderer.js");
+  const source = readDocumentRendererSources();
 
   assert.match(source, /uniform mat3 u_clipDestToSourceUv;/);
   assert.match(source, /uniform vec4 u_clipSourceUvRect;/);

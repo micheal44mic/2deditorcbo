@@ -9,6 +9,21 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+
+function readDocumentRendererSources() {
+  return documentRendererModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 test("dirty region monitor stays available but is not loaded by default", () => {
   const source = readRepoFile("js", "debug", "dirty-region-monitor.js");
   const indexSource = readRepoFile("index.html");
@@ -59,7 +74,7 @@ test("dirty region monitor stays available but is not loaded by default", () => 
 
 test("dirty region overlay stays available but is not loaded by default", () => {
   const source = readRepoFile("js", "debug", "dirty-region-overlay.js");
-  const rendererSource = readRepoFile("js", "document", "document-renderer.js");
+  const rendererSource = readDocumentRendererSources();
   const indexSource = readRepoFile("index.html");
 
   assert.doesNotMatch(indexSource, /<script src="\.\/js\/debug\/dirty-region-overlay\.js(?:\?v=[^"]+)?"><\/script>/);

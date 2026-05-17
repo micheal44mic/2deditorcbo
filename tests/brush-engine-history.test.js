@@ -529,7 +529,19 @@ test("brush stroke history batches tile captures until the idle commit", () => {
 
 test("brush batch history flushes before other raster history captures", () => {
   const brushSource = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
-  const rendererSource = fs.readFileSync(path.join(repoRoot, "js", "document", "document-renderer.js"), "utf8");
+  const documentRendererModulePaths = [
+    ["js", "document", "document-renderer-shaders.js"],
+    ["js", "document", "document-renderer-raster-targets.js"],
+    ["js", "document", "document-renderer-history-snapshots.js"],
+    ["js", "document", "document-renderer-webgl-programs.js"],
+    ["js", "document", "document-renderer-viewport-culling.js"],
+    ["js", "document", "document-renderer-layer-effects.js"],
+    ["js", "document", "document-renderer-compositing.js"],
+    ["js", "document", "document-renderer.js"],
+  ];
+  const rendererSource = documentRendererModulePaths
+    .map((parts) => fs.readFileSync(path.join(repoRoot, ...parts), "utf8"))
+    .join("\n");
 
   assert.match(brushSource, /const BRUSH_HISTORY_BATCH_IDLE_MS = 300/);
   assert.match(brushSource, /window\.addEventListener\("cbo:before-raster-history-capture", this\.handleBeforeRasterHistoryCapture\)/);

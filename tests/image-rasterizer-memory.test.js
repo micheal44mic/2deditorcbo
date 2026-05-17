@@ -11,10 +11,19 @@ const editorCanvasSource = fs.readFileSync(
   path.join(__dirname, "..", "js", "editor-canvas.js"),
   "utf8",
 );
-const rendererSource = fs.readFileSync(
-  path.join(__dirname, "..", "js", "document", "document-renderer.js"),
-  "utf8",
-);
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+const rendererSource = documentRendererModulePaths
+  .map((parts) => fs.readFileSync(path.join(__dirname, "..", ...parts), "utf8"))
+  .join("\n");
 
 test("image rasterizer caps imported images before WebGL texture upload", () => {
   assert.match(source, /IMPORT_MEMORY_POLICY/);

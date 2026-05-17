@@ -9,10 +9,25 @@ function readSource(...segments) {
   return fs.readFileSync(path.join(repoRoot, ...segments), "utf8");
 }
 
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-history-snapshots.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+
+function readDocumentRendererSources() {
+  return documentRendererModulePaths.map((segments) => readSource(...segments)).join("\n");
+}
+
 test("brush studio and thumbnail previews isolate document artboard state", () => {
   const studioSource = readSource("js", "brush-studio.js");
   const previewSource = readSource("js", "brush-preview.js");
-  const rendererSource = readSource("js", "document", "document-renderer.js");
+  const rendererSource = readDocumentRendererSources();
   const engineSource = readSource("js", "brush-engine.js");
   const layerModelSource = readSource("js", "document", "document-layer-model.js");
 
