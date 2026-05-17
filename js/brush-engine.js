@@ -6631,6 +6631,7 @@ void main() {
         source: "brush-bake",
       });
       this.documentRenderer?.compactInactivePaintTargets?.({
+        deleteEmptyTargets: !isEraserStroke,
         excludeLayerId: layerId,
         source: "brush-bake-compact-inactive",
       });

@@ -13343,7 +13343,13 @@ void main() {
       });
 
       if (!contentRect) {
-        const didDelete = layerId !== this.paintLayerId && this.deleteRasterTarget(layerId, {
+        const activeLayerId = this.layerModel?.activeLayerId || "";
+        const activePaintLayerId = this.resolvePaintLayerId?.() || "";
+        const canDeleteEmpty = options.deleteEmptyTargets !== false &&
+          layerId !== this.paintLayerId &&
+          layerId !== activeLayerId &&
+          layerId !== activePaintLayerId;
+        const didDelete = canDeleteEmpty && this.deleteRasterTarget(layerId, {
           emit: false,
           source: options.source || "compact-empty-paint-target",
         });
@@ -13428,10 +13434,23 @@ void main() {
     }
 
     compactInactivePaintTargets(options = {}) {
-      const activeLayerId = options.excludeLayerId ||
-        this.layerModel?.activeLayerId ||
-        this.paintLayerId ||
-        "";
+      const excludedLayerIds = new Set();
+      const addExcludedLayerId = (layerId) => {
+        const normalizedLayerId = String(layerId || "").trim();
+
+        if (normalizedLayerId) {
+          excludedLayerIds.add(normalizedLayerId);
+        }
+      };
+      const optionExcludedLayerIds = Array.isArray(options.excludeLayerIds)
+        ? options.excludeLayerIds
+        : [];
+
+      optionExcludedLayerIds.forEach(addExcludedLayerId);
+      addExcludedLayerId(options.excludeLayerId);
+      addExcludedLayerId(this.layerModel?.activeLayerId);
+      addExcludedLayerId(this.paintLayerId);
+      addExcludedLayerId(this.resolvePaintLayerId?.());
       const includeActive = options.includeActive === true;
       const maxTargets = Math.max(1, Math.floor(Number(options.maxTargets) || 64));
       const results = [];
@@ -13441,7 +13460,7 @@ void main() {
           break;
         }
 
-        if (!includeActive && layerId === activeLayerId) {
+        if (!includeActive && excludedLayerIds.has(layerId)) {
           continue;
         }
 
