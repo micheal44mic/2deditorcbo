@@ -300,11 +300,16 @@ void main() {
 precision highp float;
 
 uniform sampler2D u_texture;
+uniform sampler2D u_clipTexture;
 uniform mat3 u_destToSourceUv;
 uniform vec4 u_sourceUvRect;
 uniform vec4 u_quadEdges[4];
 uniform float u_edgeFeatherPixels;
 uniform float u_opacity;
+uniform float u_clipMode;
+uniform float u_clipOpacity;
+uniform vec2 u_clipOrigin;
+uniform vec2 u_clipTextureSize;
 
 in vec2 v_destPixel;
 
@@ -349,8 +354,23 @@ void main() {
   vec2 clampedUnitUv = clamp(unitUv, vec2(0.0), vec2(1.0));
   vec2 sourceUnitUv = u_sourceUvRect.xy + clampedUnitUv * u_sourceUvRect.zw;
   vec2 uv = vec2(sourceUnitUv.x, 1.0 - sourceUnitUv.y);
+  float clipAlpha = 1.0;
 
-  outColor = texture(u_texture, uv) * u_opacity * coverage;
+  if (u_clipMode > 0.5) {
+    vec2 clipLocalPixel = v_destPixel - u_clipOrigin;
+    vec2 clipUv = vec2(
+      clipLocalPixel.x / max(u_clipTextureSize.x, 1.0),
+      1.0 - clipLocalPixel.y / max(u_clipTextureSize.y, 1.0)
+    );
+
+    clipAlpha = 0.0;
+
+    if (clipUv.x >= 0.0 && clipUv.x <= 1.0 && clipUv.y >= 0.0 && clipUv.y <= 1.0) {
+      clipAlpha = texture(u_clipTexture, clipUv).a * clamp(u_clipOpacity, 0.0, 1.0);
+    }
+  }
+
+  outColor = texture(u_texture, uv) * u_opacity * coverage * clipAlpha;
 }
 `;
 
@@ -1522,6 +1542,7 @@ void main() {
       this.layerCompositeScratchB = null;
       this.layerCompositeWidth = 0;
       this.layerCompositeHeight = 0;
+      this.visualClipBaseTarget = null;
       this.layerEffectScratchA = null;
       this.layerEffectScratchB = null;
       this.activeStrokeScratchTarget = null;
@@ -3566,6 +3587,11 @@ void main() {
         uniforms: {
           cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
+          clipMode: gl.getUniformLocation(program, "u_clipMode"),
+          clipOpacity: gl.getUniformLocation(program, "u_clipOpacity"),
+          clipOrigin: gl.getUniformLocation(program, "u_clipOrigin"),
+          clipTexture: gl.getUniformLocation(program, "u_clipTexture"),
+          clipTextureSize: gl.getUniformLocation(program, "u_clipTextureSize"),
           destToSourceUv: gl.getUniformLocation(program, "u_destToSourceUv"),
           edgeFeatherPixels: gl.getUniformLocation(program, "u_edgeFeatherPixels"),
           quadEdges: gl.getUniformLocation(program, "u_quadEdges[0]"),
@@ -3607,6 +3633,11 @@ void main() {
         uniforms: {
           cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
+          clipMode: gl.getUniformLocation(program, "u_clipMode"),
+          clipOpacity: gl.getUniformLocation(program, "u_clipOpacity"),
+          clipOrigin: gl.getUniformLocation(program, "u_clipOrigin"),
+          clipTexture: gl.getUniformLocation(program, "u_clipTexture"),
+          clipTextureSize: gl.getUniformLocation(program, "u_clipTextureSize"),
           destToSourceUv: gl.getUniformLocation(program, "u_destToSourceUv"),
           edgeFeatherPixels: gl.getUniformLocation(program, "u_edgeFeatherPixels"),
           quadEdges: gl.getUniformLocation(program, "u_quadEdges[0]"),
@@ -4701,6 +4732,55 @@ void main() {
       return zoom < PREVIEW_CACHE_ZOOM_THRESHOLD && zoom <= cacheScale * 1.01;
     }
 
+    setTransformClipUniforms(uniforms, clipBase = null, textureMagFilter = null) {
+      const gl = this.gl;
+
+      if (clipBase?.target?.texture) {
+        const clipOpacity = Number.isFinite(clipBase.layer?.opacity)
+          ? Math.min(1, Math.max(0, clipBase.layer.opacity))
+          : 1;
+        const clipOrigin = this.getClipBaseOrigin(clipBase);
+
+        gl.activeTexture(gl.TEXTURE1);
+        this.setRasterTextureSampling(
+          clipBase.target.texture,
+          gl.LINEAR,
+          Number.isFinite(textureMagFilter) ? textureMagFilter : gl.LINEAR,
+        );
+        gl.bindTexture(gl.TEXTURE_2D, clipBase.target.texture);
+        gl.uniform1i(uniforms.clipTexture, 1);
+        gl.uniform1f(uniforms.clipMode, 1.0);
+        gl.uniform1f(uniforms.clipOpacity, clipOpacity);
+        gl.uniform2f(uniforms.clipOrigin, clipOrigin.x, clipOrigin.y);
+        gl.uniform2f(
+          uniforms.clipTextureSize,
+          clipBase.target.width || this.width,
+          clipBase.target.height || this.height,
+        );
+        gl.activeTexture(gl.TEXTURE0);
+        return true;
+      }
+
+      gl.uniform1i(uniforms.clipTexture, 1);
+      gl.uniform1f(uniforms.clipMode, 0.0);
+      gl.uniform1f(uniforms.clipOpacity, 1.0);
+      gl.uniform2f(uniforms.clipOrigin, 0, 0);
+      gl.uniform2f(uniforms.clipTextureSize, this.width, this.height);
+      return false;
+    }
+
+    clearTransformClipTexture(didBindClipTexture = false) {
+      if (!didBindClipTexture) {
+        return;
+      }
+
+      const gl = this.gl;
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.activeTexture(gl.TEXTURE0);
+    }
+
     drawWarpTexturedMesh(texture, controlPoints, options = {}) {
       const points = this.normalizeRasterWarpControlPoints(controlPoints);
 
@@ -4804,6 +4884,11 @@ void main() {
       gl.uniform1f(uniforms.edgeFeatherPixels, edgeFeatherPixels);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
+      const didBindClipTexture = this.setTransformClipUniforms(
+        uniforms,
+        options.clipBase,
+        textureFilter,
+      );
 
       gl.bindVertexArray(resource.vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, resource.buffer);
@@ -4815,6 +4900,7 @@ void main() {
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
+      this.clearTransformClipTexture(didBindClipTexture);
 
       if (textureFilter !== null) {
         const restoreTextureFilter = Number.isFinite(options.restoreTextureFilter)
@@ -4877,6 +4963,11 @@ void main() {
       gl.uniform1f(uniforms.edgeFeatherPixels, edgeFeatherPixels);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
+      const didBindClipTexture = this.setTransformClipUniforms(
+        uniforms,
+        options.clipBase,
+        textureFilter,
+      );
 
       gl.bindVertexArray(resource.vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, resource.buffer);
@@ -4888,6 +4979,7 @@ void main() {
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.useProgram(null);
+      this.clearTransformClipTexture(didBindClipTexture);
 
       if (textureFilter !== null) {
         const restoreTextureFilter = Number.isFinite(options.restoreTextureFilter)
@@ -8232,6 +8324,247 @@ void main() {
       };
     }
 
+    deleteVisualClipBaseTarget() {
+      if (!this.visualClipBaseTarget) {
+        return;
+      }
+
+      this.deleteRasterTargetObject(this.visualClipBaseTarget);
+      this.visualClipBaseTarget = null;
+    }
+
+    getQuadDocumentRect(quad = []) {
+      if (!Array.isArray(quad) || quad.length < 4) {
+        return null;
+      }
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (const point of quad.slice(0, 4)) {
+        const x = Number(point?.x);
+        const y = Number(point?.y);
+
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          return null;
+        }
+
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+        return null;
+      }
+
+      return this.getUnclampedDocumentRect({
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+      });
+    }
+
+    getRasterTransformPreviewDocumentRect(preview = this.rasterTransformPreview) {
+      if (!preview?.texture) {
+        return null;
+      }
+
+      const rawRect = preview.transformMode === "warp"
+        ? this.getRasterWarpBounds(preview.warpControlPoints)
+        : this.getQuadDocumentRect(preview.quad);
+
+      return this.getUnclampedDocumentRect(
+        this.padRasterRect(rawRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING),
+      );
+    }
+
+    ensureVisualClipBaseTarget(rect, source = "visual-clip-base") {
+      const targetRect = this.getUnclampedDocumentRect(rect);
+
+      if (!targetRect) {
+        return null;
+      }
+
+      const width = Math.max(1, Math.ceil(targetRect.width));
+      const height = Math.max(1, Math.ceil(targetRect.height));
+      const x = Math.floor(targetRect.x);
+      const y = Math.floor(targetRect.y);
+
+      if (
+        this.visualClipBaseTarget?.texture &&
+        this.visualClipBaseTarget?.framebuffer &&
+        this.visualClipBaseTarget.width === width &&
+        this.visualClipBaseTarget.height === height
+      ) {
+        this.visualClipBaseTarget.x = x;
+        this.visualClipBaseTarget.y = y;
+        this.visualClipBaseTarget.cropped = true;
+        return this.visualClipBaseTarget;
+      }
+
+      this.deleteVisualClipBaseTarget();
+
+      this.visualClipBaseTarget = this.createRasterTarget([0, 0, 0, 0], {
+        cropped: true,
+        height,
+        kind: "clipBaseScratch",
+        label: "visual clip base",
+        ownerId: "visual-clip-base",
+        ownerType: "scratch",
+        purgeable: true,
+        reason: source,
+        width,
+        x,
+        y,
+      });
+
+      return this.visualClipBaseTarget;
+    }
+
+    createVisualTextureClipBase(layer, texture, rect, options = {}) {
+      if (!layer || !texture || layer.visible === false) {
+        return null;
+      }
+
+      const targetRect = this.getUnclampedDocumentRect(rect);
+
+      if (!targetRect) {
+        return null;
+      }
+
+      const target = this.ensureVisualClipBaseTarget(targetRect, options.source || "visual-clip-base");
+
+      if (!target?.texture || !target?.framebuffer) {
+        return null;
+      }
+
+      const gl = this.gl;
+      const wasScissorEnabled = gl.isEnabled?.(gl.SCISSOR_TEST) === true;
+      const scissorBox = wasScissorEnabled && typeof gl.getParameter === "function"
+        ? gl.getParameter(gl.SCISSOR_BOX)
+        : null;
+      const camera = {
+        x: -target.x,
+        y: -target.y,
+        zoom: 1,
+      };
+      const fallbackQuad = [
+        { x: targetRect.x, y: targetRect.y },
+        { x: targetRect.x + targetRect.width, y: targetRect.y },
+        { x: targetRect.x + targetRect.width, y: targetRect.y + targetRect.height },
+        { x: targetRect.x, y: targetRect.y + targetRect.height },
+      ];
+      const transformMode = String(options.transformMode || "free").trim().toLowerCase();
+      const drawOptions = {
+        camera,
+        edgeFeatherPixels: options.edgeFeatherPixels,
+        framebuffer: target.framebuffer,
+        opacity: Number.isFinite(options.opacity) ? Math.max(0, Math.min(1, options.opacity)) : 1,
+        sourceUvRect: options.sourceUvRect || null,
+        textureFilter: this.gl.LINEAR,
+        viewportHeight: target.height,
+        viewportWidth: target.width,
+      };
+      let didDraw = false;
+
+      if (wasScissorEnabled) {
+        gl.disable(gl.SCISSOR_TEST);
+      }
+
+      try {
+        this.clearTarget(target);
+
+        if (transformMode === "warp" && options.warpControlPoints) {
+          didDraw = this.drawWarpTexturedMesh(
+            texture,
+            options.warpControlPoints,
+            drawOptions,
+          );
+        } else if (transformMode === "perspective") {
+          didDraw = this.drawPerspectiveTexturedQuad(
+            texture,
+            options.quad || fallbackQuad,
+            drawOptions,
+          );
+        } else {
+          didDraw = this.drawTexturedQuad(
+            texture,
+            options.quad || fallbackQuad,
+            drawOptions,
+          );
+        }
+      } finally {
+        if (wasScissorEnabled && scissorBox) {
+          gl.enable(gl.SCISSOR_TEST);
+          gl.scissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3]);
+        } else {
+          gl.disable(gl.SCISSOR_TEST);
+        }
+      }
+
+      if (!didDraw) {
+        return null;
+      }
+
+      const layerOpacity = Number.isFinite(layer.opacity)
+        ? Math.max(0, Math.min(1, layer.opacity))
+        : 1;
+      const clipOpacity = Number.isFinite(options.clipOpacity)
+        ? Math.max(0, Math.min(1, options.clipOpacity))
+        : layerOpacity;
+
+      return this.createClipBaseForLayer(
+        {
+          ...layer,
+          opacity: clipOpacity,
+        },
+        target,
+        layer.visible !== false,
+      );
+    }
+
+    createRasterTransformPreviewClipBaseForLayer(layer) {
+      const preview = this.rasterTransformPreview;
+
+      if (
+        !layer?.id ||
+        !preview?.texture ||
+        preview.layerId !== layer.id ||
+        !Array.isArray(preview.quad)
+      ) {
+        return null;
+      }
+
+      const rect = this.getRasterTransformPreviewDocumentRect(preview);
+
+      if (!rect) {
+        return null;
+      }
+
+      const layerOpacity = Number.isFinite(layer.opacity)
+        ? Math.max(0, Math.min(1, layer.opacity))
+        : 1;
+      const previewOpacity = Number.isFinite(preview.opacity)
+        ? Math.max(0, Math.min(1, preview.opacity))
+        : 1;
+
+      return this.createVisualTextureClipBase(layer, preview.texture, rect, {
+        clipOpacity: layerOpacity,
+        edgeFeatherPixels: preview.edgeFeatherPixels,
+        opacity: previewOpacity,
+        quad: preview.quad,
+        source: "raster-transform-preview-clip-base",
+        sourceUvRect: preview.sourceUvRect || null,
+        transformMode: preview.transformMode,
+        warpControlPoints: preview.warpControlPoints,
+      });
+    }
+
     getGaussianBlurRadius(layer) {
       const effects = layer?.effects;
       const effect = Array.isArray(effects)
@@ -10348,6 +10681,34 @@ void main() {
       return Boolean(
         layerTarget?.texture ||
         (this.isSparseRasterTarget(layerTarget) && layerTarget.tiles.size > 0)
+      );
+    }
+
+    hasLayerPendingRasterContent(layer) {
+      if (!layer || layer.visible === false || layer.type !== "image") {
+        return false;
+      }
+
+      const rawWidth = Number(layer.imageBounds?.width);
+      const rawHeight = Number(layer.imageBounds?.height);
+
+      if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight) || rawWidth <= 0 || rawHeight <= 0) {
+        return false;
+      }
+
+      const bounds = this.getUnclampedDocumentRect(layer.imageBounds);
+
+      return Boolean(bounds && bounds.width > 0 && bounds.height > 0);
+    }
+
+    hasLayerRenderableOrPendingRasterContent(layer) {
+      if (!layer?.id) {
+        return false;
+      }
+
+      return Boolean(
+        this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id)) ||
+        this.hasLayerPendingRasterContent(layer)
       );
     }
 
@@ -14701,13 +15062,22 @@ void main() {
         "image-rasterize",
         "image-upload",
         "image-upload-error",
-        "image-upload-metadata",
         "layer-effects-rasterize",
         "raster-transform",
       ]);
+      const forceVisualSources = new Set([
+        "image-upload-metadata",
+      ]);
+
+      if (forceVisualSources.has(source)) {
+        this.invalidatePreviewCache(source, event?.detail || {});
+        this.requestDraw();
+        this.pruneOrphanRasterTargets();
+        return;
+      }
 
       if (changeType !== "active-layer" && !nonVisualSources.has(source) && !isRasterTransformArtboardTransfer) {
-        this.invalidatePreviewCache("layers-change");
+        this.invalidatePreviewCache("layers-change", event?.detail || {});
       }
 
       this.pruneOrphanRasterTargets();
@@ -15545,7 +15915,7 @@ void main() {
       );
       const needsClipBaseTexture = (layer) => Boolean(
         layer?.visible !== false &&
-        this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id))
+        this.hasLayerRenderableOrPendingRasterContent(layer)
       );
       const clipBaseLayerIds = new Set();
       let pendingClipBaseLayerId = "";
@@ -15656,6 +16026,17 @@ void main() {
               withLayerPreviewArtboardClip(layer, () => {
                 drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
               });
+            }
+
+            if (!isClippingLayer && clipBaseLayerIds.has(layer.id) && layerTexture && renderResult?.rect) {
+              const visualClipBase = this.createVisualTextureClipBase(layer, layerTexture, renderResult.rect, {
+                source: "preview-cache-visual-clip-base",
+              });
+
+              if (visualClipBase) {
+                currentClipBase = visualClipBase;
+                bindArtboardProgram();
+              }
             }
           }
         }
@@ -16809,7 +17190,7 @@ void main() {
       const needsClipBaseTexture = (layer) => Boolean(
         layer?.visible !== false &&
         (
-          this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id)) ||
+          this.hasLayerRenderableOrPendingRasterContent(layer) ||
           (
             options.activeStrokeTexture &&
             activeStrokeMode !== "eraser" &&
@@ -17368,13 +17749,14 @@ void main() {
           gl.uniform4f(uniforms.previewCutRect, 0, 0, 0, 0);
         }
       };
-      const drawRasterTransformPreview = (layerOpacity = 1) => {
+      const drawRasterTransformPreview = (layerOpacity = 1, clipBase = null) => {
         if (!rasterTransformPreview?.texture || !Array.isArray(rasterTransformPreview.quad)) {
           return;
         }
 
         const drawOptions = {
           camera,
+          clipBase,
           edgeFeatherPixels: rasterTransformPreview.edgeFeatherPixels,
           framebuffer: canvasCompositeState?.read?.framebuffer || null,
           opacity: rasterTransformPreview.opacity * layerOpacity,
@@ -17688,6 +18070,17 @@ void main() {
                   drawBlendTexture(layerTexture, opacity, layerRect, clipBase, blendModeId);
                 }
               });
+
+              if (!isClippingLayer && isClipBaseLayer && !isRasterTransformPreviewLayer && layerTexture && layerRect) {
+                const visualClipBase = this.createVisualTextureClipBase(layer, layerTexture, layerRect, {
+                  source: "canvas-visual-clip-base",
+                });
+
+                if (visualClipBase) {
+                  currentClipBase = visualClipBase;
+                  bindArtboardProgram();
+                }
+              }
             }
 
             if (eraserMaskTexture) {
@@ -17742,7 +18135,16 @@ void main() {
           }
 
           if (isRasterTransformPreviewLayer) {
-            drawRasterTransformPreview(opacity);
+            drawRasterTransformPreview(opacity, clipBase);
+
+            if (!isClippingLayer && isClipBaseLayer) {
+              const transformClipBase = this.createRasterTransformPreviewClipBaseForLayer(layer);
+
+              if (transformClipBase) {
+                currentClipBase = transformClipBase;
+                bindArtboardProgram();
+              }
+            }
           }
 
           if (isActiveStrokeLayer && activeStrokeMode !== "eraser" && !didDrawActiveStroke) {
@@ -17844,6 +18246,7 @@ void main() {
       this.deleteCurvesResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteActiveStrokeSelectionClipTexture();
+      this.deleteVisualClipBaseTarget();
       this.deleteLayerCompositeResources();
       this.deletePreviewCache();
       this.deleteAllArtboardFlatPreviews("dispose");

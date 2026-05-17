@@ -478,10 +478,11 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
     const placement = await rasterizer.placeBlob(detail.blob, {
       artboardId: uploadArtboardId,
       layerId: imageLayer.id,
+      source: "image-rasterize",
     });
 
     if (placement?.destinationRect && layerModel.updateLayer) {
-      layerModel.updateLayer(imageLayer.id, {
+      const didUpdateMetadata = layerModel.updateLayer(imageLayer.id, {
         imageAsset: {
           importedAt: new Date().toISOString(),
           name: detail.name || "Image",
@@ -489,10 +490,19 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
         },
         imageBounds: placement.destinationRect,
       }, {
-        emit: false,
         history: false,
         source: "image-upload-metadata",
       });
+
+      if (didUpdateMetadata !== false) {
+        documentRenderer.commitVisualDirtyChange?.({
+          layerId: imageLayer.id,
+          rect: placement.destinationRect,
+          source: "image-upload-metadata",
+          usePreviewDirtyTiles: true,
+        });
+        documentRenderer.requestDraw?.();
+      }
     }
   } catch (error) {
     const remainingEntries = removeLayerFromEntriesById(layerModel.getEntries(), imageLayer.id);

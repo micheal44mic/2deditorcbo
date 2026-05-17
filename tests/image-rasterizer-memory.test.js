@@ -81,3 +81,15 @@ test("uploaded image placement reports dirty bounds instead of forcing a full pr
   assert.match(rendererSource, /"raster-transform"/);
   assert.match(rendererSource, /changeType !== "active-layer" && !nonVisualSources\.has\(source\)/);
 });
+
+test("uploaded image metadata emits visual update for clipping masks", () => {
+  assert.match(editorCanvasSource, /source: "image-rasterize"/);
+  assert.match(editorCanvasSource, /source: "image-upload-metadata"/);
+  assert.match(editorCanvasSource, /commitVisualDirtyChange\?\.\(/);
+
+  const metadataUpdateBlock = editorCanvasSource.match(
+    /imageBounds: placement\.destinationRect,[\s\S]*?source: "image-upload-metadata",[\s\S]*?\}/,
+  )?.[0] || "";
+
+  assert.doesNotMatch(metadataUpdateBlock, /emit:\s*false/);
+});

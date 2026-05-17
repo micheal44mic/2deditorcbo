@@ -45,9 +45,14 @@ test("document renderer supports raster transform preview and history commit", (
   assert.match(source, /gl\.readPixels\(coarseRect\.x, readY, coarseRect\.width, coarseRect\.height/);
   assert.match(source, /setRasterTransformPreview\(preview = null\)/);
   assert.match(source, /u_previewCutMode/);
+  assert.match(source, /uniform sampler2D u_clipTexture;/);
+  assert.match(source, /setTransformClipUniforms\(uniforms, clipBase = null/);
+  assert.match(source, /clipAlpha = texture\(u_clipTexture, clipUv\)\.a \* clamp\(u_clipOpacity, 0\.0, 1\.0\)/);
+  assert.match(source, /clipBase,/);
   assert.match(source, /if \(isRasterTransformPreviewLayer\) \{\s*setPreviewCut\(rasterTransformPreview\.sourceRect\);\s*\}\s*if \(layerTarget\?\.texture\)/);
   assert.match(source, /else if \(this\.isSparseRasterTarget\(layerTarget\)\)[\s\S]*if \(isRasterTransformPreviewLayer\) \{\s*setPreviewCut\(null\);/);
   assert.match(source, /drawTexturedQuad\(texture, quad, options = \{\}\)/);
+  assert.match(source, /options\.clipBase/);
   assert.match(source, /computeDestToSourceUvHomography\(destQuad\)/);
   assert.match(source, /drawPerspectiveTexturedQuad\(texture, quad, options = \{\}\)/);
   assert.match(source, /u_destToSourceUv/);

@@ -100,3 +100,26 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
   assert.match(source, /currentClipBase = this\.createClipBaseForLayer\(layer, mergedTarget, layer\.visible !== false\)/);
 });
+
+test("document renderer treats image upload metadata as visual for clipping masks", () => {
+  const source = readRepoFile("js", "document", "document-renderer.js");
+  const nonVisualBody = source.match(/const nonVisualSources = new Set\(\[([\s\S]*?)\]\);/)?.[1] || "";
+
+  assert.doesNotMatch(nonVisualBody, /"image-upload-metadata"/);
+  assert.match(source, /forceVisualSources/);
+  assert.match(source, /"image-upload-metadata"/);
+  assert.match(source, /hasLayerPendingRasterContent/);
+  assert.match(source, /hasLayerRenderableOrPendingRasterContent/);
+});
+
+test("document renderer can use transform preview and visual effects as live clipping base", () => {
+  const source = readRepoFile("js", "document", "document-renderer.js");
+
+  assert.match(source, /visualClipBaseTarget/);
+  assert.match(source, /createVisualTextureClipBase/);
+  assert.match(source, /createRasterTransformPreviewClipBaseForLayer/);
+  assert.match(source, /raster-transform-preview-clip-base/);
+  assert.match(source, /canvas-visual-clip-base/);
+  assert.match(source, /preview-cache-visual-clip-base/);
+  assert.match(source, /currentClipBase = transformClipBase/);
+});
