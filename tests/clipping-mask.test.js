@@ -84,6 +84,9 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /const orderedLayers = this\.getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const hasClippingMasks = orderedLayers\.some\(\(layer\) => layer\?\.clippingMask === true\)/);
   assert.match(source, /const activeStrokeUsesClippingMask = Boolean/);
+  assert.match(source, /const needsClipBaseTexture = \(layer\) => Boolean/);
+  assert.match(source, /pendingClipBaseLayerId && needsClipBaseTexture\(layer\)/);
+  assert.match(source, /const activeStrokeIsClipBaseLayer = Boolean/);
   assert.match(source, /let currentClipBase = null/);
   assert.match(source, /const clipBase = isClippingLayer \? currentClipBase : null/);
   assert.match(source, /isValidClipBaseLayer\(layer\)/);
@@ -95,4 +98,5 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /drawBlendTexture\(\s*options\.activeStrokeTexture,\s*opacity,\s*activeStrokeRect,\s*clipBase,/);
   assert.match(source, /drawTexture\(texture, opacity, rect, clipBase\)/);
   assert.match(source, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
+  assert.match(source, /currentClipBase = this\.createClipBaseForLayer\(layer, mergedTarget, layer\.visible !== false\)/);
 });

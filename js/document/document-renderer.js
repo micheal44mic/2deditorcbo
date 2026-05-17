@@ -9035,7 +9035,7 @@ void main() {
       return this.activeStrokeScratchTarget;
     }
 
-    renderLayerWithActiveStrokeTexture(layerTexture, strokeTexture, strokeRect = null) {
+    renderLayerWithActiveStrokeTexture(layerTexture, strokeTexture, strokeRect = null, options = {}) {
       if (!strokeTexture || !this.programInfo || !this.quad) {
         return null;
       }
@@ -9045,6 +9045,33 @@ void main() {
       const height = Math.max(1, Math.round(this.height || 1));
       const scratch = this.ensureActiveStrokeScratchTarget(width, height);
       const { program, uniforms } = this.programInfo;
+      const strokeClipRects = Array.isArray(options.clipRects)
+        ? options.clipRects
+            .map((rect) => this.getUnclampedDocumentRect?.(rect) || rect)
+            .filter(Boolean)
+        : [];
+      const hasStrokeClip = options.hasClip === true || strokeClipRects.length > 0;
+      const getScratchScissorForDocumentRect = (docRect) => {
+        if (!docRect) {
+          return null;
+        }
+
+        const left = Math.max(0, Math.floor(docRect.x));
+        const top = Math.max(0, Math.floor(docRect.y));
+        const right = Math.min(width, Math.ceil(docRect.x + docRect.width));
+        const bottom = Math.min(height, Math.ceil(docRect.y + docRect.height));
+
+        if (right <= left || bottom <= top) {
+          return null;
+        }
+
+        return {
+          height: bottom - top,
+          width: right - left,
+          x: left,
+          y: height - bottom,
+        };
+      };
       const drawSource = (texture, documentWidth, documentHeight, originX = 0, originY = 0) => {
         if (!texture) {
           return;
@@ -9056,6 +9083,41 @@ void main() {
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, 1);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      };
+      const drawStrokeSource = (documentWidth, documentHeight, originX = 0, originY = 0) => {
+        if (hasStrokeClip && strokeClipRects.length === 0) {
+          return;
+        }
+
+        if (strokeClipRects.length === 0) {
+          drawSource(strokeTexture, documentWidth, documentHeight, originX, originY);
+          return;
+        }
+
+        const wasScissorEnabled = gl.isEnabled?.(gl.SCISSOR_TEST) === true;
+        const previousScissor = gl.getParameter?.(gl.SCISSOR_BOX) || null;
+
+        gl.enable(gl.SCISSOR_TEST);
+        try {
+          strokeClipRects.forEach((clipRect) => {
+            const scissor = getScratchScissorForDocumentRect(clipRect);
+
+            if (!scissor) {
+              return;
+            }
+
+            gl.scissor(scissor.x, scissor.y, scissor.width, scissor.height);
+            drawSource(strokeTexture, documentWidth, documentHeight, originX, originY);
+          });
+        } finally {
+          if (previousScissor) {
+            gl.scissor(previousScissor[0], previousScissor[1], previousScissor[2], previousScissor[3]);
+          }
+
+          if (!wasScissorEnabled) {
+            gl.disable(gl.SCISSOR_TEST);
+          }
+        }
       };
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, scratch.framebuffer);
@@ -9091,9 +9153,9 @@ void main() {
         const rectX = Number.isFinite(strokeRect.x) ? strokeRect.x : 0;
         const rectY = Number.isFinite(strokeRect.y) ? strokeRect.y : 0;
 
-        drawSource(strokeTexture, rectWidth, rectHeight, rectX, rectY);
+        drawStrokeSource(rectWidth, rectHeight, rectX, rectY);
       } else {
-        drawSource(strokeTexture, width, height);
+        drawStrokeSource(width, height);
       }
 
       gl.bindVertexArray(null);
@@ -15481,12 +15543,16 @@ void main() {
         layer.type !== "background" &&
         layer.id !== "background"
       );
+      const needsClipBaseTexture = (layer) => Boolean(
+        layer?.visible !== false &&
+        this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id))
+      );
       const clipBaseLayerIds = new Set();
       let pendingClipBaseLayerId = "";
 
       orderedPreviewLayers.forEach((layer) => {
         if (layer?.clippingMask === true) {
-          if (pendingClipBaseLayerId) {
+          if (pendingClipBaseLayerId && needsClipBaseTexture(layer)) {
             clipBaseLayerIds.add(pendingClipBaseLayerId);
           }
         } else {
@@ -16740,12 +16806,23 @@ void main() {
         layer.type !== "background" &&
         layer.id !== "background"
       );
+      const needsClipBaseTexture = (layer) => Boolean(
+        layer?.visible !== false &&
+        (
+          this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id)) ||
+          (
+            options.activeStrokeTexture &&
+            activeStrokeMode !== "eraser" &&
+            layer?.id === activeStrokeLayerId
+          )
+        )
+      );
       const clipBaseLayerIds = new Set();
       let pendingClipBaseLayerId = "";
 
       orderedLayers.forEach((layer) => {
         if (layer?.clippingMask === true) {
-          if (pendingClipBaseLayerId) {
+          if (pendingClipBaseLayerId && needsClipBaseTexture(layer)) {
             clipBaseLayerIds.add(pendingClipBaseLayerId);
           }
         } else {
@@ -16756,10 +16833,18 @@ void main() {
       const activeStrokeLayer = activeStrokeLayerIndex >= 0 ? renderableLayers[activeStrokeLayerIndex] : null;
       const activeStrokeLayerHasBlendMode = Boolean(activeStrokeLayer && this.hasAdvancedLayerBlendMode(activeStrokeLayer));
       const activeStrokeLayerHasEffects = Boolean(activeStrokeLayer && this.hasEnabledLayerEffects(activeStrokeLayer));
+      const activeStrokeIsClipBaseLayer = Boolean(
+        options.activeStrokeTexture &&
+        activeStrokeLayer &&
+        clipBaseLayerIds.has(activeStrokeLayer.id)
+      );
       const activeStrokeUsesClippingMask = Boolean(
         options.activeStrokeTexture &&
         hasClippingMasks &&
-        activeStrokeLayer?.clippingMask === true
+        (
+          activeStrokeLayer?.clippingMask === true ||
+          activeStrokeIsClipBaseLayer
+        )
       );
       const activeStrokeDefersLayerEffects = Boolean(
         options.activeStrokeTexture &&
@@ -16792,9 +16877,16 @@ void main() {
         options.activeStrokeTexture &&
         activeStrokeMode !== "eraser" &&
         activeStrokeLayer &&
-        !activeStrokeHasClip &&
-        activeStrokeLayerUsesAdvancedCompositing
+        (
+          (!activeStrokeHasClip && activeStrokeLayerUsesAdvancedCompositing) ||
+          activeStrokeIsClipBaseLayer
+        )
       );
+      const activeStrokeScratchClipRects = activeStrokeClipRects?.length
+        ? activeStrokeClipRects
+        : activeStrokeClipRect
+          ? [activeStrokeClipRect]
+          : [];
 
       if (!activeStrokeNeedsScratchMerge && this.activeStrokeScratchTarget) {
         this.deleteActiveStrokeScratchTarget();
@@ -17372,6 +17464,7 @@ void main() {
           const isClippingLayer = layer.clippingMask === true;
           const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
           const isActiveStrokeLayer = options.activeStrokeTexture && layer.id === activeStrokeLayerId;
+          const isClipBaseLayer = clipBaseLayerIds.has(layer.id);
           const isRasterTransformPreviewLayer = rasterTransformPreview?.layerId === layer.id;
           const isVectorTextTransformPreviewLayer = vectorTextTransformPreviewLayerId === layer.id;
           const eraserMaskTexture = isActiveStrokeLayer && activeStrokeMode === "eraser"
@@ -17423,7 +17516,7 @@ void main() {
           }
 
           if (!isClippingLayer) {
-            const shouldMaterializeClipBase = hasClippingMasks && clipBaseLayerIds.has(layer.id);
+            const shouldMaterializeClipBase = hasClippingMasks && isClipBaseLayer;
             const baseTarget = shouldMaterializeClipBase
               ? this.getRenderableLayerTarget(layer, layerTarget, {
                   forceSingleTexture: true,
@@ -17497,12 +17590,19 @@ void main() {
                 layerTarget.texture,
                 options.activeStrokeTexture,
                 activeStrokeRect,
+                {
+                  clipRects: activeStrokeScratchClipRects,
+                  hasClip: activeStrokeHasClip,
+                },
               );
 
               if (mergedTarget?.texture) {
                 renderTarget = mergedTarget;
                 didMergeActiveStroke = true;
                 didDrawActiveStroke = true;
+                if (!isClippingLayer && isClipBaseLayer) {
+                  currentClipBase = this.createClipBaseForLayer(layer, mergedTarget, layer.visible !== false);
+                }
                 bindArtboardProgram();
               }
             }

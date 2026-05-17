@@ -1,6 +1,35 @@
 const FILL_COVERAGE_MAX = 255;
 const FILL_EDGE_AA_RADIUS = 1;
 const MAX_FILL_TOLERANCE = 255;
+const TILE_META_STRIDE = 8;
+const TILE_META_X = 0;
+const TILE_META_Y = 1;
+const TILE_META_WIDTH = 2;
+const TILE_META_HEIGHT = 3;
+const TILE_META_TX = 4;
+const TILE_META_TY = 5;
+const TILE_META_PIXELS_OFFSET = 6;
+const TILE_META_PIXELS_LENGTH = 7;
+const DEFAULT_WASM_URL = "../../wasm/pixel_core.wasm";
+
+const wasmCoreState = {
+  error: null,
+  exports: null,
+  initMs: 0,
+  instance: null,
+  lastInitMs: 0,
+  promise: null,
+  status: "idle",
+  unavailable: false,
+};
+
+function nowMs() {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+
+  return Date.now();
+}
 
 function clamp(value, min, max) {
   const number = Number(value);
@@ -41,6 +70,41 @@ function pixelsMatchTolerance(pixels, offset, red, green, blue, alpha, tolerance
   const da = pixels[offset + 3] - alpha;
 
   return dr * dr + dg * dg + db * db + da * da <= toleranceSq;
+}
+
+function floorDiv(value, divisor) {
+  const quotient = Math.trunc(value / divisor);
+  const remainder = value % divisor;
+
+  return remainder !== 0 && ((remainder < 0) !== (divisor < 0))
+    ? quotient - 1
+    : quotient;
+}
+
+function normalizeFillInput(payload = {}) {
+  const width = Math.max(1, Math.round(Number(payload.width) || 1));
+  const height = Math.max(1, Math.round(Number(payload.height) || 1));
+  const seedX = Math.floor(Number(payload.seedX) || 0);
+  const seedY = Math.floor(Number(payload.seedY) || 0);
+  const tolerance = clamp(payload.tolerance, 0, MAX_FILL_TOLERANCE);
+  const sourceEmpty = payload.sourceEmpty === true;
+  const sourceSparse = payload.sourceSparse === true;
+
+  if (seedX < 0 || seedY < 0 || seedX >= width || seedY >= height) {
+    return null;
+  }
+
+  return {
+    height,
+    originX: Math.round(Number(payload.originX) || 0),
+    originY: Math.round(Number(payload.originY) || 0),
+    seedX,
+    seedY,
+    sourceEmpty,
+    sourceSparse,
+    tolerance,
+    width,
+  };
 }
 
 function floodFillMaskDense(pixels, width, height, seedX, seedY, tolerance) {
@@ -135,34 +199,16 @@ function floodFillMaskDense(pixels, width, height, seedX, seedY, tolerance) {
   };
 }
 
-function createEmptySourceFillMask(width, height) {
-  const pixelCount = width * height;
-  const mask = new Uint8Array(pixelCount);
-
-  mask.fill(1);
-
-  return {
-    bounds: {
-      maxX: width - 1,
-      maxY: height - 1,
-      minX: 0,
-      minY: 0,
-    },
-    filledCount: pixelCount,
-    mask,
-    stackBytes: 0,
-  };
-}
-
 function createSparseSource(payload = {}) {
   const tileSize = Math.max(1, Math.round(Number(payload.tileSize) || 1));
-  const tileMap = new Map();
+  const rawTiles = Array.isArray(payload.sparseTiles) ? payload.sparseTiles : [];
+  const tiles = [];
+  let minTx = Infinity;
+  let minTy = Infinity;
+  let maxTx = -Infinity;
+  let maxTy = -Infinity;
 
-  if (!Array.isArray(payload.sparseTiles)) {
-    return null;
-  }
-
-  payload.sparseTiles.forEach((tile) => {
+  rawTiles.forEach((tile) => {
     if (!tile?.pixelsBuffer) {
       return;
     }
@@ -171,42 +217,83 @@ function createSparseSource(payload = {}) {
     const y = Math.round(Number(tile.y) || 0);
     const width = Math.max(1, Math.round(Number(tile.width) || 1));
     const height = Math.max(1, Math.round(Number(tile.height) || 1));
-    const tx = Number.isFinite(tile.tx) ? Math.round(tile.tx) : Math.floor(x / tileSize);
-    const ty = Number.isFinite(tile.ty) ? Math.round(tile.ty) : Math.floor(y / tileSize);
+    const tx = Number.isFinite(Number(tile.tx)) ? Math.round(Number(tile.tx)) : floorDiv(x, tileSize);
+    const ty = Number.isFinite(Number(tile.ty)) ? Math.round(Number(tile.ty)) : floorDiv(y, tileSize);
     const pixels = new Uint8Array(tile.pixelsBuffer);
 
     if (pixels.byteLength !== width * height * 4) {
       return;
     }
 
-    tileMap.set(`${tx}:${ty}`, {
+    minTx = Math.min(minTx, tx);
+    minTy = Math.min(minTy, ty);
+    maxTx = Math.max(maxTx, tx);
+    maxTy = Math.max(maxTy, ty);
+    tiles.push({
       height,
       pixels,
+      pixelsLength: pixels.byteLength,
+      tx,
+      ty,
       width,
       x,
       y,
     });
   });
 
-  return tileMap.size > 0
-    ? {
-        tileMap,
-        tileSize,
-      }
-    : null;
-}
-
-function getSparsePixelOffset(source, documentX, documentY) {
-  const x = Math.floor(documentX);
-  const y = Math.floor(documentY);
-  const tx = Math.floor(x / source.tileSize);
-  const ty = Math.floor(y / source.tileSize);
-  const tile = source.tileMap.get(`${tx}:${ty}`);
-
-  if (!tile) {
+  if (!tiles.length || !Number.isFinite(minTx) || !Number.isFinite(minTy)) {
     return null;
   }
 
+  const lookupWidth = maxTx - minTx + 1;
+  const lookupHeight = maxTy - minTy + 1;
+  const tileLookup = new Int32Array(lookupWidth * lookupHeight);
+
+  tileLookup.fill(-1);
+
+  tiles.forEach((tile, index) => {
+    const lookupX = tile.tx - minTx;
+    const lookupY = tile.ty - minTy;
+
+    if (lookupX >= 0 && lookupY >= 0 && lookupX < lookupWidth && lookupY < lookupHeight) {
+      tileLookup[lookupY * lookupWidth + lookupX] = index;
+    }
+  });
+
+  return {
+    lookupHeight,
+    lookupOriginTx: minTx,
+    lookupOriginTy: minTy,
+    lookupWidth,
+    tileLookup,
+    tileSize,
+    tiles,
+  };
+}
+
+function getSparseTileIndex(source, documentX, documentY) {
+  const tx = floorDiv(Math.floor(documentX), source.tileSize);
+  const ty = floorDiv(Math.floor(documentY), source.tileSize);
+  const lookupX = tx - source.lookupOriginTx;
+  const lookupY = ty - source.lookupOriginTy;
+
+  if (lookupX < 0 || lookupY < 0 || lookupX >= source.lookupWidth || lookupY >= source.lookupHeight) {
+    return -1;
+  }
+
+  return source.tileLookup[lookupY * source.lookupWidth + lookupX];
+}
+
+function getSparsePixelOffset(source, documentX, documentY) {
+  const tileIndex = getSparseTileIndex(source, documentX, documentY);
+
+  if (tileIndex < 0) {
+    return null;
+  }
+
+  const tile = source.tiles[tileIndex];
+  const x = Math.floor(documentX);
+  const y = Math.floor(documentY);
   const localX = x - tile.x;
   const localY = y - tile.y;
 
@@ -329,6 +416,25 @@ function floodFillMaskSparse(source, width, height, seedX, seedY, tolerance, ori
   };
 }
 
+function createEmptySourceFillMask(width, height) {
+  const pixelCount = width * height;
+  const mask = new Uint8Array(pixelCount);
+
+  mask.fill(1);
+
+  return {
+    bounds: {
+      maxX: width - 1,
+      maxY: height - 1,
+      minX: 0,
+      minY: 0,
+    },
+    filledCount: pixelCount,
+    mask,
+    stackBytes: 0,
+  };
+}
+
 function getDilationRadius(tolerance) {
   const normalizedTolerance = clamp(tolerance, 0, MAX_FILL_TOLERANCE);
 
@@ -406,93 +512,474 @@ function createFillCoverageMask(mask, width, height, bounds, radius = 0) {
   return coverageMask;
 }
 
-function runColorFill(payload = {}) {
-  const width = Math.max(1, Math.round(Number(payload.width) || 1));
-  const height = Math.max(1, Math.round(Number(payload.height) || 1));
-  const seedX = Math.floor(Number(payload.seedX) || 0);
-  const seedY = Math.floor(Number(payload.seedY) || 0);
-  const tolerance = clamp(payload.tolerance, 0, MAX_FILL_TOLERANCE);
-  const sourceEmpty = payload.sourceEmpty === true;
-  const sourceSparse = payload.sourceSparse === true;
-  const pixels = sourceEmpty || sourceSparse ? null : new Uint8Array(payload.pixelsBuffer);
-  const sparseSource = sourceSparse ? createSparseSource(payload) : null;
+function resolveWasmUrl(payload = {}) {
+  const override = String(payload.wasmUrl || "").trim();
+  const rawUrl = override || DEFAULT_WASM_URL;
+
+  if (typeof URL === "function" && self?.location?.href) {
+    return new URL(rawUrl, self.location.href).href;
+  }
+
+  return rawUrl;
+}
+
+async function instantiateWasmFromUrl(url) {
+  if (typeof WebAssembly !== "object" || typeof fetch !== "function") {
+    throw new Error("WebAssembly or fetch is unavailable in this Worker.");
+  }
+
+  const imports = { env: {} };
+
+  if (typeof WebAssembly.instantiateStreaming === "function") {
+    try {
+      const streamed = await WebAssembly.instantiateStreaming(fetch(url), imports);
+
+      return streamed.instance || streamed;
+    } catch (streamingError) {
+      // Some servers do not serve .wasm as application/wasm. Fall back to bytes.
+    }
+  }
+
+  const response = await fetch(url);
+
+  if (!response?.ok) {
+    throw new Error(`Unable to fetch pixel_core.wasm: ${response?.status || "unknown"}`);
+  }
+
+  const bytes = await response.arrayBuffer();
+  const instantiated = await WebAssembly.instantiate(bytes, imports);
+
+  return instantiated.instance || instantiated;
+}
+
+function validateWasmExports(exports) {
+  const requiredFunctions = [
+    "alloc",
+    "free",
+    "flood_fill_dense_rgba",
+    "flood_fill_sparse_rgba",
+  ];
+
+  if (!exports?.memory || !(exports.memory.buffer instanceof ArrayBuffer)) {
+    throw new Error("pixel_core.wasm does not export memory.");
+  }
+
+  requiredFunctions.forEach((name) => {
+    if (typeof exports[name] !== "function") {
+      throw new Error(`pixel_core.wasm missing export: ${name}`);
+    }
+  });
+}
+
+async function initWasmCore(payload = {}) {
+  if (payload.disableWasm === true) {
+    throw new Error("WASM disabled for this request.");
+  }
+
+  if (wasmCoreState.exports) {
+    wasmCoreState.lastInitMs = 0;
+    return wasmCoreState;
+  }
+
+  if (wasmCoreState.unavailable && !payload.wasmUrl) {
+    throw wasmCoreState.error || new Error("WASM unavailable.");
+  }
+
+  if (!wasmCoreState.promise || payload.wasmUrl) {
+    const startedAt = nowMs();
+    const url = resolveWasmUrl(payload);
+
+    wasmCoreState.status = "loading";
+    wasmCoreState.lastInitMs = 0;
+    wasmCoreState.promise = instantiateWasmFromUrl(url)
+      .then((instance) => {
+        const exports = instance.exports || {};
+
+        validateWasmExports(exports);
+        wasmCoreState.error = null;
+        wasmCoreState.exports = exports;
+        wasmCoreState.initMs = nowMs() - startedAt;
+        wasmCoreState.instance = instance;
+        wasmCoreState.lastInitMs = wasmCoreState.initMs;
+        wasmCoreState.status = "ready";
+        wasmCoreState.unavailable = false;
+
+        return wasmCoreState;
+      })
+      .catch((error) => {
+        wasmCoreState.error = error;
+        wasmCoreState.exports = null;
+        wasmCoreState.initMs = nowMs() - startedAt;
+        wasmCoreState.instance = null;
+        wasmCoreState.lastInitMs = wasmCoreState.initMs;
+        wasmCoreState.status = "error";
+        wasmCoreState.unavailable = !payload.wasmUrl;
+
+        throw error;
+      });
+  }
+
+  return wasmCoreState.promise;
+}
+
+function getWasmU8(exports) {
+  return new Uint8Array(exports.memory.buffer);
+}
+
+function getWasmI32(exports) {
+  return new Int32Array(exports.memory.buffer);
+}
+
+function wasmAlloc(exports, byteLength) {
+  const size = Math.max(0, Math.round(Number(byteLength) || 0));
+  const ptr = exports.alloc(size) >>> 0;
+
+  if (size > 0 && ptr === 0) {
+    throw new Error(`WASM alloc failed for ${size} bytes.`);
+  }
+
+  return ptr;
+}
+
+function wasmFree(exports, ptr, byteLength) {
+  if (ptr) {
+    exports.free(ptr >>> 0, Math.max(0, Math.round(Number(byteLength) || 0)) >>> 0);
+  }
+}
+
+function reserveWasmStack(exports, pixelCount) {
+  if (typeof exports.reserve_stack === "function") {
+    const ok = exports.reserve_stack(Math.max(1, Math.round(Number(pixelCount) || 1))) | 0;
+
+    if (ok === 0) {
+      throw new Error("WASM flood stack reserve failed.");
+    }
+  }
+}
+
+function readWasmFillResult(exports, maskPtr, maskLength, outBoundsPtr) {
+  const outIndex = outBoundsPtr >> 2;
+  const out = getWasmI32(exports);
+  const minX = out[outIndex];
+  const minY = out[outIndex + 1];
+  const maxX = out[outIndex + 2];
+  const maxY = out[outIndex + 3];
+  const filledCount = out[outIndex + 4];
+  const stackBytes = out[outIndex + 5];
+  const mask = new Uint8Array(maskLength);
+
+  mask.set(getWasmU8(exports).subarray(maskPtr, maskPtr + maskLength));
+
+  return {
+    bounds: { maxX, maxY, minX, minY },
+    filledCount,
+    mask,
+    stackBytes,
+  };
+}
+
+function runWasmDense(exports, pixels, width, height, seedX, seedY, tolerance) {
+  const pixelCount = width * height;
+  const pixelsBytes = pixels.byteLength;
+  const maskBytes = pixelCount;
+  const outBoundsBytes = 6 * Int32Array.BYTES_PER_ELEMENT;
+  let pixelsPtr = 0;
+  let maskPtr = 0;
+  let outBoundsPtr = 0;
+
+  reserveWasmStack(exports, pixelCount);
+
+  try {
+    pixelsPtr = wasmAlloc(exports, pixelsBytes);
+    maskPtr = wasmAlloc(exports, maskBytes);
+    outBoundsPtr = wasmAlloc(exports, outBoundsBytes);
+    getWasmU8(exports).set(pixels, pixelsPtr);
+
+    const ok = exports.flood_fill_dense_rgba(
+      pixelsPtr,
+      width,
+      height,
+      seedX,
+      seedY,
+      tolerance,
+      maskPtr,
+      outBoundsPtr,
+    ) | 0;
+
+    if (ok === 0) {
+      return null;
+    }
+
+    return readWasmFillResult(exports, maskPtr, maskBytes, outBoundsPtr);
+  } finally {
+    wasmFree(exports, outBoundsPtr, outBoundsBytes);
+    wasmFree(exports, maskPtr, maskBytes);
+    wasmFree(exports, pixelsPtr, pixelsBytes);
+  }
+}
+
+function buildPackedSparseData(source) {
+  let totalBytes = 0;
+
+  source.tiles.forEach((tile) => {
+    tile.pixelsOffset = totalBytes;
+    tile.pixelsLength = tile.pixels.byteLength;
+    totalBytes += tile.pixels.byteLength;
+  });
+
+  const tilePixels = new Uint8Array(totalBytes);
+  const tileMeta = new Int32Array(source.tiles.length * TILE_META_STRIDE);
+
+  source.tiles.forEach((tile, index) => {
+    tilePixels.set(tile.pixels, tile.pixelsOffset);
+
+    const metaOffset = index * TILE_META_STRIDE;
+
+    tileMeta[metaOffset + TILE_META_X] = tile.x;
+    tileMeta[metaOffset + TILE_META_Y] = tile.y;
+    tileMeta[metaOffset + TILE_META_WIDTH] = tile.width;
+    tileMeta[metaOffset + TILE_META_HEIGHT] = tile.height;
+    tileMeta[metaOffset + TILE_META_TX] = tile.tx;
+    tileMeta[metaOffset + TILE_META_TY] = tile.ty;
+    tileMeta[metaOffset + TILE_META_PIXELS_OFFSET] = tile.pixelsOffset;
+    tileMeta[metaOffset + TILE_META_PIXELS_LENGTH] = tile.pixelsLength;
+  });
+
+  return { tileMeta, tilePixels };
+}
+
+function runWasmSparse(exports, source, width, height, seedX, seedY, tolerance, originX, originY) {
+  const pixelCount = width * height;
+  const maskBytes = pixelCount;
+  const outBoundsBytes = 6 * Int32Array.BYTES_PER_ELEMENT;
+  const { tileMeta, tilePixels } = buildPackedSparseData(source);
+  let tilePixelsPtr = 0;
+  let tileMetaPtr = 0;
+  let tileLookupPtr = 0;
+  let maskPtr = 0;
+  let outBoundsPtr = 0;
+
+  reserveWasmStack(exports, pixelCount);
+
+  try {
+    tilePixelsPtr = wasmAlloc(exports, tilePixels.byteLength);
+    tileMetaPtr = wasmAlloc(exports, tileMeta.byteLength);
+    tileLookupPtr = wasmAlloc(exports, source.tileLookup.byteLength);
+    maskPtr = wasmAlloc(exports, maskBytes);
+    outBoundsPtr = wasmAlloc(exports, outBoundsBytes);
+
+    getWasmU8(exports).set(tilePixels, tilePixelsPtr);
+    getWasmI32(exports).set(tileMeta, tileMetaPtr >> 2);
+    getWasmI32(exports).set(source.tileLookup, tileLookupPtr >> 2);
+
+    const ok = exports.flood_fill_sparse_rgba(
+      tilePixelsPtr,
+      tileMetaPtr,
+      source.tiles.length,
+      tileLookupPtr,
+      source.lookupWidth,
+      source.lookupHeight,
+      source.lookupOriginTx,
+      source.lookupOriginTy,
+      source.tileSize,
+      originX,
+      originY,
+      width,
+      height,
+      seedX,
+      seedY,
+      tolerance,
+      maskPtr,
+      outBoundsPtr,
+    ) | 0;
+
+    if (ok === 0) {
+      return null;
+    }
+
+    return readWasmFillResult(exports, maskPtr, maskBytes, outBoundsPtr);
+  } finally {
+    wasmFree(exports, outBoundsPtr, outBoundsBytes);
+    wasmFree(exports, maskPtr, maskBytes);
+    wasmFree(exports, tileLookupPtr, source.tileLookup.byteLength);
+    wasmFree(exports, tileMetaPtr, tileMeta.byteLength);
+    wasmFree(exports, tilePixelsPtr, tilePixels.byteLength);
+  }
+}
+
+async function tryRunWasmFill(payload, input, pixels, sparseSource, timings) {
+  if (input.sourceEmpty || payload.disableWasm === true) {
+    return null;
+  }
+
+  const initStartedAt = nowMs();
+  const core = await initWasmCore(payload);
+
+  timings.wasmInitMs = core.lastInitMs || Math.max(0, nowMs() - initStartedAt);
+
+  const wasmStartedAt = nowMs();
+  const result = input.sourceSparse
+    ? runWasmSparse(
+        core.exports,
+        sparseSource,
+        input.width,
+        input.height,
+        input.seedX,
+        input.seedY,
+        input.tolerance,
+        input.originX,
+        input.originY,
+      )
+    : runWasmDense(
+        core.exports,
+        pixels,
+        input.width,
+        input.height,
+        input.seedX,
+        input.seedY,
+        input.tolerance,
+      );
+
+  timings.wasmMs = nowMs() - wasmStartedAt;
+
+  return result;
+}
+
+async function runColorFill(payload = {}) {
+  const workerStartedAt = nowMs();
+  const timings = {
+    coverageMs: 0,
+    jsMs: 0,
+    wasmInitMs: 0,
+    wasmMs: 0,
+    workerMs: 0,
+  };
+  const input = normalizeFillInput(payload);
+
+  if (!input) {
+    return null;
+  }
+
+  const pixelCount = input.width * input.height;
+  const pixels = input.sourceEmpty || input.sourceSparse
+    ? null
+    : new Uint8Array(payload.pixelsBuffer);
+  const sparseSource = input.sourceSparse ? createSparseSource(payload) : null;
 
   if (
-    (!sourceEmpty && !sourceSparse && pixels.byteLength !== width * height * 4) ||
-    (sourceSparse && !sparseSource) ||
-    seedX < 0 ||
-    seedY < 0 ||
-    seedX >= width ||
-    seedY >= height
+    (!input.sourceEmpty && !input.sourceSparse && pixels.byteLength !== pixelCount * 4) ||
+    (input.sourceSparse && !sparseSource)
   ) {
     return null;
   }
 
-  const fillResult = sourceEmpty
-    ? createEmptySourceFillMask(width, height)
-    : sourceSparse
-      ? floodFillMaskSparse(
-          sparseSource,
-          width,
-          height,
-          seedX,
-          seedY,
-          tolerance,
-          Math.round(Number(payload.originX) || 0),
-          Math.round(Number(payload.originY) || 0),
-        )
-      : floodFillMaskDense(pixels, width, height, seedX, seedY, tolerance);
+  let fillResult = null;
+  let engine = "js";
+  let wasmError = "";
+
+  try {
+    fillResult = await tryRunWasmFill(payload, input, pixels, sparseSource, timings);
+    if (fillResult) {
+      engine = "wasm";
+    }
+  } catch (error) {
+    wasmError = error?.message || String(error);
+    engine = "js";
+  }
 
   if (!fillResult) {
+    const jsStartedAt = nowMs();
+
+    fillResult = input.sourceEmpty
+      ? createEmptySourceFillMask(input.width, input.height)
+      : input.sourceSparse
+        ? floodFillMaskSparse(
+            sparseSource,
+            input.width,
+            input.height,
+            input.seedX,
+            input.seedY,
+            input.tolerance,
+            input.originX,
+            input.originY,
+          )
+        : floodFillMaskDense(pixels, input.width, input.height, input.seedX, input.seedY, input.tolerance);
+    timings.jsMs = nowMs() - jsStartedAt;
+    engine = "js";
+  }
+
+  if (!fillResult) {
+    timings.workerMs = nowMs() - workerStartedAt;
+
     return null;
   }
 
-  const coverageRadius = getDilationRadius(tolerance);
+  const coverageStartedAt = nowMs();
+  const coverageRadius = getDilationRadius(input.tolerance);
   const coverageMask = createFillCoverageMask(
     fillResult.mask,
-    width,
-    height,
+    input.width,
+    input.height,
     fillResult.bounds,
     coverageRadius,
   );
 
+  timings.coverageMs = nowMs() - coverageStartedAt;
+  timings.workerMs = nowMs() - workerStartedAt;
+
   return {
     bounds: fillResult.bounds,
     coverageMaskBuffer: coverageMask.buffer,
+    engine,
     filledCount: fillResult.filledCount,
     maskBuffer: fillResult.mask.buffer,
     stackBytes: fillResult.stackBytes,
+    timings,
+    wasmError,
   };
+}
+
+async function handleMessage(message = {}) {
+  if (message.type === "color-fill") {
+    const result = await runColorFill(message.payload || {});
+    const transferList = result
+      ? [result.maskBuffer, result.coverageMaskBuffer]
+      : [];
+
+    self.postMessage({
+      id: message.id,
+      ok: true,
+      result,
+    }, transferList);
+    return;
+  }
+
+  self.postMessage({
+    error: `Unknown pixel worker operation: ${message.type}`,
+    id: message.id,
+    ok: false,
+  });
 }
 
 self.onmessage = (event) => {
   const message = event.data || {};
 
-  try {
-    if (message.type === "color-fill") {
-      const result = runColorFill(message.payload);
-      const transferList = result
-        ? [result.maskBuffer, result.coverageMaskBuffer]
-        : [];
-
-      self.postMessage({
-        id: message.id,
-        ok: true,
-        result,
-      }, transferList);
-      return;
-    }
-
-    self.postMessage({
-      error: `Unknown pixel worker operation: ${message.type}`,
-      id: message.id,
-      ok: false,
-    });
-  } catch (error) {
+  handleMessage(message).catch((error) => {
     self.postMessage({
       error: error?.message || String(error),
       id: message.id,
       ok: false,
     });
-  }
+  });
 };
+
+self.__pixelWorkerTestHooks = Object.freeze({
+  buildPackedSparseData,
+  createFillCoverageMask,
+  createSparseSource,
+  floodFillMaskDense,
+  floodFillMaskSparse,
+  getSparseTileIndex,
+  initWasmCore,
+  runColorFill,
+});

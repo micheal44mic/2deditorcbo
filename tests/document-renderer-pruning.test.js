@@ -4570,7 +4570,7 @@ test("document renderer composites supported layer blend modes in shader", () =>
   assert.match(source, /drawScreenTexture\(previewCompositeState\.read\.texture/);
   assert.doesNotMatch(previewCacheBody, /copyCurrentFramebufferToLayerBlendBackdrop/);
   assert.doesNotMatch(drawToCanvasBody, /copyCurrentFramebufferToLayerBlendBackdrop/);
-  assert.match(source, /renderLayerWithActiveStrokeTexture\(layerTexture, strokeTexture, strokeRect = null\)/);
+  assert.match(source, /renderLayerWithActiveStrokeTexture\(layerTexture, strokeTexture, strokeRect = null, options = \{\}\)/);
   assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
   assert.match(drawToCanvasBody, /activeStrokeNeedsFullStack/);
   assert.match(drawToCanvasBody, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);

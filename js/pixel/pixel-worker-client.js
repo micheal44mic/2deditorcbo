@@ -1,6 +1,6 @@
 (function registerPixelWorkerClient(namespace) {
   const DEFAULT_TIMEOUT_MS = 4000;
-  const DEFAULT_WORKER_URL = "./js/workers/pixel-worker.js?v=android-v3.4-fillworker-sparse";
+  const DEFAULT_WORKER_URL = "./js/workers/pixel-worker.js?v=android-v3.6-fillwasm-all";
 
   class PixelWorkerClient {
     constructor(options = {}) {

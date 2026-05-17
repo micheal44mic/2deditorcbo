@@ -31,6 +31,14 @@
   let referenceLayerId = String(namespace.colorFillReferenceLayerId || "").trim();
   let fillWorkerJobSequence = 0;
 
+  function nowMs() {
+    if (typeof performance !== "undefined" && typeof performance.now === "function") {
+      return performance.now();
+    }
+
+    return Date.now();
+  }
+
   function clamp(value, min, max) {
     const number = Number(value);
 
@@ -88,7 +96,7 @@
   }
 
   function isColorFillWorkerEnabled() {
-    return isAndroidPerformanceMode() && namespace.colorFillWorkerEnabled !== false;
+    return namespace.colorFillWorkerEnabled !== false;
   }
 
   function getPixelWorkerClient() {
@@ -199,6 +207,7 @@
     const sourceEmpty = referenceSource?.empty === true;
     const sourceSparse = referenceSource?.sparse === true;
     const sourceDense = referenceSource?.pixels instanceof Uint8Array;
+    const serializeStartedAt = nowMs();
 
     if (!client?.runColorFill || (!sourceEmpty && !sourceSparse && !sourceDense)) {
       return Promise.reject(new Error("Color fill worker unavailable."));
@@ -231,21 +240,33 @@
       transferList.push(workerPixels.buffer);
     }
 
+    const serializeMs = nowMs() - serializeStartedAt;
+    const workerStartedAt = nowMs();
+
     return client.runColorFill(payload, transferList, {
       timeoutMs: COLOR_FILL_WORKER_TIMEOUT_MS,
     }).then((result) => {
+      const workerRoundTripMs = nowMs() - workerStartedAt;
+
       if (!result?.maskBuffer || !result?.coverageMaskBuffer || !result.bounds) {
         return null;
       }
 
       return {
         coverageMask: new Uint8Array(result.coverageMaskBuffer),
+        engine: result.engine === "wasm" ? "wasm" : "js",
         fillResult: {
           bounds: result.bounds,
           filledCount: Math.max(0, Math.round(Number(result.filledCount) || 0)),
           mask: new Uint8Array(result.maskBuffer),
           stackBytes: Math.max(0, Math.round(Number(result.stackBytes) || 0)),
         },
+        timings: {
+          ...(result.timings || {}),
+          serializeMs,
+          workerRoundTripMs,
+        },
+        wasmError: result.wasmError || "",
       };
     });
   }
@@ -404,7 +425,7 @@
 
     switch (details.status) {
       case "applied":
-        return "Fill: Worker";
+        return details.engine === "wasm" ? "Fill: WASM" : "Fill: Worker";
       case "fallback":
         return "Fill: JS fallback";
       case "sync":
@@ -421,7 +442,7 @@
   }
 
   function showFillWorkerToast(statusOrDetails = "sync") {
-    if (!isAndroidPerformanceMode()) {
+    if (namespace.colorFillWorkerStatusToastEnabled === false) {
       return;
     }
 
@@ -1751,10 +1772,13 @@
       return false;
     }
 
+    const fillStartedAt = nowMs();
+    const readStartedAt = nowMs();
     const referenceSource = createReferencePixelSource(gl, referenceTarget, {
       boundAnalysis: useExplicitReference,
       clipRect: referenceClipRect,
     });
+    const readPixelsMs = nowMs() - readStartedAt;
     const analysisRect = getFillAnalysisRect(referenceSource, width, height, seedX, seedY, referenceClipRect);
 
     if (!analysisRect) {
@@ -1781,6 +1805,11 @@
       writableLayer,
     };
     const runSyncFill = (status = "sync") => {
+      const statusDetails = typeof status === "object" && status
+        ? status
+        : { status };
+      const resolvedStatus = statusDetails.status || "sync";
+      const jsStartedAt = nowMs();
       const fillResult = floodFillMask(
         referenceSource,
         analysisRect.width,
@@ -1792,12 +1821,21 @@
         analysisRect.y,
         { selectionContains: clipContains },
       );
+      const jsMs = nowMs() - jsStartedAt;
 
       if (!fillResult) {
         showFillWorkerToast("empty");
+        namespace.lastColorFillTimings = {
+          engine: "js",
+          jsMs,
+          readPixelsMs,
+          status: "empty",
+          totalMs: nowMs() - fillStartedAt,
+        };
         return false;
       }
 
+      const coverageStartedAt = nowMs();
       const coverageRadius = getDilationRadius(tolerance);
       const coverageMask = createFillCoverageMask(
         fillResult.mask,
@@ -1806,9 +1844,21 @@
         fillResult.bounds,
         coverageRadius,
       );
+      const coverageMs = nowMs() - coverageStartedAt;
 
+      const applyStartedAt = nowMs();
       const didApply = finishColorFillFromMask(fillContext, fillResult, coverageMask);
+      const applyMs = nowMs() - applyStartedAt;
 
+      namespace.lastColorFillTimings = {
+        applyMs,
+        coverageMs,
+        engine: "js",
+        jsMs,
+        readPixelsMs,
+        status: didApply ? resolvedStatus : "skipped",
+        totalMs: nowMs() - fillStartedAt,
+      };
       showFillWorkerToast(didApply ? status : "skipped");
 
       return didApply;
@@ -1824,9 +1874,12 @@
 
       fillWorkerJobSequence = jobId;
       namespace.lastColorFillWorker = {
+        engine: "pending",
         height: analysisRect.height,
         jobId,
+        readPixelsMs,
         source: "color-fill",
+        sourceType: referenceSource?.sparse === true ? "sparse" : referenceSource?.empty === true ? "empty" : "dense",
         status: "pending",
         width: analysisRect.width,
       };
@@ -1839,29 +1892,56 @@
 
           if (!workerResult) {
             namespace.lastColorFillWorker = {
+              engine: "js",
               jobId,
+              readPixelsMs,
               source: "color-fill",
               status: "empty",
+              timings: workerResult?.timings || null,
+            };
+            namespace.lastColorFillTimings = {
+              ...(workerResult?.timings || {}),
+              engine: "js",
+              readPixelsMs,
+              status: "empty",
+              totalMs: nowMs() - fillStartedAt,
             };
             showFillWorkerToast("empty");
             return false;
           }
 
+          const applyStartedAt = nowMs();
           const didApply = finishColorFillFromMask(
             fillContext,
             workerResult.fillResult,
             workerResult.coverageMask,
           );
+          const applyMs = nowMs() - applyStartedAt;
+          const timings = {
+            ...(workerResult.timings || {}),
+            applyMs,
+            engine: workerResult.engine || "js",
+            readPixelsMs,
+            status: didApply ? "applied" : "skipped",
+            totalMs: nowMs() - fillStartedAt,
+          };
 
+          namespace.lastColorFillTimings = timings;
           namespace.lastColorFillWorker = {
             didApply,
+            engine: workerResult.engine || "js",
             height: analysisRect.height,
             jobId,
             source: "color-fill",
+            sourceType: referenceSource?.sparse === true ? "sparse" : referenceSource?.empty === true ? "empty" : "dense",
             status: didApply ? "applied" : "skipped",
+            timings,
+            wasmError: workerResult.wasmError || "",
             width: analysisRect.width,
           };
-          showFillWorkerToast(didApply ? "applied" : "skipped");
+          showFillWorkerToast(didApply
+            ? { engine: workerResult.engine || "js", status: "applied" }
+            : "skipped");
 
           return didApply;
         })
@@ -1871,8 +1951,10 @@
           }
 
           namespace.lastColorFillWorker = {
+            engine: "js",
             error: error?.message || String(error),
             jobId,
+            readPixelsMs,
             source: "color-fill",
             status: "fallback",
           };

@@ -8,7 +8,7 @@ document.addEventListener(
 
 (() => {
   const namespace = window.CBO = window.CBO || {};
-  const androidBuildVersion = "v3.4-fillworker-sparse";
+  const androidBuildVersion = "v3.6-fillwasm-all";
   const androidIndicator = document.getElementById("android-device-indicator");
 
   function isAndroidDevice() {
@@ -36,6 +36,7 @@ document.addEventListener(
   namespace.deviceIsAndroid = isAndroid;
   namespace.androidBuildVersion = androidBuildVersion;
   namespace.artboardSelectionEnabled = true;
+  namespace.colorFillWorkerEnabled = true;
   namespace.isDocumentHistoryDisabled = isDocumentHistoryDisabled;
 
   if (isAndroid) {
@@ -50,7 +51,7 @@ document.addEventListener(
     namespace.viewportLayerCullingEnabled = true;
     namespace.interactiveBrushPrewarmEnabled = false;
 
-    // Android v3.4-fillworker-sparse: keep history, artboard selection, and
+    // Android v3.6-fillwasm-all: keep history, artboard selection, and
     // residency enabled; only bypass pixel-perfect preview/transform work.
     namespace.androidFullRenderMode = true;
     namespace.androidPreviewCacheEnabled = false;
@@ -76,7 +77,6 @@ document.addEventListener(
     namespace.androidFastTransformCommitEnabled = true;
     namespace.androidFastResizeBoundsEnabled = true;
     namespace.androidLiveTransformPreviewEnabled = true;
-    namespace.colorFillWorkerEnabled = true;
   }
 
   document.body?.classList.toggle("cbo-device-android", isAndroid);
