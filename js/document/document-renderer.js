@@ -11,8 +11,8 @@
   const VIEWPORT_RENDER_OVERSCAN_CSS_PX = 256;
   const VIEWPORT_CULLING_DEBUG_EVENT = "cbo:viewport-culling-debug";
   const VIEWPORT_LAYER_CULL_SAFE_TYPES = new Set(["paint", "image", "raster", "bitmap"]);
-  const ARTBOARD_RESIDENCY_IDLE_DELAY_MS = 1400;
-  const ARTBOARD_RESIDENCY_WARM_HOLD_MS = 2400;
+  const ARTBOARD_RESIDENCY_IDLE_DELAY_MS = 7000;
+  const ARTBOARD_RESIDENCY_WARM_HOLD_MS = 7000;
   const ARTBOARD_RESIDENCY_SOFT_BUDGET_BYTES = 384 * 1024 * 1024;
   const ARTBOARD_RESIDENCY_HARD_BUDGET_BYTES = 640 * 1024 * 1024;
   const ARTBOARD_RESIDENCY_PREFETCH_CSS_PX = 640;
@@ -35,8 +35,8 @@
   const DESKTOP_RENDER_DPR_CAP = 2;
   const MOBILE_RENDER_DPR_CAP = 1.5;
   const LOW_MEMORY_MOBILE_RENDER_DPR_CAP = 1.25;
-  const ANDROID_RENDER_DPR_CAP = 1;
-  const LOW_MEMORY_ANDROID_RENDER_DPR_CAP = 1;
+  const ANDROID_RENDER_DPR_CAP = 1.25;
+  const LOW_MEMORY_ANDROID_RENDER_DPR_CAP = 1.15;
   const MOBILE_PREVIEW_CACHE_MAX_SIZE = 1536;
   const MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX = 128;
   const MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 128;
@@ -301,6 +301,7 @@ precision highp float;
 
 uniform sampler2D u_texture;
 uniform mat3 u_destToSourceUv;
+uniform vec4 u_sourceUvRect;
 uniform vec4 u_quadEdges[4];
 uniform float u_edgeFeatherPixels;
 uniform float u_opacity;
@@ -346,7 +347,8 @@ void main() {
 
   vec2 unitUv = mapped.xy / mapped.z;
   vec2 clampedUnitUv = clamp(unitUv, vec2(0.0), vec2(1.0));
-  vec2 uv = vec2(clampedUnitUv.x, 1.0 - clampedUnitUv.y);
+  vec2 sourceUnitUv = u_sourceUvRect.xy + clampedUnitUv * u_sourceUvRect.zw;
+  vec2 uv = vec2(sourceUnitUv.x, 1.0 - sourceUnitUv.y);
 
   outColor = texture(u_texture, uv) * u_opacity * coverage;
 }
@@ -1106,8 +1108,23 @@ void main() {
     return isAndroidPerformanceMode() && namespace.androidFullRenderMode === true;
   }
 
-  function isAndroidPreviewCacheDisabled() {
+  function isAndroidZoomOutPreviewCacheAllowed(options = {}) {
+    if (!isAndroidPerformanceMode() || namespace.androidZoomOutPreviewCacheEnabled !== true) {
+      return false;
+    }
+
+    if (options.activeStrokeTexture || options.deferPreviewCacheUpdate === true) {
+      return false;
+    }
+
+    const zoom = Math.abs(Number(options.camera?.zoom) || 1);
+
+    return zoom < PREVIEW_CACHE_ZOOM_THRESHOLD;
+  }
+
+  function isAndroidPreviewCacheDisabled(options = {}) {
     return isAndroidPerformanceMode() &&
+      !isAndroidZoomOutPreviewCacheAllowed(options) &&
       (namespace.androidFullRenderMode === true || namespace.androidPreviewCacheEnabled === false);
   }
 
@@ -1348,8 +1365,12 @@ void main() {
       return isAndroidFullRenderMode();
     }
 
-    static isAndroidPreviewCacheDisabled() {
-      return isAndroidPreviewCacheDisabled();
+    static isAndroidPreviewCacheDisabled(options = {}) {
+      return isAndroidPreviewCacheDisabled(options);
+    }
+
+    static isAndroidZoomOutPreviewCacheAllowed(options = {}) {
+      return isAndroidZoomOutPreviewCacheAllowed(options);
     }
 
     static isAndroidDirtyRegionsDisabled() {
@@ -2637,9 +2658,20 @@ void main() {
       return Math.max(16, Math.min(1024, Math.round(requested)));
     }
 
-    getPreviewCacheMaxSize() {
+    getPreviewCacheMaxSize(options = {}) {
       const fallback = getDefaultPreviewCacheMaxSize();
-      const requested = Number(this.options?.previewCacheMaxSize ?? fallback);
+      let requested = Number(options.previewCacheMaxSize);
+
+      if (
+        (!Number.isFinite(requested) || requested <= 0) &&
+        options.androidZoomOutPreviewCache === true
+      ) {
+        requested = Number(namespace.androidZoomOutPreviewCacheMaxSize);
+      }
+
+      if (!Number.isFinite(requested) || requested <= 0) {
+        requested = Number(this.options?.previewCacheMaxSize);
+      }
 
       return Math.max(1, Math.floor(Number.isFinite(requested) && requested > 0 ? requested : fallback));
     }
@@ -3537,6 +3569,7 @@ void main() {
           destToSourceUv: gl.getUniformLocation(program, "u_destToSourceUv"),
           edgeFeatherPixels: gl.getUniformLocation(program, "u_edgeFeatherPixels"),
           quadEdges: gl.getUniformLocation(program, "u_quadEdges[0]"),
+          sourceUvRect: gl.getUniformLocation(program, "u_sourceUvRect"),
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
@@ -3577,6 +3610,7 @@ void main() {
           destToSourceUv: gl.getUniformLocation(program, "u_destToSourceUv"),
           edgeFeatherPixels: gl.getUniformLocation(program, "u_edgeFeatherPixels"),
           quadEdges: gl.getUniformLocation(program, "u_quadEdges[0]"),
+          sourceUvRect: gl.getUniformLocation(program, "u_sourceUvRect"),
           texture: gl.getUniformLocation(program, "u_texture"),
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
@@ -4441,6 +4475,31 @@ void main() {
       ]);
     }
 
+    normalizeTextureSourceUvRect(rect = null) {
+      const x = Number(rect?.x);
+      const y = Number(rect?.y);
+      const width = Number(rect?.width);
+      const height = Number(rect?.height);
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !Number.isFinite(width) ||
+        !Number.isFinite(height) ||
+        width <= 0 ||
+        height <= 0
+      ) {
+        return { height: 1, width: 1, x: 0, y: 0 };
+      }
+
+      return {
+        height,
+        width,
+        x,
+        y,
+      };
+    }
+
     normalizeRasterWarpControlPoints(controlPoints) {
       if (!Array.isArray(controlPoints) || controlPoints.length !== 4) {
         return null;
@@ -4714,6 +4773,7 @@ void main() {
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
       const edgeFeatherPixels = this.getRasterTransformEdgeFeatherPixels(options);
       const textureFilter = Number.isFinite(options.textureFilter) ? options.textureFilter : null;
+      const sourceUvRect = this.normalizeTextureSourceUvRect(options.sourceUvRect);
       const matrix = this.computeAffineDestToSourceUvMatrix(quad);
       const edgeData = this.computeQuadEdgeUniformData(quad);
       const vertices = this.createExpandedQuadDrawVertices(
@@ -4739,6 +4799,7 @@ void main() {
       gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniformMatrix3fv(uniforms.destToSourceUv, false, matrix);
+      gl.uniform4f(uniforms.sourceUvRect, sourceUvRect.x, sourceUvRect.y, sourceUvRect.width, sourceUvRect.height);
       gl.uniform4fv(uniforms.quadEdges, edgeData);
       gl.uniform1f(uniforms.edgeFeatherPixels, edgeFeatherPixels);
       gl.uniform1f(uniforms.opacity, opacity);
@@ -4786,6 +4847,7 @@ void main() {
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
       const edgeFeatherPixels = this.getRasterTransformEdgeFeatherPixels(options);
       const textureFilter = Number.isFinite(options.textureFilter) ? options.textureFilter : null;
+      const sourceUvRect = this.normalizeTextureSourceUvRect(options.sourceUvRect);
       const edgeData = this.computeQuadEdgeUniformData(quad);
       const vertices = this.createExpandedQuadDrawVertices(
         quad,
@@ -4810,6 +4872,7 @@ void main() {
       gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniformMatrix3fv(uniforms.destToSourceUv, false, matrix);
+      gl.uniform4f(uniforms.sourceUvRect, sourceUvRect.x, sourceUvRect.y, sourceUvRect.width, sourceUvRect.height);
       gl.uniform4fv(uniforms.quadEdges, edgeData);
       gl.uniform1f(uniforms.edgeFeatherPixels, edgeFeatherPixels);
       gl.uniform1f(uniforms.opacity, opacity);
@@ -6413,11 +6476,7 @@ void main() {
       const warmHold = Number.isFinite(Number(this.options?.artboardResidencyWarmHoldMs))
         ? Math.max(0, Number(this.options.artboardResidencyWarmHoldMs))
         : ARTBOARD_RESIDENCY_WARM_HOLD_MS;
-      const delay = pressure === "hard"
-        ? 0
-        : pressure === "soft"
-          ? Math.min(Math.max(0, idleDelay), 250)
-          : Math.max(idleDelay, warmHold);
+      const delay = Math.max(idleDelay, warmHold);
 
       this.artboardResidencyIdleTimer = window.setTimeout(() => {
         this.artboardResidencyIdleTimer = 0;
@@ -6574,7 +6633,7 @@ void main() {
       const documentRect = resolvedPreviewRect.documentRect;
       const documentWidth = documentRect.width;
       const documentHeight = documentRect.height;
-      const maxSize = this.getPreviewCacheMaxSize();
+      const maxSize = this.getPreviewCacheMaxSize(options);
       const scale = Math.min(1, maxSize / Math.max(documentWidth, documentHeight));
       const width = Math.max(1, Math.floor(documentWidth * scale));
       const height = Math.max(1, Math.floor(documentHeight * scale));
@@ -6614,7 +6673,7 @@ void main() {
     }
 
     createPreviewCache(options = {}) {
-      if (isAndroidPreviewCacheDisabled()) {
+      if (isAndroidPreviewCacheDisabled(options)) {
         if (this.previewTexture || this.previewFramebuffer) {
           this.deletePreviewCache();
         }
@@ -12460,22 +12519,26 @@ void main() {
             y: Number.isFinite(point?.y) ? point.y : 0,
           })),
           sourceRect: preview.sourceRect ? { ...preview.sourceRect } : null,
+          sourceUvRect: this.normalizeTextureSourceUvRect(preview.sourceUvRect),
           texture: preview.texture,
           transformMode,
           warpControlPoints,
         };
-        this.updateRasterTexture(preview.texture, {
-          bbox: preview.sourceRect || null,
-          height: preview.sourceRect?.height,
-          kind: "transformPreview",
-          label: "raster transform preview",
-          layerId: preview.layerId,
-          ownerId: `transform-preview-${preview.layerId}`,
-          ownerType: "scratch",
-          purgeable: true,
-          reason: "set-raster-transform-preview",
-          width: preview.sourceRect?.width,
-        });
+
+        if (preview.liveTexture !== true) {
+          this.updateRasterTexture(preview.texture, {
+            bbox: preview.sourceRect || null,
+            height: preview.sourceRect?.height,
+            kind: "transformPreview",
+            label: "raster transform preview",
+            layerId: preview.layerId,
+            ownerId: `transform-preview-${preview.layerId}`,
+            ownerType: "scratch",
+            purgeable: true,
+            reason: "set-raster-transform-preview",
+            width: preview.sourceRect?.width,
+          });
+        }
       }
 
       this.requestDraw();
@@ -14205,9 +14268,6 @@ void main() {
       }) : null;
 
       try {
-      let target = this.ensureWritableRasterTarget(layerId, {
-        source: `${source}-copy-on-write-detach`,
-      }) || this.rasterTargetsByLayerId.get(layerId);
       const bounds = namespace.documentBounds;
       const normalizedTransformMode = String(transformMode).trim().toLowerCase();
 
@@ -14215,30 +14275,14 @@ void main() {
         return false;
       }
 
-      const wasSparseTarget = this.isSparseRasterTarget(target);
-
-      if (wasSparseTarget) {
-        target = this.materializeRasterTarget(layerId, {
-          emit: false,
-          source,
-        }) || target;
-      }
-
-      const preferSparseRestore = wasSparseTarget || target?.materializedFromSparse === true;
-
       const destBounds = normalizedTransformMode === "warp"
         ? bounds?.rectToBounds?.(this.getRasterWarpBounds(warpControlPoints))
         : bounds?.quadToBounds?.(destQuad);
       const destRect = bounds?.boundsToRect?.(destBounds);
-      const destDirtyRect = this.padRasterRect(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING);
-      const targetRect = this.getRasterTargetDocumentRect(target);
-      const transformEscapesTarget = Boolean(
-        targetRect &&
-        (
-          !this.containsRasterHistoryRect(targetRect, destDirtyRect || destRect) ||
-          !this.containsRasterHistoryRect(targetRect, sourceRect)
-        )
-      );
+
+      // Fast path first. A pure move only needs placement history; materializing
+      // sparse tiles before this point can turn a cheap commit into GPU work.
+      let target = this.rasterTargetsByLayerId.get(layerId);
 
       if (this.getTranslateOnlyRasterTransformDelta({
         destQuad,
@@ -14252,6 +14296,30 @@ void main() {
           target,
         });
       }
+
+      target = this.ensureWritableRasterTarget(layerId, {
+        source: `${source}-copy-on-write-detach`,
+      }) || target;
+
+      const wasSparseTarget = this.isSparseRasterTarget(target);
+
+      if (wasSparseTarget) {
+        target = this.materializeRasterTarget(layerId, {
+          emit: false,
+          source,
+        }) || target;
+      }
+
+      const preferSparseRestore = wasSparseTarget || target?.materializedFromSparse === true;
+      const destDirtyRect = this.padRasterRect(destRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING);
+      const targetRect = this.getRasterTargetDocumentRect(target);
+      const transformEscapesTarget = Boolean(
+        targetRect &&
+        (
+          !this.containsRasterHistoryRect(targetRect, destDirtyRect || destRect) ||
+          !this.containsRasterHistoryRect(targetRect, sourceRect)
+        )
+      );
 
       if (this.isCroppedRasterTarget(target) || transformEscapesTarget) {
         return this.commitCroppedRasterTransform({
@@ -16720,15 +16788,21 @@ void main() {
             .slice(activeStrokeLayerIndex + 1)
             .some((layer) => this.hasRenderableRasterTarget(this.rasterTargetsByLayerId.get(layer.id)))
         );
-      const allowPreviewCache = options.allowPreviewCache === true && !isAndroidPreviewCacheDisabled();
       const previewCacheOptions = {
+        activeStrokeTexture: options.activeStrokeTexture,
         camera,
+        deferPreviewCacheUpdate: options.deferPreviewCacheUpdate,
         dpr: options.dpr,
         previewCacheOverscanCssPx: options.previewCacheOverscanCssPx,
         previewCacheScope: options.previewCacheScope,
         viewportHeight,
         viewportWidth,
       };
+      const androidZoomOutPreviewCacheAllowed = isAndroidZoomOutPreviewCacheAllowed(previewCacheOptions);
+
+      previewCacheOptions.androidZoomOutPreviewCache = androidZoomOutPreviewCacheAllowed;
+
+      const allowPreviewCache = options.allowPreviewCache === true && !isAndroidPreviewCacheDisabled(previewCacheOptions);
       const previewCacheDimensions = this.getPreviewCacheDimensions(previewCacheOptions);
       const previewCacheDocumentRect = previewCacheDimensions.documentRect;
       const canUsePreviewCacheAtCurrentZoom = this.shouldUsePreviewCacheForCamera(camera, previewCacheDimensions);
@@ -17193,6 +17267,7 @@ void main() {
           edgeFeatherPixels: rasterTransformPreview.edgeFeatherPixels,
           framebuffer: canvasCompositeState?.read?.framebuffer || null,
           opacity: rasterTransformPreview.opacity * layerOpacity,
+          sourceUvRect: rasterTransformPreview.sourceUvRect,
           textureFilter: gl.LINEAR,
           viewportHeight,
           viewportWidth,

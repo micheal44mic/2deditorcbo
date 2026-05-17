@@ -67,6 +67,7 @@ function createFakeGl() {
     UNSIGNED_BYTE: "UNSIGNED_BYTE",
     boundReadFramebuffer: null,
     boundTexture: null,
+    reads: [],
     uploads: [],
     bindFramebuffer(target, framebuffer) {
       if (target === this.READ_FRAMEBUFFER) {
@@ -80,6 +81,7 @@ function createFakeGl() {
     readPixels(x, y, width, height, _format, _type, output) {
       const source = this.boundReadFramebuffer;
 
+      this.reads.push({ height, width, x, y });
       output.fill(0);
 
       if (!source) {
@@ -124,14 +126,19 @@ test("color drop is wired to the Procreate-style fill module", () => {
   const colorDropSource = readRepoFile("js", "color-drop.js");
   const cssSource = readRepoFile("css", "color-drop.css");
   const imageRasterizerIndex = indexSource.indexOf("./js/images/image-rasterizer.js");
+  const pixelWorkerClientIndex = indexSource.indexOf("./js/pixel/pixel-worker-client.js");
   const colorFillIndex = indexSource.indexOf("./js/color-fill.js");
   const editorCanvasIndex = indexSource.indexOf("./js/editor-canvas.js");
   const appIndex = indexSource.indexOf("./js/app.js");
 
   assert.ok(imageRasterizerIndex > 0);
-  assert.ok(colorFillIndex > imageRasterizerIndex);
+  assert.ok(pixelWorkerClientIndex > imageRasterizerIndex);
+  assert.ok(colorFillIndex > pixelWorkerClientIndex);
   assert.ok(editorCanvasIndex > colorFillIndex);
   assert.ok(appIndex > editorCanvasIndex);
+  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/color-drop\.css\?v=android-v3\.4-fillworker-sparse" \/>/);
+  assert.match(indexSource, /<script src="\.\/js\/pixel\/pixel-worker-client\.js\?v=android-v3\.4-fillworker-sparse"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill\.js\?v=android-v3\.4-fillworker-sparse"><\/script>/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.beginDropDrag\?\.\(\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.dropColorAt\?\.\(dropX, dropY, color\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.endDropDrag\?\.\(\)/);
@@ -144,6 +151,7 @@ test("color drop is wired to the Procreate-style fill module", () => {
 
 test("color fill uses active layer pixels unless a reference layer is set", () => {
   const source = readRepoFile("js", "color-fill.js");
+  const cssSource = readRepoFile("css", "color-drop.css");
 
   assert.match(source, /function setReferenceLayerId\(layerId, options = \{\}\)/);
   assert.match(source, /recordReferenceStateChange\?\.\(previousLayerId, nextLayerId,/);
@@ -152,11 +160,25 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /function getReferenceTarget\(writeLayerId, fallbackTarget = null\)/);
   assert.match(source, /function createSparseReferencePixelSource\(gl, sparseTarget, options = \{\}\)/);
   assert.match(source, /function createReferencePixelSource\(gl, referenceTarget, options = \{\}\)/);
+  assert.match(source, /function isColorFillWorkerEnabled\(\)/);
+  assert.match(source, /namespace\.lastColorFillWorkerBlockReason = ""/);
+  assert.match(source, /function runColorFillWorker\(referenceSource, analysisRect, seedX, seedY, tolerance\)/);
+  assert.match(source, /function createSparseWorkerPayload\(referenceSource, transferList\)/);
+  assert.match(source, /referenceSource\?\.empty === true/);
+  assert.match(source, /referenceSource\?\.sparse === true/);
+  assert.match(source, /sourceEmpty,/);
+  assert.match(source, /sparseTiles,/);
+  assert.match(source, /sourceSparse: true/);
+  assert.match(source, /function finishColorFillFromMask\(context, fillResult, coverageMask\)/);
+  assert.match(source, /function ensureFillWorkerToast\(\)/);
+  assert.match(source, /function showFillWorkerToast\(statusOrDetails = "sync"\)/);
   assert.match(source, /function getFillAnalysisRect\(referenceSource, targetWidth, targetHeight, seedX, seedY, clipRect = null\)/);
   assert.match(source, /function getActiveFillArtboardRect\(layerId = ""\)/);
+  assert.match(source, /function getReferenceClipRect\(fillBounds, selectionRect = null\)/);
   assert.match(source, /function getReferencePixelOffset\(referenceSource, documentX, documentY\)/);
   assert.match(source, /const referenceTarget = getReferenceTarget\(writableLayer\.layerId, writableLayer\.existingTarget\)/);
   assert.match(source, /const referenceFramebuffer = referenceTarget\.framebuffer/);
+  assert.match(source, /clipRect: referenceClipRect/);
   assert.match(source, /renderer\?\.isSparseRasterTarget\?\.\(existingTarget\) === true/);
   assert.match(source, /renderer\?\.isSparseRasterTarget\?\.\(referenceTarget\) === true/);
   assert.match(source, /reason: "color-fill-reference-hydrate"/);
@@ -182,6 +204,12 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /operationType: "color-fill"/);
   assert.match(source, /renderer\.commitVisualDirtyChange\(\{/);
   assert.match(source, /usePreviewDirtyTiles: true/);
+  assert.match(source, /namespace\.lastColorFillWorker = \{/);
+  assert.match(source, /status: "pending"/);
+  assert.match(source, /showFillWorkerToast\("pending"\)/);
+  assert.match(source, /showFillWorkerToast\(didApply \? "applied" : "skipped"\)/);
+  assert.match(source, /showFillWorkerToast\(didApply \? status : "skipped"\)/);
+  assert.match(source, /reason: namespace\.lastColorFillWorkerBlockReason \|\| "not-used"/);
   assert.match(source, /let afterSnapshot = null/);
   assert.match(source, /const captureRedoSnapshot = \(\) => \{/);
   assert.match(source, /afterSnapshot = renderer\.createRasterSnapshot\?\.\(layerId, dirtyRect, "color-fill-after"\)/);
@@ -190,6 +218,87 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
   assert.match(source, /renderer\.restoreRasterSnapshot\(layerId, beforeSnapshot/);
   assert.match(source, /gl\.texSubImage2D\(/);
   assert.match(source, /brushEngine\.screenToDocumentSpace\(clientX, clientY\)/);
+  assert.match(cssSource, /\.color-fill-worker-toast \{[\s\S]*top: 124px;/);
+  assert.match(cssSource, /\.color-fill-worker-toast\[data-fill-worker-status="fallback"\]/);
+});
+
+test("pixel worker client and worker expose fill fallback plumbing", () => {
+  const clientSource = readRepoFile("js", "pixel", "pixel-worker-client.js");
+  const workerSource = readRepoFile("js", "workers", "pixel-worker.js");
+
+  assert.match(clientSource, /class PixelWorkerClient/);
+  assert.match(clientSource, /\.\/js\/workers\/pixel-worker\.js\?v=android-v3\.4-fillworker-sparse/);
+  assert.match(clientSource, /runColorFill\(payload = \{\}, transferList = \[\], options = \{\}\)/);
+  assert.match(clientSource, /worker\.postMessage\(\{ id, payload, type \}, transferList\)/);
+  assert.match(workerSource, /function floodFillMaskDense\(pixels, width, height, seedX, seedY, tolerance\)/);
+  assert.match(workerSource, /function createSparseSource\(payload = \{\}\)/);
+  assert.match(workerSource, /function floodFillMaskSparse\(source, width, height, seedX, seedY, tolerance, originX = 0, originY = 0\)/);
+  assert.match(workerSource, /function createEmptySourceFillMask\(width, height\)/);
+  assert.match(workerSource, /payload\.sourceEmpty === true/);
+  assert.match(workerSource, /payload\.sourceSparse === true/);
+  assert.match(workerSource, /function createFillCoverageMask\(mask, width, height, bounds, radius = 0\)/);
+  assert.match(workerSource, /message\.type === "color-fill"/);
+  assert.match(workerSource, /self\.postMessage\(\{\s*id: message\.id,[\s\S]*result,[\s\S]*\}, transferList\)/);
+});
+
+test("pixel worker runs sparse color fill payloads", () => {
+  const source = readRepoFile("js", "workers", "pixel-worker.js");
+  const posts = [];
+  const self = {
+    postMessage(message) {
+      posts.push(message);
+    },
+  };
+  const context = vm.createContext({
+    Int32Array,
+    Map,
+    Math,
+    Number,
+    Object,
+    String,
+    Uint8Array,
+    console,
+    self,
+  });
+  const tilePixels = new Uint8Array(4 * 4 * 4);
+
+  vm.runInContext(source, context);
+  self.onmessage({
+    data: {
+      id: 1,
+      payload: {
+        height: 4,
+        originX: 0,
+        originY: 0,
+        seedX: 1,
+        seedY: 1,
+        sourceEmpty: false,
+        sourceSparse: true,
+        sparseTiles: [{
+          height: 4,
+          pixelsBuffer: tilePixels.buffer,
+          tx: 0,
+          ty: 0,
+          width: 4,
+          x: 0,
+          y: 0,
+        }],
+        tileSize: 4,
+        tolerance: 0,
+        width: 4,
+      },
+      type: "color-fill",
+    },
+  });
+
+  assert.equal(posts[0]?.ok, true);
+  assert.equal(posts[0]?.result?.filledCount, 16);
+  assert.equal(posts[0]?.result?.bounds?.maxX, 3);
+  assert.equal(posts[0]?.result?.bounds?.maxY, 3);
+  assert.equal(posts[0]?.result?.bounds?.minX, 0);
+  assert.equal(posts[0]?.result?.bounds?.minY, 0);
+  assert.ok(posts[0]?.result?.maskBuffer instanceof ArrayBuffer);
+  assert.ok(posts[0]?.result?.coverageMaskBuffer instanceof ArrayBuffer);
 });
 
 test("color fill reference changes are recorded in document history", () => {
@@ -687,6 +796,95 @@ test("color fill maps cropped reference layers into document coordinates", () =>
     51,
     255,
   ]);
+});
+
+test("color fill clips dense reference reads to the active artboard", () => {
+  const CBO = loadColorFillModule();
+  const gl = createFakeGl();
+  const activeFramebuffer = createFramebuffer(64, 64);
+  const activeTarget = {
+    cropped: false,
+    framebuffer: activeFramebuffer,
+    height: 64,
+    layerId: "paint",
+    texture: {},
+    width: 64,
+    x: 0,
+    y: 0,
+  };
+  const reports = [];
+
+  setTopDownPixel(activeFramebuffer, 18, 18, [255, 255, 255, 255]);
+
+  CBO.androidPerformanceMode = true;
+  CBO.brushEngine = {
+    screenToDocumentSpace: () => ({
+      docX: 18,
+      docY: 18,
+    }),
+  };
+  CBO.getActiveDocumentArtboardRect = () => ({
+    height: 8,
+    width: 8,
+    x: 16,
+    y: 16,
+  });
+  CBO.documentLayerModel = {
+    activeLayerId: "paint",
+    findEntryById(layerId) {
+      return layerId === "paint" ? { id: "paint", type: "paint" } : null;
+    },
+  };
+  CBO.documentRenderer = {
+    gl,
+    height: 64,
+    rasterTargetsByLayerId: new Map([["paint", activeTarget]]),
+    width: 64,
+    createRasterSnapshot() {
+      return { texture: {} };
+    },
+    deleteRasterSnapshot() {},
+    emitContentChange() {},
+    getRasterTarget(layerId) {
+      return {
+        ...activeTarget,
+        layerId,
+      };
+    },
+    getRasterTargetDocumentRect(target) {
+      return {
+        height: target.height,
+        width: target.width,
+        x: target.x,
+        y: target.y,
+      };
+    },
+    invalidatePreviewCache() {},
+    isSparseRasterTarget(target) {
+      return target?.sparse === true;
+    },
+    recordRasterOperation(report) {
+      reports.push(report);
+      return report;
+    },
+    requestDraw() {},
+  };
+
+  assert.equal(CBO.colorFill.dropColorAt(0, 0, "#112233", { tolerance: 0 }), true);
+
+  assert.deepEqual(gl.reads[0], {
+    height: 8,
+    width: 8,
+    x: 16,
+    y: 40,
+  });
+  assert.equal(reports[0].sourceBytes, 8 * 8 * 4);
+  assert.deepEqual({ ...CBO.lastColorFillAndroidFastPath.referenceClipRect }, {
+    height: 8,
+    width: 8,
+    x: 16,
+    y: 16,
+  });
 });
 
 test("color fill exposes route-1 anti-aliased coverage helpers", () => {

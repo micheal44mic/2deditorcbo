@@ -60,7 +60,7 @@ test("mobile transform sidebar exposes resize free resize rotate distortion pers
   assert.match(topToolbarCss, /\.transform-mode-toolbar \[data-transform-mode\],[\s\S]*\.transform-mode-toolbar \.transform-angle-control,[\s\S]*\.transform-mode-toolbar \.transform-mode-divider \{\s*display: none;/);
   assert.match(topToolbarCss, /bottom: var\(--cbo-mobile-floating-bottom\);/);
   assert.match(rasterTransformSource, /const isSameTransformTool = this\.activeTool === transformToolMode/);
-  assert.match(rasterTransformSource, /if \(!wasActive \|\| !isSameTransformTool \|\| !isSameLayerActive \|\| !\(this\.sourceSnapshot \|\| this\.startVectorTextLayer\)\) \{\s*this\.activateLayer\(activeLayer\);/);
+  assert.match(rasterTransformSource, /if \(!wasActive \|\| !isSameTransformTool \|\| !isSameLayerActive \|\| !\(this\.hasPendingTransform\(\) \|\| this\.sourceSnapshot \|\| this\.startVectorTextLayer\)\) \{\s*this\.activateLayer\(activeLayer\);/);
 });
 
 test("mobile layout accounts for iOS safe areas and visual viewport changes", () => {
@@ -72,7 +72,7 @@ test("mobile layout accounts for iOS safe areas and visual viewport changes", ()
 
   assert.match(indexSource, /viewport-fit=cover/);
   assert.match(indexSource, /interactive-widget=resizes-visual/);
-  assert.match(indexSource, /id="android-device-indicator"[\s\S]*>android v1\.9<\/div>/);
+  assert.match(indexSource, /id="android-device-indicator"[\s\S]*>android v3\.4-fillworker-sparse<\/div>/);
   assert.match(baseCss, /--cbo-safe-bottom: env\(safe-area-inset-bottom, 0px\);/);
   assert.match(baseCss, /--cbo-visual-viewport-height: 100dvh;/);
   assert.match(baseCss, /--cbo-keyboard-inset-bottom: 0px;/);
@@ -89,8 +89,22 @@ test("mobile layout accounts for iOS safe areas and visual viewport changes", ()
   assert.match(appSource, /cbo-device-android/);
   assert.match(appSource, /namespace\.androidPixelPerfectEnabled = false/);
   assert.match(appSource, /namespace\.pixelPerfectRenderingEnabled = false/);
+  assert.match(appSource, /namespace\.androidRenderDprCap = 1\.25/);
+  assert.match(appSource, /namespace\.mobileRenderDprCap = 1\.25/);
+  assert.match(appSource, /namespace\.androidZoomOutPreviewCacheEnabled = true/);
+  assert.match(appSource, /namespace\.androidZoomOutPreviewCacheMaxSize = 1536/);
   assert.match(appSource, /namespace\.androidHistoryEnabled = true/);
   assert.match(appSource, /namespace\.documentHistoryDisabled = false/);
+  assert.match(appSource, /namespace\.androidArtboardResidencyDisabled = false/);
+  assert.match(appSource, /namespace\.enableArtboardResidency = true/);
+  assert.match(appSource, /namespace\.enableArtboardResidencyBudget = true/);
+  assert.match(appSource, /namespace\.enableArtboardResidencyPrefetch = true/);
+  assert.match(appSource, /namespace\.enableArtboardFlatPreviews = true/);
+  assert.match(appSource, /namespace\.enableArtboardTileResidency = true/);
+  assert.match(appSource, /namespace\.androidFastTransformCommitEnabled = true/);
+  assert.match(appSource, /namespace\.androidFastResizeBoundsEnabled = true/);
+  assert.match(appSource, /namespace\.androidLiveTransformPreviewEnabled = true/);
+  assert.match(appSource, /namespace\.colorFillWorkerEnabled = true/);
   assert.doesNotMatch(appSource, /disableDocumentHistoryForPerformance/);
   assert.match(appSource, /window\.visualViewport/);
   assert.match(appSource, /--cbo-visual-viewport-height/);

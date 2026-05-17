@@ -8,7 +8,7 @@ document.addEventListener(
 
 (() => {
   const namespace = window.CBO = window.CBO || {};
-  const androidBuildVersion = "v1.9";
+  const androidBuildVersion = "v3.4-fillworker-sparse";
   const androidIndicator = document.getElementById("android-device-indicator");
 
   function isAndroidDevice() {
@@ -41,23 +41,42 @@ document.addEventListener(
   if (isAndroid) {
     namespace.androidPerformanceMode = true;
 
-    // Android WebGL: start low. Raise to 1.15 later if quality needs it.
-    namespace.androidRenderDprCap = 1;
-    namespace.mobileRenderDprCap = 1;
+    // Android WebGL: balanced quality. DPR 1.25 restores crispness without
+    // going back to the iPhone-style 1.5 cap that was too heavy here.
+    namespace.androidRenderDprCap = 1.25;
+    namespace.mobileRenderDprCap = 1.25;
 
     // Reuse renderer-side culling and avoid GPU work at stroke start.
     namespace.viewportLayerCullingEnabled = true;
     namespace.interactiveBrushPrewarmEnabled = false;
 
-    // Android v1.9 test: keep history and artboard selection enabled, but bypass pixel-perfect preview/transform work.
+    // Android v3.4-fillworker-sparse: keep history, artboard selection, and
+    // residency enabled; only bypass pixel-perfect preview/transform work.
     namespace.androidFullRenderMode = true;
     namespace.androidPreviewCacheEnabled = false;
     namespace.androidDirtyRegionsEnabled = false;
+    namespace.androidZoomOutPreviewCacheEnabled = true;
+    namespace.androidZoomOutPreviewCacheMaxSize = 1536;
     namespace.androidPixelPerfectEnabled = false;
     namespace.pixelPerfectRenderingEnabled = false;
     namespace.androidHistoryEnabled = true;
     namespace.androidHistoryDisabled = false;
     namespace.documentHistoryDisabled = false;
+
+    // Recovery: residency also owns hydration/cold fallback paths. Turning it
+    // fully off can leave committed text/paint invisible on Android sessions
+    // that already have cold or sparse artboard targets.
+    namespace.androidArtboardResidencyDisabled = false;
+    namespace.enableArtboardResidency = true;
+    namespace.enableArtboardResidencyBudget = true;
+    namespace.enableArtboardResidencyPrefetch = true;
+    namespace.enableArtboardFlatPreviews = true;
+    namespace.enableArtboardTileResidency = true;
+
+    namespace.androidFastTransformCommitEnabled = true;
+    namespace.androidFastResizeBoundsEnabled = true;
+    namespace.androidLiveTransformPreviewEnabled = true;
+    namespace.colorFillWorkerEnabled = true;
   }
 
   document.body?.classList.toggle("cbo-device-android", isAndroid);

@@ -1007,6 +1007,7 @@ body.cbo-document-restore-active .editor-stage {
   stroke: #18a0fb;
   stroke-width: 1.5;
   pointer-events: all;
+  touch-action: none;
   vector-effect: non-scaling-stroke;
 }
 
@@ -1016,7 +1017,19 @@ body.cbo-document-restore-active .editor-stage {
   stroke-width: 1.8;
   cursor: grab;
   pointer-events: all;
+  touch-action: none;
   vector-effect: non-scaling-stroke;
+}
+
+@media (pointer: coarse) {
+  .editor-raster-transform-box,
+  .editor-raster-transform-handle {
+    stroke-width: 2;
+  }
+
+  .editor-raster-transform-warp-point {
+    stroke-width: 2.2;
+  }
 }
 
 .editor-raster-transform-warp-point:active {

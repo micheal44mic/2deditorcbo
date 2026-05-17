@@ -13,9 +13,12 @@
     padding: RASTER_TRANSFORM_BOUNDS_PADDING,
   });
   const HANDLE_SIZE = 10;
-  const WARP_POINT_SIZE = 5;
+  const MOBILE_HANDLE_SIZE = 18;
+  const HANDLE_HIT_RADIUS_PX = 16;
+  const HANDLE_TOUCH_HIT_RADIUS_PX = 34;
+  const WARP_POINT_SIZE = 6;
   const WARP_POINT_HIT_RADIUS_PX = 16;
-  const WARP_POINT_TOUCH_HIT_RADIUS_PX = 30;
+  const WARP_POINT_TOUCH_HIT_RADIUS_PX = 38;
   const WARP_GRID_SAMPLE_STEPS = 28;
   const MIN_TRANSFORM_SIZE = 2;
   const GUIDE_PROXIMITY_PX = 3;
@@ -42,6 +45,14 @@
     }
 
     return true;
+  }
+
+  function isAndroidFastResizeBoundsEnabled() {
+    return isAndroidPerformanceMode() && namespace.androidFastResizeBoundsEnabled !== false;
+  }
+
+  function isAndroidLiveTransformPreviewEnabled() {
+    return isAndroidPerformanceMode() && namespace.androidLiveTransformPreviewEnabled !== false;
   }
 
   function getRasterTransformBoundsOptions() {
@@ -736,7 +747,7 @@
 
         const isSameLayerActive = activeLayer?.id && activeLayer.id === this.activeLayerId;
 
-        if (!wasActive || !isSameTransformTool || !isSameLayerActive || !(this.sourceSnapshot || this.startVectorTextLayer)) {
+        if (!wasActive || !isSameTransformTool || !isSameLayerActive || !(this.hasPendingTransform() || this.sourceSnapshot || this.startVectorTextLayer)) {
           this.activateLayer(activeLayer);
         }
       } else if (isSelectionToolDetail(detail)) {
@@ -981,7 +992,71 @@
       namespace.puppetTransformTool?.rasterizeActivePuppetLayer?.();
     }
 
-    getPixelTightRasterContentBounds(layerId) {
+    normalizeTransformRect(rect) {
+      const x = Number(rect?.x);
+      const y = Number(rect?.y);
+      const width = Number(rect?.width);
+      const height = Number(rect?.height);
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !Number.isFinite(width) ||
+        !Number.isFinite(height) ||
+        width <= 0 ||
+        height <= 0
+      ) {
+        return null;
+      }
+
+      return { x, y, width, height };
+    }
+
+    isDocumentSizedRect(rect) {
+      const width = Math.max(1, Math.round(this.documentRenderer?.width || 1));
+      const height = Math.max(1, Math.round(this.documentRenderer?.height || 1));
+
+      return Boolean(
+        rect &&
+        Math.round(rect.x) === 0 &&
+        Math.round(rect.y) === 0 &&
+        Math.round(rect.width) >= width &&
+        Math.round(rect.height) >= height
+      );
+    }
+
+    getCoarseRasterContentBounds(layerOrId) {
+      const layer = typeof layerOrId === "object" && layerOrId
+        ? layerOrId
+        : this.layerModel?.findEntryById?.(layerOrId) || null;
+      const layerId = String(layer?.id || layerOrId || "").trim();
+
+      if (!layerId) {
+        return null;
+      }
+
+      const target = this.documentRenderer?.rasterTargetsByLayerId?.get?.(layerId) || null;
+      const targetRect = this.normalizeTransformRect(
+        this.documentRenderer?.getRasterTargetDocumentRect?.(target),
+      );
+      const artboardRect = this.normalizeTransformRect(layer ? this.getLayerArtboardRect(layer) : null);
+
+      if (targetRect && artboardRect && this.isDocumentSizedRect(targetRect)) {
+        return artboardRect;
+      }
+
+      return targetRect || artboardRect;
+    }
+
+    getPixelTightRasterContentBounds(layerOrId) {
+      if (isAndroidFastResizeBoundsEnabled()) {
+        return this.getCoarseRasterContentBounds(layerOrId);
+      }
+
+      const layerId = typeof layerOrId === "object" && layerOrId
+        ? layerOrId.id
+        : layerOrId;
+
       return this.documentRenderer?.getRasterContentBounds?.(layerId, getRasterTransformBoundsOptions()) || null;
     }
 
@@ -989,6 +1064,18 @@
       return pointerType === "touch"
         ? TOUCH_SELECTION_HIT_RADIUS_PX * this.dpr / this.camera.zoom
         : 0;
+    }
+
+    getHandleSize() {
+      return window.matchMedia?.("(pointer: coarse)")?.matches || isAndroidPerformanceMode()
+        ? MOBILE_HANDLE_SIZE
+        : HANDLE_SIZE;
+    }
+
+    getHandleHitRadius(pointerType = "") {
+      return pointerType === "touch"
+        ? HANDLE_TOUCH_HIT_RADIUS_PX
+        : HANDLE_HIT_RADIUS_PX;
     }
 
     getLayerArtboardRect(layer) {
@@ -1084,7 +1171,7 @@
 
       const point = this.clientToDocumentPoint(clientX, clientY);
 
-      return this.isPointInsideLayerArtboard(layer, point) && this.isPointInCurrentQuad(point)
+      return this.isPointInCurrentQuad(point)
         ? layer
         : null;
     }
@@ -1125,7 +1212,7 @@
     getLayerContentBounds(layer) {
       return this.isVectorTextLayer(layer)
         ? this.getVectorTextContentBounds(layer)
-        : this.getPixelTightRasterContentBounds(layer.id);
+        : this.getPixelTightRasterContentBounds(layer);
     }
 
     activateLayer(layer, options = {}) {
@@ -1241,6 +1328,72 @@
       namespace.vectorTextRenderer?.endTextEditPreview?.();
     }
 
+    getSourceUvRect(sourceRect, targetRect) {
+      if (!sourceRect || !targetRect || !(targetRect.width > 0) || !(targetRect.height > 0)) {
+        return null;
+      }
+
+      const epsilon = 0.001;
+      const left = sourceRect.x - targetRect.x;
+      const top = sourceRect.y - targetRect.y;
+
+      if (
+        left < -epsilon ||
+        top < -epsilon ||
+        left + sourceRect.width > targetRect.width + epsilon ||
+        top + sourceRect.height > targetRect.height + epsilon
+      ) {
+        return null;
+      }
+
+      return {
+        height: sourceRect.height / targetRect.height,
+        width: sourceRect.width / targetRect.width,
+        x: left / targetRect.width,
+        y: top / targetRect.height,
+      };
+    }
+
+    getLiveRasterTransformPreview(effectiveTransformMode = this.getEffectiveTransformMode()) {
+      if (
+        !isAndroidLiveTransformPreviewEnabled() ||
+        effectiveTransformMode !== "free" ||
+        !this.activeLayerId ||
+        !this.contentRect ||
+        !Array.isArray(this.currentQuad)
+      ) {
+        return null;
+      }
+
+      const target = this.documentRenderer?.rasterTargetsByLayerId?.get?.(this.activeLayerId) || null;
+
+      if (
+        !target?.texture ||
+        this.documentRenderer?.isSparseRasterTarget?.(target) === true ||
+        target.state === "CPU_COLD"
+      ) {
+        return null;
+      }
+
+      const targetRect = this.normalizeTransformRect(
+        this.documentRenderer?.getRasterTargetDocumentRect?.(target),
+      );
+      const sourceRect = this.normalizeTransformRect(this.contentRect);
+      const sourceUvRect = this.getSourceUvRect(sourceRect, targetRect);
+
+      if (!targetRect || !sourceRect || !sourceUvRect) {
+        return null;
+      }
+
+      return {
+        liveTexture: true,
+        quad: this.currentQuad,
+        sourceRect,
+        sourceUvRect,
+        texture: target.texture,
+      };
+    }
+
     createSourceSnapshot() {
       if (this.sourceSnapshot || !this.activeLayerId || !this.contentRect) {
         return this.sourceSnapshot;
@@ -1315,8 +1468,27 @@
         return this.setVectorTextPreviewLayer(previewLayer);
       }
 
-      const snapshot = this.createSourceSnapshot();
       const effectiveTransformMode = this.getEffectiveTransformMode();
+      const livePreview = this.getLiveRasterTransformPreview(effectiveTransformMode);
+
+      if (livePreview) {
+        this.documentRenderer?.setRasterTransformPreview?.({
+          edgeFeatherPixels: this.getEdgeFeatherPixelsForQuad(this.currentQuad),
+          layerId: this.activeLayerId,
+          liveTexture: true,
+          opacity: 1,
+          quad: livePreview.quad,
+          sourceRect: livePreview.sourceRect,
+          sourceUvRect: livePreview.sourceUvRect,
+          texture: livePreview.texture,
+          transformMode: effectiveTransformMode,
+          warpControlPoints: null,
+        });
+
+        return true;
+      }
+
+      const snapshot = this.createSourceSnapshot();
 
       if (!snapshot?.texture || !this.currentQuad) {
         return false;
@@ -1332,6 +1504,7 @@
         opacity: 1,
         quad: this.currentQuad,
         sourceRect: this.contentRect,
+        sourceUvRect: null,
         texture: snapshot.texture,
         transformMode: effectiveTransformMode,
         warpControlPoints: effectiveTransformMode === WARP_TRANSFORM_MODE
@@ -1458,7 +1631,7 @@
         return this.commitVectorTextTransform(activeLayer);
       }
 
-      if (!this.sourceSnapshot || !this.activeLayerId || !this.contentRect || !this.currentQuad) {
+      if (!this.activeLayerId || !this.contentRect || !this.currentQuad) {
         return false;
       }
 
@@ -1477,7 +1650,6 @@
       }
 
       this.isCommitting = true;
-      const sourceSnapshot = this.sourceSnapshot;
       const layerId = this.activeLayerId;
       const sourceRect = cloneValue(this.contentRect);
       const destQuad = cloneValue(this.currentQuad);
@@ -1485,6 +1657,20 @@
         ? cloneValue(this.currentWarpPoints)
         : null;
       const edgeFeatherPixels = this.getEdgeFeatherPixelsForQuad(destQuad);
+      const translateOnly = this.documentRenderer?.getTranslateOnlyRasterTransformDelta?.({
+        destQuad,
+        sourceRect,
+        transformMode: effectiveTransformMode,
+        warpControlPoints,
+      });
+      const sourceSnapshot = translateOnly
+        ? this.sourceSnapshot
+        : this.sourceSnapshot || this.createSourceSnapshot();
+
+      if (!translateOnly && !sourceSnapshot?.texture) {
+        this.isCommitting = false;
+        return false;
+      }
 
       this.render();
 
@@ -1499,9 +1685,11 @@
         warpControlPoints,
       }) === true;
 
-      this.documentRenderer?.deleteRasterSnapshot?.(sourceSnapshot);
+      if (sourceSnapshot) {
+        this.documentRenderer?.deleteRasterSnapshot?.(sourceSnapshot);
+      }
 
-      if (this.sourceSnapshot === sourceSnapshot) {
+      if (sourceSnapshot && this.sourceSnapshot === sourceSnapshot) {
         this.sourceSnapshot = null;
       }
 
@@ -1510,7 +1698,7 @@
       const layer = this.layerModel?.findEntryById?.(layerId) || this.getActiveLayer();
 
       if (didCommit && this.isTransformableLayer(layer)) {
-        const bounds = this.getPixelTightRasterContentBounds(layer.id);
+        const bounds = this.getPixelTightRasterContentBounds(layer);
 
         this.contentRect = bounds || null;
         this.startQuad = bounds ? rectToQuad(bounds) : null;
@@ -1559,6 +1747,31 @@
 
     getHandleTarget(target) {
       return target?.closest?.(".editor-raster-transform-handle") || null;
+    }
+
+    getHandleHitAtClient(clientX, clientY, pointerType = "") {
+      if (!this.isActive() || this.isWarpMode() || !Array.isArray(this.currentQuad)) {
+        return null;
+      }
+
+      const viewportPoint = this.clientToViewportPoint(clientX, clientY);
+      const points = this.currentQuad.map((point) => this.documentToViewportPoint(point.x, point.y));
+      const handlePoints = this.getHandlePoints(points);
+      const hitRadius = this.getHandleHitRadius(pointerType);
+      const maxDistanceSq = hitRadius * hitRadius;
+      let closest = null;
+
+      handlePoints.forEach((handlePoint, index) => {
+        const dx = handlePoint.x - viewportPoint.x;
+        const dy = handlePoint.y - viewportPoint.y;
+        const distanceSq = dx * dx + dy * dy;
+
+        if (distanceSq <= maxDistanceSq && (!closest || distanceSq < closest.distanceSq)) {
+          closest = { distanceSq, index };
+        }
+      });
+
+      return closest ? this.handles[closest.index] || null : null;
     }
 
     getBoxTarget(target) {
@@ -1618,6 +1831,27 @@
       }
 
       return closest ? { col: closest.col, row: closest.row } : null;
+    }
+
+    shouldStartOffArtboardLayerDrag(point, pointerType = "") {
+      if (
+        pointerType !== "touch" ||
+        !this.isActive() ||
+        !this.activeLayerId ||
+        !Array.isArray(this.currentQuad) ||
+        !this.contentRect
+      ) {
+        return false;
+      }
+
+      const layer = this.getActiveLayer();
+      const artboardRect = this.getLayerArtboardRect(layer);
+
+      return Boolean(
+        artboardRect &&
+        this.isTransformableLayer(layer) &&
+        !this.isPointInsideLayerArtboard(layer, point, 0)
+      );
     }
 
     clearSelectionMoveHold(options = {}) {
@@ -1950,7 +2184,10 @@
       }
 
       const point = this.clientToDocumentPoint(event.clientX, event.clientY);
-      const handle = this.getHandleTarget(event.target);
+      const handle = this.getHandleTarget(event.target) ||
+        this.getHandleHitAtClient(event.clientX, event.clientY, event.pointerType);
+      const offArtboardMove = !handle &&
+        this.shouldStartOffArtboardLayerDrag(point, event.pointerType);
       const box = this.getBoxTarget(event.target) || (
         !this.isWarpMode() &&
         this.activeLayerId &&
@@ -1958,7 +2195,7 @@
         this.isPointInCurrentQuad(point)
           ? this.box
           : null
-      );
+      ) || (offArtboardMove ? this.box : null);
 
       if (this.isWarpMode()) {
         if (!this.activeLayerId || !this.currentQuad || !this.contentRect || !this.ensureWarpControlPoints()) {
@@ -2023,7 +2260,9 @@
       }
 
       const rotationCenter = getQuadCenter(this.currentQuad);
-      const mode = this.isRotateActive()
+      const mode = offArtboardMove
+        ? "move"
+        : this.isRotateActive()
         ? "rotate"
         : handle
           ? (this.getEffectiveTransformMode() === "free" ? "scale" : "distort")
@@ -2320,7 +2559,7 @@
         Array.isArray(this.currentWarpPoints) &&
         warpControlPointsChanged(this.startWarpPoints, this.currentWarpPoints);
       const activeLayer = this.layerModel?.findEntryById?.(this.activeLayerId);
-      const hasTransformSource = this.sourceSnapshot || this.isVectorTextLayer(activeLayer);
+      const hasTransformSource = this.isVectorTextLayer(activeLayer) || this.isTransformableLayer(activeLayer);
 
       return Boolean(
         hasTransformSource &&
@@ -2900,11 +3139,14 @@
 
       if (this.isActive() && !this.isWarpMode()) {
         const handlePoints = this.getHandlePoints(points);
+        const handleSize = this.getHandleSize();
 
         this.handles.forEach((handle, index) => {
           setSvgElementVisible(handle, true);
-          handle.setAttribute("x", handlePoints[index].x - HANDLE_SIZE / 2);
-          handle.setAttribute("y", handlePoints[index].y - HANDLE_SIZE / 2);
+          handle.setAttribute("height", handleSize);
+          handle.setAttribute("width", handleSize);
+          handle.setAttribute("x", handlePoints[index].x - handleSize / 2);
+          handle.setAttribute("y", handlePoints[index].y - handleSize / 2);
           handle.style.cursor = this.isRotateActive()
             ? transformCursor
             : HANDLE_DEFS[index].cursor;

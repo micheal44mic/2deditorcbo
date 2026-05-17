@@ -53,6 +53,7 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /getTouchNavigationGeometry\(pointers = this\.getTouchNavigationPointers\(\)\)/);
   assert.match(source, /rememberTouchNavigationPointer\(event\)/);
   assert.match(source, /pruneStaleTouchNavigationPointers\(now = this\.getNow\(\)\)/);
+  assert.match(source, /const hasStaleExclusive = this\.touchNavigationExclusive && this\.activeTouchPointers\.size === 0/);
   assert.match(source, /resetTouchNavigationState\(source = "touch-navigation-reset"\)/);
   assert.match(source, /getCanvasViewportPoint\(clientX, clientY\)/);
   assert.match(source, /safeClientX - rect\.left/);
@@ -61,8 +62,11 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /updateTouchNavigationGesture\(\)/);
   assert.match(source, /cancelActiveStrokeForTouchNavigation\(\)/);
   assert.match(source, /shouldStartTouchCanvasPan\(event, point\)/);
+  assert.match(source, /this\.isPrimaryTouchPointer\(event\)/);
   assert.match(source, /!this\.isDocumentPointOnAnyArtboard\(point\)/);
   assert.match(source, /touch-empty-canvas-pan-start/);
+  assert.match(source, /isPrimaryStrokePointer\(event\)/);
+  assert.match(source, /if \(!this\.isPrimaryStrokePointer\(event\) \|\| this\.isDrawing \|\| this\.isPanning\)/);
   assert.match(source, /this\.isPanning && this\.activePanPointerId === event\.pointerId/);
   assert.match(source, /this\.clearStrokeLayer\(\)/);
   assert.match(source, /namespace\.setTouchNavigationExclusive\?\.\(true/);

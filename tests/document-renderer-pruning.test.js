@@ -1815,6 +1815,81 @@ test("commitRasterTransform records pure moves as placement history without pixe
   assert.ok(dirtyChanges.some((detail) => detail.source === "history-redo-unit-move"));
 });
 
+test("commitRasterTransform fast-paths sparse pure moves before materialization", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const target = {
+    height: 512,
+    layerId: "paint-1",
+    sparse: true,
+    tileSize: 256,
+    tiles: new Map(),
+    version: 0,
+    width: 512,
+  };
+  let pushedEntry = null;
+  let materializeCount = 0;
+
+  window.CBO.documentBounds = {
+    boundsToRect: (bounds) => ({ ...bounds }),
+    getClampedRasterBox: (rect) => ({ ...rect }),
+    getUnionRect: (first, second) => ({
+      x: Math.min(first.x, second.x),
+      y: Math.min(first.y, second.y),
+      width: Math.max(first.x + first.width, second.x + second.width) - Math.min(first.x, second.x),
+      height: Math.max(first.y + first.height, second.y + second.height) - Math.min(first.y, second.y),
+    }),
+    quadToBounds: (quad) => ({
+      x: Math.min(...quad.map((point) => point.x)),
+      y: Math.min(...quad.map((point) => point.y)),
+      width: Math.max(...quad.map((point) => point.x)) - Math.min(...quad.map((point) => point.x)),
+      height: Math.max(...quad.map((point) => point.y)) - Math.min(...quad.map((point) => point.y)),
+    }),
+    rectToBounds: (rect) => ({ ...rect }),
+  };
+  window.CBO.documentHistory = {
+    push(entry) {
+      pushedEntry = entry;
+      return true;
+    },
+  };
+  renderer.width = 512;
+  renderer.height = 512;
+  renderer.rasterTargetsByLayerId = new Map([["paint-1", target]]);
+  renderer.layerModel = {
+    findEntryById: () => ({ id: "paint-1", type: "paint" }),
+  };
+  renderer.clearRasterTransformPreview = () => {};
+  renderer.commitVisualDirtyChange = () => {};
+  renderer.deletePuppetMeshResource = () => {};
+  renderer.getTileBasedPreviewDirtyRects = (rects) => rects.filter(Boolean).map((rect) => ({ ...rect }));
+  renderer.materializeRasterTarget = () => {
+    materializeCount += 1;
+    throw new Error("pure sparse move should not materialize before placement");
+  };
+  renderer.recordRasterOperation = (report) => report;
+  renderer.requestDraw = () => {};
+  renderer.updateRasterTargetResourceMetadata = () => {};
+
+  const didCommit = renderer.commitRasterTransform({
+    destQuad: [
+      { x: 8, y: 12 },
+      { x: 520, y: 12 },
+      { x: 520, y: 524 },
+      { x: 8, y: 524 },
+    ],
+    layerId: "paint-1",
+    source: "unit-sparse-move",
+    sourceRect: { x: 0, y: 0, width: 512, height: 512 },
+  });
+
+  assert.equal(didCommit, true);
+  assert.equal(materializeCount, 0);
+  assert.equal(target.version, 1);
+  assert.ok(pushedEntry);
+  assert.equal(pushedEntry.memoryPolicy.scratchBytes, 0);
+});
+
 test("commitRasterTransform treats fractional drags as rounded placement history", () => {
   const { DocumentRenderer, window } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -2964,8 +3039,8 @@ test("renderer caps DPR and cache size for mobile-like and Android devices", () 
   assert.equal(desktopLoad.DocumentRenderer.getPerformanceDpr(), 2);
   assert.equal(mobileLoad.DocumentRenderer.getPerformanceDpr(), 1.5);
   assert.equal(lowMemoryMobileLoad.DocumentRenderer.getPerformanceDpr(), 1.25);
-  assert.equal(androidLoad.DocumentRenderer.getPerformanceDpr(), 1);
-  assert.equal(lowMemoryAndroidLoad.DocumentRenderer.getPerformanceDpr(), 1);
+  assert.equal(androidLoad.DocumentRenderer.getPerformanceDpr(), 1.25);
+  assert.equal(lowMemoryAndroidLoad.DocumentRenderer.getPerformanceDpr(), 1.15);
   assert.equal(mobileRenderer.getPreviewCacheMaxSize(), 1536);
   assert.equal(mobileRenderer.getPreviewCacheOverscanCssPx(), 128);
   assert.equal(mobileRenderer.getViewportRenderOverscanCssPx(), 128);
@@ -2987,18 +3062,22 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /const MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX = 128/);
   assert.match(source, /const MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 128/);
   assert.match(source, /const MOBILE_RENDER_DPR_CAP = 1\.5/);
-  assert.match(source, /const ANDROID_RENDER_DPR_CAP = 1/);
+  assert.match(source, /const ANDROID_RENDER_DPR_CAP = 1\.25/);
+  assert.match(source, /const LOW_MEMORY_ANDROID_RENDER_DPR_CAP = 1\.15/);
+  assert.match(source, /const ARTBOARD_RESIDENCY_IDLE_DELAY_MS = 7000/);
+  assert.match(source, /const ARTBOARD_RESIDENCY_WARM_HOLD_MS = 7000/);
   assert.match(source, /const ANDROID_PREVIEW_CACHE_MAX_SIZE = 1024/);
   assert.match(source, /const ANDROID_PREVIEW_CACHE_OVERSCAN_CSS_PX = 64/);
   assert.match(source, /const ANDROID_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 64/);
-  assert.match(source, /function isAndroidPreviewCacheDisabled\(\)/);
+  assert.match(source, /function isAndroidZoomOutPreviewCacheAllowed\(options = \{\}\)/);
+  assert.match(source, /function isAndroidPreviewCacheDisabled\(options = \{\}\)/);
   assert.match(source, /function isAndroidDirtyRegionsDisabled\(\)/);
   assert.match(source, /antialias: false/);
   assert.match(source, /static getPerformanceDpr\(options = \{\}\)/);
   assert.match(source, /static isAndroidLikeEnvironment\(\)/);
   assert.match(source, /createPreviewCache\(options = \{\}\)/);
   assert.match(source, /getPreviewCacheDimensions\(options = \{\}\)/);
-  assert.match(source, /getPreviewCacheMaxSize\(\)/);
+  assert.match(source, /getPreviewCacheMaxSize\(options = \{\}\)/);
   assert.match(source, /getPreviewCacheOverscanCssPx\(\)/);
   assert.match(source, /getViewportRenderOverscanCssPx\(options = \{\}\)/);
   assert.match(source, /previewCacheMaxSize/);
@@ -3028,13 +3107,15 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /const previewCacheOptions = \{/);
   assert.match(source, /const previewCacheDimensions = this\.getPreviewCacheDimensions\(previewCacheOptions\)/);
   assert.match(source, /const canUsePreviewCacheAtCurrentZoom = this\.shouldUsePreviewCacheForCamera\(camera, previewCacheDimensions\)/);
-  assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true && !isAndroidPreviewCacheDisabled\(\)/);
+  assert.match(source, /const androidZoomOutPreviewCacheAllowed = isAndroidZoomOutPreviewCacheAllowed\(previewCacheOptions\)/);
+  assert.match(source, /const allowPreviewCache = options\.allowPreviewCache === true && !isAndroidPreviewCacheDisabled\(previewCacheOptions\)/);
   assert.match(source, /const deferPreviewCacheUpdate = Boolean\(/);
   assert.match(source, /options\.deferPreviewCacheUpdate === true/);
   assert.match(source, /const activeStrokeDefersLayerEffects = Boolean\(/);
   assert.match(source, /const activeStrokeDefersLayerBlend = Boolean\(/);
   assert.match(source, /const deferInteractiveResidencyHydration = Boolean\(/);
   assert.match(source, /deferInteractiveResidencyHydration\s*\?\s*0\s*:\s*this\.hydrateHotArtboardTargets/);
+  assert.match(source, /const delay = Math\.max\(idleDelay, warmHold\)/);
   assert.match(source, /skipLayerEffectsForInteractiveStroke/);
   assert.match(source, /skipLayerBlendForInteractiveStroke/);
   assert.match(source, /skipLayerEffects: skipLayerEffectsForInteractiveStroke/);
@@ -3112,6 +3193,46 @@ test("document renderer uses preview cache only when downsampling zoom-out", () 
   assert.equal(renderer.shouldUsePreviewCacheForCamera({ zoom: 10 }), false);
   assert.equal(renderer.shouldDrawPixelGrid({ zoom: 10 }), false);
   assert.equal(renderer.shouldDrawPixelGrid({ zoom: 10.01 }), true);
+});
+
+test("document renderer allows Android mipmapped preview cache only for idle zoom-out", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer({
+    maxTouchPoints: 5,
+    platform: "Linux armv8l",
+    userAgent: "Mozilla/5.0 (Linux; Android 12) Mobile",
+  });
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {};
+  window.CBO.androidPerformanceMode = true;
+  window.CBO.androidFullRenderMode = true;
+  window.CBO.androidPreviewCacheEnabled = false;
+  window.CBO.androidZoomOutPreviewCacheEnabled = true;
+  window.CBO.androidZoomOutPreviewCacheMaxSize = 1536;
+
+  assert.equal(DocumentRenderer.isAndroidPreviewCacheDisabled({
+    camera: { zoom: 0.5 },
+  }), false);
+  assert.equal(DocumentRenderer.isAndroidPreviewCacheDisabled({
+    camera: { zoom: 1 },
+  }), true);
+  assert.equal(DocumentRenderer.isAndroidPreviewCacheDisabled({
+    camera: { zoom: 0.5 },
+    deferPreviewCacheUpdate: true,
+  }), true);
+  assert.equal(DocumentRenderer.isAndroidPreviewCacheDisabled({
+    activeStrokeTexture: {},
+    camera: { zoom: 0.5 },
+  }), true);
+  assert.equal(renderer.getPreviewCacheMaxSize({
+    androidZoomOutPreviewCache: true,
+  }), 1536);
+
+  window.CBO.androidZoomOutPreviewCacheEnabled = false;
+
+  assert.equal(DocumentRenderer.isAndroidPreviewCacheDisabled({
+    camera: { zoom: 0.5 },
+  }), true);
 });
 
 test("preview cache supports dirty-region compositing", () => {

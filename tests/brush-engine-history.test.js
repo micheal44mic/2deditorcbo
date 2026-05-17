@@ -531,7 +531,7 @@ test("brush batch history flushes before other raster history captures", () => {
   const brushSource = fs.readFileSync(path.join(repoRoot, "js", "brush-engine.js"), "utf8");
   const rendererSource = fs.readFileSync(path.join(repoRoot, "js", "document", "document-renderer.js"), "utf8");
 
-  assert.match(brushSource, /const BRUSH_HISTORY_BATCH_IDLE_MS = 1000/);
+  assert.match(brushSource, /const BRUSH_HISTORY_BATCH_IDLE_MS = 300/);
   assert.match(brushSource, /window\.addEventListener\("cbo:before-raster-history-capture", this\.handleBeforeRasterHistoryCapture\)/);
   assert.match(brushSource, /handleBeforeRasterHistoryCapture\(event\)/);
   assert.match(brushSource, /this\.flushPendingBrushHistory\(\{\s*source: source \? `brush-before-\$\{source\}` : "brush-before-raster-history",\s*\}\)/);

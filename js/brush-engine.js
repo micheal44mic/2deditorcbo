@@ -35,7 +35,7 @@ window.CBO = window.CBO || {};
   const ANDROID_STROKE_SEGMENT_MAX_SAMPLES = 48;
   const ANDROID_STROKE_SEGMENT_DISTANCE_STEP = 6;
   const ANDROID_STROKE_ALLOCATION_QUANTUM = 256;
-  const BRUSH_HISTORY_BATCH_IDLE_MS = 1000;
+  const BRUSH_HISTORY_BATCH_IDLE_MS = 300;
   const RASTER_BYTES_PER_PIXEL = 4;
   const RASTER_MIB = 1024 * 1024;
   const STROKE_MEMORY_POLICY = Object.freeze({
@@ -2721,7 +2721,10 @@ void main() {
         didPrune = true;
       });
 
-      if (!didPrune) {
+      const hasStaleGesture = this.touchNavigationGesture && this.activeTouchPointers.size < 2;
+      const hasStaleExclusive = this.touchNavigationExclusive && this.activeTouchPointers.size === 0;
+
+      if (!didPrune && !hasStaleGesture && !hasStaleExclusive) {
         return false;
       }
 
@@ -2913,6 +2916,18 @@ void main() {
 
     isTemporaryPanTrigger(event) {
       return event.button === 1 || (event.button === 0 && this.isSpaceHeld);
+    }
+
+    isPrimaryTouchPointer(event) {
+      return event.pointerType === "touch" && event.isPrimary !== false;
+    }
+
+    isPrimaryStrokePointer(event) {
+      if (this.isPrimaryTouchPointer(event)) {
+        return true;
+      }
+
+      return event.button === 0;
     }
 
     markNavigationEvent(event) {
@@ -3237,8 +3252,7 @@ void main() {
 
     shouldStartTouchCanvasPan(event, point) {
       return (
-        event.pointerType === "touch" &&
-        event.button === 0 &&
+        this.isPrimaryTouchPointer(event) &&
         !this.isDrawing &&
         !this.isPanning &&
         !this.touchNavigationGesture &&
@@ -7329,7 +7343,7 @@ void main() {
         return;
       }
 
-      if (event.button !== 0 || this.isDrawing || this.isPanning) {
+      if (!this.isPrimaryStrokePointer(event) || this.isDrawing || this.isPanning) {
         return;
       }
 
