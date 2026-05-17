@@ -29,21 +29,11 @@ const DEFAULT_WASM_URL = "../../wasm/pixel_core.wasm";
 const wasmCoreState = {
   error: null,
   exports: null,
-  initMs: 0,
   instance: null,
-  lastInitMs: 0,
   promise: null,
   status: "idle",
   unavailable: false,
 };
-
-function nowMs() {
-  if (typeof performance !== "undefined" && typeof performance.now === "function") {
-    return performance.now();
-  }
-
-  return Date.now();
-}
 
 function clamp(value, min, max) {
   const number = Number(value);
@@ -848,7 +838,6 @@ async function initWasmCore(payload = {}) {
   }
 
   if (wasmCoreState.exports) {
-    wasmCoreState.lastInitMs = 0;
     return wasmCoreState;
   }
 
@@ -857,11 +846,9 @@ async function initWasmCore(payload = {}) {
   }
 
   if (!wasmCoreState.promise || payload.wasmUrl) {
-    const startedAt = nowMs();
     const url = resolveWasmUrl(payload);
 
     wasmCoreState.status = "loading";
-    wasmCoreState.lastInitMs = 0;
     wasmCoreState.promise = instantiateWasmFromUrl(url)
       .then((instance) => {
         const exports = instance.exports || {};
@@ -869,9 +856,7 @@ async function initWasmCore(payload = {}) {
         validateWasmExports(exports);
         wasmCoreState.error = null;
         wasmCoreState.exports = exports;
-        wasmCoreState.initMs = nowMs() - startedAt;
         wasmCoreState.instance = instance;
-        wasmCoreState.lastInitMs = wasmCoreState.initMs;
         wasmCoreState.status = "ready";
         wasmCoreState.unavailable = false;
 
@@ -880,9 +865,7 @@ async function initWasmCore(payload = {}) {
       .catch((error) => {
         wasmCoreState.error = error;
         wasmCoreState.exports = null;
-        wasmCoreState.initMs = nowMs() - startedAt;
         wasmCoreState.instance = null;
-        wasmCoreState.lastInitMs = wasmCoreState.initMs;
         wasmCoreState.status = "error";
         wasmCoreState.unavailable = !payload.wasmUrl;
 
@@ -1078,18 +1061,14 @@ function runWasmSparse(exports, source, width, height, seedX, seedY, tolerance, 
   }
 }
 
-async function tryRunWasmFill(payload, input, pixels, sparseSource, timings) {
+async function tryRunWasmFill(payload, input, pixels, sparseSource) {
   if (input.sourceEmpty || payload.disableWasm === true) {
     return null;
   }
 
-  const initStartedAt = nowMs();
   const core = await initWasmCore(payload);
 
-  timings.wasmInitMs = core.lastInitMs || Math.max(0, nowMs() - initStartedAt);
-
-  const wasmStartedAt = nowMs();
-  const result = input.sourceSparse
+  return input.sourceSparse
     ? runWasmSparse(
         core.exports,
         sparseSource,
@@ -1110,21 +1089,9 @@ async function tryRunWasmFill(payload, input, pixels, sparseSource, timings) {
         input.seedY,
         input.tolerance,
       );
-
-  timings.wasmMs = nowMs() - wasmStartedAt;
-
-  return result;
 }
 
 async function runColorFill(payload = {}) {
-  const workerStartedAt = nowMs();
-  const timings = {
-    coverageMs: 0,
-    jsMs: 0,
-    wasmInitMs: 0,
-    wasmMs: 0,
-    workerMs: 0,
-  };
   const input = normalizeFillInput(payload);
 
   if (!input) {
@@ -1145,22 +1112,14 @@ async function runColorFill(payload = {}) {
   }
 
   let fillResult = null;
-  let engine = "js";
-  let wasmError = "";
 
   try {
-    fillResult = await tryRunWasmFill(payload, input, pixels, sparseSource, timings);
-    if (fillResult) {
-      engine = "wasm";
-    }
-  } catch (error) {
-    wasmError = error?.message || String(error);
-    engine = "js";
+    fillResult = await tryRunWasmFill(payload, input, pixels, sparseSource);
+  } catch {
+    fillResult = null;
   }
 
   if (!fillResult) {
-    const jsStartedAt = nowMs();
-
     fillResult = input.sourceEmpty
       ? createEmptySourceFillMask(input.width, input.height)
       : input.sourceSparse
@@ -1175,17 +1134,12 @@ async function runColorFill(payload = {}) {
             input.originY,
           )
         : floodFillMaskDense(pixels, input.width, input.height, input.seedX, input.seedY, input.tolerance);
-    timings.jsMs = nowMs() - jsStartedAt;
-    engine = "js";
   }
 
   if (!fillResult) {
-    timings.workerMs = nowMs() - workerStartedAt;
-
     return null;
   }
 
-  const coverageStartedAt = nowMs();
   const coverageRadius = getDilationRadius(input.tolerance);
   const coverageMask = createFillCoverageMask(
     fillResult.mask,
@@ -1195,43 +1149,24 @@ async function runColorFill(payload = {}) {
     coverageRadius,
   );
 
-  timings.coverageMs = nowMs() - coverageStartedAt;
-  timings.workerMs = nowMs() - workerStartedAt;
-
   return {
     bounds: fillResult.bounds,
     coverageMaskBuffer: coverageMask.buffer,
-    engine,
     filledCount: fillResult.filledCount,
     maskBuffer: fillResult.mask.buffer,
     stackBytes: fillResult.stackBytes,
-    timings,
-    wasmError,
   };
 }
 
 async function runHistoryCompress(payload = {}) {
-  const workerStartedAt = nowMs();
-  const timings = {
-    compressMs: 0,
-    jsMs: 0,
-    workerMs: 0,
-  };
   const pixels = payload?.pixelsBuffer ? new Uint8Array(payload.pixelsBuffer) : null;
 
   if (!(pixels instanceof Uint8Array) || pixels.byteLength === 0 || pixels.byteLength % 4 !== 0) {
-    timings.workerMs = nowMs() - workerStartedAt;
-
     return null;
   }
 
   const rawBytes = Math.max(0, Math.round(Number(payload.rawBytes) || pixels.byteLength));
-  const compressStartedAt = nowMs();
   const result = compressRgba(pixels);
-
-  timings.compressMs = nowMs() - compressStartedAt;
-  timings.jsMs = timings.compressMs;
-  timings.workerMs = nowMs() - workerStartedAt;
 
   if (
     !result?.encoding ||
@@ -1242,14 +1177,12 @@ async function runHistoryCompress(payload = {}) {
       compressedBuffer: null,
       compressedBytes: pixels.byteLength,
       encoding: "",
-      engine: "js",
       historyId: payload.historyId || "",
       jobToken: payload.jobToken || "",
       kind: payload.kind || "",
       layerId: payload.layerId || "",
       rawBytes,
       source: payload.source || "",
-      timings,
     };
   }
 
@@ -1257,14 +1190,12 @@ async function runHistoryCompress(payload = {}) {
     compressedBuffer: result.bytes.buffer,
     compressedBytes: result.bytes.byteLength,
     encoding: result.encoding,
-    engine: "js",
     historyId: payload.historyId || "",
     jobToken: payload.jobToken || "",
     kind: payload.kind || "",
     layerId: payload.layerId || "",
     rawBytes: result.rawByteLength || rawBytes,
     source: payload.source || "",
-    timings,
   };
 }
 

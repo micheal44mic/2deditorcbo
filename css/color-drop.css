@@ -178,18 +178,6 @@
   background: #ffffff;
 }
 
-.color-fill-worker-toast {
-  top: 124px;
-  border-color: rgba(134, 255, 186, 0.34);
-  color: #ecfff4;
-}
-
-.color-fill-worker-toast[data-fill-worker-status="fallback"],
-.color-fill-worker-toast[data-fill-worker-status="sync"] {
-  border-color: rgba(255, 209, 102, 0.36);
-  color: #fff7df;
-}
-
 @media (max-width: 940px) {
   .color-fill-threshold-toolbar {
     width: 232px;

@@ -108,8 +108,6 @@ test("dense flood fill returns same mask and bounds in JS and WASM", async () =>
     pixelsBuffer: new Uint8Array(payload.pixels).buffer,
   });
 
-  assert.equal(jsResult.engine, "js");
-  assert.equal(wasmResult.engine, "wasm");
   assert.deepEqual(JSON.parse(JSON.stringify(wasmResult.bounds)), JSON.parse(JSON.stringify(jsResult.bounds)));
   assert.equal(wasmResult.filledCount, jsResult.filledCount);
   equalMask(wasmResult.maskBuffer, jsResult.maskBuffer);
@@ -156,8 +154,6 @@ test("sparse flood fill returns same mask and bounds in JS and WASM", async () =
   const jsResult = await hooks.runColorFill({ ...makePayload(), disableWasm: true });
   const wasmResult = await hooks.runColorFill(makePayload());
 
-  assert.equal(jsResult.engine, "js");
-  assert.equal(wasmResult.engine, "wasm");
   assert.deepEqual(JSON.parse(JSON.stringify(wasmResult.bounds)), JSON.parse(JSON.stringify(jsResult.bounds)));
   assert.equal(wasmResult.filledCount, jsResult.filledCount);
   equalMask(wasmResult.maskBuffer, jsResult.maskBuffer);
@@ -199,7 +195,6 @@ test("missing sparse tile is treated as transparent RGBA", async () => {
     width,
   });
 
-  assert.equal(result.engine, "wasm");
   assert.equal(result.filledCount, width * height - tileSize * tileSize);
   assert.deepEqual(JSON.parse(JSON.stringify(result.bounds)), {
     maxX: 7,
@@ -217,8 +212,6 @@ test("falls back to JS when WASM does not load", async () => {
     pixelsBuffer: payload.pixels.buffer,
   });
 
-  assert.equal(result.engine, "js");
-  assert.match(result.wasmError, /Unable to fetch|WebAssembly|wasm/i);
   assert.equal(result.filledCount, 24);
 });
 
@@ -235,7 +228,6 @@ test("history compression runs in the pixel worker and returns a transferable co
     rawBytes: pixels.byteLength,
   });
 
-  assert.equal(result.engine, "js");
   assert.equal(result.historyId, "history-1");
   assert.equal(result.jobToken, "job-1");
   assert.equal(result.layerId, "paint-1");
@@ -243,15 +235,15 @@ test("history compression runs in the pixel worker and returns a transferable co
   assert.ok(result.compressedBuffer instanceof ArrayBuffer);
   assert.ok(result.compressedBytes < pixels.byteLength);
   assert.match(result.encoding, /^rle-rgba-v/);
-  assert.equal(typeof result.timings.workerMs, "number");
+  assert.equal(result.timings, undefined);
 });
 
-test("color fill debug exposes worker engine and timings", () => {
+test("color fill worker debug and timings are not exposed", () => {
   const source = readRepoFile("js", "color-fill.js").toString("utf8");
 
-  assert.match(source, /namespace\.lastColorFillWorker/);
-  assert.match(source, /engine: workerResult\.engine \|\| "js"/);
-  assert.match(source, /namespace\.lastColorFillTimings/);
-  assert.match(source, /readPixelsMs/);
-  assert.match(source, /workerRoundTripMs/);
+  assert.doesNotMatch(source, /namespace\.lastColorFillWorker/);
+  assert.doesNotMatch(source, /engine: workerResult\.engine \|\| "js"/);
+  assert.doesNotMatch(source, /namespace\.lastColorFillTimings/);
+  assert.doesNotMatch(source, /readPixelsMs/);
+  assert.doesNotMatch(source, /workerRoundTripMs/);
 });

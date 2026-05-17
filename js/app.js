@@ -8,7 +8,7 @@ document.addEventListener(
 
 (() => {
   const namespace = window.CBO = window.CBO || {};
-  const androidBuildVersion = "v3.8-history-metrics";
+  const androidBuildVersion = "v4.5-no-fill-history-debug";
   const androidIndicator = document.getElementById("android-device-indicator");
 
   function isAndroidDevice() {
@@ -51,8 +51,8 @@ document.addEventListener(
     namespace.viewportLayerCullingEnabled = true;
     namespace.interactiveBrushPrewarmEnabled = false;
 
-    // Android v3.8-history-metrics: keep history, artboard selection, and
-    // residency enabled; only bypass pixel-perfect preview/transform work.
+    // Android v4.5-no-fill-history-debug: keep the recovered Android behavior
+    // and remove fill/history debug surfaces.
     namespace.androidFullRenderMode = true;
     namespace.androidPreviewCacheEnabled = false;
     namespace.androidDirtyRegionsEnabled = false;

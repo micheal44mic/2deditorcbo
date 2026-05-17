@@ -79,18 +79,18 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /uniform sampler2D u_clipTexture;/);
   assert.match(source, /uniform float u_clipMode;/);
   assert.match(source, /uniform vec2 u_drawOrigin;/);
-  assert.match(source, /color \*= clipAlpha;/);
+  assert.match(source, /sampleClipAlpha\(globalDocPixel\)/);
   assert.match(source, /getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const orderedLayers = this\.getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const hasClippingMasks = orderedLayers\.some\(\(layer\) => layer\?\.clippingMask === true\)/);
   assert.match(source, /const activeStrokeUsesClippingMask = Boolean/);
   assert.match(source, /const needsClipBaseTexture = \(layer\) => Boolean/);
-  assert.match(source, /pendingClipBaseLayerId && needsClipBaseTexture\(layer\)/);
+  assert.match(source, /pendingClipBaseLayer\?\.id && needsClipBaseTexture\(pendingClipBaseLayer\)/);
   assert.match(source, /const activeStrokeIsClipBaseLayer = Boolean/);
   assert.match(source, /let currentClipBase = null/);
   assert.match(source, /const clipBase = isClippingLayer \? currentClipBase : null/);
   assert.match(source, /isValidClipBaseLayer\(layer\)/);
-  assert.match(source, /createClipBaseForLayer\(layer, target, visible = true\)/);
+  assert.match(source, /createClipBaseForLayer\(layer, target, visible = true, options = \{\}\)/);
   assert.match(source, /getClipBaseOrigin\(clipBase\)/);
   assert.match(source, /for \(const renderResult of this\.getLayerRenderResults\(layer, renderTarget, viewportLayerRenderOptions\)\)/);
   assert.match(source, /const layerRect = this\.getArtboardDragVisualRect\(layer, renderResult\?\.rect \|\| null, renderTarget\)/);
@@ -98,7 +98,7 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /drawBlendTexture\(\s*options\.activeStrokeTexture,\s*opacity,\s*activeStrokeRect,\s*clipBase,/);
   assert.match(source, /drawTexture\(texture, opacity, rect, clipBase\)/);
   assert.match(source, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
-  assert.match(source, /currentClipBase = this\.createClipBaseForLayer\(layer, mergedTarget, layer\.visible !== false\)/);
+  assert.match(source, /currentClipBase = this\.createClipBaseForLayer\(layer, mergedTarget, layer\.visible !== false, \{[\s\S]*transformPreview: transformPreviewForClipBase/);
 });
 
 test("document renderer treats image upload metadata as visual for clipping masks", () => {
@@ -108,13 +108,24 @@ test("document renderer treats image upload metadata as visual for clipping mask
   assert.doesNotMatch(nonVisualBody, /"image-upload-metadata"/);
   assert.match(source, /forceVisualSources/);
   assert.match(source, /"image-upload-metadata"/);
+  assert.match(source, /"layers-panel-clipping-mask"/);
+  assert.match(source, /source === "layers-panel-clipping-mask"[\s\S]*this\.deletePreviewCache\(\)/);
   assert.match(source, /hasLayerPendingRasterContent/);
   assert.match(source, /hasLayerRenderableOrPendingRasterContent/);
 });
 
-test("document renderer can use transform preview as live clipping base", () => {
+test("document renderer samples transform preview clipping bases without scratch targets", () => {
   const source = readRepoFile("js", "document", "document-renderer.js");
 
+  assert.match(source, /uniform mat3 u_clipDestToSourceUv;/);
+  assert.match(source, /uniform vec4 u_clipSourceUvRect;/);
+  assert.match(source, /float sampleClipAlpha\(vec2 documentPixel\)/);
+  assert.match(source, /u_clipMode > 1\.5/);
+  assert.match(source, /getClipBaseTransformSampling\(clipBase\)/);
+  assert.match(source, /hasClipBaseSamplingTexture\(clipBase\)/);
+  assert.match(source, /setClipBaseUniforms\(uniforms, clipBase = null, options = \{\}\)/);
+  assert.match(source, /transformPreview: options\.transformPreview \|\| null/);
+  assert.match(source, /transformPreview: transformPreviewForClipBase/);
   assert.match(source, /drawRasterTransformPreview\(opacity, clipBase\)/);
   assert.match(source, /options\.clipBase/);
   assert.doesNotMatch(source, /visualClipBaseTarget/);

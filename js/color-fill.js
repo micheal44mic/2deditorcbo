@@ -7,7 +7,6 @@
   const RASTER_MIB = 1024 * 1024;
   const THRESHOLD_HIDE_DELAY_MS = 5000;
   const COLOR_FILL_WORKER_TIMEOUT_MS = 5000;
-  const FILL_WORKER_TOAST_HIDE_MS = 1600;
   const FILL_MEMORY_POLICY = Object.freeze({
     hugeCoverage: 0.35,
     largeMaxBytes: 128 * RASTER_MIB,
@@ -26,18 +25,8 @@
   let thresholdInput = null;
   let thresholdValue = null;
   let thresholdHideTimer = null;
-  let fillWorkerToast = null;
-  let fillWorkerToastTimer = null;
   let referenceLayerId = String(namespace.colorFillReferenceLayerId || "").trim();
   let fillWorkerJobSequence = 0;
-
-  function nowMs() {
-    if (typeof performance !== "undefined" && typeof performance.now === "function") {
-      return performance.now();
-    }
-
-    return Date.now();
-  }
 
   function clamp(value, min, max) {
     const number = Number(value);
@@ -121,25 +110,23 @@
       Array.isArray(referenceSource.tiles) &&
       referenceSource.tiles.length > 0;
 
-    namespace.lastColorFillWorkerBlockReason = "";
-
     if (!client?.runColorFill) {
-      namespace.lastColorFillWorkerBlockReason = "client-unavailable";
       return false;
     }
 
     if (client.getSupported?.() === false) {
-      namespace.lastColorFillWorkerBlockReason = "worker-unsupported";
       return false;
     }
 
     if (!analysisRect) {
-      namespace.lastColorFillWorkerBlockReason = "missing-analysis-rect";
       return false;
     }
 
     if (context.selectionRegion || context.selectionRect) {
-      namespace.lastColorFillWorkerBlockReason = "selection";
+      return false;
+    }
+
+    if (context.clippingMaskContains) {
       return false;
     }
 
@@ -148,7 +135,6 @@
     }
 
     if (!sourceDense) {
-      namespace.lastColorFillWorkerBlockReason = "source-type";
       return false;
     }
 
@@ -159,7 +145,6 @@
       referenceSource.height === analysisRect.height;
 
     if (!rectMatchesAnalysis) {
-      namespace.lastColorFillWorkerBlockReason = "analysis-rect-mismatch";
       return false;
     }
 
@@ -207,7 +192,6 @@
     const sourceEmpty = referenceSource?.empty === true;
     const sourceSparse = referenceSource?.sparse === true;
     const sourceDense = referenceSource?.pixels instanceof Uint8Array;
-    const serializeStartedAt = nowMs();
 
     if (!client?.runColorFill || (!sourceEmpty && !sourceSparse && !sourceDense)) {
       return Promise.reject(new Error("Color fill worker unavailable."));
@@ -240,33 +224,21 @@
       transferList.push(workerPixels.buffer);
     }
 
-    const serializeMs = nowMs() - serializeStartedAt;
-    const workerStartedAt = nowMs();
-
     return client.runColorFill(payload, transferList, {
       timeoutMs: COLOR_FILL_WORKER_TIMEOUT_MS,
     }).then((result) => {
-      const workerRoundTripMs = nowMs() - workerStartedAt;
-
       if (!result?.maskBuffer || !result?.coverageMaskBuffer || !result.bounds) {
         return null;
       }
 
       return {
         coverageMask: new Uint8Array(result.coverageMaskBuffer),
-        engine: result.engine === "wasm" ? "wasm" : "js",
         fillResult: {
           bounds: result.bounds,
           filledCount: Math.max(0, Math.round(Number(result.filledCount) || 0)),
           mask: new Uint8Array(result.maskBuffer),
           stackBytes: Math.max(0, Math.round(Number(result.stackBytes) || 0)),
         },
-        timings: {
-          ...(result.timings || {}),
-          serializeMs,
-          workerRoundTripMs,
-        },
-        wasmError: result.wasmError || "",
       };
     });
   }
@@ -392,77 +364,6 @@
         thresholdToolbar.hidden = true;
       }
     }, Math.max(0, delay));
-  }
-
-  function ensureFillWorkerToast() {
-    if (fillWorkerToast) {
-      return fillWorkerToast;
-    }
-
-    if (typeof document === "undefined" || typeof document.createElement !== "function") {
-      return null;
-    }
-
-    fillWorkerToast = document.getElementById?.("cbo-color-fill-worker-toast") || null;
-
-    if (!fillWorkerToast) {
-      fillWorkerToast = document.createElement("div");
-      fillWorkerToast.id = "cbo-color-fill-worker-toast";
-      fillWorkerToast.className = "cbo-layer-limit-toast color-fill-worker-toast";
-      fillWorkerToast.hidden = true;
-      fillWorkerToast.setAttribute("role", "status");
-      fillWorkerToast.setAttribute("aria-live", "polite");
-      document.body.appendChild(fillWorkerToast);
-    }
-
-    return fillWorkerToast;
-  }
-
-  function getFillWorkerStatusLabel(statusOrDetails = "") {
-    const details = typeof statusOrDetails === "object" && statusOrDetails
-      ? statusOrDetails
-      : { status: statusOrDetails };
-
-    switch (details.status) {
-      case "applied":
-        return details.engine === "wasm" ? "Fill: WASM" : "Fill: Worker";
-      case "fallback":
-        return "Fill: JS fallback";
-      case "sync":
-        return details.reason ? `Fill: JS (${details.reason})` : "Fill: JS";
-      case "empty":
-        return "Fill: no change";
-      case "skipped":
-        return "Fill: skipped";
-      case "pending":
-        return "Fill: Worker...";
-      default:
-        return "Fill: JS";
-    }
-  }
-
-  function showFillWorkerToast(statusOrDetails = "sync") {
-    if (namespace.colorFillWorkerStatusToastEnabled === false) {
-      return;
-    }
-
-    const toast = ensureFillWorkerToast();
-
-    if (!toast) {
-      return;
-    }
-
-    const details = typeof statusOrDetails === "object" && statusOrDetails
-      ? statusOrDetails
-      : { status: statusOrDetails };
-
-    window.clearTimeout(fillWorkerToastTimer);
-    toast.textContent = getFillWorkerStatusLabel(details);
-    toast.dataset.fillWorkerStatus = details.status || "sync";
-    toast.hidden = false;
-    fillWorkerToastTimer = window.setTimeout(() => {
-      toast.hidden = true;
-    }, FILL_WORKER_TOAST_HIDE_MS);
   }
 
   function beginDropDrag() {
@@ -605,6 +506,116 @@
       : null;
 
     return referenceTarget || fallbackTarget;
+  }
+
+  function isValidClippingBaseLayer(layer) {
+    return Boolean(
+      layer &&
+      layer.visible !== false &&
+      layer.type !== "group" &&
+      layer.type !== "background" &&
+      layer.id !== "background"
+    );
+  }
+
+  function getFillClippingBaseLayer(layerId) {
+    const layerModel = namespace.documentLayerModel;
+    const layers = layerModel?.flattenTopToBottom?.();
+    const index = Array.isArray(layers)
+      ? layers.findIndex((layer) => layer?.id === layerId)
+      : -1;
+    const layer = index >= 0 ? layers[index] : layerModel?.findEntryById?.(layerId);
+
+    if (!layer?.clippingMask || index < 0) {
+      return null;
+    }
+
+    for (let nextIndex = index + 1; nextIndex < layers.length; nextIndex += 1) {
+      const candidate = layers[nextIndex];
+
+      if (candidate?.clippingMask === true) {
+        continue;
+      }
+
+      return isValidClippingBaseLayer(candidate) ? candidate : null;
+    }
+
+    return null;
+  }
+
+  function createAlphaMaskContains(referenceSource) {
+    if (referenceSource?.empty === true) {
+      return () => false;
+    }
+
+    return (docX, docY) => {
+      const offset = getReferencePixelOffset(
+        referenceSource,
+        Math.floor(docX),
+        Math.floor(docY),
+      );
+
+      return getReferenceChannel(referenceSource, offset, 3) > 0;
+    };
+  }
+
+  function combineContainsPredicates(...predicates) {
+    const activePredicates = predicates.filter((predicate) => typeof predicate === "function");
+
+    if (activePredicates.length === 0) {
+      return null;
+    }
+
+    return (docX, docY) => activePredicates.every((predicate) => predicate(docX, docY));
+  }
+
+  function getClippingFillConstraint(gl, writableLayer, fillBounds) {
+    const baseLayer = getFillClippingBaseLayer(writableLayer?.layerId);
+
+    if (!baseLayer?.id) {
+      return null;
+    }
+
+    const baseTarget = getExistingRasterTarget(baseLayer.id);
+
+    if (!baseTarget) {
+      return {
+        baseLayerId: baseLayer.id,
+        containsPoint: () => false,
+        rect: null,
+      };
+    }
+
+    const source = createReferencePixelSource(gl, baseTarget, {
+      boundAnalysis: true,
+      clipRect: fillBounds,
+    });
+    const sourceRect = source?.bounds || (
+      source?.empty === true
+        ? null
+        : {
+            height: source.height,
+            width: source.width,
+            x: source.x,
+            y: source.y,
+          }
+    );
+    const rect = intersectRects(fillBounds, sourceRect);
+
+    if (!rect || source?.empty === true) {
+      return {
+        baseLayerId: baseLayer.id,
+        containsPoint: () => false,
+        rect: null,
+      };
+    }
+
+    return {
+      baseLayerId: baseLayer.id,
+      containsPoint: createAlphaMaskContains(source),
+      rect,
+      source,
+    };
   }
 
   function readFramebufferPixelsTopDown(gl, framebuffer, width, height) {
@@ -1550,11 +1561,7 @@
       targetRect: dirtyRect,
       tool: "color-fill",
     };
-    const recorded = renderer.recordRasterOperation(report);
-
-    namespace.lastColorFillMemoryReport = recorded;
-
-    return recorded;
+    return renderer.recordRasterOperation(report);
   }
 
   function finishColorFillFromMask(context, fillResult, coverageMask) {
@@ -1668,16 +1675,6 @@
       target: writeTargets[0],
       width,
     });
-    namespace.lastColorFillAndroidFastPath = isAndroidPerformanceMode()
-      ? {
-          analysisRect: { ...analysisRect },
-          dirtyRect: { ...dirtyRect },
-          referenceClipRect: { ...referenceClipRect },
-          sourceBytes: Number.isFinite(referenceSource?.bytes)
-            ? referenceSource.bytes
-            : referenceSource?.pixels?.byteLength || 0,
-        }
-      : null;
     pushHistoryEntry(renderer, layerId, dirtyRect, beforeSnapshot, memoryPolicy, tileHistory);
     if (typeof renderer.commitVisualDirtyChange === "function") {
       renderer.commitVisualDirtyChange({
@@ -1749,9 +1746,13 @@
     const artboardContains = activeArtboardRect
       ? (docX, docY) => isPointInsideRect(docX, docY, activeArtboardRect)
       : null;
-    const clipContains = selectionContains && artboardContains
-      ? (docX, docY) => selectionContains(docX, docY) && artboardContains(docX, docY)
-      : selectionContains || artboardContains;
+    const clippingConstraint = getClippingFillConstraint(gl, writableLayer, fillBounds);
+    const clippingMaskContains = clippingConstraint?.containsPoint || null;
+    const clipContains = combineContainsPredicates(
+      selectionContains,
+      artboardContains,
+      clippingMaskContains,
+    );
 
     if (clipContains && !clipContains(seedX, seedY)) {
       return false;
@@ -1766,19 +1767,20 @@
       referenceTarget &&
       referenceTarget !== writableLayer.existingTarget
     );
-    const referenceClipRect = getReferenceClipRect(fillBounds, selectionRect);
+    let referenceClipRect = getReferenceClipRect(fillBounds, selectionRect);
+
+    if (clippingConstraint) {
+      referenceClipRect = intersectRects(referenceClipRect, clippingConstraint.rect);
+    }
 
     if (!referenceClipRect || !isPointInsideRect(seedX, seedY, referenceClipRect)) {
       return false;
     }
 
-    const fillStartedAt = nowMs();
-    const readStartedAt = nowMs();
     const referenceSource = createReferencePixelSource(gl, referenceTarget, {
       boundAnalysis: useExplicitReference,
       clipRect: referenceClipRect,
     });
-    const readPixelsMs = nowMs() - readStartedAt;
     const analysisRect = getFillAnalysisRect(referenceSource, width, height, seedX, seedY, referenceClipRect);
 
     if (!analysisRect) {
@@ -1804,12 +1806,7 @@
       width,
       writableLayer,
     };
-    const runSyncFill = (status = "sync") => {
-      const statusDetails = typeof status === "object" && status
-        ? status
-        : { status };
-      const resolvedStatus = statusDetails.status || "sync";
-      const jsStartedAt = nowMs();
+    const runSyncFill = () => {
       const fillResult = floodFillMask(
         referenceSource,
         analysisRect.width,
@@ -1821,21 +1818,11 @@
         analysisRect.y,
         { selectionContains: clipContains },
       );
-      const jsMs = nowMs() - jsStartedAt;
 
       if (!fillResult) {
-        showFillWorkerToast("empty");
-        namespace.lastColorFillTimings = {
-          engine: "js",
-          jsMs,
-          readPixelsMs,
-          status: "empty",
-          totalMs: nowMs() - fillStartedAt,
-        };
         return false;
       }
 
-      const coverageStartedAt = nowMs();
       const coverageRadius = getDilationRadius(tolerance);
       const coverageMask = createFillCoverageMask(
         fillResult.mask,
@@ -1844,28 +1831,13 @@
         fillResult.bounds,
         coverageRadius,
       );
-      const coverageMs = nowMs() - coverageStartedAt;
 
-      const applyStartedAt = nowMs();
-      const didApply = finishColorFillFromMask(fillContext, fillResult, coverageMask);
-      const applyMs = nowMs() - applyStartedAt;
-
-      namespace.lastColorFillTimings = {
-        applyMs,
-        coverageMs,
-        engine: "js",
-        jsMs,
-        readPixelsMs,
-        status: didApply ? resolvedStatus : "skipped",
-        totalMs: nowMs() - fillStartedAt,
-      };
-      showFillWorkerToast(didApply ? status : "skipped");
-
-      return didApply;
+      return finishColorFillFromMask(fillContext, fillResult, coverageMask);
     };
 
     if (canUseColorFillWorker({
       analysisRect,
+      clippingMaskContains,
       referenceSource,
       selectionRect,
       selectionRegion,
@@ -1873,17 +1845,6 @@
       const jobId = fillWorkerJobSequence + 1;
 
       fillWorkerJobSequence = jobId;
-      namespace.lastColorFillWorker = {
-        engine: "pending",
-        height: analysisRect.height,
-        jobId,
-        readPixelsMs,
-        source: "color-fill",
-        sourceType: referenceSource?.sparse === true ? "sparse" : referenceSource?.empty === true ? "empty" : "dense",
-        status: "pending",
-        width: analysisRect.width,
-      };
-      showFillWorkerToast("pending");
       runColorFillWorker(referenceSource, analysisRect, analysisSeedX, analysisSeedY, tolerance)
         .then((workerResult) => {
           if (jobId !== fillWorkerJobSequence) {
@@ -1891,89 +1852,34 @@
           }
 
           if (!workerResult) {
-            namespace.lastColorFillWorker = {
-              engine: "js",
-              jobId,
-              readPixelsMs,
-              source: "color-fill",
-              status: "empty",
-              timings: workerResult?.timings || null,
-            };
-            namespace.lastColorFillTimings = {
-              ...(workerResult?.timings || {}),
-              engine: "js",
-              readPixelsMs,
-              status: "empty",
-              totalMs: nowMs() - fillStartedAt,
-            };
-            showFillWorkerToast("empty");
             return false;
           }
 
-          const applyStartedAt = nowMs();
-          const didApply = finishColorFillFromMask(
+          return finishColorFillFromMask(
             fillContext,
             workerResult.fillResult,
             workerResult.coverageMask,
           );
-          const applyMs = nowMs() - applyStartedAt;
-          const timings = {
-            ...(workerResult.timings || {}),
-            applyMs,
-            engine: workerResult.engine || "js",
-            readPixelsMs,
-            status: didApply ? "applied" : "skipped",
-            totalMs: nowMs() - fillStartedAt,
-          };
-
-          namespace.lastColorFillTimings = timings;
-          namespace.lastColorFillWorker = {
-            didApply,
-            engine: workerResult.engine || "js",
-            height: analysisRect.height,
-            jobId,
-            source: "color-fill",
-            sourceType: referenceSource?.sparse === true ? "sparse" : referenceSource?.empty === true ? "empty" : "dense",
-            status: didApply ? "applied" : "skipped",
-            timings,
-            wasmError: workerResult.wasmError || "",
-            width: analysisRect.width,
-          };
-          showFillWorkerToast(didApply
-            ? { engine: workerResult.engine || "js", status: "applied" }
-            : "skipped");
-
-          return didApply;
         })
-        .catch((error) => {
+        .catch(() => {
           if (jobId !== fillWorkerJobSequence) {
             return false;
           }
 
-          namespace.lastColorFillWorker = {
-            engine: "js",
-            error: error?.message || String(error),
-            jobId,
-            readPixelsMs,
-            source: "color-fill",
-            status: "fallback",
-          };
-
-          return runSyncFill("fallback");
+          return runSyncFill();
         });
 
       return true;
     }
 
-    return runSyncFill({
-      reason: namespace.lastColorFillWorkerBlockReason || "not-used",
-      status: "sync",
-    });
+    return runSyncFill();
   }
 
   namespace.__colorFillTestHooks = Object.freeze({
     applyFillToDirtyPixels,
+    createAlphaMaskContains,
     compositeFillPixelPremultiplied,
+    combineContainsPredicates,
     createDirtyRect,
     createFillCoverageMask,
     floodFillMask,

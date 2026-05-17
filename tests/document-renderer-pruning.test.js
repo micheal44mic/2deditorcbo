@@ -6,11 +6,23 @@ const vm = require("node:vm");
 
 const repoRoot = path.resolve(__dirname, "..");
 
+const documentRendererModulePaths = [
+  ["js", "document", "document-renderer-shaders.js"],
+  ["js", "document", "document-renderer-raster-targets.js"],
+  ["js", "document", "document-renderer-webgl-programs.js"],
+  ["js", "document", "document-renderer-viewport-culling.js"],
+  ["js", "document", "document-renderer-layer-effects.js"],
+  ["js", "document", "document-renderer-compositing.js"],
+  ["js", "document", "document-renderer.js"],
+];
+
+function readDocumentRendererSources() {
+  return documentRendererModulePaths
+    .map((parts) => fs.readFileSync(path.join(repoRoot, ...parts), "utf8"))
+    .join("\n");
+}
+
 function loadDocumentRenderer(options = {}) {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
   const matchCoarsePointer = options.coarsePointer === true;
   const window = {
     CBO: {},
@@ -52,7 +64,9 @@ function loadDocumentRenderer(options = {}) {
     );
   }
 
-  vm.runInContext(source, context);
+  for (const modulePath of documentRendererModulePaths) {
+    vm.runInContext(fs.readFileSync(path.join(repoRoot, ...modulePath), "utf8"), context);
+  }
 
   return {
     context,
@@ -251,7 +265,7 @@ test("dehydrateRasterTarget queues async compression after saving raw CPU pixels
   assert.equal(queued[0].target, target);
   assert.equal(queued[0].options.historyId, "target-1");
   assert.equal(queued[0].options.layerId, "paint-1");
-  assert.equal(typeof queued[0].options.timings.readPixelsMs, "number");
+  assert.equal(queued[0].options.timings, undefined);
 
   const pixels = renderer.getRasterTargetCpuPixels(target);
 
@@ -1994,6 +2008,34 @@ test("commitRasterTransform treats fractional drags as rounded placement history
   assert.equal(target.y, 29);
 });
 
+test("partial sparse raster transform undo restores into sparse target instead of replacing it", () => {
+  const source = readDocumentRendererSources();
+  const start = source.indexOf("const useAuthoritativeSparseHistory = Boolean");
+  const end = source.indexOf(
+    "const afterSnapshot = this.createRasterSnapshot(layerId, dirtyRect",
+    start,
+  );
+  const nonCroppedTransformBody = start >= 0 && end > start
+    ? source.slice(start, end)
+    : "";
+  const entryStart = source.indexOf(
+    "const entry = this.finalizeRasterEditHistoryEntry(layerId, {",
+    end,
+  );
+  const entryEnd = source.indexOf("destroy: () => {", entryStart);
+  const nonCroppedHistoryEntry = entryStart >= 0 && entryEnd > entryStart
+    ? source.slice(entryStart, entryEnd)
+    : "";
+
+  assert.ok(nonCroppedTransformBody);
+  assert.match(nonCroppedTransformBody, /const sparseSnapshotCoversWholeTarget = Boolean/);
+  assert.match(nonCroppedTransformBody, /this\.containsRasterHistoryRect\(dirtyRect, targetRect\)/);
+  assert.ok(nonCroppedHistoryEntry);
+  assert.match(nonCroppedHistoryEntry, /replaceSparse: sparseSnapshotCoversWholeTarget/);
+  assert.doesNotMatch(nonCroppedHistoryEntry, /replaceSparse: preferSparseRestore/);
+  assert.doesNotMatch(nonCroppedHistoryEntry, /replaceSparse: afterPreferSparse/);
+});
+
 test("commitCroppedRasterTransform restores rasterized image layers as authoritative sparse targets", () => {
   const { DocumentRenderer, window } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
@@ -2631,10 +2673,7 @@ test("puppet deformed bounds include pixels moved outside a cropped target", () 
 });
 
 test("document renderer exposes GPU snapshot lifecycle helpers for raster history", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
   const documentDrawTargetBody = source.match(
     /getDocumentDrawTarget\(layerId = this\.resolvePaintLayerId\(\)\) \{([\s\S]*?)\n    ensurePaintLayerForBrush/,
   )?.[1] || "";
@@ -3063,10 +3102,7 @@ test("renderer caps DPR and cache size for mobile-like and Android devices", () 
 });
 
 test("document renderer exposes mipmapped preview cache helpers", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
 
   assert.match(source, /const PREVIEW_CACHE_MAX_SIZE = 2048/);
   assert.match(source, /const MOBILE_PREVIEW_CACHE_MAX_SIZE = 1536/);
@@ -3145,10 +3181,7 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
 });
 
 test("document raster targets sample linearly at zoom intermediates", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
   const createRasterTargetBody = source.match(
     /createRasterTarget\(clearColor = \[0, 0, 0, 0\], options = \{\}\) \{([\s\S]*?)\n    createPaintTarget/,
   )?.[1] || "";
@@ -3249,10 +3282,7 @@ test("document renderer allows Android mipmapped preview cache only for idle zoo
 });
 
 test("preview cache supports dirty-region compositing", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
   const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
 
   assert.match(source, /previewDirtyRects/);
@@ -4200,10 +4230,7 @@ test("preview cache exact rect follows the allocated texture scale", () => {
 });
 
 test("document renderer uses a procedural background texture", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
 
   assert.match(source, /createProceduralBackgroundTarget\(\)/);
   assert.match(source, /new Uint8Array\(\[247, 247, 242, 255\]\)/);
@@ -4327,10 +4354,7 @@ test("document renderer culls procedural artboard backgrounds outside the viewpo
 });
 
 test("document renderer keeps viewport culling conservative for risky layer states", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
   const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
   const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
 
@@ -4486,10 +4510,7 @@ test("document renderer audits conservative viewport layer culling decisions", (
 });
 
 test("document renderer wires viewport culling stats without touching preview cache", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
   const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
   const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
 
@@ -4533,10 +4554,7 @@ test("document renderer infers artboard clipping from layer model group membersh
 });
 
 test("createPaintTarget forwards layer metadata before resource tracing", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
 
   assert.match(source, /createPaintTarget\(layerId = "", options = \{\}\) \{/);
   assert.match(source, /const targetLayerId = layerId \|\| options\.layerId/);
@@ -4549,10 +4567,7 @@ test("createPaintTarget forwards layer metadata before resource tracing", () => 
 });
 
 test("live eraser mask samples document coordinates for cropped layer renders", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
   const documentMaskMatches = source.match(
     /vec2 local = \(globalDocPixel - u_maskRect\.xy\) \/ max\(u_maskRect\.zw, vec2\(1\.0\)\);/g,
   ) || [];
@@ -4562,10 +4577,7 @@ test("live eraser mask samples document coordinates for cropped layer renders", 
 });
 
 test("document renderer composites supported layer blend modes in shader", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
   const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
   const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
 
@@ -4590,10 +4602,7 @@ test("document renderer composites supported layer blend modes in shader", () =>
 });
 
 test("document renderer exposes non-destructive gaussian blur layer effect helpers", () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const source = readDocumentRendererSources();
   const previewCacheBody = source.match(/updatePreviewCache\(options = \{\}\) \{([\s\S]*?)\n    drawPreviewCacheToCanvas/)?.[1] || "";
 
   assert.match(source, /GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE/);
@@ -4710,10 +4719,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
 });
 
 test("puppet rasterize commits the deformed mesh through snapshots", () => {
-  const rendererSource = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const rendererSource = readDocumentRendererSources();
   const puppetToolSource = fs.readFileSync(
     path.join(repoRoot, "js", "puppet-transform-tool.js"),
     "utf8",
@@ -4764,10 +4770,7 @@ test("puppet pin creation is blocked outside visible alpha", () => {
 });
 
 test("replaceRasterTarget can preserve preview cache and forward dirty bounds", () => {
-  const rendererSource = fs.readFileSync(
-    path.join(repoRoot, "js", "document", "document-renderer.js"),
-    "utf8",
-  );
+  const rendererSource = readDocumentRendererSources();
 
   assert.match(rendererSource, /if \(options\.invalidate !== false \|\| options\.emit !== false\) \{/);
   assert.match(rendererSource, /this\.commitVisualDirtyChange\(\{/);

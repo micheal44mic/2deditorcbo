@@ -96,8 +96,8 @@ test("left rail exposes a visual artboard tool below layers", () => {
   assert.ok(artboardButtonIndex > layerButtonIndex);
   assert.match(indexSource, /data-tooltip="ARTBOARD"/);
   assert.match(indexSource, /class="lucide lucide-dice1-icon lucide-dice-1"/);
-  assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js\?v=android-v3\.8-history-metrics"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js\?v=android-v3\.8-history-metrics"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
 });
 
 test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
