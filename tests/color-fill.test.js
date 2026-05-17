@@ -10,8 +10,20 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+const colorFillModulePaths = [
+  ["js", "color-fill-worker.js"],
+  ["js", "color-fill-reference.js"],
+  ["js", "color-fill-mask.js"],
+  ["js", "color-fill-history.js"],
+  ["js", "color-fill.js"],
+];
+
+function readColorFillSources() {
+  return colorFillModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 function loadColorFillModule() {
-  const source = readRepoFile("js", "color-fill.js");
+  const sources = colorFillModulePaths.map((parts) => readRepoFile(...parts));
   const window = {
     CBO: {},
     addEventListener() {},
@@ -35,7 +47,7 @@ function loadColorFillModule() {
     window,
   });
 
-  vm.runInContext(source, context);
+  sources.forEach((source) => vm.runInContext(source, context));
 
   return window.CBO;
 }
@@ -127,17 +139,29 @@ test("color drop is wired to the Procreate-style fill module", () => {
   const cssSource = readRepoFile("css", "color-drop.css");
   const imageRasterizerIndex = indexSource.indexOf("./js/images/image-rasterizer.js");
   const pixelWorkerClientIndex = indexSource.indexOf("./js/pixel/pixel-worker-client.js");
+  const colorFillWorkerModuleIndex = indexSource.indexOf("./js/color-fill-worker.js");
+  const colorFillReferenceModuleIndex = indexSource.indexOf("./js/color-fill-reference.js");
+  const colorFillMaskModuleIndex = indexSource.indexOf("./js/color-fill-mask.js");
+  const colorFillHistoryModuleIndex = indexSource.indexOf("./js/color-fill-history.js");
   const colorFillIndex = indexSource.indexOf("./js/color-fill.js");
   const editorCanvasIndex = indexSource.indexOf("./js/editor-canvas.js");
   const appIndex = indexSource.indexOf("./js/app.js");
 
   assert.ok(imageRasterizerIndex > 0);
   assert.ok(pixelWorkerClientIndex > imageRasterizerIndex);
-  assert.ok(colorFillIndex > pixelWorkerClientIndex);
+  assert.ok(colorFillWorkerModuleIndex > pixelWorkerClientIndex);
+  assert.ok(colorFillReferenceModuleIndex > colorFillWorkerModuleIndex);
+  assert.ok(colorFillMaskModuleIndex > colorFillReferenceModuleIndex);
+  assert.ok(colorFillHistoryModuleIndex > colorFillMaskModuleIndex);
+  assert.ok(colorFillIndex > colorFillHistoryModuleIndex);
   assert.ok(editorCanvasIndex > colorFillIndex);
   assert.ok(appIndex > editorCanvasIndex);
   assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/color-drop\.css\?v=android-v4\.5-no-fill-history-debug" \/>/);
   assert.match(indexSource, /<script src="\.\/js\/pixel\/pixel-worker-client\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill-worker\.js\?v=color-fill-modules"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill-reference\.js\?v=color-fill-modules"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill-mask\.js\?v=color-fill-modules"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill-history\.js\?v=color-fill-modules"><\/script>/);
   assert.match(indexSource, /<script src="\.\/js\/color-fill\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.beginDropDrag\?\.\(\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.dropColorAt\?\.\(dropX, dropY, color\)/);
@@ -150,7 +174,7 @@ test("color drop is wired to the Procreate-style fill module", () => {
 });
 
 test("color fill uses active layer pixels unless a reference layer is set", () => {
-  const source = readRepoFile("js", "color-fill.js");
+  const source = readColorFillSources();
   const cssSource = readRepoFile("css", "color-drop.css");
 
   assert.match(source, /function setReferenceLayerId\(layerId, options = \{\}\)/);
@@ -894,7 +918,7 @@ test("color fill clips dense reference reads to the active artboard", () => {
 });
 
 test("color fill exposes route-1 anti-aliased coverage helpers", () => {
-  const source = readRepoFile("js", "color-fill.js");
+  const source = readColorFillSources();
 
   assert.match(source, /FILL_EDGE_AA_RADIUS = 1/);
   assert.match(source, /function createFillCoverageMask\(mask, width, height, bounds, radius = 0\)/);
@@ -1090,7 +1114,7 @@ test("fill mask memory accounting includes coverage mask bytes", () => {
 });
 
 test("color fill exposes a top-center threshold range styled like quick brush controls", () => {
-  const source = readRepoFile("js", "color-fill.js");
+  const source = readColorFillSources();
   const cssSource = readRepoFile("css", "color-drop.css");
 
   assert.match(source, /DEFAULT_FILL_TOLERANCE = 48/);

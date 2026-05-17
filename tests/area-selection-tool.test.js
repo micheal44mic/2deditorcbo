@@ -37,6 +37,18 @@ function readDocumentRendererSources() {
   return documentRendererModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
 }
 
+const colorFillModulePaths = [
+  ["js", "color-fill-worker.js"],
+  ["js", "color-fill-reference.js"],
+  ["js", "color-fill-mask.js"],
+  ["js", "color-fill-history.js"],
+  ["js", "color-fill.js"],
+];
+
+function readColorFillSources() {
+  return colorFillModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 test("rect area selection is loaded and wired to the side toolbar", () => {
   const indexSource = readRepoFile("index.html");
   const appSource = readRepoFile("js", "app.js");
@@ -147,7 +159,7 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
 test("brush and fill constrain raster edits to an active area selection", () => {
   const brushSource = readBrushEngineSources();
   const rendererSource = readDocumentRendererSources();
-  const fillSource = readRepoFile("js", "color-fill.js");
+  const fillSource = readColorFillSources();
   const smudgeSource = readRepoFile("js", "smudge-engine.js");
 
   assert.match(brushSource, /getActiveAreaSelectionCoverageRects\(rect\)/);

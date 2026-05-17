@@ -10,6 +10,20 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts));
 }
 
+const colorFillModulePaths = [
+  ["js", "color-fill-worker.js"],
+  ["js", "color-fill-reference.js"],
+  ["js", "color-fill-mask.js"],
+  ["js", "color-fill-history.js"],
+  ["js", "color-fill.js"],
+];
+
+function readColorFillSources() {
+  return colorFillModulePaths
+    .map((parts) => readRepoFile(...parts).toString("utf8"))
+    .join("\n");
+}
+
 function loadPixelWorker({ wasmAvailable = true } = {}) {
   const source = readRepoFile("js", "workers", "pixel-worker.js").toString("utf8");
   const wasmBytes = readRepoFile("wasm", "pixel_core.wasm");
@@ -239,7 +253,7 @@ test("history compression runs in the pixel worker and returns a transferable co
 });
 
 test("color fill worker debug and timings are not exposed", () => {
-  const source = readRepoFile("js", "color-fill.js").toString("utf8");
+  const source = readColorFillSources();
 
   assert.doesNotMatch(source, /namespace\.lastColorFillWorker/);
   assert.doesNotMatch(source, /engine: workerResult\.engine \|\| "js"/);

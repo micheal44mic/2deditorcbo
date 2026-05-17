@@ -1364,3 +1364,221 @@
 127.0.0.1 - - [17/May/2026 20:55:29] "GET /js/document/document-autosave.js HTTP/1.1" 304 -
 127.0.0.1 - - [17/May/2026 20:55:29] "GET /js/editor-canvas.js?v=image-dirty-target HTTP/1.1" 200 -
 192.168.0.5 - - [17/May/2026 20:56:48] "GET /js/workers/pixel-worker.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 304 -
+192.168.0.12 - - [17/May/2026 21:14:37] "GET / HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/base.css?v=mobile-android-indicator HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/left-sidebar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/layout.css?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/right-sidebar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/brushes-panel.css HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/brush-studio.css?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/drawer.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/toolbar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/top-toolbar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/vertical-toolbar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/layer-effects-panel.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/layers-panel.css HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/color-drop.css?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/color-picker.css HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /css/tooltips.css HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /data/categories.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /vendor/fonts/libre-baskerville-font.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /vendor/fonts/vector-fonts.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /vendor/opentype/opentype.min.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/icons.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/sidebar.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/drawer.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/blend-modes.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/document/document-bounds.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/curves-engine.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/document/document-layer-model.js?v=active-layer-nonvisual HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/document/document-artboard-model.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/document/document-history.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/document/document-history-compression.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/text/vector-text-engine.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/text/vector-text-renderer.js?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/text/vector-text-rasterizer.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/layers-panel.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /data/grain-textures.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/drag-scroll.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/brush-defaults.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/top-toolbar.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /data/brush-library.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/rotate-button.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/file-adjustments-button.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/resize-button.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/puppet-button.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/vertical-toolbar.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/layer-effects-panel.js?v=mobile-context-back HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/color-picker.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/color-drop.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/stroke-math.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/brush-preview.js?v=brush-fastpath HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/toolbar.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:38] "GET /js/tooltips.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/right-sidebar.js?v=text-sidebar-font-controls HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brushes-panel.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brush-studio.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-renderer-shaders.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-renderer-raster-targets.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-renderer-history-snapshots.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-renderer-webgl-programs.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-renderer-viewport-culling.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-renderer-layer-effects.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-renderer-compositing.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-renderer.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/raster-transform-tool.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/puppet-transform-tool.js?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/selection-region.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/area-selection-tool.js?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brush-engine-shader-grain.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brush-engine-target-gpu.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brush-engine-history.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brush-engine-sampler.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brush-engine-stroke-input.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brush-engine.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/smudge-engine.js?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/brush-shape-outline-preview.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/images/image-rasterizer.js?v=image-dirty-target HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/pixel/pixel-worker-client.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/document/document-autosave.js HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/color-fill.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/editor-canvas.js?v=image-dirty-target HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/artboard-preview.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /js/app.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.12 - - [17/May/2026 21:14:39] code 404, message File not found
+192.168.0.12 - - [17/May/2026 21:14:39] "GET /favicon.ico HTTP/1.1" 404 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET / HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/base.css?v=mobile-android-indicator HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/layout.css?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/left-sidebar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/right-sidebar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/brushes-panel.css HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/brush-studio.css?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/drawer.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/toolbar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/top-toolbar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/vertical-toolbar.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/layer-effects-panel.css?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/layers-panel.css HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/color-picker.css HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/color-drop.css?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /css/tooltips.css HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /data/categories.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /vendor/fonts/vector-fonts.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /vendor/fonts/libre-baskerville-font.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /vendor/opentype/opentype.min.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /js/icons.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /js/sidebar.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /js/drawer.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /js/document/document-bounds.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:52] "GET /js/blend-modes.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/curves-engine.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/document/document-layer-model.js?v=active-layer-nonvisual HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/document/document-history.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/document/document-artboard-model.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/document/document-history-compression.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/text/vector-text-engine.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/text/vector-text-renderer.js?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/text/vector-text-rasterizer.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/layers-panel.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/drag-scroll.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /data/grain-textures.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/brush-defaults.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/top-toolbar.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /data/brush-library.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/file-adjustments-button.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/rotate-button.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/resize-button.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/puppet-button.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/layer-effects-panel.js?v=mobile-context-back HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/vertical-toolbar.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/color-picker.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/color-drop.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/brush-preview.js?v=brush-fastpath HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/toolbar.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/tooltips.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/stroke-math.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/right-sidebar.js?v=text-sidebar-font-controls HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/brushes-panel.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/document/document-renderer-shaders.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:53] "GET /js/brush-studio.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/document/document-renderer-raster-targets.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/document/document-renderer-history-snapshots.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/document/document-renderer-webgl-programs.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/document/document-renderer-viewport-culling.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/document/document-renderer-layer-effects.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/document/document-renderer-compositing.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/document/document-renderer.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/raster-transform-tool.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:54] "GET /js/puppet-transform-tool.js?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/selection-region.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/area-selection-tool.js?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/brush-engine-shader-grain.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/brush-engine-target-gpu.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/brush-engine-history.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/brush-engine-sampler.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/brush-engine-stroke-input.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/brush-engine.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/brush-shape-outline-preview.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/smudge-engine.js?v=mobile-ios-gesture-lock HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/images/image-rasterizer.js?v=image-dirty-target HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/color-fill.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/pixel/pixel-worker-client.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/document/document-autosave.js HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/editor-canvas.js?v=image-dirty-target HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/artboard-preview.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:55] "GET /js/app.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.27 - - [17/May/2026 21:14:56] code 404, message File not found
+192.168.0.27 - - [17/May/2026 21:14:56] "GET /favicon.ico HTTP/1.1" 404 -
+----------------------------------------
+Exception occurred during processing of request from ('192.168.0.27', 50979)
+Traceback (most recent call last):
+  File "C:\Users\michi\AppData\Local\Programs\Python\Python313\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\michi\AppData\Local\Programs\Python\Python313\Lib\http\server.py", line 1320, in finish_request
+    self.RequestHandlerClass(request, client_address, self,
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                             directory=args.directory)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\michi\AppData\Local\Programs\Python\Python313\Lib\http\server.py", line 672, in __init__
+    super().__init__(*args, **kwargs)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\michi\AppData\Local\Programs\Python\Python313\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+    ~~~~~~~~~~~^^
+  File "C:\Users\michi\AppData\Local\Programs\Python\Python313\Lib\http\server.py", line 436, in handle
+    self.handle_one_request()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\michi\AppData\Local\Programs\Python\Python313\Lib\http\server.py", line 404, in handle_one_request
+    self.raw_requestline = self.rfile.readline(65537)
+                           ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\michi\AppData\Local\Programs\Python\Python313\Lib\socket.py", line 719, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+ConnectionResetError: [WinError 10054] Connessione in corso interrotta forzatamente dall'host remoto
+----------------------------------------
+192.168.0.5 - - [17/May/2026 21:17:42] "GET / HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /css/layout.css?v=android-v4.5-no-fill-history-debug HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /css/color-drop.css?v=android-v4.5-no-fill-history-debug HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-history.js HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/brush-engine-shader-grain.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-renderer-raster-targets.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-renderer-history-snapshots.js?v=renderer-modules HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-renderer-webgl-programs.js?v=renderer-modules HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-renderer-shaders.js?v=renderer-modules HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-renderer-viewport-culling.js?v=renderer-modules HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-renderer-layer-effects.js?v=renderer-modules HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-renderer.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/document/document-renderer-compositing.js?v=renderer-modules HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/brush-engine-target-gpu.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/brush-engine-history.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/brush-engine-sampler.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/brush-engine.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/brush-engine-stroke-input.js?v=brush-modules HTTP/1.1" 200 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/smudge-engine.js?v=mobile-ios-gesture-lock HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/color-fill.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/pixel/pixel-worker-client.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/editor-canvas.js?v=image-dirty-target HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:42] "GET /js/app.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 304 -
+192.168.0.5 - - [17/May/2026 21:17:46] "GET /js/workers/pixel-worker.js?v=android-v4.5-no-fill-history-debug HTTP/1.1" 304 -
