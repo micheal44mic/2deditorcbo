@@ -222,6 +222,30 @@ test("falls back to JS when WASM does not load", async () => {
   assert.equal(result.filledCount, 24);
 });
 
+test("history compression runs in the pixel worker and returns a transferable compressed buffer", async () => {
+  const hooks = loadPixelWorker();
+  const pixels = new Uint8Array(32 * 32 * 4);
+
+  pixels.fill(0);
+  const result = await hooks.runHistoryCompress({
+    historyId: "history-1",
+    jobToken: "job-1",
+    layerId: "paint-1",
+    pixelsBuffer: pixels.buffer,
+    rawBytes: pixels.byteLength,
+  });
+
+  assert.equal(result.engine, "js");
+  assert.equal(result.historyId, "history-1");
+  assert.equal(result.jobToken, "job-1");
+  assert.equal(result.layerId, "paint-1");
+  assert.equal(result.rawBytes, pixels.byteLength);
+  assert.ok(result.compressedBuffer instanceof ArrayBuffer);
+  assert.ok(result.compressedBytes < pixels.byteLength);
+  assert.match(result.encoding, /^rle-rgba-v/);
+  assert.equal(typeof result.timings.workerMs, "number");
+});
+
 test("color fill debug exposes worker engine and timings", () => {
   const source = readRepoFile("js", "color-fill.js").toString("utf8");
 

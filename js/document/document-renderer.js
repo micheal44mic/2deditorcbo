@@ -1542,7 +1542,6 @@ void main() {
       this.layerCompositeScratchB = null;
       this.layerCompositeWidth = 0;
       this.layerCompositeHeight = 0;
-      this.visualClipBaseTarget = null;
       this.layerEffectScratchA = null;
       this.layerEffectScratchB = null;
       this.activeStrokeScratchTarget = null;
@@ -2510,32 +2509,21 @@ void main() {
       target.texture = null;
       target.textureResourceId = "";
 
-      const compression = window.CBO?.HistoryCompression;
-      let storedPixels = pixels;
-      let storedEncoding = null;
       const rawByteLength = pixels.byteLength;
 
-      if (compression && typeof compression.compressRgba === "function") {
-        try {
-          const result = compression.compressRgba(pixels);
-
-          if (result && result.encoding && result.bytes instanceof Uint8Array) {
-            storedPixels = result.bytes;
-            storedEncoding = result.encoding;
-          }
-        } catch (error) {
-          console.warn?.("[CBO renderer] Compressione RLE target raster fallita, salvo raw.", error);
-          storedPixels = pixels;
-          storedEncoding = null;
-        }
-      }
-
-      target.cpuBytes = storedPixels.byteLength;
-      target.cpuPixels = storedPixels;
-      target.cpuPixelsEncoding = storedEncoding;
+      target.cpuBytes = rawByteLength;
+      target.cpuPixels = pixels;
+      target.cpuPixelsEncoding = null;
       target.cpuRawBytes = rawByteLength;
+      target.historyCompressionState = "raw-pending";
       target.state = "CPU_COLD";
       target.reason = options.reason || target.reason || "raster-target-cpu-cold";
+      window.CBO?.queueHistoryCompression?.(target, {
+        historyId: target.id || target.layerId || "",
+        kind: target.kind || "rasterTarget",
+        layerId: target.layerId || options.layerId || "",
+        source: options.source || target.reason,
+      });
 
       return true;
     }
@@ -8324,247 +8312,6 @@ void main() {
       };
     }
 
-    deleteVisualClipBaseTarget() {
-      if (!this.visualClipBaseTarget) {
-        return;
-      }
-
-      this.deleteRasterTargetObject(this.visualClipBaseTarget);
-      this.visualClipBaseTarget = null;
-    }
-
-    getQuadDocumentRect(quad = []) {
-      if (!Array.isArray(quad) || quad.length < 4) {
-        return null;
-      }
-
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-
-      for (const point of quad.slice(0, 4)) {
-        const x = Number(point?.x);
-        const y = Number(point?.y);
-
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
-          return null;
-        }
-
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-      }
-
-      if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
-        return null;
-      }
-
-      return this.getUnclampedDocumentRect({
-        x: minX,
-        y: minY,
-        width: maxX - minX,
-        height: maxY - minY,
-      });
-    }
-
-    getRasterTransformPreviewDocumentRect(preview = this.rasterTransformPreview) {
-      if (!preview?.texture) {
-        return null;
-      }
-
-      const rawRect = preview.transformMode === "warp"
-        ? this.getRasterWarpBounds(preview.warpControlPoints)
-        : this.getQuadDocumentRect(preview.quad);
-
-      return this.getUnclampedDocumentRect(
-        this.padRasterRect(rawRect, RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING),
-      );
-    }
-
-    ensureVisualClipBaseTarget(rect, source = "visual-clip-base") {
-      const targetRect = this.getUnclampedDocumentRect(rect);
-
-      if (!targetRect) {
-        return null;
-      }
-
-      const width = Math.max(1, Math.ceil(targetRect.width));
-      const height = Math.max(1, Math.ceil(targetRect.height));
-      const x = Math.floor(targetRect.x);
-      const y = Math.floor(targetRect.y);
-
-      if (
-        this.visualClipBaseTarget?.texture &&
-        this.visualClipBaseTarget?.framebuffer &&
-        this.visualClipBaseTarget.width === width &&
-        this.visualClipBaseTarget.height === height
-      ) {
-        this.visualClipBaseTarget.x = x;
-        this.visualClipBaseTarget.y = y;
-        this.visualClipBaseTarget.cropped = true;
-        return this.visualClipBaseTarget;
-      }
-
-      this.deleteVisualClipBaseTarget();
-
-      this.visualClipBaseTarget = this.createRasterTarget([0, 0, 0, 0], {
-        cropped: true,
-        height,
-        kind: "clipBaseScratch",
-        label: "visual clip base",
-        ownerId: "visual-clip-base",
-        ownerType: "scratch",
-        purgeable: true,
-        reason: source,
-        width,
-        x,
-        y,
-      });
-
-      return this.visualClipBaseTarget;
-    }
-
-    createVisualTextureClipBase(layer, texture, rect, options = {}) {
-      if (!layer || !texture || layer.visible === false) {
-        return null;
-      }
-
-      const targetRect = this.getUnclampedDocumentRect(rect);
-
-      if (!targetRect) {
-        return null;
-      }
-
-      const target = this.ensureVisualClipBaseTarget(targetRect, options.source || "visual-clip-base");
-
-      if (!target?.texture || !target?.framebuffer) {
-        return null;
-      }
-
-      const gl = this.gl;
-      const wasScissorEnabled = gl.isEnabled?.(gl.SCISSOR_TEST) === true;
-      const scissorBox = wasScissorEnabled && typeof gl.getParameter === "function"
-        ? gl.getParameter(gl.SCISSOR_BOX)
-        : null;
-      const camera = {
-        x: -target.x,
-        y: -target.y,
-        zoom: 1,
-      };
-      const fallbackQuad = [
-        { x: targetRect.x, y: targetRect.y },
-        { x: targetRect.x + targetRect.width, y: targetRect.y },
-        { x: targetRect.x + targetRect.width, y: targetRect.y + targetRect.height },
-        { x: targetRect.x, y: targetRect.y + targetRect.height },
-      ];
-      const transformMode = String(options.transformMode || "free").trim().toLowerCase();
-      const drawOptions = {
-        camera,
-        edgeFeatherPixels: options.edgeFeatherPixels,
-        framebuffer: target.framebuffer,
-        opacity: Number.isFinite(options.opacity) ? Math.max(0, Math.min(1, options.opacity)) : 1,
-        sourceUvRect: options.sourceUvRect || null,
-        textureFilter: this.gl.LINEAR,
-        viewportHeight: target.height,
-        viewportWidth: target.width,
-      };
-      let didDraw = false;
-
-      if (wasScissorEnabled) {
-        gl.disable(gl.SCISSOR_TEST);
-      }
-
-      try {
-        this.clearTarget(target);
-
-        if (transformMode === "warp" && options.warpControlPoints) {
-          didDraw = this.drawWarpTexturedMesh(
-            texture,
-            options.warpControlPoints,
-            drawOptions,
-          );
-        } else if (transformMode === "perspective") {
-          didDraw = this.drawPerspectiveTexturedQuad(
-            texture,
-            options.quad || fallbackQuad,
-            drawOptions,
-          );
-        } else {
-          didDraw = this.drawTexturedQuad(
-            texture,
-            options.quad || fallbackQuad,
-            drawOptions,
-          );
-        }
-      } finally {
-        if (wasScissorEnabled && scissorBox) {
-          gl.enable(gl.SCISSOR_TEST);
-          gl.scissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3]);
-        } else {
-          gl.disable(gl.SCISSOR_TEST);
-        }
-      }
-
-      if (!didDraw) {
-        return null;
-      }
-
-      const layerOpacity = Number.isFinite(layer.opacity)
-        ? Math.max(0, Math.min(1, layer.opacity))
-        : 1;
-      const clipOpacity = Number.isFinite(options.clipOpacity)
-        ? Math.max(0, Math.min(1, options.clipOpacity))
-        : layerOpacity;
-
-      return this.createClipBaseForLayer(
-        {
-          ...layer,
-          opacity: clipOpacity,
-        },
-        target,
-        layer.visible !== false,
-      );
-    }
-
-    createRasterTransformPreviewClipBaseForLayer(layer) {
-      const preview = this.rasterTransformPreview;
-
-      if (
-        !layer?.id ||
-        !preview?.texture ||
-        preview.layerId !== layer.id ||
-        !Array.isArray(preview.quad)
-      ) {
-        return null;
-      }
-
-      const rect = this.getRasterTransformPreviewDocumentRect(preview);
-
-      if (!rect) {
-        return null;
-      }
-
-      const layerOpacity = Number.isFinite(layer.opacity)
-        ? Math.max(0, Math.min(1, layer.opacity))
-        : 1;
-      const previewOpacity = Number.isFinite(preview.opacity)
-        ? Math.max(0, Math.min(1, preview.opacity))
-        : 1;
-
-      return this.createVisualTextureClipBase(layer, preview.texture, rect, {
-        clipOpacity: layerOpacity,
-        edgeFeatherPixels: preview.edgeFeatherPixels,
-        opacity: previewOpacity,
-        quad: preview.quad,
-        source: "raster-transform-preview-clip-base",
-        sourceUvRect: preview.sourceUvRect || null,
-        transformMode: preview.transformMode,
-        warpControlPoints: preview.warpControlPoints,
-      });
-    }
-
     getGaussianBlurRadius(layer) {
       const effects = layer?.effects;
       const effect = Array.isArray(effects)
@@ -11815,32 +11562,21 @@ void main() {
         snapshot.texture = null;
       }
 
-      const compression = window.CBO?.HistoryCompression;
-      let storedPixels = pixels;
-      let storedEncoding = null;
       const rawByteLength = pixels.byteLength;
 
-      if (compression && typeof compression.compressRgba === "function") {
-        try {
-          const result = compression.compressRgba(pixels);
-
-          if (result && result.encoding && result.bytes instanceof Uint8Array) {
-            storedPixels = result.bytes;
-            storedEncoding = result.encoding;
-          }
-        } catch (error) {
-          console.warn?.("[CBO renderer] Compressione RLE history fallita, salvo raw.", error);
-          storedPixels = pixels;
-          storedEncoding = null;
-        }
-      }
-
       snapshot.bytes = snapshot.bytes || rawByteLength;
-      snapshot.cpuBytes = storedPixels.byteLength;
-      snapshot.cpuPixels = storedPixels;
-      snapshot.cpuPixelsEncoding = storedEncoding;
+      snapshot.cpuBytes = rawByteLength;
+      snapshot.cpuPixels = pixels;
+      snapshot.cpuPixelsEncoding = null;
       snapshot.cpuRawBytes = rawByteLength;
+      snapshot.historyCompressionState = "raw-pending";
       snapshot.state = "CPU_COLD";
+      window.CBO?.queueHistoryCompression?.(snapshot, {
+        historyId: snapshot.id || snapshot.snapshotId || "",
+        kind: "rasterSnapshot",
+        layerId: snapshot.layerId || "",
+        source: snapshot.label || "raster-snapshot-cpu-cold",
+      });
 
       return true;
     }
@@ -16028,16 +15764,6 @@ void main() {
               });
             }
 
-            if (!isClippingLayer && clipBaseLayerIds.has(layer.id) && layerTexture && renderResult?.rect) {
-              const visualClipBase = this.createVisualTextureClipBase(layer, layerTexture, renderResult.rect, {
-                source: "preview-cache-visual-clip-base",
-              });
-
-              if (visualClipBase) {
-                currentClipBase = visualClipBase;
-                bindArtboardProgram();
-              }
-            }
           }
         }
 
@@ -18071,16 +17797,6 @@ void main() {
                 }
               });
 
-              if (!isClippingLayer && isClipBaseLayer && !isRasterTransformPreviewLayer && layerTexture && layerRect) {
-                const visualClipBase = this.createVisualTextureClipBase(layer, layerTexture, layerRect, {
-                  source: "canvas-visual-clip-base",
-                });
-
-                if (visualClipBase) {
-                  currentClipBase = visualClipBase;
-                  bindArtboardProgram();
-                }
-              }
             }
 
             if (eraserMaskTexture) {
@@ -18136,15 +17852,6 @@ void main() {
 
           if (isRasterTransformPreviewLayer) {
             drawRasterTransformPreview(opacity, clipBase);
-
-            if (!isClippingLayer && isClipBaseLayer) {
-              const transformClipBase = this.createRasterTransformPreviewClipBaseForLayer(layer);
-
-              if (transformClipBase) {
-                currentClipBase = transformClipBase;
-                bindArtboardProgram();
-              }
-            }
           }
 
           if (isActiveStrokeLayer && activeStrokeMode !== "eraser" && !didDrawActiveStroke) {
@@ -18246,7 +17953,6 @@ void main() {
       this.deleteCurvesResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteActiveStrokeSelectionClipTexture();
-      this.deleteVisualClipBaseTarget();
       this.deleteLayerCompositeResources();
       this.deletePreviewCache();
       this.deleteAllArtboardFlatPreviews("dispose");

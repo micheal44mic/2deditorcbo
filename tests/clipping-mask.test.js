@@ -112,14 +112,10 @@ test("document renderer treats image upload metadata as visual for clipping mask
   assert.match(source, /hasLayerRenderableOrPendingRasterContent/);
 });
 
-test("document renderer can use transform preview and visual effects as live clipping base", () => {
+test("document renderer can use transform preview as live clipping base", () => {
   const source = readRepoFile("js", "document", "document-renderer.js");
 
-  assert.match(source, /visualClipBaseTarget/);
-  assert.match(source, /createVisualTextureClipBase/);
-  assert.match(source, /createRasterTransformPreviewClipBaseForLayer/);
-  assert.match(source, /raster-transform-preview-clip-base/);
-  assert.match(source, /canvas-visual-clip-base/);
-  assert.match(source, /preview-cache-visual-clip-base/);
-  assert.match(source, /currentClipBase = transformClipBase/);
+  assert.match(source, /drawRasterTransformPreview\(opacity, clipBase\)/);
+  assert.match(source, /options\.clipBase/);
+  assert.doesNotMatch(source, /visualClipBaseTarget/);
 });

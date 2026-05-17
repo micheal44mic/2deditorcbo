@@ -1600,13 +1600,18 @@ void main() {
 
     coolRasterHistoryGpuHotForBrush() {
       const history = namespace.documentHistory;
+      const isAndroid = this.isAndroidPerformanceMode?.() === true;
+      const options = {
+        initialDelayMs: isAndroid ? 350 : 90,
+        maxChunkMs: isAndroid ? 3 : 7,
+        maxSnapshotsPerChunk: isAndroid ? 1 : 8,
+        minProtectedEntries: isAndroid ? 2 : 0,
+        source: "brush-stroke",
+        targetGpuHotBytes: isAndroid ? 48 * RASTER_MIB : 0,
+      };
 
       if (typeof history?.scheduleRasterHistoryGpuHotPrune === "function") {
-        return history.scheduleRasterHistoryGpuHotPrune({
-          minProtectedEntries: 0,
-          source: "brush-stroke",
-          targetGpuHotBytes: 0,
-        });
+        return history.scheduleRasterHistoryGpuHotPrune(options);
       }
 
       if (!history?.pruneRasterHistoryGpuHotBudget) {
@@ -1614,8 +1619,8 @@ void main() {
       }
 
       return history.pruneRasterHistoryGpuHotBudget({
-        minProtectedEntries: 0,
-        targetGpuHotBytes: 0,
+        minProtectedEntries: options.minProtectedEntries,
+        targetGpuHotBytes: options.targetGpuHotBytes,
       });
     }
 
@@ -6828,32 +6833,21 @@ void main() {
       gl.deleteTexture(snapshot.texture);
       snapshot.texture = null;
 
-      const compression = window.CBO?.HistoryCompression;
-      let storedPixels = pixels;
-      let storedEncoding = null;
       const rawByteLength = pixels.byteLength;
 
-      if (compression && typeof compression.compressRgba === "function") {
-        try {
-          const result = compression.compressRgba(pixels);
-
-          if (result && result.encoding && result.bytes instanceof Uint8Array) {
-            storedPixels = result.bytes;
-            storedEncoding = result.encoding;
-          }
-        } catch (error) {
-          console.warn?.("[CBO brush] Compressione RLE snapshot fallita, salvo raw.", error);
-          storedPixels = pixels;
-          storedEncoding = null;
-        }
-      }
-
       snapshot.bytes = snapshot.bytes || rawByteLength;
-      snapshot.cpuBytes = storedPixels.byteLength;
-      snapshot.cpuPixels = storedPixels;
-      snapshot.cpuPixelsEncoding = storedEncoding;
+      snapshot.cpuBytes = rawByteLength;
+      snapshot.cpuPixels = pixels;
+      snapshot.cpuPixelsEncoding = null;
       snapshot.cpuRawBytes = rawByteLength;
+      snapshot.historyCompressionState = "raw-pending";
       snapshot.state = "CPU_COLD";
+      window.CBO?.queueHistoryCompression?.(snapshot, {
+        historyId: snapshot.id || "",
+        kind: "brushHistorySnapshot",
+        layerId: snapshot.layerId || "",
+        source: snapshot.label || "brush-history-snapshot",
+      });
 
       return true;
     }

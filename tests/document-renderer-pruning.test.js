@@ -208,14 +208,17 @@ test("pruneOrphanRasterTargets cools deleted undoable layer targets to CPU", () 
   assert.ok(glCalls.some((call) => call[0] === "deleteFramebuffer" && call[1] === historyFramebuffer));
 });
 
-test("dehydrateRasterTarget compresses cold layer targets when history compression is loaded", () => {
-  const { DocumentRenderer } = loadDocumentRenderer({ historyCompression: true });
+test("dehydrateRasterTarget queues async compression after saving raw CPU pixels", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer({ historyCompression: true });
   const renderer = Object.create(DocumentRenderer.prototype);
   const glCalls = [];
+  const queued = [];
   const rawBytes = 16 * 16 * 4;
   const target = {
     framebuffer: {},
     height: 16,
+    id: "target-1",
+    layerId: "paint-1",
     texture: {},
     width: 16,
   };
@@ -233,12 +236,21 @@ test("dehydrateRasterTarget compresses cold layer targets when history compressi
   };
   renderer.deleteRasterFramebuffer = () => {};
   renderer.deleteRasterTexture = () => {};
+  window.CBO.queueHistoryCompression = (queuedTarget, options) => {
+    queued.push({ options, target: queuedTarget });
+    return true;
+  };
 
   assert.equal(renderer.dehydrateRasterTarget(target), true);
   assert.equal(target.state, "CPU_COLD");
-  assert.equal(target.cpuPixelsEncoding, "rle-rgba-v1");
+  assert.equal(target.cpuPixelsEncoding, null);
   assert.equal(target.cpuRawBytes, rawBytes);
-  assert.ok(target.cpuBytes < rawBytes);
+  assert.equal(target.cpuBytes, rawBytes);
+  assert.equal(target.historyCompressionState, "raw-pending");
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].target, target);
+  assert.equal(queued[0].options.historyId, "target-1");
+  assert.equal(queued[0].options.layerId, "paint-1");
 
   const pixels = renderer.getRasterTargetCpuPixels(target);
 

@@ -251,6 +251,30 @@
         return 0;
       }
 
+      if (snapshot.state === "CPU_COLD") {
+        const cpuPixelsBytes = toFinitePositiveNumber(snapshot.cpuPixels?.byteLength, 0);
+
+        if (cpuPixelsBytes > 0) {
+          return Math.floor(cpuPixelsBytes);
+        }
+
+        const cpuBytes = toFinitePositiveNumber(snapshot.cpuBytes ?? snapshot.coldBytes, 0);
+
+        if (cpuBytes > 0) {
+          return Math.floor(cpuBytes);
+        }
+      }
+
+      const hasGpuResource = Boolean(snapshot.texture || snapshot.framebuffer);
+
+      if (hasGpuResource && snapshot.state !== "CPU_COLD") {
+        const gpuBytes = toFinitePositiveNumber(snapshot.gpuBytes ?? snapshot.bytes ?? snapshot.byteSize, 0);
+
+        if (gpuBytes > 0) {
+          return Math.floor(gpuBytes);
+        }
+      }
+
       const explicitBytes = toFinitePositiveNumber(
         snapshot.bytes ?? snapshot.byteSize ?? snapshot.gpuBytes ?? snapshot.cpuBytes ?? snapshot.coldBytes,
         0,

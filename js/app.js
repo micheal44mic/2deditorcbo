@@ -8,7 +8,7 @@ document.addEventListener(
 
 (() => {
   const namespace = window.CBO = window.CBO || {};
-  const androidBuildVersion = "v3.6-fillwasm-all";
+  const androidBuildVersion = "v3.7-history-async";
   const androidIndicator = document.getElementById("android-device-indicator");
 
   function isAndroidDevice() {
@@ -51,7 +51,7 @@ document.addEventListener(
     namespace.viewportLayerCullingEnabled = true;
     namespace.interactiveBrushPrewarmEnabled = false;
 
-    // Android v3.6-fillwasm-all: keep history, artboard selection, and
+    // Android v3.7-history-async: keep history, artboard selection, and
     // residency enabled; only bypass pixel-perfect preview/transform work.
     namespace.androidFullRenderMode = true;
     namespace.androidPreviewCacheEnabled = false;

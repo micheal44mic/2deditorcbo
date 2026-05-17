@@ -136,9 +136,9 @@ test("color drop is wired to the Procreate-style fill module", () => {
   assert.ok(colorFillIndex > pixelWorkerClientIndex);
   assert.ok(editorCanvasIndex > colorFillIndex);
   assert.ok(appIndex > editorCanvasIndex);
-  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/color-drop\.css\?v=android-v3\.6-fillwasm-all" \/>/);
-  assert.match(indexSource, /<script src="\.\/js\/pixel\/pixel-worker-client\.js\?v=android-v3\.6-fillwasm-all"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/color-fill\.js\?v=android-v3\.6-fillwasm-all"><\/script>/);
+  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/color-drop\.css\?v=android-v3\.7-history-async" \/>/);
+  assert.match(indexSource, /<script src="\.\/js\/pixel\/pixel-worker-client\.js\?v=android-v3\.7-history-async"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill\.js\?v=android-v3\.7-history-async"><\/script>/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.beginDropDrag\?\.\(\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.dropColorAt\?\.\(dropX, dropY, color\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.endDropDrag\?\.\(\)/);
@@ -233,8 +233,10 @@ test("pixel worker client and worker expose fill fallback plumbing", () => {
   const workerSource = readRepoFile("js", "workers", "pixel-worker.js");
 
   assert.match(clientSource, /class PixelWorkerClient/);
-  assert.match(clientSource, /\.\/js\/workers\/pixel-worker\.js\?v=android-v3\.6-fillwasm-all/);
+  assert.match(clientSource, /\.\/js\/workers\/pixel-worker\.js\?v=android-v3\.7-history-async/);
   assert.match(clientSource, /runColorFill\(payload = \{\}, transferList = \[\], options = \{\}\)/);
+  assert.match(clientSource, /runHistoryCompress\(payload = \{\}, transferList = \[\], options = \{\}\)/);
+  assert.match(clientSource, /namespace\.queueHistoryCompression = enqueueHistoryCompression/);
   assert.match(clientSource, /worker\.postMessage\(\{ id, payload, type \}, transferList\)/);
   assert.match(workerSource, /function floodFillMaskDense\(pixels, width, height, seedX, seedY, tolerance\)/);
   assert.match(workerSource, /function createSparseSource\(payload = \{\}\)/);
@@ -245,8 +247,10 @@ test("pixel worker client and worker expose fill fallback plumbing", () => {
   assert.match(workerSource, /flood_fill_dense_rgba/);
   assert.match(workerSource, /flood_fill_sparse_rgba/);
   assert.match(workerSource, /wasmInitMs/);
+  assert.match(workerSource, /async function runHistoryCompress\(payload = \{\}\)/);
   assert.match(workerSource, /function createFillCoverageMask\(mask, width, height, bounds, radius = 0\)/);
   assert.match(workerSource, /message\.type === "color-fill"/);
+  assert.match(workerSource, /message\.type === "history-compress"/);
   assert.match(workerSource, /self\.postMessage\(\{\s*id: message\.id,[\s\S]*result,[\s\S]*\}, transferList\)/);
 });
 

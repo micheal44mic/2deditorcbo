@@ -1,6 +1,20 @@
 const FILL_COVERAGE_MAX = 255;
 const FILL_EDGE_AA_RADIUS = 1;
 const MAX_FILL_TOLERANCE = 255;
+const RLE_HEADER_BYTES = 4;
+const RLE_RUN_BYTES = 6;
+const RLE_MAX_RUN = 0xFFFF;
+const RLE_PACKET_HEADER_BYTES = 2;
+const RLE_PACKET_LITERAL_FLAG = 0x8000;
+const RLE_PACKET_MAX_COUNT = 0x7FFF;
+const RLE_PACKET_MIN_RUN = 3;
+const RLE_V2_HEADER_BYTES = 8;
+const RLE_V2_MAGIC_0 = 0x52;
+const RLE_V2_MAGIC_1 = 0x4C;
+const RLE_V2_MAGIC_2 = 0x45;
+const RLE_V2_MAGIC_3 = 0x32;
+const LEGACY_RLE_ENCODING = "rle-rgba-v1";
+const RLE_ENCODING = "rle-rgba-v2";
 const TILE_META_STRIDE = 8;
 const TILE_META_X = 0;
 const TILE_META_Y = 1;
@@ -70,6 +84,263 @@ function pixelsMatchTolerance(pixels, offset, red, green, blue, alpha, tolerance
   const da = pixels[offset + 3] - alpha;
 
   return dr * dr + dg * dg + db * db + da * da <= toleranceSq;
+}
+
+function isUint8Array(value) {
+  return value instanceof Uint8Array;
+}
+
+function trimCompressedBytes(output, byteLength) {
+  if (!isUint8Array(output)) {
+    return output;
+  }
+
+  const length = Math.max(0, Math.min(output.byteLength, Math.floor(Number(byteLength) || 0)));
+
+  if (output.byteOffset === 0 && output.byteLength === length && output.buffer?.byteLength === length) {
+    return output;
+  }
+
+  return output.slice(0, length);
+}
+
+function writeRleHeader(output, rawByteLength) {
+  output[0] = rawByteLength & 0xFF;
+  output[1] = (rawByteLength >>> 8) & 0xFF;
+  output[2] = (rawByteLength >>> 16) & 0xFF;
+  output[3] = (rawByteLength >>> 24) & 0xFF;
+}
+
+function writeRlePacketHeader(output, offset, value) {
+  output[offset] = value & 0xFF;
+  output[offset + 1] = (value >>> 8) & 0xFF;
+}
+
+function rlePixelsMatch(rawPixels, firstIndex, secondIndex) {
+  return (
+    rawPixels[firstIndex] === rawPixels[secondIndex] &&
+    rawPixels[firstIndex + 1] === rawPixels[secondIndex + 1] &&
+    rawPixels[firstIndex + 2] === rawPixels[secondIndex + 2] &&
+    rawPixels[firstIndex + 3] === rawPixels[secondIndex + 3]
+  );
+}
+
+function compressRgbaV1(rawPixels) {
+  if (!isUint8Array(rawPixels)) {
+    return { bytes: rawPixels, encoding: null, rawByteLength: 0 };
+  }
+
+  const rawByteLength = rawPixels.byteLength;
+
+  if (rawByteLength === 0 || rawByteLength % 4 !== 0) {
+    return { bytes: rawPixels, encoding: null, rawByteLength };
+  }
+
+  const maxOutput = RLE_HEADER_BYTES + (rawByteLength / 4) * RLE_RUN_BYTES;
+  const output = new Uint8Array(maxOutput);
+
+  writeRleHeader(output, rawByteLength);
+
+  let outIdx = RLE_HEADER_BYTES;
+  let i = 0;
+
+  while (i < rawByteLength) {
+    const r = rawPixels[i];
+    const g = rawPixels[i + 1];
+    const b = rawPixels[i + 2];
+    const a = rawPixels[i + 3];
+    let count = 1;
+    let j = i + 4;
+
+    while (
+      j < rawByteLength &&
+      count < RLE_MAX_RUN &&
+      rawPixels[j] === r &&
+      rawPixels[j + 1] === g &&
+      rawPixels[j + 2] === b &&
+      rawPixels[j + 3] === a
+    ) {
+      count += 1;
+      j += 4;
+    }
+
+    if (outIdx + RLE_RUN_BYTES > rawByteLength) {
+      return { bytes: rawPixels, encoding: null, rawByteLength };
+    }
+
+    output[outIdx] = count & 0xFF;
+    output[outIdx + 1] = (count >>> 8) & 0xFF;
+    output[outIdx + 2] = r;
+    output[outIdx + 3] = g;
+    output[outIdx + 4] = b;
+    output[outIdx + 5] = a;
+    outIdx += RLE_RUN_BYTES;
+    i = j;
+  }
+
+  if (outIdx >= rawByteLength) {
+    return { bytes: rawPixels, encoding: null, rawByteLength };
+  }
+
+  return {
+    bytes: trimCompressedBytes(output, outIdx),
+    encoding: LEGACY_RLE_ENCODING,
+    rawByteLength,
+  };
+}
+
+function compressRgbaV2(rawPixels) {
+  if (!isUint8Array(rawPixels)) {
+    return { bytes: rawPixels, encoding: null, rawByteLength: 0 };
+  }
+
+  const rawByteLength = rawPixels.byteLength;
+
+  if (rawByteLength === 0 || rawByteLength % 4 !== 0) {
+    return { bytes: rawPixels, encoding: null, rawByteLength };
+  }
+
+  const pixelCount = rawByteLength / 4;
+  const maxPackets = Math.ceil(pixelCount / RLE_PACKET_MAX_COUNT);
+  const output = new Uint8Array(rawByteLength + RLE_V2_HEADER_BYTES + maxPackets * RLE_PACKET_HEADER_BYTES);
+  let outIdx = RLE_V2_HEADER_BYTES;
+  let pixelIndex = 0;
+  let literalStart = 0;
+  let literalCount = 0;
+
+  const returnRaw = () => ({ bytes: rawPixels, encoding: null, rawByteLength });
+
+  writeRleHeader(output, rawByteLength);
+  output[4] = RLE_V2_MAGIC_0;
+  output[5] = RLE_V2_MAGIC_1;
+  output[6] = RLE_V2_MAGIC_2;
+  output[7] = RLE_V2_MAGIC_3;
+
+  const hasCompressionBudget = (byteCount) => outIdx + byteCount < rawByteLength;
+
+  const flushLiteral = () => {
+    let remaining = literalCount;
+    let start = literalStart;
+
+    while (remaining > 0) {
+      const chunk = Math.min(remaining, RLE_PACKET_MAX_COUNT);
+      const sourceStart = start * 4;
+      const sourceEnd = sourceStart + chunk * 4;
+      const packetBytes = RLE_PACKET_HEADER_BYTES + chunk * 4;
+
+      if (!hasCompressionBudget(packetBytes)) {
+        return false;
+      }
+
+      writeRlePacketHeader(output, outIdx, RLE_PACKET_LITERAL_FLAG | chunk);
+      outIdx += RLE_PACKET_HEADER_BYTES;
+      output.set(rawPixels.subarray(sourceStart, sourceEnd), outIdx);
+      outIdx += chunk * 4;
+      start += chunk;
+      remaining -= chunk;
+    }
+
+    literalStart = pixelIndex;
+    literalCount = 0;
+    return true;
+  };
+
+  const writeRun = (startPixel, count) => {
+    let remaining = count;
+    const sourceStart = startPixel * 4;
+
+    while (remaining > 0) {
+      const chunk = Math.min(remaining, RLE_PACKET_MAX_COUNT);
+
+      if (!hasCompressionBudget(RLE_PACKET_HEADER_BYTES + 4)) {
+        return false;
+      }
+
+      writeRlePacketHeader(output, outIdx, chunk);
+      outIdx += RLE_PACKET_HEADER_BYTES;
+      output[outIdx] = rawPixels[sourceStart];
+      output[outIdx + 1] = rawPixels[sourceStart + 1];
+      output[outIdx + 2] = rawPixels[sourceStart + 2];
+      output[outIdx + 3] = rawPixels[sourceStart + 3];
+      outIdx += 4;
+      remaining -= chunk;
+    }
+
+    return true;
+  };
+
+  while (pixelIndex < pixelCount) {
+    const byteIndex = pixelIndex * 4;
+    let runCount = 1;
+
+    while (
+      pixelIndex + runCount < pixelCount &&
+      runCount < RLE_PACKET_MAX_COUNT &&
+      rlePixelsMatch(rawPixels, byteIndex, (pixelIndex + runCount) * 4)
+    ) {
+      runCount += 1;
+    }
+
+    if (runCount >= RLE_PACKET_MIN_RUN) {
+      if (!flushLiteral() || !writeRun(pixelIndex, runCount)) {
+        return returnRaw();
+      }
+      pixelIndex += runCount;
+      literalStart = pixelIndex;
+      continue;
+    }
+
+    literalCount += runCount;
+    pixelIndex += runCount;
+
+    if (literalCount >= RLE_PACKET_MAX_COUNT && !flushLiteral()) {
+      return returnRaw();
+    }
+  }
+
+  if (!flushLiteral() || outIdx >= rawByteLength) {
+    return returnRaw();
+  }
+
+  return {
+    bytes: trimCompressedBytes(output, outIdx),
+    encoding: RLE_ENCODING,
+    rawByteLength,
+  };
+}
+
+function chooseBestCompression(rawPixels, candidates) {
+  return candidates.reduce(
+    (best, candidate) => {
+      if (!candidate?.encoding || !(candidate.bytes instanceof Uint8Array)) {
+        return best;
+      }
+
+      if (candidate.bytes.byteLength >= best.bytes.byteLength) {
+        return best;
+      }
+
+      return candidate;
+    },
+    { bytes: rawPixels, encoding: null, rawByteLength: rawPixels?.byteLength || 0 },
+  );
+}
+
+function compressRgba(rawPixels) {
+  if (!isUint8Array(rawPixels)) {
+    return { bytes: rawPixels, encoding: null, rawByteLength: 0 };
+  }
+
+  const rawByteLength = rawPixels.byteLength;
+
+  if (rawByteLength === 0 || rawByteLength % 4 !== 0) {
+    return { bytes: rawPixels, encoding: null, rawByteLength };
+  }
+
+  return chooseBestCompression(rawPixels, [
+    compressRgbaV1(rawPixels),
+    compressRgbaV2(rawPixels),
+  ]);
 }
 
 function floorDiv(value, divisor) {
@@ -939,12 +1210,82 @@ async function runColorFill(payload = {}) {
   };
 }
 
+async function runHistoryCompress(payload = {}) {
+  const workerStartedAt = nowMs();
+  const timings = {
+    compressMs: 0,
+    jsMs: 0,
+    workerMs: 0,
+  };
+  const pixels = payload?.pixelsBuffer ? new Uint8Array(payload.pixelsBuffer) : null;
+
+  if (!(pixels instanceof Uint8Array) || pixels.byteLength === 0 || pixels.byteLength % 4 !== 0) {
+    timings.workerMs = nowMs() - workerStartedAt;
+
+    return null;
+  }
+
+  const rawBytes = Math.max(0, Math.round(Number(payload.rawBytes) || pixels.byteLength));
+  const compressStartedAt = nowMs();
+  const result = compressRgba(pixels);
+
+  timings.compressMs = nowMs() - compressStartedAt;
+  timings.jsMs = timings.compressMs;
+  timings.workerMs = nowMs() - workerStartedAt;
+
+  if (
+    !result?.encoding ||
+    !(result.bytes instanceof Uint8Array) ||
+    result.bytes.byteLength >= pixels.byteLength
+  ) {
+    return {
+      compressedBuffer: null,
+      compressedBytes: pixels.byteLength,
+      encoding: "",
+      engine: "js",
+      historyId: payload.historyId || "",
+      jobToken: payload.jobToken || "",
+      kind: payload.kind || "",
+      layerId: payload.layerId || "",
+      rawBytes,
+      source: payload.source || "",
+      timings,
+    };
+  }
+
+  return {
+    compressedBuffer: result.bytes.buffer,
+    compressedBytes: result.bytes.byteLength,
+    encoding: result.encoding,
+    engine: "js",
+    historyId: payload.historyId || "",
+    jobToken: payload.jobToken || "",
+    kind: payload.kind || "",
+    layerId: payload.layerId || "",
+    rawBytes: result.rawByteLength || rawBytes,
+    source: payload.source || "",
+    timings,
+  };
+}
+
 async function handleMessage(message = {}) {
   if (message.type === "color-fill") {
     const result = await runColorFill(message.payload || {});
     const transferList = result
       ? [result.maskBuffer, result.coverageMaskBuffer]
       : [];
+
+    self.postMessage({
+      id: message.id,
+      ok: true,
+      result,
+    }, transferList);
+    return;
+  }
+
+  if (message.type === "history-compress") {
+    const result = await runHistoryCompress(message.payload || {});
+    const transferList = result?.compressedBuffer ? [result.compressedBuffer] : [];
 
     self.postMessage({
       id: message.id,
@@ -975,6 +1316,7 @@ self.onmessage = (event) => {
 
 self.__pixelWorkerTestHooks = Object.freeze({
   buildPackedSparseData,
+  compressRgba,
   createFillCoverageMask,
   createSparseSource,
   floodFillMaskDense,
@@ -982,4 +1324,5 @@ self.__pixelWorkerTestHooks = Object.freeze({
   getSparseTileIndex,
   initWasmCore,
   runColorFill,
+  runHistoryCompress,
 });

@@ -823,32 +823,21 @@ void main() {
         snapshot.texture = null;
       }
 
-      const compression = window.CBO?.HistoryCompression;
-      let storedPixels = pixels;
-      let storedEncoding = null;
       const rawByteLength = pixels.byteLength;
 
-      if (compression && typeof compression.compressRgba === "function") {
-        try {
-          const result = compression.compressRgba(pixels);
-
-          if (result && result.encoding && result.bytes instanceof Uint8Array) {
-            storedPixels = result.bytes;
-            storedEncoding = result.encoding;
-          }
-        } catch (error) {
-          console.warn?.("[CBO smudge] Compressione RLE snapshot fallita, salvo raw.", error);
-          storedPixels = pixels;
-          storedEncoding = null;
-        }
-      }
-
       snapshot.bytes = snapshot.bytes || rawByteLength;
-      snapshot.cpuBytes = storedPixels.byteLength;
-      snapshot.cpuPixels = storedPixels;
-      snapshot.cpuPixelsEncoding = storedEncoding;
+      snapshot.cpuBytes = rawByteLength;
+      snapshot.cpuPixels = pixels;
+      snapshot.cpuPixelsEncoding = null;
       snapshot.cpuRawBytes = rawByteLength;
+      snapshot.historyCompressionState = "raw-pending";
       snapshot.state = "CPU_COLD";
+      window.CBO?.queueHistoryCompression?.(snapshot, {
+        historyId: snapshot.id || "",
+        kind: "smudgeHistorySnapshot",
+        layerId: snapshot.layerId || "",
+        source: snapshot.label || "smudge-history-snapshot",
+      });
 
       return true;
     }
