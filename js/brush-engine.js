@@ -6808,6 +6808,10 @@ void main() {
       }
 
       const pixels = new Uint8Array(width * height * 4);
+      const readPixelsStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+      let readPixelsMs = 0;
 
       try {
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
@@ -6821,6 +6825,12 @@ void main() {
 
         gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        readPixelsMs = Math.max(
+          0,
+          (typeof performance !== "undefined" && typeof performance.now === "function"
+            ? performance.now()
+            : Date.now()) - readPixelsStartedAt,
+        );
       } catch (error) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.deleteFramebuffer(framebuffer);
@@ -6847,6 +6857,7 @@ void main() {
         kind: "brushHistorySnapshot",
         layerId: snapshot.layerId || "",
         source: snapshot.label || "brush-history-snapshot",
+        timings: { readPixelsMs },
       });
 
       return true;

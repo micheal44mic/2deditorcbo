@@ -568,6 +568,18 @@ body.cbo-document-restore-active .editor-stage {
   display: none;
 }
 
+.cbo-history-compression-toast {
+  top: 166px;
+  border-color: rgba(134, 210, 255, 0.36);
+  color: #edf7ff;
+}
+
+.cbo-history-compression-toast[data-history-compression-status="error"],
+.cbo-history-compression-toast[data-history-compression-status="skipped"] {
+  border-color: rgba(255, 209, 102, 0.36);
+  color: #fff7df;
+}
+
 .cbo-memory-autosave-panel {
   display: grid;
   min-width: min(300px, calc(100vw - 48px));

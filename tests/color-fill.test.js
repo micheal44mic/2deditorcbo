@@ -136,9 +136,9 @@ test("color drop is wired to the Procreate-style fill module", () => {
   assert.ok(colorFillIndex > pixelWorkerClientIndex);
   assert.ok(editorCanvasIndex > colorFillIndex);
   assert.ok(appIndex > editorCanvasIndex);
-  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/color-drop\.css\?v=android-v3\.7-history-async" \/>/);
-  assert.match(indexSource, /<script src="\.\/js\/pixel\/pixel-worker-client\.js\?v=android-v3\.7-history-async"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/color-fill\.js\?v=android-v3\.7-history-async"><\/script>/);
+  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/color-drop\.css\?v=android-v3\.8-history-metrics" \/>/);
+  assert.match(indexSource, /<script src="\.\/js\/pixel\/pixel-worker-client\.js\?v=android-v3\.8-history-metrics"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill\.js\?v=android-v3\.8-history-metrics"><\/script>/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.beginDropDrag\?\.\(\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.dropColorAt\?\.\(dropX, dropY, color\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.endDropDrag\?\.\(\)/);
@@ -231,12 +231,16 @@ test("color fill uses active layer pixels unless a reference layer is set", () =
 test("pixel worker client and worker expose fill fallback plumbing", () => {
   const clientSource = readRepoFile("js", "pixel", "pixel-worker-client.js");
   const workerSource = readRepoFile("js", "workers", "pixel-worker.js");
+  const layoutSource = readRepoFile("css", "layout.css");
 
   assert.match(clientSource, /class PixelWorkerClient/);
-  assert.match(clientSource, /\.\/js\/workers\/pixel-worker\.js\?v=android-v3\.7-history-async/);
+  assert.match(clientSource, /\.\/js\/workers\/pixel-worker\.js\?v=android-v3\.8-history-metrics/);
   assert.match(clientSource, /runColorFill\(payload = \{\}, transferList = \[\], options = \{\}\)/);
   assert.match(clientSource, /runHistoryCompress\(payload = \{\}, transferList = \[\], options = \{\}\)/);
   assert.match(clientSource, /namespace\.queueHistoryCompression = enqueueHistoryCompression/);
+  assert.match(clientSource, /function ensureHistoryCompressionToast\(\)/);
+  assert.match(clientSource, /History: read \$\{formatHistoryMs\(readPixelsMs\)\}ms/);
+  assert.match(clientSource, /namespace\.lastHistoryCompressionQueue/);
   assert.match(clientSource, /worker\.postMessage\(\{ id, payload, type \}, transferList\)/);
   assert.match(workerSource, /function floodFillMaskDense\(pixels, width, height, seedX, seedY, tolerance\)/);
   assert.match(workerSource, /function createSparseSource\(payload = \{\}\)/);
@@ -252,6 +256,7 @@ test("pixel worker client and worker expose fill fallback plumbing", () => {
   assert.match(workerSource, /message\.type === "color-fill"/);
   assert.match(workerSource, /message\.type === "history-compress"/);
   assert.match(workerSource, /self\.postMessage\(\{\s*id: message\.id,[\s\S]*result,[\s\S]*\}, transferList\)/);
+  assert.match(layoutSource, /\.cbo-history-compression-toast \{/);
 });
 
 test("pixel worker runs sparse color fill payloads", async () => {

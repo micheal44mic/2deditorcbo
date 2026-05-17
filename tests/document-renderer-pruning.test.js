@@ -251,6 +251,7 @@ test("dehydrateRasterTarget queues async compression after saving raw CPU pixels
   assert.equal(queued[0].target, target);
   assert.equal(queued[0].options.historyId, "target-1");
   assert.equal(queued[0].options.layerId, "paint-1");
+  assert.equal(typeof queued[0].options.timings.readPixelsMs, "number");
 
   const pixels = renderer.getRasterTargetCpuPixels(target);
 

@@ -1,10 +1,11 @@
 (function registerPixelWorkerClient(namespace) {
   const DEFAULT_TIMEOUT_MS = 4000;
-  const DEFAULT_WORKER_URL = "./js/workers/pixel-worker.js?v=android-v3.7-history-async";
+  const DEFAULT_WORKER_URL = "./js/workers/pixel-worker.js?v=android-v3.8-history-metrics";
   const HISTORY_COMPRESSION_TIMEOUT_MS = 120000;
   const HISTORY_COMPRESSION_MIN_BYTES = 128 * 1024;
   const HISTORY_COMPRESSION_ANDROID_MAX_PENDING_BYTES = 32 * 1024 * 1024;
   const HISTORY_COMPRESSION_DESKTOP_MAX_PENDING_BYTES = 128 * 1024 * 1024;
+  const HISTORY_COMPRESSION_TOAST_HIDE_MS = 2200;
 
   class PixelWorkerClient {
     constructor(options = {}) {
@@ -137,6 +138,8 @@
   let historyCompressionInFlight = 0;
   let historyCompressionPendingRawBytes = 0;
   let historyCompressionPumpTimer = 0;
+  let historyCompressionToast = null;
+  let historyCompressionToastTimer = 0;
   const historyCompressionQueue = [];
 
   function nowMs() {
@@ -195,6 +198,91 @@
     }
   }
 
+  function ensureHistoryCompressionToast() {
+    if (historyCompressionToast) {
+      return historyCompressionToast;
+    }
+
+    if (typeof document === "undefined" || typeof document.createElement !== "function") {
+      return null;
+    }
+
+    historyCompressionToast = document.getElementById?.("cbo-history-compression-toast") || null;
+
+    if (!historyCompressionToast) {
+      historyCompressionToast = document.createElement("div");
+      historyCompressionToast.id = "cbo-history-compression-toast";
+      historyCompressionToast.className = "cbo-layer-limit-toast cbo-history-compression-toast";
+      historyCompressionToast.hidden = true;
+      historyCompressionToast.setAttribute("role", "status");
+      historyCompressionToast.setAttribute("aria-live", "polite");
+      document.body.appendChild(historyCompressionToast);
+    }
+
+    return historyCompressionToast;
+  }
+
+  function formatHistoryMs(value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number) || number <= 0) {
+      return "0";
+    }
+
+    return number >= 10 ? String(Math.round(number)) : number.toFixed(1);
+  }
+
+  function getHistoryCompressionToastLabel(details = {}) {
+    const timings = details.timings || {};
+    const readPixelsMs = Number(details.readPixelsMs ?? timings.readPixelsMs) || 0;
+    const workerMs = Number(timings.workerMs ?? timings.compressMs ?? details.workerMs) || 0;
+    const roundTripMs = Number(timings.roundTripMs ?? details.roundTripMs) || 0;
+
+    if (details.status === "queued") {
+      return `History: read ${formatHistoryMs(readPixelsMs)}ms, queued`;
+    }
+
+    if (details.status === "skipped") {
+      return details.reason === "queue-full"
+        ? "History: RAW, queue full"
+        : "History: RAW";
+    }
+
+    if (details.status === "error") {
+      return "History: worker fallback";
+    }
+
+    if (details.status === "applied") {
+      const ratio = Number.isFinite(Number(details.ratio))
+        ? `${Number(details.ratio).toFixed(2)}x`
+        : "compressed";
+
+      return `History: read ${formatHistoryMs(readPixelsMs)}ms, worker ${formatHistoryMs(workerMs || roundTripMs)}ms, ${ratio}`;
+    }
+
+    return "History: pending";
+  }
+
+  function showHistoryCompressionToast(details = {}) {
+    if (namespace.historyCompressionStatusToastEnabled === false) {
+      return;
+    }
+
+    const toast = ensureHistoryCompressionToast();
+
+    if (!toast) {
+      return;
+    }
+
+    window.clearTimeout(historyCompressionToastTimer);
+    toast.textContent = getHistoryCompressionToastLabel(details);
+    toast.dataset.historyCompressionStatus = details.status || "pending";
+    toast.hidden = false;
+    historyCompressionToastTimer = window.setTimeout(() => {
+      toast.hidden = true;
+    }, HISTORY_COMPRESSION_TOAST_HIDE_MS);
+  }
+
   function canApplyHistoryCompression(job, result) {
     const target = job?.target;
 
@@ -237,14 +325,17 @@
         pendingRawBytes: historyCompressionPendingRawBytes,
         queueLength: historyCompressionQueue.length,
         reason: "stale-or-not-smaller",
+        readPixelsMs: job.readPixelsMs,
         rawBytes: job.rawBytes,
         status: "skipped",
         timings: {
           ...(result?.timings || {}),
+          readPixelsMs: job.readPixelsMs,
           roundTripMs: elapsedMs,
         },
         timestamp: Date.now(),
       };
+      showHistoryCompressionToast(namespace.lastHistoryCompressionWorker);
       return;
     }
 
@@ -258,6 +349,7 @@
     target.historyCompressionState = "compressed";
     target.historyCompressionTimings = {
       ...(result.timings || {}),
+      readPixelsMs: job.readPixelsMs,
       roundTripMs: elapsedMs,
     };
 
@@ -270,12 +362,14 @@
       layerId: job.layerId,
       pendingRawBytes: historyCompressionPendingRawBytes,
       queueLength: historyCompressionQueue.length,
+      readPixelsMs: job.readPixelsMs,
       rawBytes: job.rawBytes,
       ratio: compressedPixels.byteLength / Math.max(1, job.rawBytes),
       status: "applied",
       timings: target.historyCompressionTimings,
       timestamp: Date.now(),
     };
+    showHistoryCompressionToast(namespace.lastHistoryCompressionWorker);
   }
 
   function scheduleHistoryCompressionPump(delayMs = 0) {
@@ -348,10 +442,12 @@
         layerId: job.layerId,
         pendingRawBytes: historyCompressionPendingRawBytes,
         queueLength: historyCompressionQueue.length,
+        readPixelsMs: job.readPixelsMs,
         rawBytes: job.rawBytes,
         status: "error",
         timestamp: Date.now(),
       };
+      showHistoryCompressionToast(namespace.lastHistoryCompressionWorker);
     }).finally(() => {
       finishHistoryCompressionJob(job);
     });
@@ -435,6 +531,7 @@
       rawBytes,
       source: options.source || target.reason || "",
       target,
+      readPixelsMs: Math.max(0, Number(options.timings?.readPixelsMs) || 0),
     };
 
     target.historyCompressionJobToken = jobToken;
@@ -443,6 +540,14 @@
     historyCompressionQueue.push(job);
     historyCompressionPendingRawBytes += pixels.byteLength;
     setHistoryCompressionStatus("queued");
+    showHistoryCompressionToast({
+      historyId: job.historyId,
+      kind: job.kind,
+      layerId: job.layerId,
+      readPixelsMs: job.readPixelsMs,
+      rawBytes,
+      status: "queued",
+    });
     scheduleHistoryCompressionPump(config.initialDelayMs);
 
     return true;

@@ -2488,11 +2488,21 @@ void main() {
       const height = Math.max(1, Math.round(target.height || 1));
       const pixels = new Uint8Array(width * height * RASTER_BYTES_PER_PIXEL);
       const gl = this.gl;
+      const readPixelsStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+      let readPixelsMs = 0;
 
       try {
         gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
         gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        readPixelsMs = Math.max(
+          0,
+          (typeof performance !== "undefined" && typeof performance.now === "function"
+            ? performance.now()
+            : Date.now()) - readPixelsStartedAt,
+        );
       } catch (error) {
         gl.bindFramebuffer?.(gl.FRAMEBUFFER, null);
         console.warn?.("[CBO renderer] Impossibile raffreddare target raster.", error);
@@ -2523,6 +2533,7 @@ void main() {
         kind: target.kind || "rasterTarget",
         layerId: target.layerId || options.layerId || "",
         source: options.source || target.reason,
+        timings: { readPixelsMs },
       });
 
       return true;
@@ -11541,11 +11552,21 @@ void main() {
 
       const gl = this.gl;
       const pixels = new Uint8Array(width * height * 4);
+      const readPixelsStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+      let readPixelsMs = 0;
 
       try {
         gl.bindFramebuffer(gl.FRAMEBUFFER, snapshot.framebuffer);
         gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        readPixelsMs = Math.max(
+          0,
+          (typeof performance !== "undefined" && typeof performance.now === "function"
+            ? performance.now()
+            : Date.now()) - readPixelsStartedAt,
+        );
       } catch (error) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         console.warn?.("[CBO renderer] Impossibile raffreddare snapshot raster.", error);
@@ -11576,6 +11597,7 @@ void main() {
         kind: "rasterSnapshot",
         layerId: snapshot.layerId || "",
         source: snapshot.label || "raster-snapshot-cpu-cold",
+        timings: { readPixelsMs },
       });
 
       return true;
