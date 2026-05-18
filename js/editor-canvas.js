@@ -485,13 +485,33 @@ async function placeMockupImageLayer(detail = {}, artboardId) {
   const src = String(detail.src || "").trim();
 
   if (!rasterizer?.placeBlob || !src || !layerModel?.createLayer || !documentRenderer?.getRasterTarget) {
+    window.CBO.EraserZoomDebug?.warn?.("mockup-place-unavailable", {
+      hasCreateLayer: Boolean(layerModel?.createLayer),
+      hasGetRasterTarget: Boolean(documentRenderer?.getRasterTarget),
+      hasPlaceBlob: Boolean(rasterizer?.placeBlob),
+      src,
+    });
     return false;
   }
 
   const targetArtboardId = getExistingDocumentArtboardId(artboardId);
   const name = getMockupAssetName(detail);
+  window.CBO.EraserZoomDebug?.log?.("mockup-place-start", {
+    artboardId: targetArtboardId,
+    id: detail.id || "",
+    name,
+    src,
+  });
   const blob = await fetchMockupAssetBlob(src);
   const placementRect = getMockupPlacementRect(detail, targetArtboardId);
+
+  window.CBO.EraserZoomDebug?.log?.("mockup-place-blob", {
+    artboardId: targetArtboardId,
+    blobBytes: Number(blob?.size) || 0,
+    blobType: blob?.type || "",
+    placementRect,
+    src,
+  });
 
   ensureUploadArtboardGroups(layerModel);
 
@@ -515,9 +535,24 @@ async function placeMockupImageLayer(detail = {}, artboardId) {
   const nextEntries = didInsertInArtboard ? entries : [imageLayer, ...entries];
 
   layerModel.setEntries(nextEntries, { activeLayerId: imageLayer.id, source: "mockup-image-layer" });
+  window.CBO.EraserZoomDebug?.log?.("mockup-layer-created", {
+    artboardId: targetArtboardId,
+    layerId: imageLayer.id,
+    layerType: imageLayer.type,
+    placementRect,
+    src,
+  });
 
   try {
     const placementTarget = createMockupPlacementTarget(imageLayer.id, placementRect);
+    window.CBO.EraserZoomDebug?.log?.("mockup-placement-target", {
+      layerId: imageLayer.id,
+      placementRect,
+      target: window.CBO.EraserZoomDebug?.getTargetSummary?.(
+        documentRenderer.rasterTargetsByLayerId?.get?.(imageLayer.id),
+        documentRenderer,
+      ),
+    });
     const placement = await rasterizer.placeBlob(blob, {
       artboardId: targetArtboardId,
       ...(placementTarget
@@ -531,6 +566,16 @@ async function placeMockupImageLayer(detail = {}, artboardId) {
         : {}),
       layerId: imageLayer.id,
       source: "mockup-rasterize",
+    });
+
+    window.CBO.EraserZoomDebug?.log?.("mockup-place-blob-done", {
+      destinationRect: placement?.destinationRect || null,
+      layerId: imageLayer.id,
+      sourceRect: placement?.sourceRect || null,
+      target: window.CBO.EraserZoomDebug?.getTargetSummary?.(
+        documentRenderer.rasterTargetsByLayerId?.get?.(imageLayer.id),
+        documentRenderer,
+      ),
     });
 
     if (placement?.destinationRect && layerModel.updateLayer) {
@@ -569,6 +614,11 @@ async function placeMockupImageLayer(detail = {}, artboardId) {
     const remainingEntries = removeLayerFromEntriesById(layerModel.getEntries(), imageLayer.id);
 
     layerModel.setEntries(remainingEntries, { source: "mockup-image-error" });
+    window.CBO.EraserZoomDebug?.warn?.("mockup-place-error", {
+      layerId: imageLayer.id,
+      message: error?.message || String(error),
+      src,
+    });
     throw error;
   }
 }
@@ -939,12 +989,23 @@ window.CBO.openMockupAsset = async function openMockupAsset(detail = {}) {
     return false;
   }
 
+  window.CBO.EraserZoomDebug?.log?.("mockup-open-start", {
+    id: detail.id || "",
+    name: getMockupAssetName(detail),
+    src,
+  });
   const artboardId = focusMockupArtboard(prepareMockupArtboard(detail));
   const didPlace = await placeMockupImageLayer(detail, artboardId);
 
   focusMockupArtboardView(artboardId, {
     closeDrawer: true,
     source: "mockup-open-view",
+  });
+  window.CBO.EraserZoomDebug?.log?.("mockup-open-end", {
+    artboardId,
+    didPlace,
+    id: detail.id || "",
+    src,
   });
   return didPlace;
 };

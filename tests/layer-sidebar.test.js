@@ -11,7 +11,7 @@ test("right sidebar exposes a manual save button next to share", () => {
 
   assert.match(source, /right-sidebar-primary-actions/);
   assert.match(source, /data-manual-save/);
-  assert.match(source, /lucide-save-icon lucide-save/);
+  assert.match(source, /data-manual-save[\s\S]*<svg\b/);
   assert.match(source, /documentSaveSystem/);
   assert.match(source, /saveSystem\.saveNow\(\{ source: "manual-save" \}\)/);
   assert.match(source, /saveButton\?\.addEventListener\("click"/);

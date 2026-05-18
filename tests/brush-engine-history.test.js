@@ -240,9 +240,11 @@ test("brush first paint stroke can defer full live target materialization", () =
   assert.match(source, /const previewDirtyRects = this\.getStrokePreviewDirtyRectsForBake\(/);
   assert.match(source, /this\.getFallbackStrokePreviewDirtyRects\(effectiveStrokeRect\)/);
   assert.match(source, /selectionCoverageRects/);
-  assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
+  assert.match(source, /const paintTargetLookupRect = isEraserStroke/);
+  assert.match(source, /getRasterTargetsForPaintRect\?\.\(layerId, paintTargetLookupRect/);
   assert.match(source, /source: "brush-eraser-target"/);
-  assert.match(source, /ensureRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
+  assert.match(source, /const paintTargetRect = !isEraserStroke && targetStrategy\.sparse === false/);
+  assert.match(source, /ensureRasterTargetsForPaintRect\?\.\(layerId, paintTargetRect/);
   assert.match(source, /source: "brush-stroke-target"/);
   assert.match(source, /tilePatchRects: activeStrokeTilePatchRects/);
   assert.match(source, /preserveDirtyRects: true/);

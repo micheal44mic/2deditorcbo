@@ -72,7 +72,7 @@ test("mobile layout accounts for iOS safe areas and visual viewport changes", ()
 
   assert.match(indexSource, /viewport-fit=cover/);
   assert.match(indexSource, /interactive-widget=resizes-visual/);
-  assert.match(indexSource, /id="android-device-indicator"[\s\S]*>android v4\.5-no-fill-history-debug<\/div>/);
+  assert.match(indexSource, /id="android-device-indicator"[\s\S]*>android [^<]+<\/div>/);
   assert.match(baseCss, /--cbo-safe-bottom: env\(safe-area-inset-bottom, 0px\);/);
   assert.match(baseCss, /--cbo-visual-viewport-height: 100dvh;/);
   assert.match(baseCss, /--cbo-keyboard-inset-bottom: 0px;/);

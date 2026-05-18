@@ -168,7 +168,13 @@ test("eraser rasterizes image layers through the same public rasterize path befo
   assert.match(source, /const rasterizeOptions = \{[\s\S]*historyGroup: `eraser-image-auto-rasterize-\$\{activeId\}`,[\s\S]*source,/);
   assert.match(source, /deferHistoryFlush: true/);
   assert.match(source, /requestDraw: false/);
-  assert.match(source, /forceDense: true/);
+  assert.match(source, /source: `\$\{source\}-materialize`/);
+  assert.match(source, /source: "eraser-materialize-sparse"/);
+  assert.doesNotMatch(source, /forceDense: true/);
+  assert.match(source, /denseTarget\.materializedFromSparse = false/);
+  assert.match(source, /target\.materializedFromSparse = false/);
+  assert.match(source, /retileExistingTarget: false/);
+  assert.match(source, /sparse: false/);
   assert.match(source, /namespace\.rasterizeImageLayerToPaint\(activeId, rasterizeOptions\)/);
   assert.match(source, /layerModel\.rasterizeImageLayerToPaint\?\.?\(activeId, rasterizeOptions\) === true/);
   assert.match(source, /invalidatePreviewCache\?\.?\(source, \{\s*layerId: activeId,/);

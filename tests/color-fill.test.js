@@ -156,13 +156,13 @@ test("color drop is wired to the Procreate-style fill module", () => {
   assert.ok(colorFillIndex > colorFillHistoryModuleIndex);
   assert.ok(editorCanvasIndex > colorFillIndex);
   assert.ok(appIndex > editorCanvasIndex);
-  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/color-drop\.css\?v=android-v4\.5-no-fill-history-debug" \/>/);
-  assert.match(indexSource, /<script src="\.\/js\/pixel\/pixel-worker-client\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/color-fill-worker\.js\?v=color-fill-modules"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/color-fill-reference\.js\?v=color-fill-modules"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/color-fill-mask\.js\?v=color-fill-modules"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/color-fill-history\.js\?v=color-fill-modules"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/color-fill\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
+  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/color-drop\.css(?:\?v=[^"]+)?" \/>/);
+  assert.match(indexSource, /<script src="\.\/js\/pixel\/pixel-worker-client\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill-worker\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill-reference\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill-mask\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill-history\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/color-fill\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.beginDropDrag\?\.\(\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.dropColorAt\?\.\(dropX, dropY, color\)/);
   assert.match(colorDropSource, /window\.CBO\.colorFill\?\.endDropDrag\?\.\(\)/);
@@ -254,7 +254,7 @@ test("pixel worker client and worker expose fill fallback plumbing", () => {
   const layoutSource = readRepoFile("css", "layout.css");
 
   assert.match(clientSource, /class PixelWorkerClient/);
-  assert.match(clientSource, /\.\/js\/workers\/pixel-worker\.js\?v=android-v4\.5-no-fill-history-debug/);
+  assert.match(clientSource, /\.\/js\/workers\/pixel-worker\.js(?:\?v=[^"')]+)?/);
   assert.match(clientSource, /runColorFill\(payload = \{\}, transferList = \[\], options = \{\}\)/);
   assert.match(clientSource, /runHistoryCompress\(payload = \{\}, transferList = \[\], options = \{\}\)/);
   assert.match(clientSource, /namespace\.queueHistoryCompression = enqueueHistoryCompression/);

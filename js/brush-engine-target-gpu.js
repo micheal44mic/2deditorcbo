@@ -66,6 +66,8 @@
       STROKE_RENDER_MODE_MIXED,
       COLOR_GOLDEN_RATIO,
     } = internals;
+    const MOBILE_DENSE_BRUSH_TARGET_PATCH_THRESHOLD = 48;
+    const MOBILE_DENSE_BRUSH_TARGET_COVERAGE_THRESHOLD = 0.35;
 
     defineBrushEngineMethods(BrushEngine, {
     getRasterResourceManager() {
@@ -1051,6 +1053,11 @@
         return;
       }
 
+      const debugStartedAt = this.getNow();
+      const debugInitialStampCount = this.stampsBuffer.length;
+      let debugSkippedReason = "";
+      let debugStrokeBufferRect = null;
+      let debugStrokeRect = null;
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.flush-stamps", {
         bufferedStamps: this.stampsBuffer.length,
         tool: this.currentStrokeTool || "brush",
@@ -1064,13 +1071,16 @@
       const gl = this.gl;
       const target = this.getDocumentDrawTarget(this.strokeTargetLayerId || "");
       const strokeRect = this.getActiveStrokeRect();
+      debugStrokeRect = strokeRect ? { ...strokeRect } : null;
 
       if (!strokeRect || !this.ensureStrokeLayerTargetForRect(strokeRect, target)) {
+        debugSkippedReason = !strokeRect ? "missing-stroke-rect" : "missing-stroke-target";
         this.stampsBuffer.length = 0;
         return;
       }
 
       const strokeBufferRect = this.strokeBufferRect || this.getFullDocumentRect(target);
+      debugStrokeBufferRect = strokeBufferRect ? { ...strokeBufferRect } : null;
       const stampCount = this.stampsBuffer.length;
       const flushDirtyRect = this.getStampBufferDirtyRect(this.stampsBuffer, strokeBufferRect);
       const flushScissor = this.getStrokeBufferScissor(flushDirtyRect, strokeBufferRect);
@@ -1242,6 +1252,18 @@
         this.requestDraw();
       }
       } finally {
+        namespace.BrushLagDebug?.recordTiming?.("slow-flush", {
+          durationMs: this.getNow() - debugStartedAt,
+          reason: debugSkippedReason,
+          stampCount: debugInitialStampCount,
+          strokeBufferRect: debugStrokeBufferRect,
+          strokeRect: debugStrokeRect,
+          strokeStamps: this.strokeStampCount,
+          tool: this.currentStrokeTool || "brush",
+        }, {
+          metric: "flushMs",
+          warnAtMs: 10,
+        });
         trace?.end({
           scissor: flushUsedScissor,
           strokeStamps: this.strokeStampCount,
@@ -1557,6 +1579,77 @@
     }
 ,
 
+    getBrushBakePaintTargetStrategy({
+      documentTarget = this.getDocumentDrawTarget(this.strokeTargetLayerId || ""),
+      effectiveStrokeRect = null,
+      isEraserStroke = false,
+      tilePatchRects = null,
+    } = {}) {
+      const tilePatchRectCount = Array.isArray(tilePatchRects) ? tilePatchRects.length : 0;
+      const coverage = this.getRasterRectCoverage(effectiveStrokeRect, documentTarget);
+      const isMobileLike = Boolean(this.documentRenderer?.isMobileLikeDevice?.());
+      const shouldUseDenseTarget = Boolean(
+        !isEraserStroke &&
+        isMobileLike &&
+        namespace.mobileBrushDenseBakeTargets !== false &&
+        (
+          tilePatchRectCount >= MOBILE_DENSE_BRUSH_TARGET_PATCH_THRESHOLD ||
+          coverage >= MOBILE_DENSE_BRUSH_TARGET_COVERAGE_THRESHOLD
+        )
+      );
+
+      return {
+        coverage,
+        mode: shouldUseDenseTarget ? "dense-mobile-large-stroke" : "sparse-patch",
+        sparse: !shouldUseDenseTarget,
+        tilePatchRectCount,
+        tilePatchRects: shouldUseDenseTarget ? null : tilePatchRects,
+      };
+    }
+,
+
+    isFirstDenseBrushPaintTarget(layerId) {
+      const existingTarget = layerId
+        ? this.documentRenderer?.rasterTargetsByLayerId?.get?.(layerId)
+        : null;
+      const isEmptySparseTarget = Boolean(
+        existingTarget &&
+        this.documentRenderer?.isSparseRasterTarget?.(existingTarget) &&
+        (!existingTarget.tiles || existingTarget.tiles.size === 0)
+      );
+
+      return !existingTarget || isEmptySparseTarget;
+    }
+,
+
+    getDenseBrushPaintTargetRect(layerId, strokeBufferRect, effectiveStrokeRect, documentTarget) {
+      if (!strokeBufferRect) {
+        return effectiveStrokeRect;
+      }
+
+      if (this.isFirstDenseBrushPaintTarget(layerId)) {
+        return this.getStrokeAllocationBounds(documentTarget);
+      }
+
+      return strokeBufferRect;
+    }
+,
+
+    getEraserPaintTargetLookupRect(layerId, strokeRect) {
+      if (!layerId || !strokeRect) {
+        return strokeRect || null;
+      }
+
+      const target = this.documentRenderer?.rasterTargetsByLayerId?.get?.(layerId) ||
+        this.documentRenderer?.getRasterTarget?.(layerId);
+      const targetRect = this.documentRenderer?.getRasterTargetDocumentRect?.(target);
+      const clipped = this.documentRenderer?.intersectRasterHistoryRects?.(strokeRect, targetRect) ||
+        this.intersectDocumentRects(strokeRect, targetRect);
+
+      return clipped || strokeRect;
+    }
+,
+
     bakeStrokeIncrementally({ decision = null, reason = "stroke-scratch-pressure" } = {}) {
       if (this.isIncrementalStrokeBakeInProgress) {
         return false;
@@ -1617,18 +1710,33 @@
           effectiveStrokeRect,
           activeStrokeTilePatchRects,
         );
+        const targetStrategy = this.getBrushBakePaintTargetStrategy({
+          documentTarget,
+          effectiveStrokeRect,
+          isEraserStroke,
+          tilePatchRects: activeStrokeTilePatchRects,
+        });
+        const paintTargetLookupRect = isEraserStroke
+          ? this.getEraserPaintTargetLookupRect(layerId, effectiveStrokeRect)
+          : effectiveStrokeRect;
+        const paintTargetRect = !isEraserStroke && targetStrategy.sparse === false
+          ? this.getDenseBrushPaintTargetRect(layerId, initialStrokeBufferRect, effectiveStrokeRect, documentTarget)
+          : effectiveStrokeRect;
         const paintTargets = isEraserStroke
-          ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
+          ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, paintTargetLookupRect, {
+              retileExistingTarget: false,
+              sparse: false,
               source: "brush-incremental-eraser-target",
               tilePatchRects: activeStrokeTilePatchRects,
             }) || [{
               target: this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget(),
             }]
-          : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
+          : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, paintTargetRect, {
+              sparse: targetStrategy.sparse,
               source: "brush-incremental-stroke-target",
-              tilePatchRects: activeStrokeTilePatchRects,
+              tilePatchRects: targetStrategy.tilePatchRects,
             }) || [{
-              target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, effectiveStrokeRect, {
+              target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, paintTargetRect, {
                 source: "brush-incremental-stroke-target",
               }) || this.documentRenderer?.getRasterTarget?.(layerId),
             }];
@@ -1755,6 +1863,29 @@
 ,
 
     bakeStroke() {
+      const debugStartedAt = this.getNow();
+      const debugBakePhases = {};
+      let debugBakePhaseStartedAt = debugStartedAt;
+      let debugBakeDrawCallCount = null;
+      let debugBakeHistoryCommitMode = "";
+      let debugBakeHistoryMode = "";
+      let debugBakeLayerId = this.strokeTargetLayerId || "";
+      let debugBakePaintTargetCount = null;
+      let debugBakePreviewDirtyRectCount = null;
+      let debugBakePushedHistoryEntry = false;
+      let debugBakeReason = "";
+      let debugBakeStrokeBufferRect = null;
+      let debugBakeStrokeRect = null;
+      let debugBakeTargetCoverage = null;
+      let debugBakeTargetStrategy = "";
+      let debugBakeTilePatchRectCount = null;
+      const recordDebugBakePhase = (name) => {
+        const now = this.getNow();
+        const durationMs = now - debugBakePhaseStartedAt;
+
+        debugBakePhases[name] = Math.max(0, Math.round(durationMs * 10) / 10);
+        debugBakePhaseStartedAt = now;
+      };
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("brush.bake", {
         tool: this.currentStrokeTool || "brush",
       }) : null;
@@ -1768,9 +1899,11 @@
       const layerId = this.strokeTargetLayerId ||
         this.documentRenderer?.resolvePaintLayerId?.() ||
         this.getDocumentDrawTarget().layerId;
+      debugBakeLayerId = layerId;
       const isEraserStroke = this.currentStrokeTool === "eraser";
       const { program, uniforms } = this.compositeProgramInfo;
       const strokeRect = this.getActiveStrokeRect();
+      debugBakeStrokeRect = strokeRect ? { ...strokeRect } : null;
       if (isEraserStroke) {
         namespace.EraserZoomDebug?.log?.("eraser-bake-start", {
           layerId,
@@ -1785,8 +1918,10 @@
         layerId,
         tool: this.currentStrokeTool || "brush",
       });
+      recordDebugBakePhase("setup");
 
       if (!this.strokeTexture || !strokeRect) {
+        debugBakeReason = !this.strokeTexture ? "missing-stroke-texture" : "missing-stroke-rect";
         if (isEraserStroke) {
           namespace.EraserZoomDebug?.warn?.("eraser-bake-missing-stroke-texture-or-rect", {
             hasStrokeRect: Boolean(strokeRect),
@@ -1812,8 +1947,10 @@
         hasEmptySelectionCoverage,
         hasSelectionCoverage,
       });
+      recordDebugBakePhase("coverage");
 
       if (hasEmptySelectionCoverage) {
+        debugBakeReason = "empty-selection-coverage";
         if (isEraserStroke) {
           namespace.EraserZoomDebug?.warn?.("eraser-bake-empty-selection-coverage", {
             layerId,
@@ -1831,6 +1968,7 @@
         : strokeRect;
 
       if (!effectiveStrokeRect) {
+        debugBakeReason = "missing-effective-stroke-rect";
         if (isEraserStroke) {
           namespace.EraserZoomDebug?.warn?.("eraser-bake-missing-effective-stroke-rect", {
             layerId,
@@ -1856,43 +1994,73 @@
         effectiveStrokeRect,
         activeStrokeTilePatchRects,
       );
+      const targetStrategy = this.getBrushBakePaintTargetStrategy({
+        documentTarget,
+        effectiveStrokeRect,
+        isEraserStroke,
+        tilePatchRects: activeStrokeTilePatchRects,
+      });
+      const paintTargetLookupRect = isEraserStroke
+        ? this.getEraserPaintTargetLookupRect(layerId, effectiveStrokeRect)
+        : effectiveStrokeRect;
+      const isFirstDensePaintTarget = !isEraserStroke &&
+        targetStrategy.sparse === false &&
+        this.isFirstDenseBrushPaintTarget(layerId);
+      const paintTargetRect = !isEraserStroke && targetStrategy.sparse === false
+        ? this.getDenseBrushPaintTargetRect(layerId, finalStrokeBufferRect, effectiveStrokeRect, documentTarget)
+        : effectiveStrokeRect;
       const paintTargets = isEraserStroke
-        ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
+        ? this.documentRenderer?.getRasterTargetsForPaintRect?.(layerId, paintTargetLookupRect, {
+            retileExistingTarget: false,
+            sparse: false,
             source: "brush-eraser-target",
             tilePatchRects: activeStrokeTilePatchRects,
           }) || [{
-            target: this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget(),
-          }]
-        : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, effectiveStrokeRect, {
+          target: this.documentRenderer?.getRasterTarget?.(layerId) || this.getPaintTarget(),
+        }]
+        : this.documentRenderer?.ensureRasterTargetsForPaintRect?.(layerId, paintTargetRect, {
+            sparse: targetStrategy.sparse,
             source: "brush-stroke-target",
-            tilePatchRects: activeStrokeTilePatchRects,
+            tilePatchRects: targetStrategy.tilePatchRects,
           }) || [{
-            target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, effectiveStrokeRect, {
+            target: this.documentRenderer?.ensureRasterTargetForPaintRect?.(layerId, paintTargetRect, {
               source: "brush-stroke-target",
             }) || this.documentRenderer?.getRasterTarget?.(layerId),
           }];
       const target = paintTargets.find((item) => item?.target?.framebuffer && item?.target?.texture)?.target || null;
+      debugBakePaintTargetCount = paintTargets.length;
+      debugBakePreviewDirtyRectCount = previewDirtyRects.length;
+      debugBakeStrokeBufferRect = finalStrokeBufferRect ? { ...finalStrokeBufferRect } : null;
+      debugBakeTargetCoverage = targetStrategy.coverage;
+      debugBakeTargetStrategy = isFirstDensePaintTarget
+        ? `${targetStrategy.mode}-first-full`
+        : targetStrategy.mode;
+      debugBakeTilePatchRectCount = targetStrategy.tilePatchRectCount;
       targetTrace?.end({
         hasFinalStrokeBufferRect: Boolean(finalStrokeBufferRect),
         hasTarget: Boolean(target),
         paintTargetCount: paintTargets.length,
         previewDirtyRectCount: previewDirtyRects.length,
-        tilePatchRectCount: activeStrokeTilePatchRects.length,
+        targetStrategy: targetStrategy.mode,
+        tilePatchRectCount: targetStrategy.tilePatchRectCount,
       });
+      recordDebugBakePhase("targets");
       if (isEraserStroke) {
         namespace.EraserZoomDebug?.log?.("eraser-bake-targets", {
           effectiveStrokeRect: effectiveStrokeRect ? { ...effectiveStrokeRect } : null,
           finalStrokeBufferRect: finalStrokeBufferRect ? { ...finalStrokeBufferRect } : null,
           layerId,
+          paintTargetLookupRect: paintTargetLookupRect ? { ...paintTargetLookupRect } : null,
           paintTargetCount: paintTargets.length,
           targets: paintTargets.map((item) =>
             namespace.EraserZoomDebug?.getTargetSummary?.(item?.target, this.documentRenderer)),
           target: namespace.EraserZoomDebug?.getTargetSummary?.(target, this.documentRenderer),
-          tilePatchRectCount: activeStrokeTilePatchRects.length,
+          tilePatchRectCount: targetStrategy.tilePatchRectCount,
         });
       }
 
       if (!target?.framebuffer || !target?.texture || !finalStrokeBufferRect) {
+        debugBakeReason = "missing-paint-target";
         if (isEraserStroke) {
           namespace.EraserZoomDebug?.warn?.("eraser-bake-no-usable-target", {
             hasFinalStrokeBufferRect: Boolean(finalStrokeBufferRect),
@@ -1936,6 +2104,8 @@
         historyMode: memoryReport?.historyMode || "",
         policy: memoryReport?.policy || "",
       });
+      debugBakeHistoryMode = memoryReport?.historyMode || "";
+      recordDebugBakePhase("history-prepare");
       if (isEraserStroke) {
         namespace.EraserZoomDebug?.log?.("eraser-bake-history-prepare", {
           hasBatchedTileHistory: Boolean(batchedTileHistory),
@@ -1954,6 +2124,7 @@
       preDrawTrace?.end({
         policy: memoryReport?.policy || "",
       });
+      recordDebugBakePhase("pre-draw");
       const bakeRect = this.strokeBufferRect || { ...strokeRect };
       const drawTrace = beginBakeTrace("draw-targets", {
         paintTargetCount: paintTargets.length,
@@ -2026,6 +2197,8 @@
         paintTargetCount: paintTargets.length,
         selectionScissorCount: hasSelectionCoverage ? drawCallCount : 0,
       });
+      debugBakeDrawCallCount = drawCallCount;
+      recordDebugBakePhase("draw");
       if (isEraserStroke) {
         namespace.EraserZoomDebug?.log?.("eraser-bake-drawn", {
           bakeRect: bakeRect ? { ...bakeRect } : null,
@@ -2146,6 +2319,9 @@
         mode: historyCommitMode,
         pushedHistoryEntry,
       });
+      debugBakeHistoryCommitMode = historyCommitMode;
+      debugBakePushedHistoryEntry = pushedHistoryEntry;
+      recordDebugBakePhase("history-commit");
       if (isEraserStroke) {
         namespace.EraserZoomDebug?.log?.("eraser-bake-history-commit", {
           historyMode: historyCommitMode,
@@ -2175,6 +2351,7 @@
       cleanupTrace?.end({
         keepPreviewCacheForDirtyBake,
       });
+      recordDebugBakePhase("cleanup");
       const dirtyTrace = beginBakeTrace("dirty");
       if (typeof this.documentRenderer?.commitVisualDirtyChange === "function") {
         this.documentRenderer.commitVisualDirtyChange({
@@ -2197,6 +2374,7 @@
       dirtyTrace?.end({
         previewDirtyRectCount: previewDirtyRects.length,
       });
+      recordDebugBakePhase("dirty");
       if (isEraserStroke) {
         const afterState = namespace.EraserZoomDebug?.captureLayerState?.(layerId, { precise: true });
         const debugDetail = {
@@ -2216,6 +2394,30 @@
       } finally {
         this.releaseStrokeLayerTarget();
         this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+        const debugDurationMs = this.getNow() - debugStartedAt;
+        namespace.BrushLagDebug?.recordTiming?.("slow-bake", {
+          drawCallCount: debugBakeDrawCallCount,
+          durationMs: debugDurationMs,
+          historyCommitMode: debugBakeHistoryCommitMode,
+          historyMode: debugBakeHistoryMode,
+          layerId: debugBakeLayerId,
+          paintTargetCount: debugBakePaintTargetCount,
+          pendingSamples: Array.isArray(this.pendingPointerSamples) ? this.pendingPointerSamples.length : 0,
+          phases: debugBakePhases,
+          previewDirtyRectCount: debugBakePreviewDirtyRectCount,
+          pushedHistoryEntry: debugBakePushedHistoryEntry,
+          reason: debugBakeReason,
+          strokeBufferRect: debugBakeStrokeBufferRect,
+          strokeRect: debugBakeStrokeRect,
+          strokeStamps: this.strokeStampCount,
+          targetCoverage: debugBakeTargetCoverage,
+          targetStrategy: debugBakeTargetStrategy,
+          tilePatchRectCount: debugBakeTilePatchRectCount,
+          tool: this.currentStrokeTool || "brush",
+        }, {
+          metric: "bakeMs",
+          warnAtMs: 24,
+        });
         trace?.end({
           strokeStamps: this.strokeStampCount,
           tool: this.currentStrokeTool || "brush",
@@ -2318,6 +2520,7 @@
         return;
       }
 
+      const debugStartedAt = this.getNow();
       const governor = namespace.EngineGovernor;
       const frameMode = this.isDrawing || this.isPanning || this.touchNavigationGesture || namespace.smudgeEngine?.isDragging
         ? "interactive"
@@ -2344,11 +2547,23 @@
           activeStroke: this.isDrawing,
           dpr: this.dpr,
         });
+        namespace.BrushLagDebug?.recordTiming?.("slow-frame", {
+          durationMs: this.getNow() - debugStartedAt,
+          frameTimestamp: Math.max(0, Math.round(Number(frameTimestamp) || 0)),
+          pendingSamples: Array.isArray(this.pendingPointerSamples) ? this.pendingPointerSamples.length : 0,
+          strokeStamps: this.strokeStampCount,
+          tool: this.currentStrokeTool || this.activeStrokeTool || "brush",
+        }, {
+          metric: "frameMs",
+          warnAtMs: 32,
+          snapshot: false,
+        });
       }
     }
 ,
 
     draw() {
+      const debugStartedAt = this.getNow();
       this.processPendingPointerSamples({
         requestDraw: false,
       });
@@ -2389,6 +2604,18 @@
         endRenderSubmit?.({
           cacheMisses: allowPreviewCache && this.documentRenderer?.previewCacheDirty ? 1 : 0,
           visibleTiles: Number(viewportStats?.sparseTiles?.drawn) || 0,
+        });
+        namespace.BrushLagDebug?.recordTiming?.("slow-draw", {
+          durationMs: this.getNow() - debugStartedAt,
+          pendingSamples: Array.isArray(this.pendingPointerSamples) ? this.pendingPointerSamples.length : 0,
+          strokeBufferRect: this.strokeBufferRect ? { ...this.strokeBufferRect } : null,
+          strokeStamps: this.strokeStampCount,
+          tool: this.currentStrokeTool || this.activeStrokeTool || "brush",
+          visibleTiles: Number(viewportStats?.sparseTiles?.drawn) || 0,
+        }, {
+          metric: "drawMs",
+          warnAtMs: 20,
+          snapshot: false,
         });
       }
 

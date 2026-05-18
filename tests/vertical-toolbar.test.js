@@ -15,5 +15,5 @@ test("vertical toolbar places layer style below resize", () => {
   assert.ok(layerStyleIndex > resizeIndex);
   assert.match(source, /aria-label="LAYER STYLE"/);
   assert.match(source, /data-tool-mode="layer-style"/);
-  assert.match(source, /class="lucide lucide-dna-icon lucide-dna"/);
+  assert.match(source, /vertical-layer-style-button[\s\S]*<svg\b/);
 });

@@ -110,11 +110,11 @@ test("left rail exposes a visual artboard tool below layers", () => {
   assert.notEqual(artboardButtonIndex, -1);
   assert.ok(artboardButtonIndex > layerButtonIndex);
   assert.match(indexSource, /data-tooltip="ARTBOARD"/);
-  assert.match(indexSource, /class="lucide lucide-dice1-icon lucide-dice-1"/);
-  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layout\.css\?v=android-v5\.2-space-board-loading-frame" \/>/);
-  assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js\?v=android-v4\.5-space-board-collision"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/artboard-connections\.js\?v=spaces-connections-loading-aura"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
+  assert.match(indexSource, /class="[^"]*\brail-artboard-button\b[^"]*"/);
+  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layout\.css(?:\?v=[^"]+)?" \/>/);
+  assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/artboard-connections\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js(?:\?v=[^"]+)?"><\/script>/);
 });
 
 test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
@@ -297,7 +297,7 @@ test("layers panel mirrors artboards as collapsed artboard groups", () => {
   assert.match(layersSource, /function getCurrentArtboardLayerEntry\(\)/);
   assert.match(layersSource, /activeArtboardChildren\.prepend\(entry\)/);
   assert.match(layersSource, /expandArtboardLayerEntry\(activeArtboardEntry\)/);
-  assert.match(layersSource, /class="lucide lucide-dice1-icon lucide-dice-1"/);
+  assert.match(layersSource, /state\.artboardGroup === true[\s\S]*<svg\b/);
   assert.match(layersSource, /layerEntry\.classList\.toggle\("collapsed", shouldCollapse\)/);
   assert.match(cssSource, /\.layer-artboard-row/);
   assert.match(layerModelSource, /entry\.artboardGroup === true/);

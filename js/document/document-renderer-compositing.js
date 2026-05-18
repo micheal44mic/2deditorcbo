@@ -1826,8 +1826,10 @@
           );
           const skipLayerBlendForInteractiveStroke = Boolean(
             isActiveStrokeLayer &&
-            activeStrokeDefersLayerBlend &&
-            activeStrokeMode !== "eraser"
+            (
+              activeStrokeMode === "eraser" ||
+              activeStrokeDefersLayerBlend
+            )
           );
           let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
             forceSingleTexture: Boolean(eraserMaskTexture),

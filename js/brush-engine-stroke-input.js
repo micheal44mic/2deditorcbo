@@ -1163,10 +1163,18 @@
 
       this.documentRenderer?.materializeRasterTarget?.(activeId, {
         emit: false,
-        forceDense: true,
         invalidate: false,
-        source: `${source}-dense`,
+        source: `${source}-materialize`,
       });
+      const denseTarget = this.documentRenderer?.rasterTargetsByLayerId?.get?.(activeId);
+
+      if (
+        denseTarget?.texture &&
+        denseTarget?.framebuffer &&
+        !this.documentRenderer?.isSparseRasterTarget?.(denseTarget)
+      ) {
+        denseTarget.materializedFromSparse = false;
+      }
       this.documentRenderer?.invalidatePreviewCache?.(source, {
         layerId: activeId,
         lightweight: options.lightweight !== false,
@@ -1238,11 +1246,13 @@
         return null;
       }
 
-      const target = this.documentRenderer?.isCroppedRasterTarget?.(existingTarget)
+      const target = this.documentRenderer?.isSparseRasterTarget?.(existingTarget)
         ? this.documentRenderer?.materializeRasterTarget?.(activeId, {
-            source: "eraser-materialize",
+            emit: false,
+            invalidate: false,
+            source: "eraser-materialize-sparse",
           })
-        : this.documentRenderer?.getRasterTarget?.(activeId);
+        : existingTarget;
 
       if (!target?.texture || !target?.framebuffer) {
         this.warnEraserZoomDebug("eraser-target-unusable-before-stroke", {
@@ -1251,6 +1261,10 @@
           target: namespace.EraserZoomDebug?.getTargetSummary?.(target, this.documentRenderer),
         });
         return null;
+      }
+
+      if (!this.documentRenderer?.isSparseRasterTarget?.(target)) {
+        target.materializedFromSparse = false;
       }
 
       this.logEraserZoomDebug("eraser-target-ready", {
@@ -1547,6 +1561,7 @@
         return false;
       }
 
+      const initialPendingSamples = this.pendingPointerSamples.length;
       const samples = this.takePointerSamplesForFrame(options);
       const frameBudgetMs = options.drainAll === true ? Infinity : this.getPointerFrameBudgetMs();
       const startedAt = this.getNow();
@@ -1581,6 +1596,21 @@
 
       if (this.pendingPointerSamples.length > 0) {
         this.requestDraw();
+      }
+
+      if (processedCount > 0) {
+        namespace.BrushLagDebug?.recordTiming?.("slow-input", {
+          durationMs: this.getNow() - startedAt,
+          drainAll: options.drainAll === true,
+          frameBudgetMs: Number.isFinite(frameBudgetMs) ? frameBudgetMs : null,
+          initialPendingSamples,
+          processedSamples: processedCount,
+          remainingSamples: this.pendingPointerSamples.length,
+          tool: this.currentStrokeTool || this.activeStrokeTool || "brush",
+        }, {
+          metric: "inputMs",
+          warnAtMs: 8,
+        });
       }
 
       return processedCount > 0;
@@ -1646,6 +1676,11 @@
       this.clearPendingBrushHistoryTimer();
       const strokeTool = this.activeStrokeTool || "brush";
       let strokeTarget = null;
+
+      namespace.BrushLagDebug?.log?.("pointerdown", {
+        pendingSamples: Array.isArray(this.pendingPointerSamples) ? this.pendingPointerSamples.length : 0,
+        tool: strokeTool,
+      });
 
       if (strokeTool === "eraser") {
         this.logEraserZoomDebug("eraser-pointerdown", {
@@ -1803,6 +1838,12 @@
         }
 
         this.bakeStroke();
+
+        namespace.BrushLagDebug?.log?.("pointerup", {
+          pendingSamples: Array.isArray(this.pendingPointerSamples) ? this.pendingPointerSamples.length : 0,
+          strokeStamps: this.strokeStampCount,
+          tool: this.currentStrokeTool || this.activeStrokeTool || "brush",
+        });
 
         if (this.currentStrokeTool === "eraser") {
           this.logEraserZoomDebug("eraser-pointerup-after-bake", {
