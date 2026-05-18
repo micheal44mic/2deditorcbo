@@ -72,8 +72,12 @@ window.CBO = window.CBO || {};
 
   function getPreviewScale(settings, camera) {
     const zoom = Math.max(0.0001, Number(camera?.zoom) || 1);
+    const dpr = Math.max(
+      0.0001,
+      Number(camera?.dpr || namespace.brushEngine?.dpr || window.devicePixelRatio) || 1,
+    );
 
-    return Math.max(0.001, (zoom * getBrushSize(settings)) / baseSize);
+    return Math.max(0.001, ((zoom / dpr) * getBrushSize(settings)) / baseSize);
   }
 
   function getShapeRotation(settings) {
@@ -247,7 +251,10 @@ window.CBO = window.CBO || {};
     const wrapper = document.createElement("div");
     const canvas = document.createElement("canvas");
     let activeTool = false;
-    let camera = namespace.brushEngine?.camera || { zoom: 1 };
+    let camera = {
+      ...(namespace.brushEngine?.camera || { zoom: 1 }),
+      dpr: Math.max(0.0001, Number(namespace.brushEngine?.dpr || window.devicePixelRatio) || 1),
+    };
     let currentSource = "";
     let currentFlipX = null;
     let currentFlipY = null;
@@ -392,7 +399,13 @@ window.CBO = window.CBO || {};
     });
 
     window.addEventListener("cbo:camera-change", (event) => {
-      camera = event.detail?.camera || camera;
+      camera = {
+        ...(event.detail?.camera || camera),
+        dpr: Math.max(
+          0.0001,
+          Number(event.detail?.dpr || namespace.brushEngine?.dpr || camera?.dpr || window.devicePixelRatio) || 1,
+        ),
+      };
       updateTransform();
     });
 

@@ -1945,6 +1945,7 @@
                 {
                   clipRects: activeStrokeScratchClipRects,
                   hasClip: activeStrokeHasClip,
+                  layerRect: this.getRasterTargetDocumentRect(layerTarget),
                 },
               );
 

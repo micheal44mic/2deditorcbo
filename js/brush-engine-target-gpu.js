@@ -1651,23 +1651,79 @@
       const tilePatchRectCount = Array.isArray(tilePatchRects) ? tilePatchRects.length : 0;
       const coverage = this.getRasterRectCoverage(effectiveStrokeRect, documentTarget);
       const isMobileLike = Boolean(this.documentRenderer?.isMobileLikeDevice?.());
+      const layerId = String(this.strokeTargetLayerId || documentTarget?.layerId || "").trim();
+      const isClippingMaskBase = !isEraserStroke && this.isLayerClippingMaskBase(layerId);
       const shouldUseDenseTarget = Boolean(
         !isEraserStroke &&
-        isMobileLike &&
-        namespace.mobileBrushDenseBakeTargets !== false &&
         (
-          tilePatchRectCount >= MOBILE_DENSE_BRUSH_TARGET_PATCH_THRESHOLD ||
-          coverage >= MOBILE_DENSE_BRUSH_TARGET_COVERAGE_THRESHOLD
+          isClippingMaskBase ||
+          (
+            isMobileLike &&
+            namespace.mobileBrushDenseBakeTargets !== false &&
+            (
+              tilePatchRectCount >= MOBILE_DENSE_BRUSH_TARGET_PATCH_THRESHOLD ||
+              coverage >= MOBILE_DENSE_BRUSH_TARGET_COVERAGE_THRESHOLD
+            )
+          )
         )
       );
 
       return {
         coverage,
-        mode: shouldUseDenseTarget ? "dense-mobile-large-stroke" : "sparse-patch",
+        mode: isClippingMaskBase
+          ? "dense-clipping-mask-base"
+          : shouldUseDenseTarget
+            ? "dense-mobile-large-stroke"
+            : "sparse-patch",
         sparse: !shouldUseDenseTarget,
         tilePatchRectCount,
         tilePatchRects: shouldUseDenseTarget ? null : tilePatchRects,
       };
+    }
+,
+
+    isLayerClippingMaskBase(layerId) {
+      const normalizedLayerId = String(layerId || "").trim();
+
+      if (!normalizedLayerId) {
+        return false;
+      }
+
+      const renderer = this.documentRenderer || null;
+      const layerModel = renderer?.layerModel || namespace.documentLayerModel || null;
+      let orderedLayers = [];
+
+      if (typeof renderer?.getOrderedLayersBottomToTop === "function") {
+        orderedLayers = renderer.getOrderedLayersBottomToTop();
+      } else if (typeof layerModel?.flattenTopToBottom === "function") {
+        orderedLayers = layerModel.flattenTopToBottom().slice().reverse();
+      } else if (typeof layerModel?.getEntries === "function") {
+        orderedLayers = layerModel.getEntries().slice().reverse();
+      }
+
+      if (!Array.isArray(orderedLayers) || orderedLayers.length === 0) {
+        return false;
+      }
+
+      let currentBaseLayer = null;
+
+      for (const layer of orderedLayers) {
+        if (layer?.clippingMask === true) {
+          if (currentBaseLayer?.id === normalizedLayerId) {
+            return true;
+          }
+          continue;
+        }
+
+        currentBaseLayer = layer &&
+          layer.type !== "group" &&
+          layer.type !== "background" &&
+          layer.id !== "background"
+          ? layer
+          : null;
+      }
+
+      return false;
     }
 ,
 

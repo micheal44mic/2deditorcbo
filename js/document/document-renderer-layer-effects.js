@@ -645,6 +645,13 @@
             .map((rect) => this.getUnclampedDocumentRect?.(rect) || rect)
             .filter(Boolean)
         : [];
+      const layerRect = options.layerRect
+        ? this.getUnclampedDocumentRect?.(options.layerRect) || options.layerRect
+        : null;
+      const layerDrawWidth = Math.max(1, Math.round(layerRect?.width || width));
+      const layerDrawHeight = Math.max(1, Math.round(layerRect?.height || height));
+      const layerOriginX = Number.isFinite(layerRect?.x) ? layerRect.x : 0;
+      const layerOriginY = Number.isFinite(layerRect?.y) ? layerRect.y : 0;
       const hasStrokeClip = options.hasClip === true || strokeClipRects.length > 0;
       const getScratchScissorForDocumentRect = (docRect) => {
         if (!docRect) {
@@ -740,7 +747,7 @@
       gl.bindVertexArray(this.quad.vao);
       gl.activeTexture(gl.TEXTURE0);
 
-      drawSource(layerTexture, width, height);
+      drawSource(layerTexture, layerDrawWidth, layerDrawHeight, layerOriginX, layerOriginY);
 
       if (strokeRect) {
         const rectWidth = Math.max(1, Math.round(strokeRect.width || width));

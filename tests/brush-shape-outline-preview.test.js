@@ -27,6 +27,8 @@ test("brush shape outline preview extracts a single alpha outline and scales lik
   assert.match(source, /let brushSettingsOverride = null/);
   assert.match(source, /function getShapeRotation\(settings\)/);
   assert.match(source, /function getShapeBaseRotation\(settings\)/);
+  assert.match(source, /Number\(camera\?\.dpr \|\| namespace\.brushEngine\?\.dpr \|\| window\.devicePixelRatio\)/);
+  assert.match(source, /\(\(zoom \/ dpr\) \* getBrushSize\(settings\)\) \/ baseSize/);
   assert.match(source, /getCoverage\(data, neighborOffset, useAlpha\) <= alphaThreshold/);
   assert.match(source, /function resetPointerTracking\(\)/);
   assert.match(source, /function angleLerp\(current, target, amount\)/);
