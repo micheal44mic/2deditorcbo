@@ -122,25 +122,6 @@ body.cbo-canvas-pan-active *::after {
   cursor: grabbing !important;
 }
 
-body.cbo-touch-navigation-active .side-panel,
-body.cbo-touch-navigation-active .toolbar-dock,
-body.cbo-touch-navigation-active .top-toolbar-dock,
-body.cbo-touch-navigation-active .right-vertical-toolbar-dock,
-body.cbo-touch-navigation-active .brush-studio-panel,
-body.cbo-touch-navigation-active .brushes-gallery-popout,
-body.cbo-touch-navigation-active .artboard-create-popover,
-body.cbo-touch-navigation-active .layer-effects-popover,
-body.cbo-touch-navigation-guard .side-panel,
-body.cbo-touch-navigation-guard .toolbar-dock,
-body.cbo-touch-navigation-guard .top-toolbar-dock,
-body.cbo-touch-navigation-guard .right-vertical-toolbar-dock,
-body.cbo-touch-navigation-guard .brush-studio-panel,
-body.cbo-touch-navigation-guard .brushes-gallery-popout,
-body.cbo-touch-navigation-guard .artboard-create-popover,
-body.cbo-touch-navigation-guard .layer-effects-popover {
-  pointer-events: none;
-}
-
 body.cbo-touch-navigation-active .brush-shape-outline-preview,
 body.cbo-touch-navigation-guard .brush-shape-outline-preview {
   display: none !important;

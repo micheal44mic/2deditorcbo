@@ -2338,10 +2338,20 @@
         return null;
       }
 
-      const fullTarget = this.createRasterTargetForUnclampedRect(targetRect, sparseTarget.clearColor, 0, {
-        layerId,
-        source: options.source || "materialize-sparse-raster-target",
-      });
+      const fullTarget = options.forceDense === true
+        ? this.createRasterTarget(sparseTarget.clearColor || [0, 0, 0, 0], {
+            cropped: false,
+            height: this.height,
+            layerId,
+            source: options.source || "materialize-sparse-raster-target",
+            width: this.width,
+            x: 0,
+            y: 0,
+          })
+        : this.createRasterTargetForUnclampedRect(targetRect, sparseTarget.clearColor, 0, {
+            layerId,
+            source: options.source || "materialize-sparse-raster-target",
+          });
 
       if (!fullTarget) {
         return null;

@@ -8,7 +8,7 @@ document.addEventListener(
 
 (() => {
   const namespace = window.CBO = window.CBO || {};
-  const androidBuildVersion = "v4.5-no-fill-history-debug";
+  const androidBuildVersion = "v4.6-android-cache-restore";
   const androidIndicator = document.getElementById("android-device-indicator");
 
   function isAndroidDevice() {
@@ -51,11 +51,11 @@ document.addEventListener(
     namespace.viewportLayerCullingEnabled = true;
     namespace.interactiveBrushPrewarmEnabled = false;
 
-    // Android v4.5-no-fill-history-debug: keep the recovered Android behavior
-    // and remove fill/history debug surfaces.
-    namespace.androidFullRenderMode = true;
-    namespace.androidPreviewCacheEnabled = false;
-    namespace.androidDirtyRegionsEnabled = false;
+    // Android hotfix: keep preview cache and dirty-region rendering enabled.
+    // Full-render mode was too expensive during pan, zoom, and eraser strokes.
+    namespace.androidFullRenderMode = false;
+    namespace.androidPreviewCacheEnabled = true;
+    namespace.androidDirtyRegionsEnabled = true;
     namespace.androidZoomOutPreviewCacheEnabled = true;
     namespace.androidZoomOutPreviewCacheMaxSize = 1536;
     namespace.androidPixelPerfectEnabled = false;
@@ -164,7 +164,7 @@ document.addEventListener(
 
 (() => {
   const namespace = window.CBO = window.CBO || {};
-  const TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 420;
+  const TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 120;
   const touchNavigationInteractiveSelector = [
     "a[href]",
     "button",

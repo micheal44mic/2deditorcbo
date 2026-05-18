@@ -1473,7 +1473,9 @@
       return false;
     }
 
-    namespace.documentHistory?.flushLayerState?.(layerModel);
+    if (options.deferHistoryFlush !== true) {
+      namespace.documentHistory?.flushLayerState?.(layerModel);
+    }
 
     const source = options.source || "image-rasterize";
     const didRasterize = layerModel.rasterizeImageLayerToPaint(layer.id, {
@@ -1485,7 +1487,9 @@
       return false;
     }
 
-    namespace.documentRenderer?.requestDraw?.();
+    if (options.requestDraw !== false) {
+      namespace.documentRenderer?.requestDraw?.();
+    }
     window.dispatchEvent(new CustomEvent("cbo:image-layer-rasterized", {
       detail: {
         layerId: layer.id,

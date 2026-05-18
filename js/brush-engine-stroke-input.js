@@ -183,6 +183,12 @@
 
       this.activeStrokeTool = tool;
       this.isBrushToolActive = Boolean(tool);
+
+      if (tool === "eraser") {
+        this.scheduleActiveImageLayerRasterizeForEraser("eraser-tool-change-preflight");
+      } else {
+        this.cancelPendingEraserImageRasterize();
+      }
     }
 ,
 
@@ -194,6 +200,10 @@
       }
 
       this.requestDraw();
+
+      if (this.activeStrokeTool === "eraser") {
+        this.scheduleActiveImageLayerRasterizeForEraser("eraser-layer-change-preflight");
+      }
     }
 ,
 
@@ -976,7 +986,67 @@
     }
 ,
 
-    rasterizeImageLayerForEraser(activeId) {
+    cancelPendingEraserImageRasterize() {
+      const cancel = this.pendingEraserImageRasterizeCancel;
+      const handle = this.pendingEraserImageRasterizeHandle;
+
+      if (handle && typeof cancel === "function") {
+        cancel(handle);
+      }
+
+      this.pendingEraserImageRasterizeHandle = 0;
+      this.pendingEraserImageRasterizeCancel = null;
+      this.pendingEraserImageRasterizeLayerId = "";
+    }
+,
+
+    scheduleActiveImageLayerRasterizeForEraser(source = "eraser-image-preflight-rasterize") {
+      const layerModel = this.documentRenderer?.layerModel || namespace.documentLayerModel;
+      const activeId = layerModel?.activeLayerId;
+      const activeLayer = activeId && typeof layerModel?.findEntryById === "function"
+        ? layerModel.findEntryById(activeId)
+        : null;
+
+      if (this.activeStrokeTool !== "eraser" || activeLayer?.type !== "image") {
+        this.cancelPendingEraserImageRasterize();
+        return false;
+      }
+
+      if (this.pendingEraserImageRasterizeLayerId === activeId) {
+        return true;
+      }
+
+      this.cancelPendingEraserImageRasterize();
+
+      const run = () => {
+        this.pendingEraserImageRasterizeHandle = 0;
+        this.pendingEraserImageRasterizeCancel = null;
+        this.pendingEraserImageRasterizeLayerId = "";
+
+        if (this.activeStrokeTool !== "eraser" || layerModel.activeLayerId !== activeId) {
+          return;
+        }
+
+        this.rasterizeImageLayerForEraser(activeId, {
+          source,
+          requestDraw: true,
+        });
+      };
+      const useIdleCallback = typeof window.requestIdleCallback === "function";
+
+      this.pendingEraserImageRasterizeLayerId = activeId;
+      this.pendingEraserImageRasterizeCancel = useIdleCallback
+        ? window.cancelIdleCallback?.bind(window)
+        : window.clearTimeout?.bind(window);
+      this.pendingEraserImageRasterizeHandle = useIdleCallback
+        ? window.requestIdleCallback(run, { timeout: 250 })
+        : window.setTimeout(run, 0);
+
+      return true;
+    }
+,
+
+    rasterizeImageLayerForEraser(activeId, options = {}) {
       const layerModel = this.documentRenderer?.layerModel || namespace.documentLayerModel;
       const activeLayer = activeId && typeof layerModel?.findEntryById === "function"
         ? layerModel.findEntryById(activeId)
@@ -986,10 +1056,17 @@
         return activeLayer;
       }
 
+      const source = options.source || "eraser-image-auto-rasterize";
       const rasterizeOptions = {
         historyGroup: `eraser-image-auto-rasterize-${activeId}`,
-        source: "eraser-image-auto-rasterize",
+        requestDraw: options.requestDraw === true,
+        source,
       };
+
+      if (options.deferHistoryFlush === true) {
+        rasterizeOptions.deferHistoryFlush = true;
+      }
+
       const didRasterize = typeof namespace.rasterizeImageLayerToPaint === "function"
         ? namespace.rasterizeImageLayerToPaint(activeId, rasterizeOptions)
         : layerModel.rasterizeImageLayerToPaint?.(activeId, rasterizeOptions) === true;
@@ -998,11 +1075,20 @@
         return null;
       }
 
-      namespace.documentHistory?.flushLayerState?.(layerModel);
-      this.documentRenderer?.invalidatePreviewCache?.("eraser-image-auto-rasterize", {
-        layerId: activeId,
+      this.documentRenderer?.materializeRasterTarget?.(activeId, {
+        emit: false,
+        forceDense: true,
+        invalidate: false,
+        source: `${source}-dense`,
       });
-      this.documentRenderer?.requestDraw?.();
+      this.documentRenderer?.invalidatePreviewCache?.(source, {
+        layerId: activeId,
+        lightweight: options.lightweight !== false,
+      });
+
+      if (options.requestDraw === true) {
+        this.documentRenderer?.requestDraw?.();
+      }
 
       return layerModel.findEntryById(activeId);
     }
@@ -1019,7 +1105,12 @@
       let activeLayer = layerModel.findEntryById(activeId);
 
       if (activeLayer?.type === "image") {
-        activeLayer = this.rasterizeImageLayerForEraser(activeId);
+        this.cancelPendingEraserImageRasterize();
+        activeLayer = this.rasterizeImageLayerForEraser(activeId, {
+          deferHistoryFlush: true,
+          lightweight: true,
+          requestDraw: false,
+        });
       }
 
       if (activeLayer?.type !== "paint") {

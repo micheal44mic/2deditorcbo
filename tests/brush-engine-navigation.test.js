@@ -115,7 +115,7 @@ test("touch navigation exposes an exclusive mobile gesture guard", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
   const baseCss = fs.readFileSync(path.join(repoRoot, "css", "base.css"), "utf8");
 
-  assert.match(appSource, /TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 420/);
+  assert.match(appSource, /TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 120/);
   assert.match(appSource, /function isTouchNavigationGuardActive\(\)/);
   assert.match(appSource, /function isTouchNavigationInteractiveTarget\(target\)/);
   assert.match(appSource, /guardTimer: 0/);
@@ -131,9 +131,8 @@ test("touch navigation exposes an exclusive mobile gesture guard", () => {
   assert.match(appSource, /!isGhostActivation && !isOffStageTouchPointer && !isInteractiveTouchPointer/);
   assert.match(appSource, /event\.pointerType === "touch"[\s\S]*!isStageEvent\(event\)/);
   assert.match(appSource, /event\.stopImmediatePropagation\(\)/);
-  assert.match(baseCss, /body\.cbo-touch-navigation-active \.side-panel/);
-  assert.match(baseCss, /body\.cbo-touch-navigation-guard \.toolbar-dock/);
   assert.match(baseCss, /body\.cbo-touch-navigation-guard \.brush-shape-outline-preview/);
+  assert.doesNotMatch(baseCss, /body\.cbo-touch-navigation-active \.side-panel[\s\S]*pointer-events: none/);
 });
 
 test("mobile pinch navigation cancels active touch tool interactions", () => {
@@ -162,13 +161,17 @@ test("mobile pinch navigation cancels active touch tool interactions", () => {
 test("eraser rasterizes image layers through the same public rasterize path before erasing", () => {
   const source = readBrushEngineSources();
 
-  assert.match(source, /rasterizeImageLayerForEraser\(activeId\)/);
-  assert.match(source, /activeLayer\?\.type === "image"[\s\S]*this\.rasterizeImageLayerForEraser\(activeId\)/);
-  assert.match(source, /const rasterizeOptions = \{[\s\S]*historyGroup: `eraser-image-auto-rasterize-\$\{activeId\}`,[\s\S]*source: "eraser-image-auto-rasterize"/);
+  assert.match(source, /rasterizeImageLayerForEraser\(activeId, options = \{\}\)/);
+  assert.match(source, /scheduleActiveImageLayerRasterizeForEraser\("eraser-tool-change-preflight"\)/);
+  assert.match(source, /scheduleActiveImageLayerRasterizeForEraser\("eraser-layer-change-preflight"\)/);
+  assert.match(source, /activeLayer = this\.rasterizeImageLayerForEraser\(activeId, \{/);
+  assert.match(source, /const rasterizeOptions = \{[\s\S]*historyGroup: `eraser-image-auto-rasterize-\$\{activeId\}`,[\s\S]*source,/);
+  assert.match(source, /deferHistoryFlush: true/);
+  assert.match(source, /requestDraw: false/);
+  assert.match(source, /forceDense: true/);
   assert.match(source, /namespace\.rasterizeImageLayerToPaint\(activeId, rasterizeOptions\)/);
   assert.match(source, /layerModel\.rasterizeImageLayerToPaint\?\.?\(activeId, rasterizeOptions\) === true/);
-  assert.match(source, /namespace\.documentHistory\?\.flushLayerState\?\.?\(layerModel\)/);
-  assert.match(source, /invalidatePreviewCache\?\.?\("eraser-image-auto-rasterize", \{\s*layerId: activeId,/);
+  assert.match(source, /invalidatePreviewCache\?\.?\(source, \{\s*layerId: activeId,/);
   assert.match(source, /if \(activeLayer\?\.type !== "paint"\) \{\s*return null;\s*\}/);
 });
 
