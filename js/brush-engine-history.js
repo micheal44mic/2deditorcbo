@@ -242,6 +242,25 @@
     }
 ,
 
+    getBrushHistoryTileSize(memoryReport = null) {
+      if (this.documentRenderer?.isMobileLikeDevice?.() !== true) {
+        return null;
+      }
+
+      const policy = String(memoryReport?.policy || "").trim();
+
+      if (policy === "huge") {
+        return Math.max(128, Math.min(1024, Math.round(Number(namespace.mobileBrushHistoryHugeTileSize) || 512)));
+      }
+
+      if (policy === "large") {
+        return Math.max(128, Math.min(1024, Math.round(Number(namespace.mobileBrushHistoryLargeTileSize) || 256)));
+      }
+
+      return null;
+    }
+,
+
     clearPendingBrushHistoryTimer() {
       if (!this.pendingBrushHistoryTimer) {
         return;
@@ -332,6 +351,16 @@
       }
 
       const source = this.currentStrokeTool || "brush";
+      const historyTileSize = this.getBrushHistoryTileSize(memoryReport);
+      const historyOptions = {
+        label: "brush-stroke",
+        source,
+        tilePatchRects,
+      };
+
+      if (historyTileSize) {
+        historyOptions.tileSize = historyTileSize;
+      }
 
       if (this.pendingBrushHistory && !this.isPendingBrushHistoryCompatible(layerId, source)) {
         this.flushPendingBrushHistory({
@@ -340,11 +369,7 @@
       }
 
       if (!this.pendingBrushHistory) {
-        const capture = this.documentRenderer.beginRasterTileHistory(layerId, strokeRect, {
-          label: "brush-stroke",
-          source,
-          tilePatchRects,
-        });
+        const capture = this.documentRenderer.beginRasterTileHistory(layerId, strokeRect, historyOptions);
 
         if (!capture) {
           return null;
@@ -364,10 +389,9 @@
       }
 
       const didExtend = this.documentRenderer.extendRasterTileHistory(this.pendingBrushHistory.capture, strokeRect, {
+        ...historyOptions,
         label: "brush-stroke",
         layerId,
-        source,
-        tilePatchRects,
       });
 
       if (!didExtend) {
