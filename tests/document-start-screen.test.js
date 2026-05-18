@@ -37,9 +37,9 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(editorCanvasSource, /window\.CBO\.initEditorDocumentStart = function initEditorDocumentStart\(\)/);
   assert.match(editorCanvasSource, /button\.dataset\.documentPreset = preset\.id/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorCanvas\(\{[\s\S]*documentHeight: preset\.height,[\s\S]*documentWidth: preset\.width/);
-  assert.match(editorCanvasSource, /documentAutosave/);
-  assert.match(editorCanvasSource, /autosave\.getLatestSummary\(\)/);
-  assert.match(editorCanvasSource, /autosave\.restoreLatest\(\)/);
+  assert.match(editorCanvasSource, /documentSaveSystem/);
+  assert.match(editorCanvasSource, /saveSystem\.getLatestSummary\(\)/);
+  assert.match(editorCanvasSource, /saveSystem\.restoreLatest\(\)/);
   assert.match(editorCanvasSource, /documentWidth: documentSize\.width/);
   assert.match(editorCanvasSource, /enableViewportLayerCulling: true/);
   assert.match(editorCanvasSource, /function dispatchEditorCanvasReady\(documentRenderer, documentSize = \{\}, options = \{\}\)/);
@@ -49,6 +49,7 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(appSource, /window\.CBO\.initEditorDocumentStart\(\);/);
   assert.ok(
     indexSource.indexOf("./js/document/document-autosave.js") > -1 &&
+      indexSource.indexOf("./js/document/document-save-system.js") > -1 &&
       indexSource.indexOf("./js/document/document-autosave.js") < indexSource.indexOf("./js/editor-canvas.js"),
   );
   assert.match(cssSource, /\.document-start-screen/);

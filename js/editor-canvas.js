@@ -408,10 +408,10 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
   stage.dataset.documentStartReady = "true";
   stage.replaceChildren(screen);
 
-  const autosave = window.CBO.documentAutosave;
+  const saveSystem = window.CBO.documentSaveSystem;
 
-  if (autosave?.getLatestSummary && autosave?.restoreLatest) {
-    void autosave.getLatestSummary().then((summary) => {
+  if (saveSystem?.getLatestSummary && saveSystem?.restoreLatest) {
+    void saveSystem.getLatestSummary().then((summary) => {
       if (!summary || stage.dataset.canvasReady === "true") {
         return;
       }
@@ -421,7 +421,7 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
       recoveryButton.addEventListener("click", () => {
         recoveryButton.disabled = true;
         recoveryButton.dataset.loading = "true";
-        void autosave.restoreLatest().then((didRestore) => {
+        void saveSystem.restoreLatest().then((didRestore) => {
           if (didRestore) {
             return;
           }
@@ -429,7 +429,7 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
           recoveryButton.disabled = false;
           recoveryButton.dataset.loading = "false";
         }).catch((error) => {
-          console.warn("Impossibile ripristinare l'autosave documento.", error);
+          console.warn("Impossibile ripristinare il documento salvato.", error);
           recoveryButton.disabled = false;
           recoveryButton.dataset.loading = "false";
         });

@@ -150,7 +150,7 @@ test("document autosave restores the latest session before the canvas is started
   assert.match(source, /namespace\.emitEditorCanvasReady\?\.\(\{ source: "autosave-restore" \}\)/);
   assert.match(editorCanvasSource, /createDocumentRecoveryButton\(summary\)/);
   assert.match(editorCanvasSource, /const projectName = String\(summary\?\.projectName \|\| ""\)\.trim\(\)/);
-  assert.match(editorCanvasSource, /autosave\.restoreLatest\(\)/);
+  assert.match(editorCanvasSource, /saveSystem\.restoreLatest\(\)/);
   assert.match(editorCanvasSource, /window\.CBO\.emitEditorCanvasReady = function emitEditorCanvasReady/);
   assert.match(editorCanvasSource, /if \(options\.deferReadyEvent === true\)/);
 });

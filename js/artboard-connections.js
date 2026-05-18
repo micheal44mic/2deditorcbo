@@ -20,6 +20,7 @@ window.CBO = window.CBO || {};
   const AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX = 96;
   const AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX = 42;
   const AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX = 24;
+  const AI_IMAGE_GENERATION_PREVIEW_MS = 3000;
   const SPACE_BOARD_GAP_DOC_PX = 220;
   const SPACE_BOARD_DRAG_GAP_DOC_PX = 24;
   const SPACE_BOARD_MOVE_SEARCH_STEPS = 18;
@@ -35,6 +36,8 @@ window.CBO = window.CBO || {};
   let spaceBoardDrag = null;
   let promptEditState = null;
   let promptFocusViewportTimers = [];
+  let aiImageGeneratingBoardIds = new Set();
+  let aiImageGenerationPreviewTimers = new Map();
   let connectionIdSeed = 1;
   let boardIdSeed = 1;
   let lastRenderContext = {
@@ -315,6 +318,10 @@ window.CBO = window.CBO || {};
       board.innerHTML = `
         <div class="editor-ai-image-board-label" data-ai-image-board-drag-handle></div>
         <div class="editor-ai-image-board-surface"></div>
+        <div class="editor-ai-image-board-loading" aria-hidden="true">
+          <div class="editor-ai-image-board-loading-halo"></div>
+          <div class="editor-ai-image-board-loading-text">Your image is being generated...</div>
+        </div>
         <div class="editor-ai-image-board-prompt-title" aria-hidden="true">What image do you want to generate?</div>
         <div class="editor-ai-image-board-footer" data-ai-image-board-footer>
           <textarea class="editor-ai-image-board-prompt-input" data-ai-image-board-prompt-input aria-label="AI image prompt" placeholder="${AI_IMAGE_PROMPT_PLACEHOLDER}" spellcheck="true"></textarea>
@@ -620,6 +627,8 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    startAiImageGenerationPreview(board.id);
+
     window.dispatchEvent(new CustomEvent("cbo:ai-image-board-generate-click", {
       detail: {
         board: cloneSpaceBoard(board),
@@ -632,6 +641,51 @@ window.CBO = window.CBO || {};
     const boardId = String(event.currentTarget?.closest?.("[data-ai-image-board]")?.dataset?.boardId || "").trim();
 
     return getSpaceBoardById(boardId);
+  }
+
+  function startAiImageGenerationPreview(boardId) {
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!normalizedBoardId) {
+      return false;
+    }
+
+    if (aiImageGenerationPreviewTimers.has(normalizedBoardId)) {
+      window.clearTimeout(aiImageGenerationPreviewTimers.get(normalizedBoardId));
+    }
+
+    aiImageGeneratingBoardIds.add(normalizedBoardId);
+    renderSpaceBoards();
+
+    const timerId = window.setTimeout(() => {
+      aiImageGenerationPreviewTimers.delete(normalizedBoardId);
+      aiImageGeneratingBoardIds.delete(normalizedBoardId);
+      renderSpaceBoards();
+    }, AI_IMAGE_GENERATION_PREVIEW_MS);
+
+    aiImageGenerationPreviewTimers.set(normalizedBoardId, timerId);
+
+    return true;
+  }
+
+  function clearAiImageGenerationPreview(boardId = "") {
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (normalizedBoardId) {
+      if (aiImageGenerationPreviewTimers.has(normalizedBoardId)) {
+        window.clearTimeout(aiImageGenerationPreviewTimers.get(normalizedBoardId));
+      }
+
+      aiImageGenerationPreviewTimers.delete(normalizedBoardId);
+      aiImageGeneratingBoardIds.delete(normalizedBoardId);
+      return;
+    }
+
+    aiImageGenerationPreviewTimers.forEach((timerId) => {
+      window.clearTimeout(timerId);
+    });
+    aiImageGenerationPreviewTimers = new Map();
+    aiImageGeneratingBoardIds = new Set();
   }
 
   function handleAiImagePromptFocus(event) {
@@ -1090,6 +1144,7 @@ window.CBO = window.CBO || {};
       element.style.setProperty("--ai-image-generate-icon-size", `${handleMetrics.iconSizeDoc}px`);
       element.style.setProperty("--ai-image-board-label-top", `${-25 / Math.max(0.0001, scale)}px`);
       element.style.setProperty("--ai-image-board-label-inverse-scale", `${1 / Math.max(0.0001, scale)}`);
+      element.classList.toggle("is-generating", aiImageGeneratingBoardIds.has(board.id));
 
       if (label) {
         label.textContent = `${board.name || "AI Image board"} ${width} x ${height}`;
@@ -1103,7 +1158,10 @@ window.CBO = window.CBO || {};
     });
 
     layer.querySelectorAll("[data-ai-image-board]").forEach((element) => {
-      if (!renderedIds.has(element.dataset.boardId || "")) {
+      const boardId = element.dataset.boardId || "";
+
+      if (!renderedIds.has(boardId)) {
+        clearAiImageGenerationPreview(boardId);
         element.remove();
       }
     });
@@ -1795,6 +1853,7 @@ window.CBO = window.CBO || {};
     spaceBoardDrag = null;
     promptEditState = null;
     clearPromptFocusViewportTimers();
+    clearAiImageGenerationPreview();
     removeSpaceBoardDragListeners();
     dismissConnectionMenu({ render: false });
     renderConnectionOverlay();

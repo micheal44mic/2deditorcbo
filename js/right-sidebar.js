@@ -525,9 +525,9 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   }
 
   async function saveDocumentNow() {
-    const autosave = window.CBO.documentAutosave;
+    const saveSystem = window.CBO.documentSaveSystem;
 
-    if (!saveButton || saveButton.disabled || !autosave?.saveNow) {
+    if (!saveButton || saveButton.disabled || !saveSystem?.saveNow) {
       return;
     }
 
@@ -536,7 +536,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     saveButton.setAttribute("aria-busy", "true");
 
     try {
-      const didSave = await autosave.saveNow({ source: "manual-save" });
+      const didSave = await saveSystem.saveNow({ source: "manual-save" });
 
       if (didSave) {
         saveButton.classList.add("saved");

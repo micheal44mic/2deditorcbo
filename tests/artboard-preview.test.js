@@ -111,9 +111,9 @@ test("left rail exposes a visual artboard tool below layers", () => {
   assert.ok(artboardButtonIndex > layerButtonIndex);
   assert.match(indexSource, /data-tooltip="ARTBOARD"/);
   assert.match(indexSource, /class="lucide lucide-dice1-icon lucide-dice-1"/);
-  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layout\.css\?v=android-v5\.0-space-board-generate" \/>/);
+  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layout\.css\?v=android-v5\.2-space-board-loading-frame" \/>/);
   assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js\?v=android-v4\.5-space-board-collision"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/artboard-connections\.js\?v=spaces-connections-keyboard-focus"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/artboard-connections\.js\?v=spaces-connections-loading-aura"><\/script>/);
   assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
 });
 
@@ -197,6 +197,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /AI_IMAGE_BOARD_FOOTER_MIN_HEIGHT_CSS_PX = 210/);
   assert.match(connectionsSource, /AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX = 96/);
   assert.match(connectionsSource, /AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX = 24/);
+  assert.match(connectionsSource, /AI_IMAGE_GENERATION_PREVIEW_MS = 3000/);
   assert.match(connectionsSource, /placeholder="\$\{AI_IMAGE_PROMPT_PLACEHOLDER\}"/);
   assert.match(connectionsSource, /input\.placeholder = ""/);
   assert.match(connectionsSource, /input\.placeholder = AI_IMAGE_PROMPT_PLACEHOLDER/);
@@ -214,6 +215,10 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /function handleSpaceBoardWheel\(event\)/);
   assert.match(connectionsSource, /brushEngine\.handleWheel\.call\(brushEngine, event\)/);
   assert.match(connectionsSource, /function handleAiImageGenerateClick\(event\)/);
+  assert.match(connectionsSource, /function startAiImageGenerationPreview\(boardId\)/);
+  assert.match(connectionsSource, /function clearAiImageGenerationPreview\(boardId = ""\)/);
+  assert.match(connectionsSource, /startAiImageGenerationPreview\(board\.id\)/);
+  assert.match(connectionsSource, /element\.classList\.toggle\("is-generating", aiImageGeneratingBoardIds\.has\(board\.id\)\)/);
   assert.match(connectionsSource, /cbo:ai-image-board-generate-click/);
   assert.match(connectionsSource, /--ai-image-generate-handle-left/);
   assert.match(connectionsSource, /function handleAiImagePromptInput\(event\)/);
@@ -242,6 +247,13 @@ test("artboard connections live in their own module", () => {
   assert.match(cssSource, /\.editor-space-board-layer/);
   assert.match(cssSource, /\.editor-space-board-layer[\s\S]*z-index: 5/);
   assert.match(cssSource, /\.editor-ai-image-board[\s\S]*pointer-events: auto/);
+  assert.match(cssSource, /\.editor-ai-image-board[\s\S]*isolation: isolate/);
+  assert.match(cssSource, /@property --editor-ai-loading-angle/);
+  assert.match(cssSource, /\.editor-ai-image-board::before[\s\S]*repeating-conic-gradient/);
+  assert.match(cssSource, /\.editor-ai-image-board::before[\s\S]*box-shadow/);
+  assert.match(cssSource, /\.editor-ai-image-board\.is-generating::before[\s\S]*animation: editor-ai-image-board-loading-frame 1400ms linear infinite/);
+  assert.match(cssSource, /@keyframes editor-ai-image-board-loading-frame/);
+  assert.doesNotMatch(cssSource.match(/\.editor-ai-image-board::before\s*\{[\s\S]*?\}/)?.[0] || "", /filter:\s*blur/);
   assert.match(cssSource, /\.editor-ai-image-board-label[\s\S]*cursor: grab/);
   assert.match(cssSource, /\.editor-ai-image-board-label[\s\S]*touch-action: none/);
   assert.match(cssSource, /\.editor-stage\.artboard-dragging \.editor-artboard-action-bubble[\s\S]*opacity: 0/);

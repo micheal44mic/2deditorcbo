@@ -238,13 +238,81 @@
   pointer-events: none;
 }
 
+@property --editor-ai-loading-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 .editor-ai-image-board {
   --ai-image-board-footer-height: 210px;
 
   position: absolute;
   box-sizing: border-box;
+  isolation: isolate;
   transform-origin: 0 0;
   pointer-events: auto;
+}
+
+.editor-ai-image-board::before {
+  position: absolute;
+  inset: -28px;
+  z-index: 0;
+  box-sizing: border-box;
+  border: 11px solid transparent;
+  border-radius: calc(var(--ai-image-board-radius, 38px) + 28px);
+  background:
+    linear-gradient(transparent, transparent) padding-box,
+    repeating-conic-gradient(
+      from calc(var(--editor-ai-loading-angle) * -0.32),
+      rgba(255, 255, 255, 0.72) 0deg 4deg,
+      rgba(255, 255, 255, 0) 4deg 14deg
+    ) border-box,
+    conic-gradient(
+      from var(--editor-ai-loading-angle),
+      rgba(240, 80, 35, 0) 0deg,
+      rgba(240, 80, 35, 0.92) 28deg,
+      rgba(255, 255, 255, 0.98) 44deg,
+      rgba(240, 80, 35, 0.95) 60deg,
+      rgba(240, 80, 35, 0) 92deg,
+      rgba(240, 80, 35, 0) 168deg,
+      rgba(240, 80, 35, 0.82) 206deg,
+      rgba(255, 255, 255, 0.92) 220deg,
+      rgba(240, 80, 35, 0.9) 238deg,
+      rgba(240, 80, 35, 0) 276deg,
+      rgba(240, 80, 35, 0) 360deg
+    ) border-box;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.74),
+    0 0 0 5px rgba(240, 80, 35, 0.16);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+  will-change: opacity;
+}
+
+.editor-ai-image-board.is-generating::before {
+  animation: editor-ai-image-board-loading-frame 1400ms linear infinite;
+  opacity: 1;
+}
+
+@keyframes editor-ai-image-board-loading-frame {
+  to {
+    --editor-ai-loading-angle: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-ai-image-board.is-generating::before {
+    animation: none;
+  }
+
+  .editor-ai-image-board.is-generating .editor-ai-image-board-loading-halo {
+    animation: none;
+    opacity: 0.34;
+    transform: scale(1);
+  }
 }
 
 .editor-ai-image-board-label {
@@ -278,6 +346,7 @@
 .editor-ai-image-board-surface {
   position: absolute;
   inset: 0;
+  z-index: 1;
   box-sizing: border-box;
   border: 5px solid #f05023;
   border-radius: var(--ai-image-board-radius, 38px);
@@ -285,6 +354,89 @@
   box-shadow: 0 22px 48px rgba(0, 0, 0, 0.18);
   overflow: hidden;
   pointer-events: none;
+}
+
+.editor-ai-image-board-loading {
+  position: absolute;
+  inset: 5px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border-radius: calc(var(--ai-image-board-radius, 38px) - 5px);
+  background: rgba(255, 255, 255, 0.68);
+  color: #111111;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.editor-ai-image-board-loading-halo {
+  position: absolute;
+  width: 36%;
+  min-width: 260px;
+  max-width: 430px;
+  aspect-ratio: 1;
+  border: 9px solid rgba(17, 17, 17, 0.2);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 22px rgba(17, 17, 17, 0.055),
+    0 0 0 52px rgba(17, 17, 17, 0.026);
+  opacity: 0;
+  transform: scale(0.78);
+}
+
+.editor-ai-image-board-loading-text {
+  position: relative;
+  z-index: 1;
+  max-width: 72%;
+  color: #111111;
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.08;
+  text-align: center;
+}
+
+.editor-ai-image-board.is-generating .editor-ai-image-board-loading {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.editor-ai-image-board.is-generating .editor-ai-image-board-loading-halo {
+  animation: editor-ai-image-board-loading-halo 1100ms ease-in-out infinite;
+}
+
+.editor-ai-image-board.is-generating .editor-ai-image-board-footer,
+.editor-ai-image-board.is-generating .editor-ai-image-board-prompt-title {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(14px);
+}
+
+@keyframes editor-ai-image-board-loading-halo {
+  0% {
+    opacity: 0.2;
+    transform: scale(0.78);
+  }
+
+  48% {
+    opacity: 0.58;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0.08;
+    transform: scale(1.14);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-ai-image-board.is-generating .editor-ai-image-board-loading-halo {
+    animation: none;
+    opacity: 0.34;
+    transform: scale(1);
+  }
 }
 
 .editor-ai-image-board::after {
@@ -348,6 +500,15 @@
 .editor-ai-image-board:hover .editor-ai-image-board-footer,
 .editor-ai-image-board:focus-within .editor-ai-image-board-footer {
   pointer-events: auto;
+}
+
+.editor-ai-image-board.is-generating:hover .editor-ai-image-board-footer,
+.editor-ai-image-board.is-generating:focus-within .editor-ai-image-board-footer,
+.editor-ai-image-board.is-generating:hover .editor-ai-image-board-prompt-title,
+.editor-ai-image-board.is-generating:focus-within .editor-ai-image-board-prompt-title {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(14px);
 }
 
 .editor-ai-image-board-prompt-input {
