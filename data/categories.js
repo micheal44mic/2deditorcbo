@@ -57,7 +57,6 @@ const HOODIE_BODY_1_MOCKUP = {
   fit: "contain",
   artboardWidth: 2048,
   artboardHeight: 2048,
-  placement: { x: 0, y: 0, width: 2048, height: 2048 },
   tags: ["mockup", "hats", "hoodie", "body", "hoodie-body-1"],
 };
 
@@ -68,7 +67,6 @@ const HOODIE_DETAIL_1_MOCKUP = {
   src: "./assets/mockups/hoodie-detail-1.svg",
   type: "mockup-addon",
   fit: "contain",
-  placement: { x: 0, y: 0, width: 2048, height: 2048 },
   tags: ["mockup", "hoodie", "detail", "hoodie-detail-1"],
 };
 

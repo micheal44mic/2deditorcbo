@@ -725,7 +725,7 @@ window.CBO = window.CBO || {};
     const detail = {
       ...item,
       artboardId,
-      placement: item.placement || { x: 0, y: 0, width: 2048, height: 2048 },
+      placement: item.placement || null,
     };
     const slotButton = getActiveMockupSlotButton();
 

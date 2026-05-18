@@ -356,34 +356,13 @@ function getMockupArtboardRect(artboardId) {
 }
 
 function getMockupPlacementRect(detail = {}, artboardId) {
-  const placement = detail.placement && typeof detail.placement === "object"
-    ? detail.placement
-    : null;
-
-  if (!placement) {
-    return null;
-  }
-
   const artboardRect = getMockupArtboardRect(artboardId);
-  const requestedWidth = Math.round(Number(placement.width) || 0);
-  const requestedHeight = Math.round(Number(placement.height) || 0);
-
-  if (requestedWidth <= 0 || requestedHeight <= 0) {
-    return null;
-  }
-
-  const width = Math.max(1, Math.min(artboardRect.width, requestedWidth));
-  const height = Math.max(1, Math.min(artboardRect.height, requestedHeight));
-  const fallbackX = Math.round((artboardRect.width - width) * 0.5);
-  const fallbackY = Math.round((artboardRect.height - height) * 0.5);
-  const relativeX = Number.isFinite(Number(placement.x)) ? Math.round(Number(placement.x)) : fallbackX;
-  const relativeY = Number.isFinite(Number(placement.y)) ? Math.round(Number(placement.y)) : fallbackY;
 
   return {
-    height,
-    width,
-    x: artboardRect.x + Math.max(0, Math.min(relativeX, artboardRect.width - width)),
-    y: artboardRect.y + Math.max(0, Math.min(relativeY, artboardRect.height - height)),
+    height: artboardRect.height,
+    width: artboardRect.width,
+    x: artboardRect.x,
+    y: artboardRect.y,
   };
 }
 

@@ -31,7 +31,7 @@ test("mockup drawer exposes hoodie body 1 as a 2048 artboard starter", () => {
   assert.match(dataSource, /src: "\.\/assets\/mockups\/hoodie-body-1\.png(?:\?v=[^"]+)?"/);
   assert.match(dataSource, /artboardWidth: 2048/);
   assert.match(dataSource, /artboardHeight: 2048/);
-  assert.match(dataSource, /placement: \{ x: 0, y: 0, width: 2048, height: 2048 \}/);
+  assert.doesNotMatch(dataSource, /placement: \{ x: 0, y: 0, width: 2048, height: 2048 \}/);
   assert.match(dataSource, /HOODIE_BODY_1_MOCKUP,[\s\S]*window\.CBO_MOCKUP_CATEGORIES/);
   assert.match(dataSource, /id: "hoodie-detail-1"/);
   assert.match(dataSource, /name: "hoodie detail 1"/);
@@ -54,6 +54,7 @@ test("mockup drawer exposes hoodie body 1 as a 2048 artboard starter", () => {
   assert.match(editorCanvasSource, /window\.CBO\.initEditorCanvas\(\{[\s\S]*documentHeight: size\.height,[\s\S]*documentWidth: size\.width/);
   assert.match(editorCanvasSource, /window\.CBO\.createDocumentArtboard\?\.\(\{[\s\S]*height: size\.height,[\s\S]*width: size\.width/);
   assert.match(editorCanvasSource, /function getMockupPlacementRect\(detail = \{\}, artboardId\)/);
+  assert.match(editorCanvasSource, /height: artboardRect\.height,[\s\S]*width: artboardRect\.width,[\s\S]*x: artboardRect\.x,[\s\S]*y: artboardRect\.y/);
   assert.match(editorCanvasSource, /createMockupPlacementTarget\(imageLayer\.id, placementRect\)/);
   assert.match(editorCanvasSource, /layerModel\.createLayer\(\{[\s\S]*mockupAsset:[\s\S]*name,[\s\S]*type: "image"/);
   assert.match(editorCanvasSource, /source: "mockup-rasterize"/);
@@ -71,6 +72,7 @@ test("mockup drawer exposes hoodie body 1 as a 2048 artboard starter", () => {
   assert.match(artboardPreviewSource, /function isMockupAddonLayerEntry\(entry, artboardId, addonLibrary = getMockupAddonLibrary\(\)\)/);
   assert.match(artboardPreviewSource, /return hasBodyLayer && !hasAddonLayer/);
   assert.match(artboardPreviewSource, /slotButton\?\.remove\(\)/);
+  assert.match(artboardPreviewSource, /placement: item\.placement \|\| null/);
   assert.match(artboardPreviewSource, /namespace\.addMockupAssetToArtboard\(detail, \{ artboardId \}\)/);
   assert.match(artboardPreviewSource, /window\.CBO_MOCKUP_ADDON_LIBRARY/);
   assert.match(layoutSource, /\.editor-mockup-slot-button/);
