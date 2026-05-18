@@ -52,7 +52,7 @@ const HOODIE_BODY_1_MOCKUP = {
   id: "hoodie-body-1",
   name: "hoodie body 1",
   alt: "hoodie body 1",
-  src: "./assets/mockups/hoodie-body-1.svg",
+  src: "./assets/mockups/hoodie-body-1.png",
   type: "mockup",
   fit: "contain",
   artboardWidth: 2048,

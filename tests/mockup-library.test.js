@@ -15,18 +15,17 @@ test("mockup drawer exposes hoodie body 1 as a 2048 artboard starter", () => {
   const editorCanvasSource = readRepoFile("js", "editor-canvas.js");
   const artboardPreviewSource = readRepoFile("js", "artboard-preview.js");
   const layoutSource = readRepoFile("css", "layout.css");
-  const svgSource = readRepoFile("assets", "mockups", "hoodie-body-1.svg");
   const addonSvgSource = readRepoFile("assets", "mockups", "hoodie-detail-1.svg");
-  const assetPath = path.join(repoRoot, "assets", "mockups", "hoodie-body-1.svg");
+  const assetPath = path.join(repoRoot, "assets", "mockups", "hoodie-body-1.png");
   const addonAssetPath = path.join(repoRoot, "assets", "mockups", "hoodie-detail-1.svg");
 
   assert.ok(fs.existsSync(assetPath));
   assert.ok(fs.existsSync(addonAssetPath));
-  assert.match(svgSource, /width="2048" height="2048" viewBox="0 0 1080 1080"/);
+  assert.equal(fs.readFileSync(assetPath).subarray(1, 4).toString("ascii"), "PNG");
   assert.match(addonSvgSource, /width="2048" height="2048" viewBox="0 0 1080 1080"/);
   assert.match(dataSource, /id: "hoodie-body-1"/);
   assert.match(dataSource, /name: "hoodie body 1"/);
-  assert.match(dataSource, /src: "\.\/assets\/mockups\/hoodie-body-1\.svg"/);
+  assert.match(dataSource, /src: "\.\/assets\/mockups\/hoodie-body-1\.png"/);
   assert.match(dataSource, /artboardWidth: 2048/);
   assert.match(dataSource, /artboardHeight: 2048/);
   assert.match(dataSource, /placement: \{ x: 0, y: 0, width: 2048, height: 2048 \}/);
