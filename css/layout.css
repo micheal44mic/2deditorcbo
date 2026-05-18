@@ -370,6 +370,7 @@
   z-index: 5;
   overflow: visible;
   pointer-events: none;
+  contain: layout style;
 }
 
 @property --editor-ai-loading-angle {
@@ -383,8 +384,10 @@
 
   position: absolute;
   box-sizing: border-box;
+  contain: layout style;
   isolation: isolate;
   transform-origin: 0 0;
+  will-change: transform;
   pointer-events: auto;
 }
 
@@ -485,7 +488,7 @@
   border: 5px solid #f05023;
   border-radius: var(--ai-image-board-radius, 38px);
   background: #ffffff;
-  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
   overflow: hidden;
   pointer-events: none;
 }
@@ -687,6 +690,34 @@
   background: #ffffff;
   color: #111111;
   touch-action: none;
+}
+
+@media (hover: none), (pointer: coarse), (max-width: 900px) {
+  .editor-ai-image-board::before {
+    animation: none;
+    background: none;
+    box-shadow: none;
+    opacity: 0;
+    transition: none;
+  }
+
+  .editor-ai-image-board.is-generating::before {
+    animation: none;
+    opacity: 0;
+  }
+
+  .editor-ai-image-board-loading,
+  .editor-ai-image-board-footer,
+  .editor-ai-image-board-prompt-title,
+  .editor-ai-image-board-generate::before {
+    animation: none;
+    transition: none;
+  }
+
+  .editor-ai-image-board-loading-halo {
+    animation: none;
+    box-shadow: none;
+  }
 }
 
 .editor-ai-image-board-input svg {
