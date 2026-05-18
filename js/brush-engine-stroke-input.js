@@ -244,6 +244,55 @@
     }
 ,
 
+    roundEraserDebugValue(value, digits = 3) {
+      const number = Number(value);
+
+      if (!Number.isFinite(number)) {
+        return null;
+      }
+
+      const factor = 10 ** digits;
+
+      return Math.round(number * factor) / factor;
+    }
+,
+
+    logEraserZoomDebug(eventName, detail = {}, options = {}) {
+      const debug = namespace.EraserZoomDebug;
+
+      if (!debug?.log) {
+        return null;
+      }
+
+      return debug.log(eventName, {
+        ...detail,
+        activeStrokeTool: this.activeStrokeTool || "",
+        currentStrokeTool: this.currentStrokeTool || "",
+        isDrawing: this.isDrawing === true,
+        isPanning: this.isPanning === true,
+        touchNavigationExclusive: this.touchNavigationExclusive === true,
+      }, options);
+    }
+,
+
+    warnEraserZoomDebug(eventName, detail = {}, options = {}) {
+      const debug = namespace.EraserZoomDebug;
+
+      if (!debug?.warn) {
+        return null;
+      }
+
+      return debug.warn(eventName, {
+        ...detail,
+        activeStrokeTool: this.activeStrokeTool || "",
+        currentStrokeTool: this.currentStrokeTool || "",
+        isDrawing: this.isDrawing === true,
+        isPanning: this.isPanning === true,
+        touchNavigationExclusive: this.touchNavigationExclusive === true,
+      }, options);
+    }
+,
+
     handleWheel(event) {
       event.preventDefault();
 
@@ -298,6 +347,15 @@
       this.camera.y = cursorViewportY - docY * newZoom;
       this.userManipulatedCamera = true;
       this.requestDraw();
+      this.logEraserZoomDebug("zoom-wheel", {
+        clientX: this.roundEraserDebugValue(clientX),
+        clientY: this.roundEraserDebugValue(clientY),
+        docX: this.roundEraserDebugValue(docX),
+        docY: this.roundEraserDebugValue(docY),
+        factor: this.roundEraserDebugValue(factor, 5),
+        newZoom: this.roundEraserDebugValue(newZoom, 5),
+        oldZoom: this.roundEraserDebugValue(oldZoom, 5),
+      }, { layerState: false });
     }
 ,
 
@@ -463,6 +521,12 @@
         source: "brush-touch-navigation",
       });
       namespace.EngineGovernor?.markActivity?.({ source: "touch-navigation-start" });
+      this.logEraserZoomDebug("touch-zoom-start", {
+        centerX: this.roundEraserDebugValue(geometry.centerX),
+        centerY: this.roundEraserDebugValue(geometry.centerY),
+        distance: this.roundEraserDebugValue(geometry.distance),
+        pointerIds: geometry.pointerIds,
+      }, { layerState: false });
 
       return true;
     }
@@ -510,6 +574,16 @@
       this.userManipulatedCamera = true;
       namespace.EngineGovernor?.markActivity?.({ source: "touch-navigation" });
       this.requestDraw();
+      this.logEraserZoomDebug("touch-zoom-update", {
+        centerX: this.roundEraserDebugValue(geometry.centerX),
+        centerY: this.roundEraserDebugValue(geometry.centerY),
+        docX: this.roundEraserDebugValue(docX),
+        docY: this.roundEraserDebugValue(docY),
+        factor: this.roundEraserDebugValue(factor, 5),
+        newZoom: this.roundEraserDebugValue(newZoom, 5),
+        oldZoom: this.roundEraserDebugValue(oldZoom, 5),
+        rawFactor: this.roundEraserDebugValue(rawFactor, 5),
+      }, { layerState: false });
 
       return true;
     }
@@ -537,6 +611,9 @@
       namespace.setTouchNavigationExclusive?.(false, {
         source: "brush-touch-navigation",
       });
+      this.logEraserZoomDebug("touch-zoom-end", {
+        activeTouchPointers: this.activeTouchPointers.size,
+      }, { layerState: false });
     }
 ,
 
@@ -1057,6 +1134,11 @@
       }
 
       const source = options.source || "eraser-image-auto-rasterize";
+      this.logEraserZoomDebug("eraser-image-rasterize-start", {
+        before: namespace.EraserZoomDebug?.captureLayerState?.(activeId, { coarseOnly: true }),
+        layerId: activeId,
+        source,
+      });
       const rasterizeOptions = {
         historyGroup: `eraser-image-auto-rasterize-${activeId}`,
         requestDraw: options.requestDraw === true,
@@ -1072,6 +1154,10 @@
         : layerModel.rasterizeImageLayerToPaint?.(activeId, rasterizeOptions) === true;
 
       if (!didRasterize) {
+        this.warnEraserZoomDebug("eraser-image-rasterize-failed", {
+          layerId: activeId,
+          source,
+        });
         return null;
       }
 
@@ -1090,6 +1176,12 @@
         this.documentRenderer?.requestDraw?.();
       }
 
+      this.logEraserZoomDebug("eraser-image-rasterize-end", {
+        after: namespace.EraserZoomDebug?.captureLayerState?.(activeId, { coarseOnly: true }),
+        layerId: activeId,
+        source,
+      });
+
       return layerModel.findEntryById(activeId);
     }
 ,
@@ -1099,10 +1191,18 @@
       const activeId = layerModel?.activeLayerId;
 
       if (!activeId || typeof layerModel?.findEntryById !== "function") {
+        this.warnEraserZoomDebug("eraser-target-fallback-missing-active-layer", {
+          activeId: activeId || "",
+        });
         return this.getPaintTarget();
       }
 
       let activeLayer = layerModel.findEntryById(activeId);
+      this.logEraserZoomDebug("eraser-target-check-start", {
+        activeLayerType: activeLayer?.type || "",
+        layerId: activeId,
+        state: namespace.EraserZoomDebug?.captureLayerState?.(activeId, { coarseOnly: true }),
+      });
 
       if (activeLayer?.type === "image") {
         this.cancelPendingEraserImageRasterize();
@@ -1114,6 +1214,11 @@
       }
 
       if (activeLayer?.type !== "paint") {
+        this.warnEraserZoomDebug("eraser-target-not-paint-layer", {
+          activeLayerType: activeLayer?.type || "",
+          layerId: activeId,
+          state: namespace.EraserZoomDebug?.captureLayerState?.(activeId, { coarseOnly: true }),
+        });
         return null;
       }
 
@@ -1123,6 +1228,12 @@
         existingTarget.tiles.size === 0;
 
       if (!existingTarget || isEmptySparseTarget) {
+        this.warnEraserZoomDebug("eraser-target-empty-before-stroke", {
+          isEmptySparseTarget,
+          layerId: activeId,
+          state: namespace.EraserZoomDebug?.captureLayerState?.(activeId, { coarseOnly: true }),
+          target: namespace.EraserZoomDebug?.getTargetSummary?.(existingTarget, this.documentRenderer),
+        });
         this.showEmptyEraserLayerToast();
         return null;
       }
@@ -1134,8 +1245,19 @@
         : this.documentRenderer?.getRasterTarget?.(activeId);
 
       if (!target?.texture || !target?.framebuffer) {
+        this.warnEraserZoomDebug("eraser-target-unusable-before-stroke", {
+          layerId: activeId,
+          state: namespace.EraserZoomDebug?.captureLayerState?.(activeId, { coarseOnly: true }),
+          target: namespace.EraserZoomDebug?.getTargetSummary?.(target, this.documentRenderer),
+        });
         return null;
       }
+
+      this.logEraserZoomDebug("eraser-target-ready", {
+        layerId: activeId,
+        state: namespace.EraserZoomDebug?.captureLayerState?.(activeId, { coarseOnly: true }),
+        target: namespace.EraserZoomDebug?.getTargetSummary?.(target, this.documentRenderer),
+      });
 
       return target;
     }
@@ -1526,11 +1648,31 @@
       let strokeTarget = null;
 
       if (strokeTool === "eraser") {
+        this.logEraserZoomDebug("eraser-pointerdown", {
+          docPoint: {
+            x: this.roundEraserDebugValue(documentPoint.x, 2),
+            y: this.roundEraserDebugValue(documentPoint.y, 2),
+          },
+          pointerId: event.pointerId,
+          pointerType: event.pointerType || "",
+          state: namespace.EraserZoomDebug?.captureLayerState?.(
+            this.documentRenderer?.layerModel?.activeLayerId || "",
+            { coarseOnly: true },
+          ),
+        });
         strokeTarget = this.getActiveRasterTargetForEraser();
 
         if (!strokeTarget) {
+          this.warnEraserZoomDebug("eraser-pointerdown-no-target", {
+            layerId: this.documentRenderer?.layerModel?.activeLayerId || "",
+          });
           return;
         }
+
+        this.logEraserZoomDebug("eraser-pointerdown-target", {
+          layerId: strokeTarget.layerId || "",
+          target: namespace.EraserZoomDebug?.getTargetSummary?.(strokeTarget, this.documentRenderer),
+        });
       } else {
         strokeTarget = this.documentRenderer?.ensurePaintLayerForBrush?.({ materialize: false }) ||
           this.getDocumentDrawTarget();
@@ -1642,6 +1784,18 @@
         this.processStamps();
         this.flushStamps();
 
+        if (this.currentStrokeTool === "eraser") {
+          this.logEraserZoomDebug("eraser-pointerup-before-bake", {
+            layerId: this.strokeTargetLayerId || "",
+            recordedSamples: this.recordedStroke.length,
+            state: namespace.EraserZoomDebug?.captureLayerState?.(this.strokeTargetLayerId || "", {
+              coarseOnly: true,
+            }),
+            strokeRect: this.activeStrokeBounds ? { ...this.activeStrokeBounds } : null,
+            strokeStamps: this.strokeStampCount,
+          });
+        }
+
         // Taper: rifaccio l'intero tratto in strokeFBO conoscendo la lunghezza totale,
         // cosi' posso modulare size+opacity ai due estremi. Solo dopo bake.
         if (this.isTaperActive() && this.recordedStroke.length > 1) {
@@ -1649,7 +1803,20 @@
         }
 
         this.bakeStroke();
+
+        if (this.currentStrokeTool === "eraser") {
+          this.logEraserZoomDebug("eraser-pointerup-after-bake", {
+            layerId: this.strokeTargetLayerId || "",
+            state: namespace.EraserZoomDebug?.captureLayerState?.(this.strokeTargetLayerId || "", {
+              precise: true,
+            }),
+          });
+        }
       } catch (error) {
+        this.warnEraserZoomDebug("eraser-pointerup-error", {
+          layerId: this.strokeTargetLayerId || "",
+          message: error?.message || String(error),
+        });
         console.error?.("[CBO brush] Fine tratto interrotta: cleanup stroke scratch eseguito.", error);
       } finally {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
@@ -1692,6 +1859,14 @@
 
       if (!this.isDrawing || this.activePointerId !== event.pointerId) {
         return;
+      }
+
+      if (this.currentStrokeTool === "eraser") {
+        this.warnEraserZoomDebug("eraser-pointercancel", {
+          layerId: this.strokeTargetLayerId || "",
+          pointerId: event.pointerId,
+          pointerType: event.pointerType || "",
+        });
       }
 
       if (this.canvas.hasPointerCapture(event.pointerId)) {

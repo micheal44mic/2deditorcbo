@@ -172,7 +172,10 @@ test("eraser rasterizes image layers through the same public rasterize path befo
   assert.match(source, /namespace\.rasterizeImageLayerToPaint\(activeId, rasterizeOptions\)/);
   assert.match(source, /layerModel\.rasterizeImageLayerToPaint\?\.?\(activeId, rasterizeOptions\) === true/);
   assert.match(source, /invalidatePreviewCache\?\.?\(source, \{\s*layerId: activeId,/);
-  assert.match(source, /if \(activeLayer\?\.type !== "paint"\) \{\s*return null;\s*\}/);
+  assert.match(source, /warnEraserZoomDebug\("eraser-target-not-paint-layer"/);
+  assert.match(source, /if \(activeLayer\?\.type !== "paint"\) \{[\s\S]*return null;\s*\}/);
+  assert.match(source, /logEraserZoomDebug\("eraser-pointerdown"/);
+  assert.match(source, /EraserZoomDebug\?\.captureLayerState/);
 });
 
 test("brush pointer moves are coalesced into the render frame", () => {

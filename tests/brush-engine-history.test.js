@@ -227,7 +227,8 @@ test("brush first paint stroke can defer full live target materialization", () =
   assert.doesNotMatch(source, /clearActiveLayer\?\.\(\{ source: "canvas-empty-click" \}\)/);
   assert.match(source, /showEmptyEraserLayerToast\(message = "Nothing to erase on this layer"\)/);
   assert.match(source, /const existingTarget = this\.documentRenderer\?\.rasterTargetsByLayerId\?\.get\?\.\(activeId\)/);
-  assert.match(source, /if \(!existingTarget \|\| isEmptySparseTarget\) \{\s*this\.showEmptyEraserLayerToast\(\);\s*return null;\s*\}/);
+  assert.match(source, /warnEraserZoomDebug\("eraser-target-empty-before-stroke"/);
+  assert.match(source, /if \(!existingTarget \|\| isEmptySparseTarget\) \{[\s\S]*this\.showEmptyEraserLayerToast\(\);[\s\S]*return null;\s*\}/);
   assert.match(source, /const paintTargets = isEraserStroke/);
   assert.match(source, /const hasSelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length > 0/);
   assert.match(source, /const hasEmptySelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length === 0/);

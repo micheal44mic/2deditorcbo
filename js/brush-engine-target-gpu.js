@@ -1771,6 +1771,14 @@
       const isEraserStroke = this.currentStrokeTool === "eraser";
       const { program, uniforms } = this.compositeProgramInfo;
       const strokeRect = this.getActiveStrokeRect();
+      if (isEraserStroke) {
+        namespace.EraserZoomDebug?.log?.("eraser-bake-start", {
+          layerId,
+          state: namespace.EraserZoomDebug?.captureLayerState?.(layerId, { coarseOnly: true }),
+          strokeRect: strokeRect ? { ...strokeRect } : null,
+          strokeStamps: this.strokeStampCount,
+        });
+      }
       setupTrace?.end({
         hasStrokeRect: Boolean(strokeRect),
         hasStrokeTexture: Boolean(this.strokeTexture),
@@ -1779,6 +1787,14 @@
       });
 
       if (!this.strokeTexture || !strokeRect) {
+        if (isEraserStroke) {
+          namespace.EraserZoomDebug?.warn?.("eraser-bake-missing-stroke-texture-or-rect", {
+            hasStrokeRect: Boolean(strokeRect),
+            hasStrokeTexture: Boolean(this.strokeTexture),
+            layerId,
+            state: namespace.EraserZoomDebug?.captureLayerState?.(layerId, { coarseOnly: true }),
+          });
+        }
         this.releaseStrokeLayerTarget();
         this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
         if (this.pendingBrushHistory) {
@@ -1798,6 +1814,12 @@
       });
 
       if (hasEmptySelectionCoverage) {
+        if (isEraserStroke) {
+          namespace.EraserZoomDebug?.warn?.("eraser-bake-empty-selection-coverage", {
+            layerId,
+            strokeRect: strokeRect ? { ...strokeRect } : null,
+          });
+        }
         this.clearStrokeLayer();
         this.releaseStrokeLayerTarget();
         this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
@@ -1809,6 +1831,12 @@
         : strokeRect;
 
       if (!effectiveStrokeRect) {
+        if (isEraserStroke) {
+          namespace.EraserZoomDebug?.warn?.("eraser-bake-missing-effective-stroke-rect", {
+            layerId,
+            strokeRect: strokeRect ? { ...strokeRect } : null,
+          });
+        }
         this.clearStrokeLayer();
         this.releaseStrokeLayerTarget();
         this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
@@ -1851,8 +1879,27 @@
         previewDirtyRectCount: previewDirtyRects.length,
         tilePatchRectCount: activeStrokeTilePatchRects.length,
       });
+      if (isEraserStroke) {
+        namespace.EraserZoomDebug?.log?.("eraser-bake-targets", {
+          effectiveStrokeRect: effectiveStrokeRect ? { ...effectiveStrokeRect } : null,
+          finalStrokeBufferRect: finalStrokeBufferRect ? { ...finalStrokeBufferRect } : null,
+          layerId,
+          paintTargetCount: paintTargets.length,
+          targets: paintTargets.map((item) =>
+            namespace.EraserZoomDebug?.getTargetSummary?.(item?.target, this.documentRenderer)),
+          target: namespace.EraserZoomDebug?.getTargetSummary?.(target, this.documentRenderer),
+          tilePatchRectCount: activeStrokeTilePatchRects.length,
+        });
+      }
 
       if (!target?.framebuffer || !target?.texture || !finalStrokeBufferRect) {
+        if (isEraserStroke) {
+          namespace.EraserZoomDebug?.warn?.("eraser-bake-no-usable-target", {
+            hasFinalStrokeBufferRect: Boolean(finalStrokeBufferRect),
+            layerId,
+            target: namespace.EraserZoomDebug?.getTargetSummary?.(target, this.documentRenderer),
+          });
+        }
         this.releaseStrokeLayerTarget();
         return;
       }
@@ -1889,6 +1936,16 @@
         historyMode: memoryReport?.historyMode || "",
         policy: memoryReport?.policy || "",
       });
+      if (isEraserStroke) {
+        namespace.EraserZoomDebug?.log?.("eraser-bake-history-prepare", {
+          hasBatchedTileHistory: Boolean(batchedTileHistory),
+          hasBeforeSnapshot: Boolean(beforeSnapshot),
+          hasTileHistory: Boolean(tileHistory),
+          historyMode: memoryReport?.historyMode || "",
+          layerId,
+          policy: memoryReport?.policy || "",
+        });
+      }
 
       const preDrawTrace = beginBakeTrace("pre-draw");
       this.recordStrokeMemory(memoryReport);
@@ -1969,6 +2026,15 @@
         paintTargetCount: paintTargets.length,
         selectionScissorCount: hasSelectionCoverage ? drawCallCount : 0,
       });
+      if (isEraserStroke) {
+        namespace.EraserZoomDebug?.log?.("eraser-bake-drawn", {
+          bakeRect: bakeRect ? { ...bakeRect } : null,
+          drawCallCount,
+          layerId,
+          paintTargetCount: paintTargets.length,
+          state: namespace.EraserZoomDebug?.captureLayerState?.(layerId, { coarseOnly: true }),
+        });
+      }
 
       const historyCommitTrace = beginBakeTrace("history-commit");
       let historyCommitMode = "none";
@@ -2080,6 +2146,13 @@
         mode: historyCommitMode,
         pushedHistoryEntry,
       });
+      if (isEraserStroke) {
+        namespace.EraserZoomDebug?.log?.("eraser-bake-history-commit", {
+          historyMode: historyCommitMode,
+          layerId,
+          pushedHistoryEntry,
+        });
+      }
 
       const cleanupTrace = beginBakeTrace("cleanup");
       this.clearStrokeLayer();
@@ -2124,6 +2197,22 @@
       dirtyTrace?.end({
         previewDirtyRectCount: previewDirtyRects.length,
       });
+      if (isEraserStroke) {
+        const afterState = namespace.EraserZoomDebug?.captureLayerState?.(layerId, { precise: true });
+        const debugDetail = {
+          after: afterState,
+          historyMode: historyCommitMode,
+          layerId,
+          previewDirtyRectCount: previewDirtyRects.length,
+          pushedHistoryEntry,
+        };
+
+        if (afterState?.contentBounds === null) {
+          namespace.EraserZoomDebug?.warn?.("eraser-bake-end-content-null", debugDetail, { precise: true });
+        } else {
+          namespace.EraserZoomDebug?.log?.("eraser-bake-end", debugDetail, { precise: true });
+        }
+      }
       } finally {
         this.releaseStrokeLayerTarget();
         this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
