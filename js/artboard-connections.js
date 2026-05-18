@@ -4,22 +4,39 @@ window.CBO = window.CBO || {};
   const ACTION_BUBBLE_SIZE_DOC_PX = 120;
   const ACTION_BUBBLE_GAP_DOC_PX = 24;
   const ACTION_BUBBLE_ICON_DOC_PX = 76;
-  const ACTION_BUBBLE_MIN_CSS_PX = 28;
-  const ACTION_BUBBLE_MAX_CSS_PX = 128;
-  const ACTION_BUBBLE_VIEWPORT_PADDING_CSS_PX = 8;
   const CONNECTION_MIN_DRAG_CSS_PX = 6;
   const CONNECTION_CLICK_DISTANCE_CSS_PX = 220;
   const CONNECTION_ARROW_LENGTH_STROKE_UNITS = 5;
   const CONNECTION_MENU_GAP_CSS_PX = 14;
+  const AI_IMAGE_BOARD_SIZE_DOC_PX = 1024;
+  const AI_IMAGE_BOARD_RADIUS_DOC_PX = 38;
+  const AI_IMAGE_PROMPT_PLACEHOLDER = "Neon product shot";
+  const AI_IMAGE_PROMPT_INPUT_MIN_HEIGHT_CSS_PX = 84;
+  const AI_IMAGE_BOARD_FOOTER_MIN_HEIGHT_CSS_PX = 210;
+  const AI_IMAGE_INPUT_HANDLE_SIZE_DOC_PX = ACTION_BUBBLE_SIZE_DOC_PX;
+  const AI_IMAGE_INPUT_HANDLE_GAP_DOC_PX = ACTION_BUBBLE_GAP_DOC_PX;
+  const AI_IMAGE_GENERATE_HANDLE_SIZE_DOC_PX = ACTION_BUBBLE_SIZE_DOC_PX;
+  const AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX = ACTION_BUBBLE_GAP_DOC_PX;
+  const AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX = 96;
+  const AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX = 42;
+  const AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX = 24;
+  const SPACE_BOARD_GAP_DOC_PX = 220;
+  const SPACE_BOARD_DRAG_GAP_DOC_PX = 24;
+  const SPACE_BOARD_MOVE_SEARCH_STEPS = 18;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
   let connectionDrag = null;
   let connections = [];
+  let spaceBoards = [];
   let anchorOverrides = new Map();
   let menuState = null;
   let menuDismissBound = false;
   let ignoreNextMenuDocumentClick = false;
+  let spaceBoardDrag = null;
+  let promptEditState = null;
+  let promptFocusViewportTimers = [];
   let connectionIdSeed = 1;
+  let boardIdSeed = 1;
   let lastRenderContext = {
     artboardViews: [],
     camera: { x: 0, y: 0, zoom: 1 },
@@ -78,8 +95,73 @@ window.CBO = window.CBO || {};
     return getAllArtboards().find((artboard) => artboard.id === normalizedId) || null;
   }
 
-  function clampNumber(value, min, max) {
-    return Math.max(min, Math.min(max, value));
+  function createRect(x, y, width, height) {
+    return {
+      height: Math.max(1, Number(height) || 1),
+      width: Math.max(1, Number(width) || 1),
+      x: Number(x) || 0,
+      y: Number(y) || 0,
+    };
+  }
+
+  function expandRect(rect, amount = 0) {
+    const safeAmount = Math.max(0, Number(amount) || 0);
+
+    return rect
+      ? {
+          height: rect.height + safeAmount * 2,
+          width: rect.width + safeAmount * 2,
+          x: rect.x - safeAmount,
+          y: rect.y - safeAmount,
+        }
+      : null;
+  }
+
+  function rectsOverlap(first, second) {
+    return Boolean(
+      first &&
+      second &&
+      first.x < second.x + second.width &&
+      first.x + first.width > second.x &&
+      first.y < second.y + second.height &&
+      first.y + first.height > second.y
+    );
+  }
+
+  function doesRectOverlapAny(rect, blockers = []) {
+    return blockers.some((blocker) => rectsOverlap(rect, blocker));
+  }
+
+  function offsetRect(rect, dx = 0, dy = 0) {
+    return rect
+      ? createRect(
+          rect.x + (Number(dx) || 0),
+          rect.y + (Number(dy) || 0),
+          rect.width,
+          rect.height,
+        )
+      : null;
+  }
+
+  function getRectOverlapArea(first, second) {
+    if (!first || !second) {
+      return 0;
+    }
+
+    const width = Math.max(
+      0,
+      Math.min(first.x + first.width, second.x + second.width) - Math.max(first.x, second.x),
+    );
+    const height = Math.max(
+      0,
+      Math.min(first.y + first.height, second.y + second.height) - Math.max(first.y, second.y),
+    );
+
+    return width * height;
+  }
+
+  function getRectOverlapScore(rect, blockers = []) {
+    return blockers.reduce((score, blocker) => score + getRectOverlapArea(rect, blocker), 0);
   }
 
   function getViewScale() {
@@ -90,6 +172,26 @@ window.CBO = window.CBO || {};
 
   function getConnectionStrokeWidth(viewScale = getViewScale()) {
     return Math.max(0.5, 3 * (Number(viewScale) || 1));
+  }
+
+  function getActionBubbleMetrics(scale = getViewScale()) {
+    const safeScale = Math.max(0.0001, Number(scale) || 1);
+    const size = ACTION_BUBBLE_SIZE_DOC_PX * safeScale;
+    const gap = ACTION_BUBBLE_GAP_DOC_PX * safeScale;
+    const iconSize = ACTION_BUBBLE_ICON_DOC_PX * safeScale;
+    const borderWidth = 3 * safeScale;
+
+    return {
+      borderWidth,
+      borderWidthDoc: 3,
+      gap,
+      gapDoc: ACTION_BUBBLE_GAP_DOC_PX,
+      iconSize,
+      iconSizeDoc: ACTION_BUBBLE_ICON_DOC_PX,
+      size,
+      sizeDoc: ACTION_BUBBLE_SIZE_DOC_PX,
+      visualScale: safeScale,
+    };
   }
 
   function documentPointToStagePoint(point, viewState = getCameraState()) {
@@ -173,6 +275,78 @@ window.CBO = window.CBO || {};
 
     bubble.dataset.artboardId = normalizedArtboardId;
     return bubble;
+  }
+
+  function ensureSpaceBoardLayer() {
+    const stage = getStage();
+
+    if (!stage || !getRenderer()) {
+      return null;
+    }
+
+    let layer = stage.querySelector("[data-artboard-space-board-layer]");
+
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = "editor-space-board-layer";
+      layer.dataset.artboardSpaceBoardLayer = "";
+      stage.appendChild(layer);
+    }
+
+    return layer;
+  }
+
+  function ensureAiImageBoardElement(boardId) {
+    const layer = ensureSpaceBoardLayer();
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!layer || !normalizedBoardId) {
+      return null;
+    }
+
+    let board = Array.from(layer.querySelectorAll("[data-ai-image-board]"))
+      .find((element) => element.dataset.boardId === normalizedBoardId) || null;
+
+    if (!board) {
+      board = document.createElement("div");
+      board.className = "editor-ai-image-board";
+      board.dataset.aiImageBoard = "";
+      board.dataset.boardId = normalizedBoardId;
+      board.innerHTML = `
+        <div class="editor-ai-image-board-label" data-ai-image-board-drag-handle></div>
+        <div class="editor-ai-image-board-surface"></div>
+        <div class="editor-ai-image-board-prompt-title" aria-hidden="true">What image do you want to generate?</div>
+        <div class="editor-ai-image-board-footer" data-ai-image-board-footer>
+          <textarea class="editor-ai-image-board-prompt-input" data-ai-image-board-prompt-input aria-label="AI image prompt" placeholder="${AI_IMAGE_PROMPT_PLACEHOLDER}" spellcheck="true"></textarea>
+        </div>
+        <div class="editor-ai-image-board-input" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+            <circle cx="9" cy="9" r="2"></circle>
+            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
+          </svg>
+        </div>
+        <button class="editor-ai-image-board-generate" type="button" aria-label="Generate image" data-ai-image-board-generate>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path>
+          </svg>
+        </button>
+      `;
+      board.querySelector("[data-ai-image-board-drag-handle]")?.addEventListener("pointerdown", startSpaceBoardDrag);
+      board.querySelector("[data-ai-image-board-footer]")?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
+      board.querySelector("[data-ai-image-board-footer]")?.addEventListener("click", stopSpaceBoardControlEvent);
+      board.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
+      board.querySelector("[data-ai-image-board-generate]")?.addEventListener("click", handleAiImageGenerateClick);
+      board.querySelector("[data-ai-image-board-prompt-input]")?.addEventListener("focus", handleAiImagePromptFocus);
+      board.querySelector("[data-ai-image-board-prompt-input]")?.addEventListener("input", handleAiImagePromptInput);
+      board.querySelector("[data-ai-image-board-prompt-input]")?.addEventListener("blur", handleAiImagePromptBlur);
+      board.querySelector("[data-ai-image-board-prompt-input]")?.addEventListener("keydown", stopSpaceBoardControlEvent);
+      board.addEventListener("wheel", handleSpaceBoardWheel, { passive: false });
+      layer.appendChild(board);
+    }
+
+    board.dataset.boardId = normalizedBoardId;
+    return board;
   }
 
   function ensureConnectionLayer() {
@@ -261,6 +435,13 @@ window.CBO = window.CBO || {};
 
         if (event.target?.closest?.("[data-artboard-connection-dismiss]")) {
           dismissConnectionMenu();
+          return;
+        }
+
+        const action = event.target?.closest?.("[data-artboard-connection-action]")?.dataset?.artboardConnectionAction;
+
+        if (action === "ai-image") {
+          materializeAiImageBoardFromMenu();
         }
       });
       stage.appendChild(menu);
@@ -289,6 +470,465 @@ window.CBO = window.CBO || {};
       y: (Number(artboard.y) || 0) +
         ACTION_BUBBLE_GAP_DOC_PX +
         ACTION_BUBBLE_SIZE_DOC_PX * 0.5,
+    };
+  }
+
+  function getSpaceBoardById(boardId) {
+    const normalizedId = String(boardId || "").trim();
+
+    if (!normalizedId) {
+      return null;
+    }
+
+    return spaceBoards.find((board) => board.id === normalizedId) || null;
+  }
+
+  function getSpaceBoardRect(board) {
+    return board
+      ? createRect(board.x, board.y, board.width || AI_IMAGE_BOARD_SIZE_DOC_PX, board.height || AI_IMAGE_BOARD_SIZE_DOC_PX)
+      : null;
+  }
+
+  function cloneConnection(connection) {
+    return {
+      ...connection,
+    };
+  }
+
+  function cloneSpaceBoard(board) {
+    return {
+      ...board,
+    };
+  }
+
+  function captureConnectionsHistoryState(options = {}) {
+    const excludeConnectionIds = new Set(
+      Array.isArray(options.excludeConnectionIds)
+        ? options.excludeConnectionIds.map((id) => String(id || "").trim()).filter(Boolean)
+        : [],
+    );
+
+    return {
+      connections: connections
+        .filter((connection) => !excludeConnectionIds.has(String(connection?.id || "").trim()))
+        .map(cloneConnection),
+      spaceBoards: spaceBoards.map(cloneSpaceBoard),
+    };
+  }
+
+  function restoreConnectionsHistoryState(state, source = "history-artboard-connections") {
+    removeSpaceBoardDragListeners();
+    connections = Array.isArray(state?.connections)
+      ? state.connections.map(cloneConnection)
+      : [];
+    spaceBoards = Array.isArray(state?.spaceBoards)
+      ? state.spaceBoards.map(cloneSpaceBoard)
+      : [];
+    connectionDrag = null;
+    spaceBoardDrag = null;
+    menuState = null;
+    unbindMenuDismiss();
+    renderConnectionOverlay();
+    window.dispatchEvent(new CustomEvent("cbo:artboard-connections-change", {
+      detail: {
+        connections: connections.map(cloneConnection),
+        source,
+        spaceBoards: spaceBoards.map(cloneSpaceBoard),
+      },
+    }));
+
+    return true;
+  }
+
+  function statesAreEqual(first, second) {
+    return JSON.stringify(first) === JSON.stringify(second);
+  }
+
+  function pushConnectionsHistoryEntry(beforeState, afterState, options = {}) {
+    const history = namespace.documentHistory;
+
+    if (
+      !beforeState ||
+      !afterState ||
+      statesAreEqual(beforeState, afterState) ||
+      history?.canRecord?.(options) !== true ||
+      typeof history.push !== "function"
+    ) {
+      return false;
+    }
+
+    const before = {
+      connections: beforeState.connections.map(cloneConnection),
+      spaceBoards: beforeState.spaceBoards.map(cloneSpaceBoard),
+    };
+    const after = {
+      connections: afterState.connections.map(cloneConnection),
+      spaceBoards: afterState.spaceBoards.map(cloneSpaceBoard),
+    };
+
+    return history.push({
+      after,
+      before,
+      historyGroup: options.historyGroup || "",
+      source: options.source || "artboard-connections",
+      type: options.type || "artboard-connections-state",
+      undo() {
+        return restoreConnectionsHistoryState(this.before, `history-undo-${this.source}`);
+      },
+      redo() {
+        return restoreConnectionsHistoryState(this.after, `history-redo-${this.source}`);
+      },
+      mergeWith() {
+        return false;
+      },
+      destroy() {},
+    }, options);
+  }
+
+  function emitConnectionsChange(source = "artboard-connections") {
+    window.dispatchEvent(new CustomEvent("cbo:artboard-connections-change", {
+      detail: {
+        connections: connections.map(cloneConnection),
+        source,
+        spaceBoards: spaceBoards.map(cloneSpaceBoard),
+      },
+    }));
+  }
+
+  function stopSpaceBoardControlEvent(event) {
+    event.stopPropagation();
+  }
+
+  function handleSpaceBoardWheel(event) {
+    const brushEngine = getBrushEngine();
+
+    if (!brushEngine?.handleWheel) {
+      return;
+    }
+
+    event.stopPropagation();
+    brushEngine.handleWheel.call(brushEngine, event);
+  }
+
+  function handleAiImageGenerateClick(event) {
+    const board = getBoardFromControlEvent(event);
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!board) {
+      return;
+    }
+
+    window.dispatchEvent(new CustomEvent("cbo:ai-image-board-generate-click", {
+      detail: {
+        board: cloneSpaceBoard(board),
+        source: "artboard-connections",
+      },
+    }));
+  }
+
+  function getBoardFromControlEvent(event) {
+    const boardId = String(event.currentTarget?.closest?.("[data-ai-image-board]")?.dataset?.boardId || "").trim();
+
+    return getSpaceBoardById(boardId);
+  }
+
+  function handleAiImagePromptFocus(event) {
+    const board = getBoardFromControlEvent(event);
+    const input = event.currentTarget;
+
+    if (input) {
+      input.placeholder = "";
+      resizeAiImagePromptInput(input);
+    }
+
+    if (!board) {
+      return;
+    }
+
+    scheduleAiImagePromptFocusViewport(board.id);
+
+    promptEditState = {
+      beforeState: captureConnectionsHistoryState(),
+      boardId: board.id,
+      value: String(board.promptText || ""),
+    };
+  }
+
+  function handleAiImagePromptInput(event) {
+    const board = getBoardFromControlEvent(event);
+
+    if (!board) {
+      return;
+    }
+
+    board.promptText = String(event.currentTarget?.value || "");
+    resizeAiImagePromptInput(event.currentTarget);
+    emitConnectionsChange("space-board-prompt-input");
+  }
+
+  function handleAiImagePromptBlur(event) {
+    const board = getBoardFromControlEvent(event);
+    const editState = promptEditState;
+    const input = event.currentTarget;
+
+    promptEditState = null;
+
+    if (input) {
+      input.placeholder = AI_IMAGE_PROMPT_PLACEHOLDER;
+      resizeAiImagePromptInput(input);
+    }
+
+    if (!board || !editState || editState.boardId !== board.id) {
+      return;
+    }
+
+    const nextValue = String(event.currentTarget?.value || "");
+
+    if (nextValue === editState.value) {
+      return;
+    }
+
+    pushConnectionsHistoryEntry(editState.beforeState, captureConnectionsHistoryState(), {
+      historyGroup: `space-board-prompt-${board.id}`,
+      source: "space-board-prompt-input",
+      type: "space-board-prompt",
+    });
+  }
+
+  function isMobilePromptFocusViewport() {
+    return Boolean(
+      window.matchMedia?.("(pointer: coarse)")?.matches ||
+      (window.innerWidth || 0) <= 900 ||
+      document.documentElement?.classList.contains("cbo-visual-keyboard-active")
+    );
+  }
+
+  function clearPromptFocusViewportTimers() {
+    promptFocusViewportTimers.forEach((timerId) => {
+      window.clearTimeout(timerId);
+    });
+    promptFocusViewportTimers = [];
+  }
+
+  function scheduleAiImagePromptFocusViewport(boardId) {
+    if (!isMobilePromptFocusViewport()) {
+      return;
+    }
+
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!normalizedBoardId) {
+      return;
+    }
+
+    clearPromptFocusViewportTimers();
+    focusAiImagePromptBoard(normalizedBoardId);
+    [80, 260, 520].forEach((delay) => {
+      const timerId = window.setTimeout(() => {
+        focusAiImagePromptBoard(normalizedBoardId);
+        window.scrollTo?.(0, 0);
+      }, delay);
+
+      promptFocusViewportTimers.push(timerId);
+    });
+  }
+
+  function focusAiImagePromptBoard(boardId) {
+    const board = getSpaceBoardById(boardId);
+    const brushEngine = getBrushEngine();
+    const stage = getStage();
+
+    if (!board || !brushEngine?.camera || !stage) {
+      return false;
+    }
+
+    const dpr = Math.max(0.0001, Number(brushEngine.dpr || lastRenderContext.dpr || window.devicePixelRatio || 1));
+    const zoom = Math.max(0.0001, Number(brushEngine.camera.zoom) || 1);
+    const stageRect = stage.getBoundingClientRect();
+    const viewportWidthCss = Math.max(1, stage.clientWidth || stageRect.width || 1);
+    const viewportHeightCss = Math.max(
+      1,
+      Math.min(
+        stage.clientHeight || stageRect.height || 1,
+        window.visualViewport?.height || stage.clientHeight || stageRect.height || 1,
+      ),
+    );
+    const boardWidth = Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const boardHeight = Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const boardScreenHeight = boardHeight * zoom / dpr;
+    const maxTop = Math.max(
+      AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX,
+      viewportHeightCss - Math.min(boardScreenHeight, viewportHeightCss) - AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX,
+    );
+    const targetTopCss = Math.min(AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX, maxTop);
+    const boardCenterX = (Number(board.x) || 0) + boardWidth * 0.5;
+    const boardTopY = Number(board.y) || 0;
+    const nextCameraX = viewportWidthCss * 0.5 * dpr - boardCenterX * zoom;
+    const nextCameraY = targetTopCss * dpr - boardTopY * zoom;
+
+    if (
+      Math.abs((Number(brushEngine.camera.x) || 0) - nextCameraX) < 0.5 &&
+      Math.abs((Number(brushEngine.camera.y) || 0) - nextCameraY) < 0.5
+    ) {
+      return false;
+    }
+
+    brushEngine.camera.x = nextCameraX;
+    brushEngine.camera.y = nextCameraY;
+    brushEngine.userManipulatedCamera = true;
+    brushEngine.requestDraw?.();
+
+    return true;
+  }
+
+  function resizeAiImagePromptInput(input) {
+    if (!input) {
+      return;
+    }
+
+    const boardElement = input.closest?.("[data-ai-image-board]");
+    const footer = input.closest?.("[data-ai-image-board-footer]");
+
+    input.style.height = "auto";
+    input.style.height = `${Math.max(AI_IMAGE_PROMPT_INPUT_MIN_HEIGHT_CSS_PX, input.scrollHeight || 0)}px`;
+
+    if (boardElement && footer) {
+      const footerHeight = Math.max(
+        AI_IMAGE_BOARD_FOOTER_MIN_HEIGHT_CSS_PX,
+        Math.ceil(footer.scrollHeight || footer.offsetHeight || 0),
+      );
+      boardElement.style.setProperty("--ai-image-board-footer-height", `${footerHeight}px`);
+    }
+  }
+
+  function getAiImageBoardFootprintRect(rect) {
+    if (!rect) {
+      return null;
+    }
+
+    const metrics = getActionBubbleMetrics();
+    const leftExtension = metrics.gapDoc + metrics.sizeDoc;
+
+    return createRect(
+      rect.x - leftExtension,
+      rect.y,
+      rect.width + leftExtension,
+      rect.height,
+    );
+  }
+
+  function getDocumentArtboardRect(artboard) {
+    return artboard
+      ? createRect(artboard.x, artboard.y, artboard.width, artboard.height)
+      : null;
+  }
+
+  function getSpaceBoardPlacementBlockers(options = {}) {
+    const excludeBoardId = String(options.excludeBoardId || "").trim();
+    const gap = Number.isFinite(Number(options.gap))
+      ? Math.max(0, Number(options.gap))
+      : SPACE_BOARD_GAP_DOC_PX;
+
+    return [
+      ...getAllArtboards().map(getDocumentArtboardRect),
+      ...spaceBoards
+        .filter((board) => !excludeBoardId || board.id !== excludeBoardId)
+        .map(getSpaceBoardRect)
+        .map(getAiImageBoardFootprintRect),
+    ]
+      .filter(Boolean)
+      .map((rect) => expandRect(rect, gap));
+  }
+
+  function resolveFreeSpaceBoardPlacement(preferredRect, options = {}) {
+    const blockers = getSpaceBoardPlacementBlockers(options);
+    const preferredFootprint = getAiImageBoardFootprintRect(preferredRect);
+    const metrics = getActionBubbleMetrics();
+    const leftExtension = metrics.gapDoc + metrics.sizeDoc;
+
+    if (!doesRectOverlapAny(preferredFootprint, blockers)) {
+      return preferredRect;
+    }
+
+    const candidates = [];
+    const seen = new Set();
+    const pushCandidate = (x, y) => {
+      const rect = createRect(
+        Math.round(Number(x) || 0),
+        Math.round(Number(y) || 0),
+        preferredRect.width,
+        preferredRect.height,
+      );
+      const key = `${rect.x}:${rect.y}`;
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        candidates.push(rect);
+      }
+    };
+
+    blockers.forEach((blocker) => {
+      pushCandidate(blocker.x + blocker.width + leftExtension, preferredRect.y);
+      pushCandidate(preferredRect.x, blocker.y + blocker.height);
+      pushCandidate(blocker.x + blocker.width + leftExtension, blocker.y);
+      pushCandidate(blocker.x, blocker.y + blocker.height);
+    });
+
+    blockers.forEach((horizontalBlocker) => {
+      blockers.forEach((verticalBlocker) => {
+        pushCandidate(horizontalBlocker.x + horizontalBlocker.width + leftExtension, verticalBlocker.y);
+        pushCandidate(horizontalBlocker.x + horizontalBlocker.width + leftExtension, verticalBlocker.y + verticalBlocker.height);
+      });
+    });
+
+    return candidates
+      .filter((rect) => !doesRectOverlapAny(getAiImageBoardFootprintRect(rect), blockers))
+      .sort((first, second) => (
+        Math.hypot(first.x - preferredRect.x, first.y - preferredRect.y) -
+        Math.hypot(second.x - preferredRect.x, second.y - preferredRect.y)
+      ))[0] || preferredRect;
+  }
+
+  function getAiImageBoardInputAnchor(board) {
+    if (!board) {
+      return null;
+    }
+
+    const metrics = getActionBubbleMetrics();
+
+    return {
+      x: (Number(board.x) || 0) -
+        metrics.gapDoc -
+        metrics.sizeDoc * 0.5,
+      y: (Number(board.y) || 0) +
+        (Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX) -
+        metrics.gapDoc -
+        metrics.sizeDoc * 0.5,
+    };
+  }
+
+  function getConnectionEndPoint(connection) {
+    const targetBoard = getSpaceBoardById(connection?.targetBoardId);
+    const targetAnchor = targetBoard?.type === "ai-image"
+      ? getAiImageBoardInputAnchor(targetBoard)
+      : null;
+
+    if (targetAnchor) {
+      return targetAnchor;
+    }
+
+    if (
+      !Number.isFinite(Number(connection?.endDocX)) ||
+      !Number.isFinite(Number(connection?.endDocY))
+    ) {
+      return null;
+    }
+
+    return {
+      x: Number(connection.endDocX),
+      y: Number(connection.endDocY),
     };
   }
 
@@ -333,15 +973,16 @@ window.CBO = window.CBO || {};
   function createConnectionPath(connection, options = {}) {
     const sourceArtboard = getArtboardById(connection.sourceArtboardId);
     const source = getActionAnchorPoint(sourceArtboard);
+    const target = getConnectionEndPoint(connection);
 
-    if (!source || !Number.isFinite(Number(connection.endDocX)) || !Number.isFinite(Number(connection.endDocY))) {
+    if (!source || !target) {
       return null;
     }
 
     const viewState = getCameraState();
     const viewScale = getViewScale();
     const start = documentPointToStagePoint(source, viewState);
-    const end = documentPointToStagePoint({ x: connection.endDocX, y: connection.endDocY }, viewState);
+    const end = documentPointToStagePoint(target, viewState);
 
     return createSvgElement("path", {
       class: `editor-artboard-connection-path${options.active ? " is-active" : ""}`,
@@ -397,6 +1038,77 @@ window.CBO = window.CBO || {};
     svg.replaceChildren(createConnectionDefs(), ...paths);
   }
 
+  function renderSpaceBoards() {
+    const layer = ensureSpaceBoardLayer();
+
+    if (!layer) {
+      return;
+    }
+
+    const viewState = getCameraState();
+    const scale = getViewScale();
+    const handleMetrics = getActionBubbleMetrics(scale);
+    const renderedIds = new Set();
+
+    spaceBoards.forEach((board) => {
+      if (board.type !== "ai-image") {
+        return;
+      }
+
+      const element = ensureAiImageBoardElement(board.id);
+
+      if (!element) {
+        return;
+      }
+
+      renderedIds.add(board.id);
+
+      const point = documentPointToStagePoint({
+        x: board.x,
+        y: board.y,
+      }, viewState);
+      const width = Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+      const height = Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+      const label = element.querySelector("[data-ai-image-board-drag-handle]");
+      const promptInput = element.querySelector("[data-ai-image-board-prompt-input]");
+
+      element.style.left = `${point.x}px`;
+      element.style.top = `${point.y}px`;
+      element.style.width = `${width}px`;
+      element.style.height = `${height}px`;
+      element.style.transform = `scale(${scale})`;
+      element.style.setProperty("--ai-image-board-radius", `${AI_IMAGE_BOARD_RADIUS_DOC_PX}px`);
+      element.style.setProperty("--ai-image-input-handle-size", `${handleMetrics.sizeDoc}px`);
+      element.style.setProperty("--ai-image-input-handle-left", `${(handleMetrics.sizeDoc + handleMetrics.gapDoc) * -1}px`);
+      element.style.setProperty("--ai-image-input-handle-top", `${height - handleMetrics.gapDoc - handleMetrics.sizeDoc}px`);
+      element.style.setProperty("--ai-image-input-border-width", `${handleMetrics.borderWidthDoc}px`);
+      element.style.setProperty("--ai-image-input-icon-size", `${handleMetrics.iconSizeDoc}px`);
+      element.style.setProperty("--ai-image-generate-handle-size", `${AI_IMAGE_GENERATE_HANDLE_SIZE_DOC_PX}px`);
+      element.style.setProperty("--ai-image-generate-handle-left", `${width + AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
+      element.style.setProperty("--ai-image-generate-handle-top", `${AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
+      element.style.setProperty("--ai-image-generate-border-width", `${handleMetrics.borderWidthDoc}px`);
+      element.style.setProperty("--ai-image-generate-icon-size", `${handleMetrics.iconSizeDoc}px`);
+      element.style.setProperty("--ai-image-board-label-top", `${-25 / Math.max(0.0001, scale)}px`);
+      element.style.setProperty("--ai-image-board-label-inverse-scale", `${1 / Math.max(0.0001, scale)}`);
+
+      if (label) {
+        label.textContent = `${board.name || "AI Image board"} ${width} x ${height}`;
+      }
+
+      if (promptInput && document.activeElement !== promptInput) {
+        promptInput.value = String(board.promptText || "");
+      }
+
+      resizeAiImagePromptInput(promptInput);
+    });
+
+    layer.querySelectorAll("[data-ai-image-board]").forEach((element) => {
+      if (!renderedIds.has(element.dataset.boardId || "")) {
+        element.remove();
+      }
+    });
+  }
+
   function getConnectionById(connectionId) {
     const normalizedId = String(connectionId || "").trim();
 
@@ -444,6 +1156,7 @@ window.CBO = window.CBO || {};
   }
 
   function renderConnectionOverlay() {
+    renderSpaceBoards();
     renderActions();
     renderConnections();
     renderConnectionMenu();
@@ -511,17 +1224,33 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    const end = documentPointToStagePoint({
-      x: connection.endDocX,
-      y: connection.endDocY,
-    });
+    const target = getConnectionEndPoint(connection);
+
+    if (!target) {
+      menu.classList.remove("is-visible");
+      menu.setAttribute("aria-hidden", "true");
+      return;
+    }
+
+    const end = documentPointToStagePoint(target);
+    const stage = getStage();
+    const stageRect = stage?.getBoundingClientRect?.();
+    const stageWidth = Math.max(1, Number(stageRect?.width || stage?.clientWidth) || 1);
+    const stageHeight = Math.max(1, Number(stageRect?.height || stage?.clientHeight) || 1);
 
     menu.classList.add("is-visible");
     menu.setAttribute("aria-hidden", "false");
 
     const height = menu.offsetHeight || 154;
-    const left = end.x + CONNECTION_MENU_GAP_CSS_PX;
-    const top = end.y - height * 0.5;
+    const width = menu.offsetWidth || 140;
+    const preferredLeft = end.x + CONNECTION_MENU_GAP_CSS_PX;
+    const left = preferredLeft + width > stageWidth - 8
+      ? Math.max(8, end.x - width - CONNECTION_MENU_GAP_CSS_PX)
+      : Math.max(8, preferredLeft);
+    const top = Math.min(
+      Math.max(8, end.y - height * 0.5),
+      Math.max(8, stageHeight - height - 8),
+    );
 
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
@@ -531,6 +1260,289 @@ window.CBO = window.CBO || {};
     const id = `artboard-connection-${Date.now().toString(36)}-${connectionIdSeed}`;
     connectionIdSeed += 1;
     return id;
+  }
+
+  function createBoardId() {
+    const id = `ai-image-board-${Date.now().toString(36)}-${boardIdSeed}`;
+    boardIdSeed += 1;
+    return id;
+  }
+
+  function createAiImageBoardForConnection(connection) {
+    const anchor = getConnectionEndPoint(connection);
+
+    if (!anchor) {
+      return null;
+    }
+
+    const handleMetrics = getActionBubbleMetrics();
+    const preferredRect = createRect(
+      anchor.x + handleMetrics.gapDoc + handleMetrics.sizeDoc * 0.5,
+      anchor.y - AI_IMAGE_BOARD_SIZE_DOC_PX + handleMetrics.gapDoc + handleMetrics.sizeDoc * 0.5,
+      AI_IMAGE_BOARD_SIZE_DOC_PX,
+      AI_IMAGE_BOARD_SIZE_DOC_PX,
+    );
+    const placement = resolveFreeSpaceBoardPlacement(preferredRect);
+    const board = {
+      height: AI_IMAGE_BOARD_SIZE_DOC_PX,
+      id: createBoardId(),
+      name: `AI Image board #${spaceBoards.filter((entry) => entry.type === "ai-image").length + 1}`,
+      promptText: "",
+      type: "ai-image",
+      width: AI_IMAGE_BOARD_SIZE_DOC_PX,
+      x: placement.x,
+      y: placement.y,
+    };
+
+    spaceBoards.push(board);
+
+    const targetAnchor = getAiImageBoardInputAnchor(board);
+
+    connection.endDocX = targetAnchor.x;
+    connection.endDocY = targetAnchor.y;
+    connection.targetBoardId = board.id;
+    connection.targetHandle = "image-input";
+
+    return board;
+  }
+
+  function getAllowedSpaceBoardMove(startFootprint, dx, dy, blockers = []) {
+    const safeDx = Number.isFinite(Number(dx)) ? Number(dx) : 0;
+    const safeDy = Number.isFinite(Number(dy)) ? Number(dy) : 0;
+
+    if (!startFootprint || blockers.length === 0 || (safeDx === 0 && safeDy === 0)) {
+      return {
+        dx: safeDx,
+        dy: safeDy,
+      };
+    }
+
+    const startScore = getRectOverlapScore(startFootprint, blockers);
+    const isAllowed = (rect) => {
+      const score = getRectOverlapScore(rect, blockers);
+
+      return score <= 0 || (startScore > 0 && score <= startScore);
+    };
+
+    if (isAllowed(offsetRect(startFootprint, safeDx, safeDy))) {
+      return {
+        dx: safeDx,
+        dy: safeDy,
+      };
+    }
+
+    let low = 0;
+    let high = 1;
+
+    for (let index = 0; index < SPACE_BOARD_MOVE_SEARCH_STEPS; index += 1) {
+      const mid = (low + high) * 0.5;
+
+      if (isAllowed(offsetRect(startFootprint, safeDx * mid, safeDy * mid))) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+    }
+
+    return {
+      dx: safeDx * low,
+      dy: safeDy * low,
+    };
+  }
+
+  function getSpaceBoardMoveDistance(move) {
+    return Math.hypot(Number(move?.dx) || 0, Number(move?.dy) || 0);
+  }
+
+  function constrainSpaceBoardMove(boardId, dx, dy, startRect) {
+    const normalizedBoardId = String(boardId || "").trim();
+    const start = startRect || getSpaceBoardRect(getSpaceBoardById(normalizedBoardId));
+
+    if (!start) {
+      return {
+        dx: Number(dx) || 0,
+        dy: Number(dy) || 0,
+      };
+    }
+
+    const requested = {
+      dx: Number(dx) || 0,
+      dy: Number(dy) || 0,
+    };
+    const candidate = createRect(
+      start.x + requested.dx,
+      start.y + requested.dy,
+      start.width,
+      start.height,
+    );
+    const blockers = getSpaceBoardPlacementBlockers({
+      excludeBoardId: normalizedBoardId,
+      gap: SPACE_BOARD_DRAG_GAP_DOC_PX,
+    });
+    const startFootprint = getAiImageBoardFootprintRect(start);
+
+    if (!doesRectOverlapAny(getAiImageBoardFootprintRect(candidate), blockers)) {
+      return requested;
+    }
+
+    return [
+      getAllowedSpaceBoardMove(startFootprint, requested.dx, requested.dy, blockers),
+      getAllowedSpaceBoardMove(startFootprint, requested.dx, 0, blockers),
+      getAllowedSpaceBoardMove(startFootprint, 0, requested.dy, blockers),
+    ].sort((first, second) => getSpaceBoardMoveDistance(second) - getSpaceBoardMoveDistance(first))[0] || {
+      dx: 0,
+      dy: 0,
+    };
+  }
+
+  function startSpaceBoardDrag(event) {
+    if (event.button !== 0 || event.isPrimary === false) {
+      return;
+    }
+
+    const boardElement = event.currentTarget?.closest?.("[data-ai-image-board]");
+    const boardId = String(boardElement?.dataset?.boardId || "").trim();
+    const board = getSpaceBoardById(boardId);
+    const point = getEventDocumentPoint(event);
+
+    if (!board || !point) {
+      return;
+    }
+
+    if (menuState) {
+      dismissConnectionMenu({ render: false });
+    }
+
+    spaceBoardDrag = {
+      boardId,
+      beforeState: captureConnectionsHistoryState(),
+      didMove: false,
+      dx: 0,
+      dy: 0,
+      pointerId: event.pointerId,
+      sourceElement: event.currentTarget,
+      startDocX: Number(point.docX) || 0,
+      startDocY: Number(point.docY) || 0,
+      startRect: getSpaceBoardRect(board),
+      startX: Number(board.x) || 0,
+      startY: Number(board.y) || 0,
+    };
+
+    getStage()?.classList.add("artboard-dragging");
+
+    try {
+      event.currentTarget?.setPointerCapture?.(event.pointerId);
+    } catch (error) {
+      // Pointer capture is best-effort for browser compatibility.
+    }
+
+    addSpaceBoardDragListeners();
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function updateSpaceBoardDrag(event) {
+    if (!spaceBoardDrag || event.pointerId !== spaceBoardDrag.pointerId) {
+      return;
+    }
+
+    const board = getSpaceBoardById(spaceBoardDrag.boardId);
+    const point = getEventDocumentPoint(event);
+
+    if (!board || !point) {
+      return;
+    }
+
+    const rawDx = (Number(point.docX) || 0) - spaceBoardDrag.startDocX;
+    const rawDy = (Number(point.docY) || 0) - spaceBoardDrag.startDocY;
+    const constrained = constrainSpaceBoardMove(
+      spaceBoardDrag.boardId,
+      rawDx,
+      rawDy,
+      spaceBoardDrag.startRect,
+    );
+    const dx = Number(constrained.dx) || 0;
+    const dy = Number(constrained.dy) || 0;
+
+    board.x = spaceBoardDrag.startX + dx;
+    board.y = spaceBoardDrag.startY + dy;
+    spaceBoardDrag.dx = dx;
+    spaceBoardDrag.dy = dy;
+    spaceBoardDrag.didMove = spaceBoardDrag.didMove || Boolean(dx || dy);
+    renderConnectionOverlay();
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function finishSpaceBoardDrag(event) {
+    if (!spaceBoardDrag || event.pointerId !== spaceBoardDrag.pointerId) {
+      return;
+    }
+
+    const state = spaceBoardDrag;
+
+    spaceBoardDrag = null;
+    removeSpaceBoardDragListeners();
+    getStage()?.classList.remove("artboard-dragging");
+
+    try {
+      state.sourceElement?.releasePointerCapture?.(event.pointerId);
+    } catch (error) {
+      // Some browsers release capture automatically before pointercancel/pointerup.
+    }
+
+    if (event.type === "pointercancel") {
+      restoreConnectionsHistoryState(state.beforeState, "space-board-drag-cancel");
+    } else if (state.didMove && (Math.round(state.dx) || Math.round(state.dy))) {
+      pushConnectionsHistoryEntry(state.beforeState, captureConnectionsHistoryState(), {
+        historyGroup: `space-board-move-${state.boardId}`,
+        source: "space-board-label-drag",
+        type: "space-board-move",
+      });
+    } else {
+      renderConnectionOverlay();
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function addSpaceBoardDragListeners() {
+    document.addEventListener("pointermove", updateSpaceBoardDrag, true);
+    document.addEventListener("pointerup", finishSpaceBoardDrag, true);
+    document.addEventListener("pointercancel", finishSpaceBoardDrag, true);
+  }
+
+  function removeSpaceBoardDragListeners() {
+    document.removeEventListener("pointermove", updateSpaceBoardDrag, true);
+    document.removeEventListener("pointerup", finishSpaceBoardDrag, true);
+    document.removeEventListener("pointercancel", finishSpaceBoardDrag, true);
+    getStage()?.classList.remove("artboard-dragging");
+  }
+
+  function materializeAiImageBoardFromMenu() {
+    const connection = getConnectionById(menuState?.connectionId);
+
+    if (!connection) {
+      dismissConnectionMenu();
+      return;
+    }
+
+    const beforeState = captureConnectionsHistoryState({
+      excludeConnectionIds: [connection.id],
+    });
+
+    createAiImageBoardForConnection(connection);
+    dismissConnectionMenu({
+      removeConnection: false,
+      render: false,
+    });
+    pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+      historyGroup: `space-board-create-${connection.id}`,
+      source: "space-board-create-ai-image",
+      type: "space-board-create",
+    });
+    renderConnectionOverlay();
   }
 
   function getDefaultConnectionEndPoint(sourceArtboardId) {
@@ -700,28 +1712,8 @@ window.CBO = window.CBO || {};
       visibleArtboardIds.add(activeSourceArtboardId);
     }
 
-    const stage = getStage();
-    const stageRect = stage?.getBoundingClientRect?.();
-    const stageWidth = Math.max(1, Number(stageRect?.width || stage?.clientWidth) || 1);
-    const stageHeight = Math.max(1, Number(stageRect?.height || stage?.clientHeight) || 1);
     const scale = Math.max(0.0001, Number(lastRenderContext.viewScale) || 1);
-    const maxViewportSize = Math.max(
-      ACTION_BUBBLE_MIN_CSS_PX,
-      Math.min(
-        ACTION_BUBBLE_MAX_CSS_PX,
-        stageWidth - ACTION_BUBBLE_VIEWPORT_PADDING_CSS_PX * 2,
-        stageHeight - ACTION_BUBBLE_VIEWPORT_PADDING_CSS_PX * 2,
-      ),
-    );
-    const size = clampNumber(
-      ACTION_BUBBLE_SIZE_DOC_PX * scale,
-      ACTION_BUBBLE_MIN_CSS_PX,
-      maxViewportSize,
-    );
-    const visualScale = size / ACTION_BUBBLE_SIZE_DOC_PX;
-    const gap = clampNumber(ACTION_BUBBLE_GAP_DOC_PX * scale, 6, 40);
-    const iconSize = Math.max(1, ACTION_BUBBLE_ICON_DOC_PX * visualScale);
-    const borderWidth = Math.max(0.5, 3 * visualScale);
+    const { borderWidth, gap, iconSize, size } = getActionBubbleMetrics(scale);
     const renderedIds = new Set();
     const nextAnchorOverrides = new Map();
 
@@ -784,9 +1776,26 @@ window.CBO = window.CBO || {};
     return connections.map((connection) => ({ ...connection }));
   };
 
+  namespace.getArtboardConnectionBoards = function getArtboardConnectionBoards() {
+    return spaceBoards.map((board) => ({ ...board }));
+  };
+
+  namespace.getArtboardConnectionBoardCollisionRects = function getArtboardConnectionBoardCollisionRects() {
+    return spaceBoards
+      .map(getSpaceBoardRect)
+      .map(getAiImageBoardFootprintRect)
+      .filter(Boolean)
+      .map((rect) => ({ ...rect }));
+  };
+
   namespace.clearArtboardConnections = function clearArtboardConnections() {
     connections = [];
+    spaceBoards = [];
     connectionDrag = null;
+    spaceBoardDrag = null;
+    promptEditState = null;
+    clearPromptFocusViewportTimers();
+    removeSpaceBoardDragListeners();
     dismissConnectionMenu({ render: false });
     renderConnectionOverlay();
   };

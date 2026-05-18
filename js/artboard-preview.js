@@ -1193,7 +1193,7 @@ window.CBO = window.CBO || {};
   }
 
   function handleStagePointerDown(event) {
-    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-connection-menu]")) {
+    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-connection-menu], [data-ai-image-board]")) {
       return;
     }
 

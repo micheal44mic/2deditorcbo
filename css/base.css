@@ -140,6 +140,11 @@ body {
     "Segoe UI", sans-serif;
 }
 
+html.cbo-visual-keyboard-active,
+html.cbo-visual-keyboard-active body {
+  background: #262626;
+}
+
 .android-device-indicator {
   position: fixed;
   top: calc(8px + var(--cbo-safe-top));

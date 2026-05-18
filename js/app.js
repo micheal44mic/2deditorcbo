@@ -290,6 +290,10 @@ document.addEventListener(
     root.style.setProperty("--cbo-visual-viewport-height", toCssPx(viewportHeight, root.clientHeight || 1));
     root.style.setProperty("--cbo-keyboard-inset-bottom", `${Math.round(keyboardInsetBottom)}px`);
     root.classList.toggle("cbo-visual-keyboard-active", keyboardInsetBottom > 80);
+
+    if (keyboardInsetBottom > 80 && (window.scrollX || window.scrollY)) {
+      window.scrollTo(0, 0);
+    }
   }
 
   function scheduleVisualViewportUpdate() {

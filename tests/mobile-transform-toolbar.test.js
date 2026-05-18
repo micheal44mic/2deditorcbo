@@ -76,6 +76,7 @@ test("mobile layout accounts for iOS safe areas and visual viewport changes", ()
   assert.match(baseCss, /--cbo-safe-bottom: env\(safe-area-inset-bottom, 0px\);/);
   assert.match(baseCss, /--cbo-visual-viewport-height: 100dvh;/);
   assert.match(baseCss, /--cbo-keyboard-inset-bottom: 0px;/);
+  assert.match(baseCss, /html\.cbo-visual-keyboard-active,[\s\S]*html\.cbo-visual-keyboard-active body \{[\s\S]*background: #262626;/);
   assert.match(baseCss, /\.android-device-indicator \{[\s\S]*top: calc\(8px \+ var\(--cbo-safe-top\)\);/);
   assert.match(baseCss, /\.android-device-indicator \{[\s\S]*pointer-events: none;/);
   assert.match(baseCss, /input:not\(\[type="range"\]\):not\(\[type="color"\]\):not\(\[type="checkbox"\]\):not\(\[type="radio"\]\),[\s\S]*font-size: 16px;/);
@@ -110,4 +111,6 @@ test("mobile layout accounts for iOS safe areas and visual viewport changes", ()
   assert.match(appSource, /--cbo-visual-viewport-height/);
   assert.match(appSource, /--cbo-keyboard-inset-bottom/);
   assert.match(appSource, /cbo-visual-keyboard-active/);
+  assert.match(appSource, /keyboardInsetBottom > 80 && \(window\.scrollX \|\| window\.scrollY\)/);
+  assert.match(appSource, /window\.scrollTo\(0, 0\)/);
 });

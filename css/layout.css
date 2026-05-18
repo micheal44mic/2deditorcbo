@@ -184,6 +184,7 @@
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
+  touch-action: none;
   transform: scale(0.9);
   transform-origin: center;
   transition:
@@ -214,6 +215,12 @@
   transform: scale(1);
 }
 
+.editor-stage.artboard-dragging .editor-artboard-action-bubble {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.9);
+}
+
 .editor-artboard-action-bubble svg {
   position: relative;
   z-index: 1;
@@ -221,6 +228,222 @@
   pointer-events: none;
   width: var(--artboard-action-icon-size, 24px);
   height: var(--artboard-action-icon-size, 24px);
+}
+
+.editor-space-board-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.editor-ai-image-board {
+  --ai-image-board-footer-height: 210px;
+
+  position: absolute;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  pointer-events: auto;
+}
+
+.editor-ai-image-board-label {
+  position: absolute;
+  left: 0;
+  top: var(--ai-image-board-label-top, -25px);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 5px;
+  background: rgba(18, 20, 24, 0.86);
+  color: #edf0f6;
+  cursor: grab;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  pointer-events: auto;
+  touch-action: none;
+  transform: scale(var(--ai-image-board-label-inverse-scale, 1));
+  transform-origin: 0 0;
+  white-space: nowrap;
+}
+
+.editor-ai-image-board-label:active {
+  cursor: grabbing;
+}
+
+.editor-ai-image-board-surface {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 5px solid #f05023;
+  border-radius: var(--ai-image-board-radius, 38px);
+  background: #ffffff;
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.editor-ai-image-board::after {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  box-sizing: border-box;
+  border: 5px solid #f05023;
+  border-radius: var(--ai-image-board-radius, 38px);
+  pointer-events: none;
+  content: "";
+}
+
+.editor-ai-image-board-footer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  min-height: var(--ai-image-board-footer-height, 210px);
+  box-sizing: border-box;
+  padding: 34px 38px;
+  border-radius: 0 0 var(--ai-image-board-radius, 38px) var(--ai-image-board-radius, 38px);
+  background: rgba(12, 14, 18, 0.68);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(14px);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.editor-ai-image-board-prompt-title {
+  position: absolute;
+  right: 38px;
+  bottom: calc(var(--ai-image-board-footer-height, 210px) + 24px);
+  left: 38px;
+  z-index: 3;
+  color: #111111;
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.12;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.editor-ai-image-board:hover .editor-ai-image-board-footer,
+.editor-ai-image-board:focus-within .editor-ai-image-board-footer,
+.editor-ai-image-board:hover .editor-ai-image-board-prompt-title,
+.editor-ai-image-board:focus-within .editor-ai-image-board-prompt-title {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.editor-ai-image-board:hover .editor-ai-image-board-footer,
+.editor-ai-image-board:focus-within .editor-ai-image-board-footer {
+  pointer-events: auto;
+}
+
+.editor-ai-image-board-prompt-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 84px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  overflow: hidden;
+  resize: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.96);
+  font: inherit;
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.22;
+}
+
+.editor-ai-image-board-prompt-input::placeholder {
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.editor-ai-image-board-prompt-input::selection {
+  background: rgba(240, 80, 35, 0.35);
+}
+
+.editor-ai-image-board-input {
+  position: absolute;
+  left: var(--ai-image-input-handle-left, -144px);
+  top: var(--ai-image-input-handle-top, 880px);
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: var(--ai-image-input-handle-size, 120px);
+  height: var(--ai-image-input-handle-size, 120px);
+  border: var(--ai-image-input-border-width, 3px) solid #f05023;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111111;
+  touch-action: none;
+}
+
+.editor-ai-image-board-input svg {
+  width: var(--ai-image-input-icon-size, 76px);
+  height: var(--ai-image-input-icon-size, 76px);
+}
+
+.editor-ai-image-board-generate {
+  position: absolute;
+  left: var(--ai-image-generate-handle-left, 1048px);
+  top: var(--ai-image-generate-handle-top, 24px);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: var(--ai-image-generate-handle-size, 120px);
+  height: var(--ai-image-generate-handle-size, 120px);
+  padding: 0;
+  border: var(--ai-image-generate-border-width, 3px) solid #f05023;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111111;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.editor-ai-image-board-generate::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #f05023;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+.editor-ai-image-board-generate:hover::before,
+.editor-ai-image-board-generate:focus-visible::before {
+  opacity: 0.1;
+}
+
+.editor-ai-image-board-generate:focus-visible {
+  outline: none;
+}
+
+.editor-ai-image-board-generate svg {
+  position: relative;
+  z-index: 1;
+  width: var(--ai-image-generate-icon-size, 76px);
+  height: var(--ai-image-generate-icon-size, 76px);
+  pointer-events: none;
 }
 
 .editor-artboard-connection-menu {
@@ -236,6 +459,7 @@
   color: #d9dde6;
   opacity: 0;
   pointer-events: none;
+  touch-action: none;
   transform: translateY(4px) scale(0.98);
   transform-origin: 0 50%;
   transition:
@@ -279,6 +503,7 @@
   background: transparent;
   color: #aeb5c4;
   cursor: pointer;
+  touch-action: manipulation;
   transition:
     background 140ms ease,
     color 140ms ease;
@@ -308,6 +533,7 @@
   background: transparent;
   color: #aeb5c4;
   cursor: pointer;
+  touch-action: manipulation;
   font: inherit;
   font-size: 13px;
   font-weight: 700;

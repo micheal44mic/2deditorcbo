@@ -221,11 +221,22 @@ window.CBO = window.CBO || {};
   function getArtboardCollisionRects(artboardId) {
     const normalizedArtboardId = String(artboardId || "").trim();
 
-    return (namespace.documentArtboardModel?.artboards || [])
-      .filter((artboard) => artboard?.id && artboard.id !== normalizedArtboardId)
-      .map((artboard) => getArtboardRect(artboard))
+    return [
+      ...(namespace.documentArtboardModel?.artboards || [])
+        .filter((artboard) => artboard?.id && artboard.id !== normalizedArtboardId)
+        .map((artboard) => getArtboardRect(artboard)),
+      ...getExternalArtboardCollisionRects(),
+    ]
       .map((rect) => expandRect(rect, MIN_ARTBOARD_GAP))
       .filter(Boolean);
+  }
+
+  function getExternalArtboardCollisionRects() {
+    const rects = namespace.getArtboardConnectionBoardCollisionRects?.();
+
+    return Array.isArray(rects)
+      ? rects.map(cloneRect).filter(Boolean)
+      : [];
   }
 
   function constrainRectMove(startRect, dx, dy, blockers = []) {
@@ -403,8 +414,10 @@ window.CBO = window.CBO || {};
     findFreeArtboardPlacement(size, options = {}) {
       const width = toPositiveInt(size?.width, DEFAULT_ARTBOARD_WIDTH);
       const height = toPositiveInt(size?.height, DEFAULT_ARTBOARD_HEIGHT);
-      const blockers = this.artboards
-        .map((artboard) => getArtboardRect(artboard))
+      const blockers = [
+        ...this.artboards.map((artboard) => getArtboardRect(artboard)),
+        ...getExternalArtboardCollisionRects(),
+      ]
         .map((rect) => expandRect(rect, MIN_ARTBOARD_GAP))
         .filter(Boolean);
       const canUseRect = (rect) => (

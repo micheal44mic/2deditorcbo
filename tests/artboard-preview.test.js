@@ -111,8 +111,9 @@ test("left rail exposes a visual artboard tool below layers", () => {
   assert.ok(artboardButtonIndex > layerButtonIndex);
   assert.match(indexSource, /data-tooltip="ARTBOARD"/);
   assert.match(indexSource, /class="lucide lucide-dice1-icon lucide-dice-1"/);
-  assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/js\/artboard-connections\.js\?v=spaces-connections"><\/script>/);
+  assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layout\.css\?v=android-v5\.0-space-board-generate" \/>/);
+  assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js\?v=android-v4\.5-space-board-collision"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/artboard-connections\.js\?v=spaces-connections-keyboard-focus"><\/script>/);
   assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
 });
 
@@ -167,13 +168,108 @@ test("artboard connections live in their own module", () => {
   assert.doesNotMatch(connectionsSource, /addEventListener\("pointerdown", handleMenuDocumentPointerDown/);
   assert.match(connectionsSource, /addEventListener\("click", handleMenuDocumentClick, true\)/);
   assert.match(connectionsSource, /ignoreNextMenuDocumentClick = true/);
+  assert.match(connectionsSource, /AI_IMAGE_BOARD_SIZE_DOC_PX = 1024/);
+  assert.match(connectionsSource, /AI_IMAGE_INPUT_HANDLE_SIZE_DOC_PX = ACTION_BUBBLE_SIZE_DOC_PX/);
+  assert.match(connectionsSource, /AI_IMAGE_INPUT_HANDLE_GAP_DOC_PX = ACTION_BUBBLE_GAP_DOC_PX/);
+  assert.match(connectionsSource, /AI_IMAGE_GENERATE_HANDLE_SIZE_DOC_PX = ACTION_BUBBLE_SIZE_DOC_PX/);
+  assert.match(connectionsSource, /AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX = ACTION_BUBBLE_GAP_DOC_PX/);
+  assert.match(connectionsSource, /SPACE_BOARD_DRAG_GAP_DOC_PX = 24/);
+  assert.match(connectionsSource, /function getAllowedSpaceBoardMove\(startFootprint, dx, dy, blockers = \[\]\)/);
+  assert.match(connectionsSource, /function getActionBubbleMetrics\(scale = getViewScale\(\)\)/);
+  assert.match(connectionsSource, /const size = ACTION_BUBBLE_SIZE_DOC_PX \* safeScale/);
+  assert.match(connectionsSource, /const gap = ACTION_BUBBLE_GAP_DOC_PX \* safeScale/);
+  assert.doesNotMatch(connectionsSource, /clampNumber/);
+  assert.match(connectionsSource, /SPACE_BOARD_GAP_DOC_PX = 220/);
+  assert.match(connectionsSource, /function getAiImageBoardFootprintRect\(rect\)/);
+  assert.match(connectionsSource, /function resolveFreeSpaceBoardPlacement\(preferredRect, options = \{\}\)/);
+  assert.match(connectionsSource, /getAllArtboards\(\)\.map\(getDocumentArtboardRect\)/);
+  assert.match(connectionsSource, /spaceBoards[\s\S]*\.filter\(\(board\)[\s\S]*\.map\(getSpaceBoardRect\)/);
+  assert.match(connectionsSource, /function materializeAiImageBoardFromMenu\(\)/);
+  assert.match(connectionsSource, /connection\.targetHandle = "image-input"/);
+  assert.match(connectionsSource, /data-ai-image-board-drag-handle/);
+  assert.match(connectionsSource, /data-ai-image-board-footer/);
+  assert.match(connectionsSource, /data-ai-image-board-prompt-input/);
+  assert.match(connectionsSource, /data-ai-image-board-generate/);
+  assert.match(connectionsSource, /aria-label="Generate image"/);
+  assert.match(connectionsSource, /What image do you want to generate\?/);
+  assert.match(connectionsSource, /AI_IMAGE_PROMPT_PLACEHOLDER = "Neon product shot"/);
+  assert.match(connectionsSource, /AI_IMAGE_PROMPT_INPUT_MIN_HEIGHT_CSS_PX = 84/);
+  assert.match(connectionsSource, /AI_IMAGE_BOARD_FOOTER_MIN_HEIGHT_CSS_PX = 210/);
+  assert.match(connectionsSource, /AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX = 96/);
+  assert.match(connectionsSource, /AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX = 24/);
+  assert.match(connectionsSource, /placeholder="\$\{AI_IMAGE_PROMPT_PLACEHOLDER\}"/);
+  assert.match(connectionsSource, /input\.placeholder = ""/);
+  assert.match(connectionsSource, /input\.placeholder = AI_IMAGE_PROMPT_PLACEHOLDER/);
+  assert.match(connectionsSource, /function resizeAiImagePromptInput\(input\)/);
+  assert.match(connectionsSource, /input\.style\.height = "auto"/);
+  assert.match(connectionsSource, /footer\.scrollHeight/);
+  assert.match(connectionsSource, /--ai-image-board-footer-height/);
+  assert.match(connectionsSource, /function scheduleAiImagePromptFocusViewport\(boardId\)/);
+  assert.match(connectionsSource, /function focusAiImagePromptBoard\(boardId\)/);
+  assert.match(connectionsSource, /\(window\.innerWidth \|\| 0\) <= 900/);
+  assert.match(connectionsSource, /brushEngine\.camera\.x = nextCameraX/);
+  assert.match(connectionsSource, /brushEngine\.camera\.y = nextCameraY/);
+  assert.match(connectionsSource, /brushEngine\.requestDraw\?\.\(\)/);
+  assert.match(connectionsSource, /board\.addEventListener\("wheel", handleSpaceBoardWheel, \{ passive: false \}\)/);
+  assert.match(connectionsSource, /function handleSpaceBoardWheel\(event\)/);
+  assert.match(connectionsSource, /brushEngine\.handleWheel\.call\(brushEngine, event\)/);
+  assert.match(connectionsSource, /function handleAiImageGenerateClick\(event\)/);
+  assert.match(connectionsSource, /cbo:ai-image-board-generate-click/);
+  assert.match(connectionsSource, /--ai-image-generate-handle-left/);
+  assert.match(connectionsSource, /function handleAiImagePromptInput\(event\)/);
+  assert.match(connectionsSource, /type: "space-board-prompt"/);
+  assert.match(connectionsSource, /function startSpaceBoardDrag\(event\)/);
+  assert.match(connectionsSource, /function finishSpaceBoardDrag\(event\)/);
+  assert.match(connectionsSource, /type: "space-board-create"/);
+  assert.match(connectionsSource, /type: "space-board-move"/);
+  assert.match(connectionsSource, /function captureConnectionsHistoryState\(options = \{\}\)/);
+  assert.match(connectionsSource, /function restoreConnectionsHistoryState\(state, source = "history-artboard-connections"\)/);
+  assert.match(previewSource, /\[data-ai-image-board\]/);
+  assert.match(connectionsSource, /namespace\.getArtboardConnectionBoards = function getArtboardConnectionBoards/);
+  assert.match(connectionsSource, /namespace\.getArtboardConnectionBoardCollisionRects = function getArtboardConnectionBoardCollisionRects/);
+  assert.doesNotMatch(connectionsSource, /Describe the image you want to generate/);
   assert.match(connectionsSource, /const left = view\.left \+ view\.width \+ gap;/);
   assert.match(connectionsSource, /const top = view\.top \+ gap;/);
-  assert.match(connectionsSource, /const left = end\.x \+ CONNECTION_MENU_GAP_CSS_PX;/);
-  assert.match(connectionsSource, /const top = end\.y - height \* 0\.5;/);
+  assert.match(connectionsSource, /const preferredLeft = end\.x \+ CONNECTION_MENU_GAP_CSS_PX;/);
+  assert.match(connectionsSource, /preferredLeft \+ width > stageWidth - 8/);
+  assert.match(connectionsSource, /stageHeight - height - 8/);
   assert.doesNotMatch(connectionsSource, /CONNECTION_MENU_PADDING_CSS_PX/);
   assert.match(cssSource, /\.editor-artboard-connection-menu/);
   assert.match(cssSource, /\.editor-artboard-connection-menu-close/);
+  assert.match(cssSource, /\.editor-artboard-action-bubble[\s\S]*touch-action: none/);
+  assert.match(cssSource, /\.editor-artboard-connection-menu-button[\s\S]*touch-action: manipulation/);
+  assert.doesNotMatch(cssSource, /@media \(pointer: coarse\)[\s\S]*min-width: 44px/);
+  assert.match(cssSource, /\.editor-space-board-layer/);
+  assert.match(cssSource, /\.editor-space-board-layer[\s\S]*z-index: 5/);
+  assert.match(cssSource, /\.editor-ai-image-board[\s\S]*pointer-events: auto/);
+  assert.match(cssSource, /\.editor-ai-image-board-label[\s\S]*cursor: grab/);
+  assert.match(cssSource, /\.editor-ai-image-board-label[\s\S]*touch-action: none/);
+  assert.match(cssSource, /\.editor-stage\.artboard-dragging \.editor-artboard-action-bubble[\s\S]*opacity: 0/);
+  assert.match(cssSource, /\.editor-ai-image-board-surface[\s\S]*border: 5px solid #f05023/);
+  assert.match(cssSource, /\.editor-ai-image-board::after[\s\S]*z-index: 4/);
+  assert.match(cssSource, /\.editor-ai-image-board-footer[\s\S]*bottom: 0/);
+  assert.match(cssSource, /\.editor-ai-image-board-footer[\s\S]*left: 0/);
+  assert.match(cssSource, /\.editor-ai-image-board-footer[\s\S]*right: 0/);
+  assert.match(cssSource, /--ai-image-board-footer-height: 210px/);
+  assert.match(cssSource, /\.editor-ai-image-board-footer[\s\S]*min-height: var\(--ai-image-board-footer-height, 210px\)/);
+  assert.match(cssSource, /\.editor-ai-image-board-prompt-title[\s\S]*bottom: calc\(var\(--ai-image-board-footer-height, 210px\) \+ 24px\)/);
+  assert.match(cssSource, /\.editor-ai-image-board-prompt-title[\s\S]*color: #111111/);
+  assert.match(cssSource, /\.editor-ai-image-board-prompt-title[\s\S]*font-size: 42px/);
+  assert.match(cssSource, /\.editor-ai-image-board:hover \.editor-ai-image-board-footer/);
+  assert.match(cssSource, /\.editor-ai-image-board:hover \.editor-ai-image-board-prompt-title/);
+  assert.match(cssSource, /\.editor-ai-image-board-prompt-input/);
+  assert.match(cssSource, /\.editor-ai-image-board-prompt-input[\s\S]*box-sizing: border-box/);
+  assert.match(cssSource, /\.editor-ai-image-board-prompt-input[\s\S]*overflow: hidden/);
+  assert.match(cssSource, /\.editor-ai-image-board-prompt-input[\s\S]*font-size: 48px/);
+  assert.match(cssSource, /\.editor-ai-image-board-prompt-input::placeholder[\s\S]*rgba\(255, 255, 255, 0\.46\)/);
+  assert.match(cssSource, /\.editor-ai-image-board-input/);
+  assert.match(cssSource, /--ai-image-input-handle-left, -144px/);
+  assert.match(cssSource, /--ai-image-input-icon-size, 76px/);
+  assert.match(cssSource, /\.editor-ai-image-board-generate/);
+  assert.match(cssSource, /\.editor-ai-image-board-generate[\s\S]*border: var\(--ai-image-generate-border-width, 3px\) solid #f05023/);
+  assert.match(cssSource, /\.editor-ai-image-board-generate:hover::before/);
+  assert.match(cssSource, /--ai-image-generate-icon-size, 76px/);
+  assert.doesNotMatch(cssSource, /\.editor-ai-image-board-controls/);
 });
 
 test("layers panel mirrors artboards as collapsed artboard groups", () => {
@@ -285,6 +381,8 @@ test("document artboard model owns artboard records and persistence hooks", () =
   assert.match(modelSource, /namespace\.getActiveDocumentArtboardRect = function getActiveDocumentArtboardRect/);
   assert.match(modelSource, /namespace\.getDocumentArtboardUnionRect = function getDocumentArtboardUnionRect/);
   assert.match(modelSource, /namespace\.getActiveDocumentArtboardCoverageRects = function getActiveDocumentArtboardCoverageRects/);
+  assert.match(modelSource, /function getExternalArtboardCollisionRects\(\)/);
+  assert.match(modelSource, /namespace\.getArtboardConnectionBoardCollisionRects\?\.\(\)/);
 
   assert.match(editorCanvasSource, /DocumentArtboardModel non caricato/);
   assert.match(editorCanvasSource, /window\.CBO\.resetDocumentArtboards\?\.\(\{/);
@@ -508,6 +606,55 @@ test("new artboard creation uses requested size and skips occupied slots", () =>
   assert.equal(custom.width, 321);
   assert.equal(custom.height, 654);
   assert.equal(namespace.getDocumentArtboards().length, 5);
+});
+
+test("new artboard creation avoids AI image board collision rects", () => {
+  const namespace = loadDocumentArtboardNamespace();
+
+  namespace.resetDocumentArtboards({
+    artboards: [
+      {
+        height: 100,
+        id: "active-document",
+        isPrimary: true,
+        name: "Artboard 1",
+        width: 100,
+        x: 0,
+        y: 0,
+      },
+      {
+        height: 180,
+        id: "selected",
+        name: "Selected",
+        width: 240,
+        x: 200,
+        y: 0,
+      },
+    ],
+    defaultSecondaryCount: 0,
+    documentHeight: 100,
+    documentWidth: 100,
+    source: "unit-artboard-create-external-placement",
+  });
+  namespace.artboardSelectionEnabled = true;
+  namespace.selectDocumentArtboard("selected", { emit: false });
+  namespace.getArtboardConnectionBoardCollisionRects = () => [
+    {
+      height: 1024,
+      width: 1024,
+      x: 696,
+      y: 0,
+    },
+  ];
+
+  const created = namespace.createDocumentArtboard({
+    source: "unit-artboard-create-external-placement",
+  });
+
+  assert.equal(created.width, 240);
+  assert.equal(created.height, 180);
+  assert.equal(created.x, 200);
+  assert.equal(created.y, 436);
 });
 
 test("created artboards undo and redo their generated layer groups", () => {
