@@ -1193,6 +1193,10 @@ window.CBO = window.CBO || {};
   }
 
   function handleStagePointerDown(event) {
+    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-connection-menu]")) {
+      return;
+    }
+
     if (
       event.button !== 0 ||
       event.isPrimary === false ||
@@ -1318,6 +1322,17 @@ window.CBO = window.CBO || {};
       return frame;
     }));
 
+    namespace.renderArtboardConnectionOverlay?.({
+      artboardViews,
+      camera: {
+        x: Number(camera.x) || 0,
+        y: Number(camera.y) || 0,
+        zoom,
+      },
+      dpr,
+      selectedArtboardId,
+      viewScale: zoom / dpr,
+    });
     syncArtboardDragPreview();
   }
 

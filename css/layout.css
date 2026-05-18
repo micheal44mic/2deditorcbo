@@ -152,6 +152,194 @@
   color: #17130a;
 }
 
+.editor-artboard-connection-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.editor-artboard-connection-path {
+  fill: none;
+  stroke: #f05023;
+  stroke-linecap: butt;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.editor-artboard-action-bubble {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 3px solid #f05023;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111111;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.24);
+  cursor: pointer;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transform: scale(0.9);
+  transform-origin: center;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+  will-change: opacity, transform;
+}
+
+.editor-artboard-action-bubble::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #f05023;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.editor-artboard-action-bubble:hover::before,
+.editor-artboard-action-bubble.is-hovered::before {
+  opacity: 0.1;
+}
+
+.editor-artboard-action-bubble.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.editor-artboard-action-bubble svg {
+  position: relative;
+  z-index: 1;
+  display: block;
+  pointer-events: none;
+  width: var(--artboard-action-icon-size, 24px);
+  height: var(--artboard-action-icon-size, 24px);
+}
+
+.editor-artboard-connection-menu {
+  position: absolute;
+  z-index: 6;
+  box-sizing: border-box;
+  width: 140px;
+  padding: 14px 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 7px;
+  background: #181a20;
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.28);
+  color: #d9dde6;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px) scale(0.98);
+  transform-origin: 0 50%;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.editor-artboard-connection-menu.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.editor-artboard-connection-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 9px 5px;
+}
+
+.editor-artboard-connection-menu-title {
+  color: #ffffff;
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.editor-artboard-connection-menu-close {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -5px -4px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #aeb5c4;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.editor-artboard-connection-menu-close:hover,
+.editor-artboard-connection-menu-close:focus-visible {
+  background: rgba(240, 80, 35, 0.1);
+  color: #ffffff;
+  outline: none;
+}
+
+.editor-artboard-connection-menu-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.editor-artboard-connection-menu-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #aeb5c4;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: left;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.editor-artboard-connection-menu-button:hover,
+.editor-artboard-connection-menu-button:focus-visible {
+  background: rgba(240, 80, 35, 0.1);
+  color: #ffffff;
+  outline: none;
+}
+
+.editor-artboard-connection-menu-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-artboard-action-bubble,
+  .editor-artboard-connection-menu {
+    transition: none;
+  }
+}
+
 .artboard-create-popover {
   position: fixed;
   z-index: 20050;

@@ -112,6 +112,7 @@ test("left rail exposes a visual artboard tool below layers", () => {
   assert.match(indexSource, /data-tooltip="ARTBOARD"/);
   assert.match(indexSource, /class="lucide lucide-dice1-icon lucide-dice-1"/);
   assert.match(indexSource, /<script src="\.\/js\/document\/document-artboard-model\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/js\/artboard-connections\.js\?v=spaces-connections"><\/script>/);
   assert.match(indexSource, /<script src="\.\/js\/artboard-preview\.js\?v=android-v4\.5-no-fill-history-debug"><\/script>/);
 });
 
@@ -150,6 +151,29 @@ test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
   assert.match(cssSource, /\.editor-artboard-paper\.is-transparent[\s\S]*background: transparent/);
   assert.match(cssSource, /\.editor-artboard-frame[\s\S]*background: transparent/);
   assert.match(appSource, /window\.CBO\.initArtboardPreview\?\.\(\);/);
+});
+
+test("artboard connections live in their own module", () => {
+  const previewSource = readRepoFile("js", "artboard-preview.js");
+  const connectionsSource = readRepoFile("js", "artboard-connections.js");
+  const cssSource = readRepoFile("css", "layout.css");
+
+  assert.match(previewSource, /namespace\.renderArtboardConnectionOverlay\?\.\(\{/);
+  assert.doesNotMatch(previewSource, /function ensureArtboardConnectionLayer/);
+  assert.match(connectionsSource, /function ensureConnectionLayer\(\)/);
+  assert.match(connectionsSource, /namespace\.renderArtboardConnectionOverlay = function renderArtboardConnectionOverlay/);
+  assert.match(connectionsSource, /CONNECTION_CLICK_DISTANCE_CSS_PX = 220/);
+  assert.match(connectionsSource, /data-artboard-connection-dismiss/);
+  assert.doesNotMatch(connectionsSource, /addEventListener\("pointerdown", handleMenuDocumentPointerDown/);
+  assert.match(connectionsSource, /addEventListener\("click", handleMenuDocumentClick, true\)/);
+  assert.match(connectionsSource, /ignoreNextMenuDocumentClick = true/);
+  assert.match(connectionsSource, /const left = view\.left \+ view\.width \+ gap;/);
+  assert.match(connectionsSource, /const top = view\.top \+ gap;/);
+  assert.match(connectionsSource, /const left = end\.x \+ CONNECTION_MENU_GAP_CSS_PX;/);
+  assert.match(connectionsSource, /const top = end\.y - height \* 0\.5;/);
+  assert.doesNotMatch(connectionsSource, /CONNECTION_MENU_PADDING_CSS_PX/);
+  assert.match(cssSource, /\.editor-artboard-connection-menu/);
+  assert.match(cssSource, /\.editor-artboard-connection-menu-close/);
 });
 
 test("layers panel mirrors artboards as collapsed artboard groups", () => {
