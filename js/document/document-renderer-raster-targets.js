@@ -3231,17 +3231,32 @@
         return null;
       }
 
-      const existingTarget = this.ensureWritableRasterTarget(layerId, {
+      let existingTarget = this.ensureWritableRasterTarget(layerId, {
         source: options.source || "paint-copy-on-write-detach",
       }) || this.rasterTargetsByLayerId.get(layerId);
-      const existingRect = this.getRasterTargetDocumentRect(existingTarget);
+      let existingRect = this.getRasterTargetDocumentRect(existingTarget);
       const source = options.source || "ensure-raster-target-for-paint-rect";
 
       if (this.isSparseRasterTarget(existingTarget)) {
-        return this.materializeRasterTarget(layerId, {
+        existingTarget = this.materializeRasterTarget(layerId, {
           emit: false,
           source,
-        });
+        }) || this.rasterTargetsByLayerId.get(layerId);
+        existingRect = this.getRasterTargetDocumentRect(existingTarget);
+
+        // Dense brush bakes can request a rect much larger than the sparse tiles
+        // that were prewarmed during live drawing. Materializing sparse content
+        // alone may therefore create a cropped target that is still too small.
+        if (
+          existingTarget?.framebuffer &&
+          existingTarget?.texture &&
+          this.containsRasterHistoryRect(existingRect, requiredRect)
+        ) {
+          return {
+            ...existingTarget,
+            layerId,
+          };
+        }
       }
 
       if (!existingTarget?.framebuffer || !existingTarget?.texture) {

@@ -1492,6 +1492,102 @@
     }
 ,
 
+    createStrokeInputStats(firstSample = null) {
+      const startTime = Number(firstSample?.time);
+
+      return {
+        avgSpeed: 0,
+        coalescedSamples: 0,
+        droppedSamples: 0,
+        durationMs: 0,
+        frameBudgetHits: 0,
+        lastSample: firstSample ? { ...firstSample } : null,
+        maxPendingSamples: 0,
+        maxSegmentDistance: 0,
+        moveEvents: 0,
+        pathDistance: 0,
+        pointerUpDrainSamples: 0,
+        processedSamples: 0,
+        rawSamples: firstSample ? 1 : 0,
+        startTime: Number.isFinite(startTime) ? startTime : this.getNow(),
+      };
+    }
+,
+
+    updateStrokeInputStats(samples = [], options = {}) {
+      if (!Array.isArray(samples) || samples.length === 0) {
+        return null;
+      }
+
+      if (!this.strokeInputStats) {
+        this.strokeInputStats = this.createStrokeInputStats();
+      }
+
+      const stats = this.strokeInputStats;
+      let batchPathDistance = 0;
+      let batchMaxSegmentDistance = 0;
+
+      if (options.eventType === "move") {
+        stats.moveEvents += 1;
+        stats.coalescedSamples += Math.max(0, samples.length - 1);
+      }
+
+      stats.rawSamples += samples.length;
+
+      samples.forEach((sample) => {
+        if (stats.lastSample) {
+          const distance = Math.hypot(sample.x - stats.lastSample.x, sample.y - stats.lastSample.y);
+
+          batchPathDistance += distance;
+          batchMaxSegmentDistance = Math.max(batchMaxSegmentDistance, distance);
+          stats.pathDistance += distance;
+          stats.maxSegmentDistance = Math.max(stats.maxSegmentDistance, distance);
+        }
+
+        stats.lastSample = { ...sample };
+      });
+
+      const lastTime = Number(stats.lastSample?.time);
+      const durationMs = Number.isFinite(lastTime)
+        ? Math.max(0, lastTime - stats.startTime)
+        : 0;
+
+      stats.durationMs = durationMs;
+      stats.avgSpeed = durationMs > 0 ? stats.pathDistance / durationMs : 0;
+
+      return {
+        batchMaxSegmentDistance,
+        batchPathDistance,
+        sampleCount: samples.length,
+        stats: this.getStrokeInputStatsSnapshot(),
+      };
+    }
+,
+
+    getStrokeInputStatsSnapshot() {
+      const stats = this.strokeInputStats;
+
+      if (!stats) {
+        return null;
+      }
+
+      return {
+        avgSpeed: Math.round((Number(stats.avgSpeed) || 0) * 100) / 100,
+        coalescedSamples: Math.max(0, Math.round(Number(stats.coalescedSamples) || 0)),
+        droppedSamples: Math.max(0, Math.round(Number(stats.droppedSamples) || 0)),
+        durationMs: Math.round((Number(stats.durationMs) || 0) * 10) / 10,
+        frameBudgetHits: Math.max(0, Math.round(Number(stats.frameBudgetHits) || 0)),
+        maxPendingSamples: Math.max(0, Math.round(Number(stats.maxPendingSamples) || 0)),
+        maxSegmentDistance: Math.round((Number(stats.maxSegmentDistance) || 0) * 10) / 10,
+        moveEvents: Math.max(0, Math.round(Number(stats.moveEvents) || 0)),
+        pathDistance: Math.round((Number(stats.pathDistance) || 0) * 10) / 10,
+        pointerUpDrainSamples: Math.max(0, Math.round(Number(stats.pointerUpDrainSamples) || 0)),
+        processedSamples: Math.max(0, Math.round(Number(stats.processedSamples) || 0)),
+        rawSamples: Math.max(0, Math.round(Number(stats.rawSamples) || 0)),
+      };
+    }
+,
+
     enqueuePointerMoveSamples(event) {
       const samples = this.getPointerEventSamples(event);
 
@@ -1507,8 +1603,16 @@
         this.recordedStroke = [];
       }
 
+      this.updateStrokeInputStats(samples, { eventType: "move" });
+
       this.recordedStroke.push(...samples);
       this.pendingPointerSamples.push(...samples);
+      if (this.strokeInputStats) {
+        this.strokeInputStats.maxPendingSamples = Math.max(
+          this.strokeInputStats.maxPendingSamples || 0,
+          this.pendingPointerSamples.length,
+        );
+      }
 
       return true;
     }
@@ -1535,23 +1639,23 @@
         return this.pendingPointerSamples.splice(0, budget);
       }
 
-      const backlog = this.pendingPointerSamples.splice(0);
-      const result = [];
-      const lastIndex = backlog.length - 1;
-
-      for (let index = 0; index < budget; index += 1) {
-        const sourceIndex = Math.round((index / Math.max(1, budget - 1)) * lastIndex);
-
-        result.push(backlog[sourceIndex]);
-      }
+      const pendingSamples = this.pendingPointerSamples.length;
+      const result = this.pendingPointerSamples.splice(0, budget);
 
       namespace.lastBrushPointerBacklogDrop = {
-        droppedSamples: Math.max(0, backlog.length - result.length),
+        backlogPreserved: true,
+        droppedSamples: 0,
         keptSamples: result.length,
-        pendingSamples: backlog.length,
+        pendingSamples,
+        remainingSamples: this.pendingPointerSamples.length,
         timestamp: Date.now(),
       };
-
+      if (this.strokeInputStats) {
+        this.strokeInputStats.maxPendingSamples = Math.max(
+          this.strokeInputStats.maxPendingSamples || 0,
+          pendingSamples,
+        );
+      }
       return result;
     }
 ,
@@ -1580,6 +1684,9 @@
           this.getNow() - startedAt >= frameBudgetMs
         ) {
           this.pendingPointerSamples.unshift(...samples.slice(index + 1));
+          if (this.strokeInputStats) {
+            this.strokeInputStats.frameBudgetHits += 1;
+          }
           namespace.lastBrushPointerFrameBudget = {
             budgetMs: frameBudgetMs,
             processedSamples: processedCount,
@@ -1590,27 +1697,19 @@
         }
       }
 
+      if (this.strokeInputStats) {
+        this.strokeInputStats.processedSamples += processedCount;
+        if (options.drainAll === true) {
+          this.strokeInputStats.pointerUpDrainSamples += processedCount;
+        }
+      }
+
       if (processedCount > 0 && options.flush !== false) {
         this.flushStamps({ requestDraw: options.requestDraw !== false });
       }
 
       if (this.pendingPointerSamples.length > 0) {
         this.requestDraw();
-      }
-
-      if (processedCount > 0) {
-        namespace.BrushLagDebug?.recordTiming?.("slow-input", {
-          durationMs: this.getNow() - startedAt,
-          drainAll: options.drainAll === true,
-          frameBudgetMs: Number.isFinite(frameBudgetMs) ? frameBudgetMs : null,
-          initialPendingSamples,
-          processedSamples: processedCount,
-          remainingSamples: this.pendingPointerSamples.length,
-          tool: this.currentStrokeTool || this.activeStrokeTool || "brush",
-        }, {
-          metric: "inputMs",
-          warnAtMs: 8,
-        });
       }
 
       return processedCount > 0;
@@ -1677,11 +1776,6 @@
       const strokeTool = this.activeStrokeTool || "brush";
       let strokeTarget = null;
 
-      namespace.BrushLagDebug?.log?.("pointerdown", {
-        pendingSamples: Array.isArray(this.pendingPointerSamples) ? this.pendingPointerSamples.length : 0,
-        tool: strokeTool,
-      });
-
       if (strokeTool === "eraser") {
         this.logEraserZoomDebug("eraser-pointerdown", {
           docPoint: {
@@ -1732,6 +1826,8 @@
       this.strokeRenderMode = this.getBrushStrokeRenderMode();
       this.strokeTargetLayerId = strokeTarget?.layerId || null;
       const rawSample = this.createPointerSample(event);
+
+      this.strokeInputStats = this.createStrokeInputStats(rawSample);
 
       this.recordedStroke = [rawSample];
 
@@ -1838,12 +1934,6 @@
         }
 
         this.bakeStroke();
-
-        namespace.BrushLagDebug?.log?.("pointerup", {
-          pendingSamples: Array.isArray(this.pendingPointerSamples) ? this.pendingPointerSamples.length : 0,
-          strokeStamps: this.strokeStampCount,
-          tool: this.currentStrokeTool || this.activeStrokeTool || "brush",
-        });
 
         if (this.currentStrokeTool === "eraser") {
           this.logEraserZoomDebug("eraser-pointerup-after-bake", {

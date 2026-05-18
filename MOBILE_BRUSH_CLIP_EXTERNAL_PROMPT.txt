@@ -1,0 +1,209 @@
+PROMPT PER DEBUG ESTERNO - BUG BRUSH MOBILE TAGLIATO
+
+Repo locale:
+C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush
+
+Contesto:
+Questa e' una web app editor 2D canvas/WebGL. Il bug e' visibile solo su mobile
+iOS/Android, non su PC desktop. Con pennello molto grande e pennellate rapide, il
+tratto rosso viene tagliato/troncato visivamente. Su desktop lo stesso comportamento
+non si vede.
+
+Riproduzione consigliata:
+1. Avviare app in locale, aprire da telefono sulla LAN.
+2. Creare/aprire artboard 2048 x 2048.
+3. Selezionare brush normale, colore rosso, size circa 400-500 px, opacity 100%.
+4. Fare pennellate veloci sull'artboard.
+5. Confrontare mobile vs PC: PC ok, mobile taglia/accorcia parti del tratto.
+
+Debug attuale gia' inserito:
+Il file js/debug/brush-first-stroke-clip-debug.js mostra:
+- console testuale "FAST STROKE CLIP DEBUG"
+- overlay visivo sopra canvas con quadrati/rect del bake
+
+Legenda overlay visivo:
+- rosso = stroke bounds
+- verde = scratch buffer / stroke buffer
+- arancione = paint target
+- giallo tratteggiato = tile intero
+- azzurro = patch effettiva scritta dal brush
+- viola = dirty/preview rect
+
+Dati osservati da screenshot mobile:
+- raw=34, processed=33
+- pending=0
+- dropped=0
+- budgetHits=0
+- maxSeg=133.2
+- path=2246.5
+- speed=4.28 px/ms
+- stroke=389,138 1431x1673
+- scratch=0,0 2048x2048
+- paintTargetRect=383,132 1443x1685
+- targets=1
+- strategy=dense-mobile-large-stroke
+- patchTiles=146
+
+Nuovi screenshot 20:42:
+- La prima foto inviata e' la SECONDA pennellata: si vede che il secondo stroke
+  viene disegnato molto piu' completo, mentre resta visibile sopra un pezzo tagliato
+  della prima pennellata.
+- La seconda foto mostra la PRIMA pennellata tagliata: visivamente rimane solo un
+  piccolo pezzo rosso in alto/sinistra, ma il debug dice:
+  stroke=42,359 1576x1343
+  scratch iniziale=0,0 2048x2048
+  paintTargetRect=36,353 1588x1355
+  scratch-after-compact=36,353 1588x1355
+  bake=36,353 1588x1355
+  targets=1
+  draws=1
+  patchTiles=128
+- La terza foto con overlay visuale mostra molti quadrati azzurri/gialli presenti
+  su una zona grande: quindi i tile/patch sembrano coprire la zona, almeno in
+  visualizzazione. Il pezzo rosso rimasto e' piccolo rispetto allo strokeRect enorme.
+
+Interpretazione:
+In questo snapshot il bug NON sembra causato da campioni pending persi, perche'
+dropped=0, pending=0, budgetHits=0. Il browser mobile pero' manda pochi punti
+molto distanti tra loro: raw=34 su una path di 2246 px, maxSeg=133 px.
+
+Aggiornamento ipotesi dopo gli screenshot 20:42:
+La pista piu' forte NON e' piu' solo "paint target troppo piccolo". Il target finale
+e la bake rect sono grandi e coerenti, pero' il contenuto visibile e' piccolo. Questo
+suggerisce che il contenuto dello stroke viene perso PRIMA o DURANTE il pass:
+
+scratch full 2048x2048 -> compact scratch rect -> bake nel paint target
+
+Il sospetto principale diventa:
+1. compactStrokeLayerTargetForRect / replaceStrokeLayerTarget perde contenuto su
+   mobile quando compatta lo scratch dal full rect 0,0 2048x2048 al rect cropped;
+2. copyStrokeTargetContent usa gl.blitFramebuffer e potrebbe copiare la porzione
+   sbagliata o non copiare tutto su mobile/WebGL;
+3. se l'overlay mostra i patch azzurri corretti ma il rosso resta tagliato, allora
+   i tile NON sono la causa primaria: sono solo history/dirty coverage, mentre il
+   problema e' nel contenuto reale dello scratch texture;
+4. in seconda battuta, input mobile troppo rado: servono punti sintetici tra due
+   sample lontani prima di processare Catmull-Rom/stamps.
+
+Conclusione provvisoria aggiornata:
+Se nell'overlay la parte tagliata del tratto rosso esce fuori dai patch azzurri,
+la soluzione e' allargare/correggere i tile patch rect generati durante il brush
+bake, probabilmente includendo padding basato su brush radius, jitter e rounding
+inclusivo. Guardare getActiveStrokeTilePatchRects e includeStrokeStampBounds.
+
+Pero' dai nuovi screenshot sembra piu' probabile la seconda opzione: i patch azzurri
+coprono una zona ampia, ma il contenuto rosso rimane piccolo. Quindi controllare
+prima compactStrokeLayerTargetForRect, replaceStrokeLayerTarget e copyStrokeTargetContent
+in brush-engine-target-gpu.js. Test decisivo: su mobile disabilitare temporaneamente
+la compattazione finale dello scratch prima del bake e disegnare direttamente dallo
+scratch full 2048x2048. Se il taglio sparisce, il bug e' nel compact/copy scratch,
+non nei tile.
+
+File da controllare, uno per volta:
+
+1. C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\debug\brush-first-stroke-clip-debug.js
+   Scopo: e' solo debug temporaneo. Controllare che l'overlay disegni correttamente
+   tilePatchRects, previewDirtyRects, strokeRect, strokeBufferRect e paintTargetRect.
+   Non dovrebbe modificare il rendering reale.
+
+2. C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\brush-engine-stroke-input.js
+   Scopo: input mobile e pending pointer samples.
+   Funzioni importanti:
+   - getPointerEventSamples
+   - enqueuePointerMoveSamples
+   - takePointerSamplesForFrame
+   - processPendingPointerSamples
+   Nota: era presente una logica che buttava via campioni quando il backlog era alto.
+   Ora dovrebbe mantenere i campioni e processarli a blocchi. Verificare che non
+   perda comunque punti su pointerup e che raw/processed siano coerenti.
+
+3. C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\brush-engine-sampler.js
+   Scopo: generazione stamp, bounds e tile patch rect.
+   Funzioni importanti:
+   - getStrokeSegmentSampleCount
+   - processStamps
+   - pushShapeStamps
+   - includeStrokeStampBounds
+   - getActiveStrokeTilePatchRects
+   - getActiveStrokePreviewDirtyRects
+   Ipotesi: patch rect troppo strette o non aggiornate bene quando i sample mobile
+   sono distanti e il brush e' grande.
+
+4. C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\brush-engine-target-gpu.js
+   Scopo: scratch buffer, bake finale e draw nel paint target.
+   Funzioni importanti:
+   - copyStrokeTargetContent
+   - replaceStrokeLayerTarget
+   - ensureStrokeLayerTargetForRect
+   - compactStrokeLayerTargetForRect
+   - getBrushBakePaintTargetStrategy
+   - getDenseBrushPaintTargetRect
+   - drawStrokeTextureToPaintTargets
+   - bakeStroke
+   Da verificare:
+   - finalStrokeBufferRect deve contenere tutta la stroke
+   - paintTargetRect deve contenere tutta la bake area
+   - copyStrokeTargetContent deve preservare tutto lo scratch quando passa da
+     0,0 2048x2048 a una rect cropped tipo 36,353 1588x1355
+   - gl.blitFramebuffer potrebbe essere la parte fragile su mobile
+   - viewport locale in drawStrokeTextureToPaintTargets non deve uscire dal target
+   - tilePatchRects non devono essere usati per limitare troppo il target/bake
+
+5. C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\js\document\document-renderer-raster-targets.js
+   Scopo: creazione/retile/sparse target e patch tiles.
+   Funzioni/aree da cercare:
+   - ensureRasterTargetsForPaintRect
+   - ensureRasterTargetForPaintRect
+   - getRasterTargetsForPaintRect
+   - tilePatchRects
+   - sparse target / cropped target
+   Da verificare: se targetStrategy=dense-mobile-large-stroke ma tilePatchRects
+   vengono comunque usati per history/dirty/copy, non devono creare buchi.
+
+6. C:\Users\michi\Desktop\editor 2d cbos - aggiunti brush\index.html
+   Scopo: solo ordine script e cache busting.
+   Controllare che carichi:
+   - js/debug/brush-first-stroke-clip-debug.js?v=tile-visual-v1
+   - js/brush-engine-target-gpu.js?v=tile-visual-v1
+   - js/brush-engine-stroke-input.js?v=fast-stroke-clip-v1
+
+Test rapidi da eseguire dopo modifiche:
+node --check js\debug\brush-first-stroke-clip-debug.js
+node --check js\brush-engine-stroke-input.js
+node --check js\brush-engine-target-gpu.js
+node --test tests\brush-engine-history.test.js tests\brush-engine-navigation.test.js
+
+Possibile fix A, se il problema sono i tile/patch:
+- In brush-engine-sampler.js, quando si salvano activeStrokeTilePatchRects, espandere
+  patchRect con padding dinamico:
+  padding = ceil(brushSize * 0.5 + jitter/lateral/linear margin + 8)
+- Usare floor su minX/minY e ceil su maxX/maxY.
+- Non filtrare mai una patch al solo effectiveStrokeRect se il brush radius esce
+  oltre la linea centrale del sample.
+
+Possibile fix B, se il problema e' input mobile troppo rado:
+- In brush-engine-stroke-input.js, prima di pushare samples in pendingPointerSamples,
+  interpolare punti sintetici quando la distanza fra due sample e' troppo alta,
+  ad esempio step massimo = max(12, brushSize * 0.12).
+- Copiare pressure/time/tilt interpolati.
+- Il debug dovrebbe mostrare syntheticSamples > 0 e maxSeg piu' basso.
+
+Possibile fix C, se il problema e' bake/viewport:
+- In brush-engine-target-gpu.js, per mobile large stroke provare temporaneamente a
+  forzare paintTargetRect = artboard/full target e bakeRect = full scratch target,
+  evitando cropped/dense intermedio. Se il taglio sparisce, restringere gradualmente
+  la rect finche' si trova la conversione errata.
+
+Possibile fix D, nuova ipotesi piu' forte dopo screenshot 20:42:
+- Saltare compactStrokeLayerTargetForRect su mobile quando lo scratch iniziale e'
+  full artboard/document, almeno per large/fast stroke.
+- In alternativa sostituire gl.blitFramebuffer in copyStrokeTargetContent con un
+  pass shader fullscreen/copy piu' controllato, o aggiungere debug readPixels prima
+  e dopo replaceStrokeLayerTarget per verificare se il contenuto sparisce durante
+  la compattazione.
+- Test minimo: nel bake finale, provare a NON chiamare compactStrokeLayerTargetForRect
+  e usare bakeRect = strokeBufferRect originale. Se funziona su mobile, questa e'
+  quasi certamente la causa.
+
+Nota:
+Non fare push automatico. Il debug e' temporaneo e va rimosso dopo il fix.
