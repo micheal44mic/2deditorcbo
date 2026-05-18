@@ -217,8 +217,30 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /function handleAiImageGenerateClick\(event\)/);
   assert.match(connectionsSource, /function startAiImageGenerationPreview\(boardId\)/);
   assert.match(connectionsSource, /function clearAiImageGenerationPreview\(boardId = ""\)/);
+  assert.match(connectionsSource, /const AI_IMAGE_SAMPLE_ASSETS = \[/);
+  assert.match(connectionsSource, /assets\/ai-board-samples\/sample-01-badge\.png/);
+  assert.match(connectionsSource, /assets\/ai-board-samples\/sample-08-video-2026-05-07-1\.mp4/);
+  [
+    "assets/ai-board-samples/sample-01-badge.png",
+    "assets/ai-board-samples/sample-02-balenciaga.png",
+    "assets/ai-board-samples/sample-03-hats.jpg",
+    "assets/ai-board-samples/sample-04-dragon.png",
+    "assets/ai-board-samples/sample-05-green-screens.jpeg",
+    "assets/ai-board-samples/sample-06-video-2026-05-18-2.mp4",
+    "assets/ai-board-samples/sample-07-video-2026-05-18-1.mp4",
+    "assets/ai-board-samples/sample-08-video-2026-05-07-1.mp4",
+  ].forEach((samplePath) => {
+    assert.ok(fs.existsSync(path.join(repoRoot, samplePath)), `${samplePath} should exist`);
+  });
+  assert.match(connectionsSource, /function loadAiImageSampleMetadata\(sample\)/);
+  assert.match(connectionsSource, /video\.preload = "metadata"/);
+  assert.match(connectionsSource, /node\.autoplay = false/);
+  assert.match(connectionsSource, /board\.generatedMedia = \{/);
+  assert.match(connectionsSource, /board\.height = board\.generatedMedia\.height/);
+  assert.match(connectionsSource, /board\.width = board\.generatedMedia\.width/);
   assert.match(connectionsSource, /startAiImageGenerationPreview\(board\.id\)/);
   assert.match(connectionsSource, /element\.classList\.toggle\("is-generating", aiImageGeneratingBoardIds\.has\(board\.id\)\)/);
+  assert.match(connectionsSource, /renderAiImageBoardGeneratedMedia\(element, board\)/);
   assert.match(connectionsSource, /cbo:ai-image-board-generate-click/);
   assert.match(connectionsSource, /--ai-image-generate-handle-left/);
   assert.match(connectionsSource, /function handleAiImagePromptInput\(event\)/);
@@ -258,6 +280,8 @@ test("artboard connections live in their own module", () => {
   assert.match(cssSource, /\.editor-ai-image-board-label[\s\S]*touch-action: none/);
   assert.match(cssSource, /\.editor-stage\.artboard-dragging \.editor-artboard-action-bubble[\s\S]*opacity: 0/);
   assert.match(cssSource, /\.editor-ai-image-board-surface[\s\S]*border: 5px solid #f05023/);
+  assert.match(cssSource, /\.editor-ai-image-board-media/);
+  assert.match(cssSource, /\.editor-ai-image-board-media-item[\s\S]*object-fit: contain/);
   assert.match(cssSource, /\.editor-ai-image-board::after[\s\S]*z-index: 4/);
   assert.match(cssSource, /\.editor-ai-image-board-footer[\s\S]*bottom: 0/);
   assert.match(cssSource, /\.editor-ai-image-board-footer[\s\S]*left: 0/);

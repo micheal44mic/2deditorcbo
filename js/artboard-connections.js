@@ -21,6 +21,16 @@ window.CBO = window.CBO || {};
   const AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX = 42;
   const AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX = 24;
   const AI_IMAGE_GENERATION_PREVIEW_MS = 3000;
+  const AI_IMAGE_SAMPLE_ASSETS = [
+    { kind: "image", name: "Badge", src: "assets/ai-board-samples/sample-01-badge.png" },
+    { kind: "image", name: "Balenciaga", src: "assets/ai-board-samples/sample-02-balenciaga.png" },
+    { kind: "image", name: "Hats", src: "assets/ai-board-samples/sample-03-hats.jpg" },
+    { kind: "image", name: "Dragon", src: "assets/ai-board-samples/sample-04-dragon.png" },
+    { kind: "image", name: "Green screens", src: "assets/ai-board-samples/sample-05-green-screens.jpeg" },
+    { kind: "video", name: "Render 2026-05-18 2", src: "assets/ai-board-samples/sample-06-video-2026-05-18-2.mp4" },
+    { kind: "video", name: "Render 2026-05-18 1", src: "assets/ai-board-samples/sample-07-video-2026-05-18-1.mp4" },
+    { kind: "video", name: "Render 2026-05-07 1", src: "assets/ai-board-samples/sample-08-video-2026-05-07-1.mp4" },
+  ];
   const SPACE_BOARD_GAP_DOC_PX = 220;
   const SPACE_BOARD_DRAG_GAP_DOC_PX = 24;
   const SPACE_BOARD_MOVE_SEARCH_STEPS = 18;
@@ -38,6 +48,7 @@ window.CBO = window.CBO || {};
   let promptFocusViewportTimers = [];
   let aiImageGeneratingBoardIds = new Set();
   let aiImageGenerationPreviewTimers = new Map();
+  let aiImageGenerationRuns = new Map();
   let connectionIdSeed = 1;
   let boardIdSeed = 1;
   let lastRenderContext = {
@@ -317,7 +328,9 @@ window.CBO = window.CBO || {};
       board.dataset.boardId = normalizedBoardId;
       board.innerHTML = `
         <div class="editor-ai-image-board-label" data-ai-image-board-drag-handle></div>
-        <div class="editor-ai-image-board-surface"></div>
+        <div class="editor-ai-image-board-surface">
+          <div class="editor-ai-image-board-media" data-ai-image-board-media></div>
+        </div>
         <div class="editor-ai-image-board-loading" aria-hidden="true">
           <div class="editor-ai-image-board-loading-halo"></div>
           <div class="editor-ai-image-board-loading-text">Your image is being generated...</div>
@@ -627,6 +640,11 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    namespace.AiBoardMediaDebug?.log?.("generate-click", {
+      boardId: board.id,
+      height: Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX,
+      width: Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX,
+    });
     startAiImageGenerationPreview(board.id);
 
     window.dispatchEvent(new CustomEvent("cbo:ai-image-board-generate-click", {
@@ -635,6 +653,222 @@ window.CBO = window.CBO || {};
         source: "artboard-connections",
       },
     }));
+  }
+
+  function pickRandomAiImageSample(currentSrc = "") {
+    const current = String(currentSrc || "").trim();
+    const candidates = AI_IMAGE_SAMPLE_ASSETS.filter((sample) => sample.src !== current);
+    const pool = candidates.length > 0 ? candidates : AI_IMAGE_SAMPLE_ASSETS;
+    const index = Math.floor(Math.random() * pool.length);
+
+    const sample = pool[index] || null;
+
+    namespace.AiBoardMediaDebug?.log?.("sample-picked", {
+      kind: sample?.kind || "",
+      name: sample?.name || "",
+      poolSize: pool.length,
+      src: sample?.src || "",
+    });
+
+    return sample;
+  }
+
+  function loadAiImageSampleMetadata(sample) {
+    if (!sample?.src) {
+      return Promise.reject(new Error("Missing AI image sample source."));
+    }
+
+    const startedAt = performance.now();
+
+    namespace.AiBoardMediaDebug?.log?.("metadata-load-start", {
+      kind: sample.kind || "image",
+      name: sample.name || "",
+      src: sample.src,
+    });
+
+    if (sample.kind === "video") {
+      return new Promise((resolve, reject) => {
+        const video = document.createElement("video");
+        const cleanup = () => {
+          video.removeAttribute("src");
+          video.load?.();
+        };
+
+        video.preload = "metadata";
+        video.muted = true;
+        video.playsInline = true;
+        video.addEventListener("loadedmetadata", () => {
+          const width = Math.round(Number(video.videoWidth) || AI_IMAGE_BOARD_SIZE_DOC_PX);
+          const height = Math.round(Number(video.videoHeight) || AI_IMAGE_BOARD_SIZE_DOC_PX);
+          const durationMs = performance.now() - startedAt;
+
+          namespace.AiBoardMediaDebug?.recordTiming?.("metadata-load-ok", {
+            durationMs,
+            height,
+            kind: "video",
+            name: sample.name || "",
+            src: sample.src,
+            width,
+          }, {
+            always: true,
+            metric: "metadataMs",
+            warnAtMs: 250,
+          });
+          cleanup();
+          resolve({
+            ...sample,
+            height,
+            width,
+          });
+        }, { once: true });
+        video.addEventListener("error", () => {
+          namespace.AiBoardMediaDebug?.warn?.("metadata-load-error", {
+            durationMs: performance.now() - startedAt,
+            kind: "video",
+            name: sample.name || "",
+            src: sample.src,
+          });
+          cleanup();
+          reject(new Error(`Unable to load AI board video sample: ${sample.src}`));
+        }, { once: true });
+        video.src = sample.src;
+        video.load?.();
+      });
+    }
+
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+
+      image.addEventListener("load", () => {
+        namespace.AiBoardMediaDebug?.recordTiming?.("metadata-load-ok", {
+          durationMs: performance.now() - startedAt,
+          height: Math.round(Number(image.naturalHeight) || AI_IMAGE_BOARD_SIZE_DOC_PX),
+          kind: "image",
+          name: sample.name || "",
+          src: sample.src,
+          width: Math.round(Number(image.naturalWidth) || AI_IMAGE_BOARD_SIZE_DOC_PX),
+        }, {
+          always: true,
+          metric: "metadataMs",
+          warnAtMs: 250,
+        });
+        resolve({
+          ...sample,
+          height: Math.round(Number(image.naturalHeight) || AI_IMAGE_BOARD_SIZE_DOC_PX),
+          width: Math.round(Number(image.naturalWidth) || AI_IMAGE_BOARD_SIZE_DOC_PX),
+        });
+      }, { once: true });
+      image.addEventListener("error", () => {
+        namespace.AiBoardMediaDebug?.warn?.("metadata-load-error", {
+          durationMs: performance.now() - startedAt,
+          kind: "image",
+          name: sample.name || "",
+          src: sample.src,
+        });
+        reject(new Error(`Unable to load AI board image sample: ${sample.src}`));
+      }, { once: true });
+      image.decoding = "async";
+      image.src = sample.src;
+    });
+  }
+
+  function applyAiImageSampleToBoard(boardId, sample) {
+    const board = getSpaceBoardById(boardId);
+
+    if (!board || !sample) {
+      return false;
+    }
+
+    board.generatedMedia = {
+      height: Math.max(1, Math.round(Number(sample.height) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+      kind: sample.kind === "video" ? "video" : "image",
+      name: String(sample.name || "Generated sample"),
+      src: String(sample.src || ""),
+      width: Math.max(1, Math.round(Number(sample.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+    };
+    board.height = board.generatedMedia.height;
+    board.width = board.generatedMedia.width;
+    board.name = board.generatedMedia.name;
+    namespace.AiBoardMediaDebug?.log?.("sample-applied", {
+      boardId,
+      height: board.generatedMedia.height,
+      kind: board.generatedMedia.kind,
+      name: board.generatedMedia.name,
+      pixelMB: (board.generatedMedia.width * board.generatedMedia.height * 4) / 1048576,
+      src: board.generatedMedia.src,
+      width: board.generatedMedia.width,
+    });
+
+    return true;
+  }
+
+  function completeAiImageSampleGeneration(boardId, runId) {
+    const normalizedBoardId = String(boardId || "").trim();
+    const activeRunId = aiImageGenerationRuns.get(normalizedBoardId);
+
+    if (!normalizedBoardId || activeRunId !== runId) {
+      namespace.AiBoardMediaDebug?.warn?.("generate-stale-run", {
+        boardId: normalizedBoardId,
+        runId,
+      });
+      return;
+    }
+
+    const board = getSpaceBoardById(normalizedBoardId);
+    const beforeState = captureConnectionsHistoryState();
+    const sample = pickRandomAiImageSample(board?.generatedMedia?.src || "");
+
+    if (!board || !sample) {
+      namespace.AiBoardMediaDebug?.warn?.("generate-missing-board-or-sample", {
+        boardId: normalizedBoardId,
+        runId,
+      });
+      aiImageGeneratingBoardIds.delete(normalizedBoardId);
+      aiImageGenerationRuns.delete(normalizedBoardId);
+      aiImageGenerationPreviewTimers.delete(normalizedBoardId);
+      renderSpaceBoards();
+      return;
+    }
+
+    loadAiImageSampleMetadata(sample)
+      .then((sampleWithMeta) => {
+        if (aiImageGenerationRuns.get(normalizedBoardId) !== runId) {
+          namespace.AiBoardMediaDebug?.warn?.("metadata-stale-run", {
+            boardId: normalizedBoardId,
+            runId,
+          });
+          return;
+        }
+
+        const didApply = applyAiImageSampleToBoard(normalizedBoardId, sampleWithMeta);
+
+        aiImageGeneratingBoardIds.delete(normalizedBoardId);
+        aiImageGenerationRuns.delete(normalizedBoardId);
+        aiImageGenerationPreviewTimers.delete(normalizedBoardId);
+
+        if (didApply) {
+          pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+            historyGroup: `ai-image-board-sample-${normalizedBoardId}`,
+            source: "ai-image-board-sample-generation",
+            type: "space-board-generate-sample",
+          });
+          emitConnectionsChange("ai-image-board-sample-generation");
+        }
+
+        renderConnectionOverlay();
+      })
+      .catch((error) => {
+        console.warn("[CBO] Unable to apply AI image sample.", error);
+        namespace.AiBoardMediaDebug?.warn?.("generate-error", {
+          boardId: normalizedBoardId,
+          message: error?.message || String(error || "error"),
+          runId,
+        });
+        aiImageGeneratingBoardIds.delete(normalizedBoardId);
+        aiImageGenerationRuns.delete(normalizedBoardId);
+        aiImageGenerationPreviewTimers.delete(normalizedBoardId);
+        renderSpaceBoards();
+      });
   }
 
   function getBoardFromControlEvent(event) {
@@ -654,13 +888,19 @@ window.CBO = window.CBO || {};
       window.clearTimeout(aiImageGenerationPreviewTimers.get(normalizedBoardId));
     }
 
+    const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+    aiImageGenerationRuns.set(normalizedBoardId, runId);
     aiImageGeneratingBoardIds.add(normalizedBoardId);
+    namespace.AiBoardMediaDebug?.log?.("generate-start", {
+      boardId: normalizedBoardId,
+      loadingBoards: aiImageGeneratingBoardIds.size,
+      runId,
+    });
     renderSpaceBoards();
 
     const timerId = window.setTimeout(() => {
-      aiImageGenerationPreviewTimers.delete(normalizedBoardId);
-      aiImageGeneratingBoardIds.delete(normalizedBoardId);
-      renderSpaceBoards();
+      completeAiImageSampleGeneration(normalizedBoardId, runId);
     }, AI_IMAGE_GENERATION_PREVIEW_MS);
 
     aiImageGenerationPreviewTimers.set(normalizedBoardId, timerId);
@@ -677,6 +917,7 @@ window.CBO = window.CBO || {};
       }
 
       aiImageGenerationPreviewTimers.delete(normalizedBoardId);
+      aiImageGenerationRuns.delete(normalizedBoardId);
       aiImageGeneratingBoardIds.delete(normalizedBoardId);
       return;
     }
@@ -685,7 +926,127 @@ window.CBO = window.CBO || {};
       window.clearTimeout(timerId);
     });
     aiImageGenerationPreviewTimers = new Map();
+    aiImageGenerationRuns = new Map();
     aiImageGeneratingBoardIds = new Set();
+  }
+
+  function renderAiImageBoardGeneratedMedia(element, board) {
+    const mediaHost = element?.querySelector?.("[data-ai-image-board-media]");
+    const media = board?.generatedMedia || null;
+    const src = String(media?.src || "").trim();
+    const kind = media?.kind === "video" ? "video" : "image";
+
+    if (!mediaHost) {
+      namespace.AiBoardMediaDebug?.warn?.("media-host-missing", {
+        boardId: board?.id || "",
+      });
+      return;
+    }
+
+    element.classList.toggle("has-generated-media", Boolean(src));
+
+    if (!src) {
+      mediaHost.replaceChildren();
+      delete mediaHost.dataset.mediaKind;
+      delete mediaHost.dataset.mediaSrc;
+      return;
+    }
+
+    if (mediaHost.dataset.mediaSrc === src && mediaHost.dataset.mediaKind === kind) {
+      return;
+    }
+
+    const startedAt = performance.now();
+    const node = document.createElement(kind === "video" ? "video" : "img");
+
+    node.className = "editor-ai-image-board-media-item";
+
+    if (kind === "video") {
+      node.muted = true;
+      node.loop = false;
+      node.autoplay = false;
+      node.controls = false;
+      node.playsInline = true;
+      node.preload = "metadata";
+      node.addEventListener("loadedmetadata", () => {
+        namespace.AiBoardMediaDebug?.recordTiming?.("media-node-metadata", {
+          boardId: board?.id || "",
+          durationMs: performance.now() - startedAt,
+          height: Number(node.videoHeight) || 0,
+          kind,
+          networkState: node.networkState,
+          readyState: node.readyState,
+          src,
+          width: Number(node.videoWidth) || 0,
+        }, {
+          always: true,
+          metric: "mediaLoadMs",
+          warnAtMs: 250,
+        });
+        node.pause();
+      }, { once: true });
+      node.addEventListener("error", () => {
+        namespace.AiBoardMediaDebug?.warn?.("media-node-error", {
+          boardId: board?.id || "",
+          kind,
+          networkState: node.networkState,
+          readyState: node.readyState,
+          src,
+        });
+      }, { once: true });
+      node.addEventListener("stalled", () => {
+        namespace.AiBoardMediaDebug?.warn?.("media-node-stalled", {
+          boardId: board?.id || "",
+          kind,
+          networkState: node.networkState,
+          readyState: node.readyState,
+          src,
+        });
+      }, { once: true });
+    } else {
+      node.alt = String(media.name || "Generated AI sample");
+      node.decoding = "async";
+      node.loading = "eager";
+      node.addEventListener("load", () => {
+        namespace.AiBoardMediaDebug?.recordTiming?.("media-node-load", {
+          boardId: board?.id || "",
+          complete: node.complete,
+          durationMs: performance.now() - startedAt,
+          height: Number(node.naturalHeight) || 0,
+          kind,
+          src,
+          width: Number(node.naturalWidth) || 0,
+        }, {
+          always: true,
+          metric: "mediaLoadMs",
+          warnAtMs: 250,
+        });
+      }, { once: true });
+      node.addEventListener("error", () => {
+        namespace.AiBoardMediaDebug?.warn?.("media-node-error", {
+          boardId: board?.id || "",
+          complete: node.complete,
+          kind,
+          src,
+        });
+      }, { once: true });
+    }
+
+    namespace.AiBoardMediaDebug?.log?.("media-node-create", {
+      boardId: board?.id || "",
+      height: Number(media.height) || 0,
+      kind,
+      name: media.name || "",
+      pixelMB: ((Number(media.width) || 0) * (Number(media.height) || 0) * 4) / 1048576,
+      src,
+      width: Number(media.width) || 0,
+    });
+    node.setAttribute("width", String(Math.max(1, Math.round(Number(media.width) || AI_IMAGE_BOARD_SIZE_DOC_PX))));
+    node.setAttribute("height", String(Math.max(1, Math.round(Number(media.height) || AI_IMAGE_BOARD_SIZE_DOC_PX))));
+    node.src = src;
+    mediaHost.dataset.mediaKind = kind;
+    mediaHost.dataset.mediaSrc = src;
+    mediaHost.replaceChildren(node);
   }
 
   function handleAiImagePromptFocus(event) {
@@ -1093,6 +1454,7 @@ window.CBO = window.CBO || {};
   }
 
   function renderSpaceBoards() {
+    const debugStartedAt = performance.now();
     const layer = ensureSpaceBoardLayer();
 
     if (!layer) {
@@ -1145,6 +1507,7 @@ window.CBO = window.CBO || {};
       element.style.setProperty("--ai-image-board-label-top", `${-25 / Math.max(0.0001, scale)}px`);
       element.style.setProperty("--ai-image-board-label-inverse-scale", `${1 / Math.max(0.0001, scale)}`);
       element.classList.toggle("is-generating", aiImageGeneratingBoardIds.has(board.id));
+      renderAiImageBoardGeneratedMedia(element, board);
 
       if (label) {
         label.textContent = `${board.name || "AI Image board"} ${width} x ${height}`;
@@ -1164,6 +1527,18 @@ window.CBO = window.CBO || {};
         clearAiImageGenerationPreview(boardId);
         element.remove();
       }
+    });
+
+    namespace.AiBoardMediaDebug?.recordTiming?.("render-space-boards", {
+      boards: spaceBoards.length,
+      durationMs: performance.now() - debugStartedAt,
+      generatedBoards: spaceBoards.filter((board) => board?.generatedMedia).length,
+      imageNodes: layer.querySelectorAll("[data-ai-image-board-media] img").length,
+      loadingBoards: aiImageGeneratingBoardIds.size,
+      videoNodes: layer.querySelectorAll("[data-ai-image-board-media] video").length,
+    }, {
+      metric: "renderBoardsMs",
+      warnAtMs: 12,
     });
   }
 
@@ -1214,10 +1589,21 @@ window.CBO = window.CBO || {};
   }
 
   function renderConnectionOverlay() {
+    const debugStartedAt = performance.now();
     renderSpaceBoards();
     renderActions();
     renderConnections();
     renderConnectionMenu();
+    namespace.AiBoardMediaDebug?.recordTiming?.("render-overlay", {
+      boards: spaceBoards.length,
+      connectionPaths: getStage()?.querySelectorAll?.("[data-artboard-connection-layer] path.editor-artboard-connection-path")?.length || 0,
+      connections: connections.length,
+      durationMs: performance.now() - debugStartedAt,
+      generatedBoards: spaceBoards.filter((board) => board?.generatedMedia).length,
+    }, {
+      metric: "renderBoardsMs",
+      warnAtMs: 16,
+    });
   }
 
   function dismissConnectionMenu(options = {}) {
@@ -1353,6 +1739,15 @@ window.CBO = window.CBO || {};
     };
 
     spaceBoards.push(board);
+    namespace.AiBoardMediaDebug?.log?.("empty-board-created", {
+      boardDomNodes: getStage()?.querySelectorAll?.("[data-ai-image-board]")?.length || 0,
+      boardId: board.id,
+      boards: spaceBoards.length,
+      height: board.height,
+      width: board.width,
+      x: board.x,
+      y: board.y,
+    });
 
     const targetAnchor = getAiImageBoardInputAnchor(board);
 
@@ -1579,18 +1974,27 @@ window.CBO = window.CBO || {};
   }
 
   function materializeAiImageBoardFromMenu() {
+    const debugStartedAt = performance.now();
     const connection = getConnectionById(menuState?.connectionId);
 
     if (!connection) {
+      namespace.AiBoardMediaDebug?.warn?.("materialize-empty-board-missing-connection", {
+        connectionId: menuState?.connectionId || "",
+      });
       dismissConnectionMenu();
       return;
     }
 
+    namespace.AiBoardMediaDebug?.log?.("materialize-empty-board-start", {
+      boards: spaceBoards.length,
+      connectionId: connection.id,
+      connections: connections.length,
+    });
     const beforeState = captureConnectionsHistoryState({
       excludeConnectionIds: [connection.id],
     });
 
-    createAiImageBoardForConnection(connection);
+    const board = createAiImageBoardForConnection(connection);
     dismissConnectionMenu({
       removeConnection: false,
       render: false,
@@ -1601,6 +2005,16 @@ window.CBO = window.CBO || {};
       type: "space-board-create",
     });
     renderConnectionOverlay();
+    namespace.AiBoardMediaDebug?.recordTiming?.("materialize-empty-board-end", {
+      boardDomNodes: getStage()?.querySelectorAll?.("[data-ai-image-board]")?.length || 0,
+      boardId: board?.id || "",
+      boards: spaceBoards.length,
+      connections: connections.length,
+      durationMs: performance.now() - debugStartedAt,
+    }, {
+      always: true,
+      warnAtMs: 16,
+    });
   }
 
   function getDefaultConnectionEndPoint(sourceArtboardId) {

@@ -493,6 +493,22 @@
   pointer-events: none;
 }
 
+.editor-ai-image-board-media {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: stretch;
+  overflow: hidden;
+}
+
+.editor-ai-image-board-media-item {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
 .editor-ai-image-board-loading {
   position: absolute;
   inset: 5px;
