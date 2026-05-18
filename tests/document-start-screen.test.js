@@ -38,8 +38,10 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(editorCanvasSource, /button\.dataset\.documentPreset = preset\.id/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorCanvas\(\{[\s\S]*documentHeight: preset\.height,[\s\S]*documentWidth: preset\.width/);
   assert.match(editorCanvasSource, /documentSaveSystem/);
-  assert.match(editorCanvasSource, /saveSystem\.getLatestSummary\(\)/);
-  assert.match(editorCanvasSource, /saveSystem\.restoreLatest\(\)/);
+  assert.match(editorCanvasSource, /saveSystem\.listSummaries\(\)/);
+  assert.match(editorCanvasSource, /saveSystem\.restore\(sessionId\)/);
+  assert.match(editorCanvasSource, /saveSystem\.delete\?\.\(sessionId\)/);
+  assert.match(editorCanvasSource, /clearCurrentDocument/);
   assert.match(editorCanvasSource, /documentWidth: documentSize\.width/);
   assert.match(editorCanvasSource, /enableViewportLayerCulling: true/);
   assert.match(editorCanvasSource, /function dispatchEditorCanvasReady\(documentRenderer, documentSize = \{\}, options = \{\}\)/);
@@ -55,5 +57,7 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(cssSource, /\.document-start-screen/);
   assert.match(cssSource, /\.editor-zoom-indicator/);
   assert.match(cssSource, /\.document-start-recovery/);
+  assert.match(cssSource, /\.document-start-recovery-list/);
+  assert.match(cssSource, /\.document-start-recovery-delete/);
   assert.match(cssSource, /\.document-start-preset/);
 });

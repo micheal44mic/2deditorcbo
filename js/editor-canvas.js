@@ -11,6 +11,7 @@ const EDITOR_DOCUMENT_PRESETS = Object.freeze([
 ]);
 const DEFAULT_DOCUMENT_PRESET_ID = "square-4000";
 const MOBILE_DOCUMENT_PRESET_ID = "square-2048";
+const DEFAULT_MOCKUP_ARTBOARD_SIZE = 2048;
 const DESKTOP_RASTER_HISTORY_PROFILE = Object.freeze({
   maxEntries: 40,
   maxRasterHistoryGpuHotMiB: 0,
@@ -278,6 +279,337 @@ function removeLayerFromEntriesById(entries, layerId) {
     });
 }
 
+function toPositiveDocumentInteger(value, fallback) {
+  const number = Number(value);
+
+  return Number.isFinite(number) && number > 0
+    ? Math.max(1, Math.round(number))
+    : fallback;
+}
+
+function getDocumentPresetIdForSize(width, height) {
+  const exactPreset = EDITOR_DOCUMENT_PRESETS.find((preset) =>
+    preset.width === width && preset.height === height,
+  );
+
+  return exactPreset?.id || getDefaultDocumentPresetId();
+}
+
+function getMockupAssetName(detail = {}) {
+  return String(detail.name || detail.alt || "Mockup").trim() || "Mockup";
+}
+
+function getMockupArtboardSize(detail = {}) {
+  return {
+    height: toPositiveDocumentInteger(
+      detail.artboardHeight ?? detail.documentHeight,
+      DEFAULT_MOCKUP_ARTBOARD_SIZE,
+    ),
+    width: toPositiveDocumentInteger(
+      detail.artboardWidth ?? detail.documentWidth,
+      DEFAULT_MOCKUP_ARTBOARD_SIZE,
+    ),
+  };
+}
+
+function isEditorCanvasReady() {
+  const stage = document.querySelector(".editor-stage");
+
+  return Boolean(
+    stage?.dataset.canvasReady === "true" &&
+    window.CBO.documentRenderer &&
+    window.CBO.documentLayerModel &&
+    window.CBO.imageRasterizer,
+  );
+}
+
+function getExistingDocumentArtboardId(artboardId) {
+  const normalizedArtboardId = String(artboardId || "").trim();
+  const knownArtboards = window.CBO?.getDocumentArtboards?.() || [];
+
+  return knownArtboards.some((artboard) => artboard?.id === normalizedArtboardId)
+    ? normalizedArtboardId
+    : getPrimaryDocumentArtboardId();
+}
+
+async function fetchMockupAssetBlob(src) {
+  const response = await fetch(src);
+
+  if (!response.ok) {
+    throw new Error(`Mockup asset non disponibile: ${response.status}`);
+  }
+
+  return response.blob();
+}
+
+function getMockupArtboardRect(artboardId) {
+  const normalizedArtboardId = getExistingDocumentArtboardId(artboardId);
+  const artboard = (window.CBO?.getDocumentArtboards?.() || [])
+    .find((record) => record?.id === normalizedArtboardId) || null;
+
+  return {
+    height: Math.max(1, Math.round(Number(artboard?.height || window.CBO?.documentRenderer?.height) || 1)),
+    width: Math.max(1, Math.round(Number(artboard?.width || window.CBO?.documentRenderer?.width) || 1)),
+    x: Math.round(Number(artboard?.x) || 0),
+    y: Math.round(Number(artboard?.y) || 0),
+  };
+}
+
+function getMockupPlacementRect(detail = {}, artboardId) {
+  const placement = detail.placement && typeof detail.placement === "object"
+    ? detail.placement
+    : null;
+
+  if (!placement) {
+    return null;
+  }
+
+  const artboardRect = getMockupArtboardRect(artboardId);
+  const requestedWidth = Math.round(Number(placement.width) || 0);
+  const requestedHeight = Math.round(Number(placement.height) || 0);
+
+  if (requestedWidth <= 0 || requestedHeight <= 0) {
+    return null;
+  }
+
+  const width = Math.max(1, Math.min(artboardRect.width, requestedWidth));
+  const height = Math.max(1, Math.min(artboardRect.height, requestedHeight));
+  const fallbackX = Math.round((artboardRect.width - width) * 0.5);
+  const fallbackY = Math.round((artboardRect.height - height) * 0.5);
+  const relativeX = Number.isFinite(Number(placement.x)) ? Math.round(Number(placement.x)) : fallbackX;
+  const relativeY = Number.isFinite(Number(placement.y)) ? Math.round(Number(placement.y)) : fallbackY;
+
+  return {
+    height,
+    width,
+    x: artboardRect.x + Math.max(0, Math.min(relativeX, artboardRect.width - width)),
+    y: artboardRect.y + Math.max(0, Math.min(relativeY, artboardRect.height - height)),
+  };
+}
+
+function createMockupPlacementTarget(layerId, placementRect, source = "mockup-placement-target") {
+  const renderer = window.CBO.documentRenderer;
+
+  if (!layerId || !placementRect || !renderer?.createRasterTargetForRect || !renderer?.replaceRasterTarget) {
+    return null;
+  }
+
+  const target = renderer.createRasterTargetForRect(placementRect, [0, 0, 0, 0]);
+
+  if (!target) {
+    return null;
+  }
+
+  renderer.replaceRasterTarget(layerId, target, {
+    emit: false,
+    invalidate: false,
+    source,
+  });
+
+  return {
+    ...target,
+    drawHeight: placementRect.height,
+    drawWidth: placementRect.width,
+    drawX: 0,
+    drawY: 0,
+    layerId,
+  };
+}
+
+function prepareMockupArtboard(detail = {}) {
+  const size = getMockupArtboardSize(detail);
+  const name = getMockupAssetName(detail);
+
+  if (!isEditorCanvasReady()) {
+    window.CBO.documentSaveSystem?.clearCurrentDocument?.();
+    window.CBO.setDocumentProjectName?.("", { source: "mockup-document-new" });
+    window.CBO.initEditorCanvas({
+      documentHeight: size.height,
+      documentWidth: size.width,
+      presetId: getDocumentPresetIdForSize(size.width, size.height),
+    });
+
+    return getPrimaryDocumentArtboardId();
+  }
+
+  const artboard = window.CBO.createDocumentArtboard?.({
+    height: size.height,
+    history: true,
+    name,
+    source: "mockup-artboard-create",
+    width: size.width,
+  });
+
+  window.CBO.ensureDocumentLayerArtboardGroups?.({
+    source: "mockup-artboard-layer-groups",
+  });
+
+  return getExistingDocumentArtboardId(artboard?.id);
+}
+
+function focusMockupArtboard(artboardId) {
+  const normalizedArtboardId = getExistingDocumentArtboardId(artboardId);
+
+  window.CBO.selectDocumentArtboard?.(normalizedArtboardId, {
+    force: true,
+    source: "mockup-artboard-select",
+  });
+
+  return normalizedArtboardId;
+}
+
+function focusMockupArtboardView(artboardId, options = {}) {
+  const normalizedArtboardId = focusMockupArtboard(artboardId);
+
+  if (typeof window.CBO.focusPreviewArtboardView === "function") {
+    window.CBO.focusPreviewArtboardView(normalizedArtboardId, {
+      closeDrawer: options.closeDrawer !== false,
+      source: options.source || "mockup-artboard-view",
+    });
+    return normalizedArtboardId;
+  }
+
+  if (options.closeDrawer !== false) {
+    window.CBO.closeDrawerPanel?.();
+  }
+
+  window.CBO.fitPreviewArtboard?.(normalizedArtboardId);
+  window.CBO.fitPreviewArtboards?.();
+  return normalizedArtboardId;
+}
+
+function finalizeImportedImageLayerAsEditablePaint(layerId, source = "image-import-auto-rasterize") {
+  const layerModel = window.CBO.documentLayerModel;
+  const documentRenderer = window.CBO.documentRenderer;
+  const layer = layerModel?.findEntryById?.(layerId);
+  let didFinalize = false;
+
+  if (!layer || !layerId) {
+    return false;
+  }
+
+  if (layer.type === "image" && typeof layerModel.rasterizeImageLayerToPaint === "function") {
+    didFinalize = layerModel.rasterizeImageLayerToPaint(layerId, {
+      history: false,
+      source,
+    }) === true;
+  } else if (layer.type === "paint") {
+    didFinalize = Boolean(documentRenderer?.sparsifyRasterizedImageLayer?.(layerId, {
+      emit: false,
+      source: `${source}-retile`,
+    }));
+  }
+
+  if (didFinalize) {
+    documentRenderer?.requestDraw?.();
+    window.dispatchEvent(new CustomEvent("cbo:image-layer-rasterized", {
+      detail: {
+        layerId,
+        source,
+      },
+    }));
+  }
+
+  return didFinalize;
+}
+
+async function placeMockupImageLayer(detail = {}, artboardId) {
+  const rasterizer = window.CBO.imageRasterizer;
+  const layerModel = window.CBO.documentLayerModel;
+  const documentRenderer = window.CBO.documentRenderer;
+  const src = String(detail.src || "").trim();
+
+  if (!rasterizer?.placeBlob || !src || !layerModel?.createLayer || !documentRenderer?.getRasterTarget) {
+    return false;
+  }
+
+  const targetArtboardId = getExistingDocumentArtboardId(artboardId);
+  const name = getMockupAssetName(detail);
+  const blob = await fetchMockupAssetBlob(src);
+  const placementRect = getMockupPlacementRect(detail, targetArtboardId);
+
+  ensureUploadArtboardGroups(layerModel);
+
+  const imageLayer = layerModel.createLayer({
+    artboardId: targetArtboardId,
+    mockupAsset: {
+      id: detail.id || "",
+      name,
+      src,
+    },
+    name,
+    type: "paint",
+  });
+  const entries = layerModel.getEntries();
+  const didInsertInArtboard = insertLayerAtTopOfArtboardEntries(
+    entries,
+    targetArtboardId,
+    imageLayer,
+    layerModel,
+  );
+  const nextEntries = didInsertInArtboard ? entries : [imageLayer, ...entries];
+
+  layerModel.setEntries(nextEntries, { activeLayerId: imageLayer.id, source: "mockup-image-layer" });
+
+  try {
+    const placementTarget = createMockupPlacementTarget(imageLayer.id, placementRect);
+    const placement = await rasterizer.placeBlob(blob, {
+      artboardId: targetArtboardId,
+      ...(placementTarget
+        ? {
+            drawHeight: placementRect.height,
+            drawWidth: placementRect.width,
+            target: placementTarget,
+            x: 0,
+            y: 0,
+          }
+        : {}),
+      layerId: imageLayer.id,
+      source: "mockup-rasterize",
+    });
+
+    finalizeImportedImageLayerAsEditablePaint(imageLayer.id, "mockup-rasterize");
+
+    if (placement?.destinationRect && layerModel.updateLayer) {
+      const didUpdateMetadata = layerModel.updateLayer(imageLayer.id, {
+        imageAsset: {
+          importedAt: new Date().toISOString(),
+          name,
+          sourceRect: placement.sourceRect || null,
+          src,
+        },
+        imageBounds: placement.destinationRect,
+        mockupAsset: {
+          id: detail.id || "",
+          importedAt: new Date().toISOString(),
+          name,
+          src,
+        },
+      }, {
+        history: false,
+        source: "mockup-image-metadata",
+      });
+
+      if (didUpdateMetadata !== false) {
+        documentRenderer.commitVisualDirtyChange?.({
+          layerId: imageLayer.id,
+          rect: placement.destinationRect,
+          source: "mockup-image-metadata",
+          usePreviewDirtyTiles: true,
+        });
+        documentRenderer.requestDraw?.();
+      }
+    }
+
+    return true;
+  } catch (error) {
+    const remainingEntries = removeLayerFromEntriesById(layerModel.getEntries(), imageLayer.id);
+
+    layerModel.setEntries(remainingEntries, { source: "mockup-image-error" });
+    throw error;
+  }
+}
+
 function createEditorZoomIndicator(camera = {}) {
   const indicator = document.createElement("output");
 
@@ -315,7 +647,7 @@ function createDocumentPresetButton(preset) {
   return button;
 }
 
-function formatAutosaveDate(value) {
+function formatDocumentSaveDate(value) {
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
@@ -333,24 +665,71 @@ function createDocumentRecoveryButton(summary) {
   const label = document.createElement("span");
   const meta = document.createElement("span");
   const projectName = String(summary?.projectName || "").trim();
-  const savedAt = formatAutosaveDate(summary?.savedAt);
+  const savedAt = formatDocumentSaveDate(summary?.savedAt);
   const sizeLabel = `${Math.max(1, Math.round(summary?.width || 1))} x ${Math.max(1, Math.round(summary?.height || 1))}`;
   const layerLabel = `${Math.max(0, Math.round(summary?.layerCount || 0))} layers`;
   const tileLabel = `${Math.max(0, Math.round(summary?.tileCount || 0))} tiles`;
 
   button.className = "document-start-recovery";
   button.type = "button";
-  button.dataset.documentRecovery = "latest";
-  button.setAttribute("aria-label", projectName ? `Continue saved document ${projectName}` : "Continue saved document");
+  button.dataset.documentRecovery = summary?.sessionId || "";
+  button.setAttribute("aria-label", projectName ? `Open saved project ${projectName}` : "Open saved project");
 
   label.className = "document-start-recovery-label";
-  label.textContent = projectName || "Continue saved document";
+  label.textContent = projectName || "Untitled project";
 
   meta.className = "document-start-recovery-meta";
   meta.textContent = [sizeLabel, layerLabel, tileLabel, savedAt].filter(Boolean).join(" | ");
 
   button.append(label, meta);
   return button;
+}
+
+function createDocumentRecoveryItem(summary) {
+  const item = document.createElement("div");
+  const openButton = createDocumentRecoveryButton(summary);
+  const deleteButton = document.createElement("button");
+  const projectName = String(summary?.projectName || "").trim() || "Untitled project";
+
+  item.className = "document-start-recovery-item";
+  item.dataset.documentSessionId = summary?.sessionId || "";
+
+  deleteButton.className = "document-start-recovery-delete";
+  deleteButton.type = "button";
+  deleteButton.dataset.documentDelete = summary?.sessionId || "";
+  deleteButton.textContent = "DELETE";
+  deleteButton.setAttribute("aria-label", `Delete saved project ${projectName}`);
+
+  item.append(openButton, deleteButton);
+
+  return {
+    deleteButton,
+    item,
+    openButton,
+  };
+}
+
+function createDocumentRecoverySection() {
+  const section = document.createElement("section");
+  const title = document.createElement("h2");
+  const list = document.createElement("div");
+
+  section.className = "document-start-recovery-section";
+  section.setAttribute("aria-labelledby", "document-start-recovery-title");
+
+  title.className = "document-start-section-title";
+  title.id = "document-start-recovery-title";
+  title.textContent = "Saved projects";
+
+  list.className = "document-start-recovery-list";
+  list.dataset.documentRecoveryList = "";
+
+  section.append(title, list);
+
+  return {
+    list,
+    section,
+  };
 }
 
 window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
@@ -396,6 +775,9 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
 
     const preset = getDocumentPreset(button.dataset.documentPreset);
 
+    window.CBO.documentSaveSystem?.clearCurrentDocument?.();
+    window.CBO.setDocumentProjectName?.("", { source: "document-start-new" });
+
     window.CBO.initEditorCanvas({
       documentHeight: preset.height,
       documentWidth: preset.width,
@@ -410,7 +792,77 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
 
   const saveSystem = window.CBO.documentSaveSystem;
 
-  if (saveSystem?.getLatestSummary && saveSystem?.restoreLatest) {
+  if (saveSystem?.listSummaries && saveSystem?.restore) {
+    const renderSavedProjects = () => {
+      void saveSystem.listSummaries().then((summaries) => {
+        if (stage.dataset.canvasReady === "true") {
+          return;
+        }
+
+        if (!Array.isArray(summaries) || summaries.length === 0) {
+          recoveryHost.replaceChildren();
+          recoveryHost.hidden = true;
+          return;
+        }
+
+        const recoverySection = createDocumentRecoverySection();
+        const list = recoverySection.list;
+
+        summaries.forEach((summary) => {
+          const sessionId = String(summary?.sessionId || "").trim();
+          const recoveryItem = createDocumentRecoveryItem(summary);
+
+          recoveryItem.openButton.addEventListener("click", () => {
+            if (!sessionId) {
+              return;
+            }
+
+            recoveryItem.openButton.disabled = true;
+            recoveryItem.openButton.dataset.loading = "true";
+            void saveSystem.restore(sessionId).then((didRestore) => {
+              if (didRestore) {
+                return;
+              }
+
+              recoveryItem.openButton.disabled = false;
+              recoveryItem.openButton.dataset.loading = "false";
+            }).catch((error) => {
+              console.warn("Impossibile ripristinare il documento salvato.", error);
+              recoveryItem.openButton.disabled = false;
+              recoveryItem.openButton.dataset.loading = "false";
+            });
+          });
+
+          recoveryItem.deleteButton.addEventListener("click", () => {
+            if (!sessionId) {
+              return;
+            }
+
+            const projectName = String(summary?.projectName || "").trim() || "Untitled project";
+
+            if (typeof window.confirm === "function" && !window.confirm(`Delete saved project "${projectName}"?`)) {
+              return;
+            }
+
+            recoveryItem.deleteButton.disabled = true;
+            void saveSystem.delete?.(sessionId).then(() => {
+              renderSavedProjects();
+            }).catch((error) => {
+              console.warn("Impossibile eliminare il documento salvato.", error);
+              recoveryItem.deleteButton.disabled = false;
+            });
+          });
+
+          list.append(recoveryItem.item);
+        });
+
+        recoveryHost.replaceChildren(recoverySection.section);
+        recoveryHost.hidden = false;
+      });
+    };
+
+    renderSavedProjects();
+  } else if (saveSystem?.getLatestSummary && saveSystem?.restoreLatest) {
     void saveSystem.getLatestSummary().then((summary) => {
       if (!summary || stage.dataset.canvasReady === "true") {
         return;
@@ -504,6 +956,8 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
         documentRenderer.requestDraw?.();
       }
     }
+
+    finalizeImportedImageLayerAsEditablePaint(imageLayer.id, "image-upload-auto-rasterize");
   } catch (error) {
     const remainingEntries = removeLayerFromEntriesById(layerModel.getEntries(), imageLayer.id);
 
@@ -514,6 +968,62 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
 
 window.addEventListener("cbo:place-uploaded-image", (event) => {
   void window.CBO.placeUploadedImageOnCanvas(event.detail);
+});
+
+window.CBO.openMockupAsset = async function openMockupAsset(detail = {}) {
+  const src = String(detail.src || "").trim();
+
+  if (!src) {
+    return false;
+  }
+
+  const artboardId = focusMockupArtboard(prepareMockupArtboard(detail));
+  const didPlace = await placeMockupImageLayer(detail, artboardId);
+
+  focusMockupArtboardView(artboardId, {
+    closeDrawer: true,
+    source: "mockup-open-view",
+  });
+  return didPlace;
+};
+
+window.CBO.addMockupAssetToArtboard = async function addMockupAssetToArtboard(detail = {}, options = {}) {
+  const src = String(detail.src || "").trim();
+
+  if (!src || !isEditorCanvasReady()) {
+    return false;
+  }
+
+  const requestedArtboardId = String(
+    options.artboardId ||
+    detail.artboardId ||
+    window.CBO.getSelectedDocumentArtboardId?.() ||
+    window.CBO.getActiveDocumentArtboardId?.() ||
+    "",
+  ).trim();
+  const artboardId = focusMockupArtboard(getExistingDocumentArtboardId(requestedArtboardId));
+
+  const didPlace = await placeMockupImageLayer(detail, artboardId);
+
+  focusMockupArtboardView(artboardId, {
+    closeDrawer: true,
+    source: "mockup-addon-view",
+  });
+  return didPlace;
+};
+
+window.addEventListener("cbo:open-mockup-asset", (event) => {
+  void window.CBO.openMockupAsset(event.detail).catch((error) => {
+    console.warn("Impossibile aprire il mockup.", error);
+  });
+});
+
+window.addEventListener("cbo:add-mockup-asset-to-artboard", (event) => {
+  void window.CBO.addMockupAssetToArtboard(event.detail, {
+    artboardId: event.detail?.artboardId,
+  }).catch((error) => {
+    console.warn("Impossibile aggiungere il mockup.", error);
+  });
 });
 
 window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {

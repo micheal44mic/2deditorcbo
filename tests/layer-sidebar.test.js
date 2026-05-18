@@ -12,7 +12,8 @@ test("right sidebar exposes a manual save button next to share", () => {
   assert.match(source, /right-sidebar-primary-actions/);
   assert.match(source, /data-manual-save/);
   assert.match(source, /lucide-save-icon lucide-save/);
-  assert.match(source, /autosave\.saveNow\(\{ source: "manual-save" \}\)/);
+  assert.match(source, /documentSaveSystem/);
+  assert.match(source, /saveSystem\.saveNow\(\{ source: "manual-save" \}\)/);
   assert.match(source, /saveButton\?\.addEventListener\("click"/);
   assert.match(css, /\.right-sidebar-save-button/);
   assert.match(css, /\.right-sidebar-primary-actions/);
@@ -98,12 +99,20 @@ test("layers panel has mobile-sized touch controls and long-press context menu",
   const layoutCss = fs.readFileSync(path.join(repoRoot, "css", "layout.css"), "utf8");
 
   assert.match(source, /const layerTouchLongPressDelay = 520/);
+  assert.match(source, /const layerTouchDragAutoScrollZone = 54/);
   assert.match(source, /function beginLayerLongPress\(row, event\)/);
+  assert.match(source, /function isLayerTouchDragHandleTarget\(target\)/);
+  assert.match(source, /function scrollLayerDrawerDuringTouchDrag\(event\)/);
+  assert.match(source, /data-layer-drag-handle/);
   assert.match(source, /return event\.pointerType === "touch"/);
-  assert.match(source, /selectLayerFromPointer\(row, event\);\s*beginLayerLongPress\(row, event\);/);
+  assert.match(source, /const isTouchDragHandle = isTouchPointer && isLayerTouchDragHandleTarget\(target\)/);
+  assert.match(source, /if \(!isTouchDragHandle\) \{\s*beginLayerLongPress\(row, event\);\s*return;\s*\}/);
+  assert.match(source, /scrollLayerDrawerDuringTouchDrag\(event\)/);
   assert.match(source, /openLayerContextMenu\(state\.row, \{\s*clientX: state\.clientX,\s*clientY: state\.clientY,\s*\}\)/);
   assert.match(css, /@media \(max-width: 900px\), \(pointer: coarse\)/);
   assert.match(css, /\.layer-row \{\s*min-height: 46px;\s*height: 46px;/);
+  assert.match(css, /\.layer-icon-stack \{\s*width: 40px;\s*height: 40px;\s*flex-basis: 40px;[\s\S]*touch-action: none;/);
+  assert.match(css, /\.layer-icon-stack:active \{\s*background: rgba\(255, 255, 255, 0\.08\);/);
   assert.match(css, /\.layer-action \{\s*width: 38px;\s*height: 38px;/);
   assert.match(css, /\.layer-context-menu-item \{\s*height: 44px;/);
   assert.match(layoutCss, /--left-drawer-width: min\(336px, calc\(100vw - var\(--left-rail-width\) - 10px\)\)/);

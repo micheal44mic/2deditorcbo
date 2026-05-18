@@ -76,6 +76,7 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /beginTouchNavigationGesture\(\)/);
   assert.match(source, /updateTouchNavigationGesture\(\)/);
   assert.match(source, /cancelActiveStrokeForTouchNavigation\(\)/);
+  assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.?\("touch-navigation-cancel-stroke", \{\s*layerId,/);
   assert.match(source, /shouldStartTouchCanvasPan\(event, point\)/);
   assert.match(source, /this\.isPrimaryTouchPointer\(event\)/);
   assert.match(source, /!this\.isDocumentPointOnAnyArtboard\(point\)/);

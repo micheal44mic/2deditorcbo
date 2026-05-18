@@ -404,11 +404,15 @@
       }
 
       const pointerId = this.activePointerId;
+      const layerId = this.strokeTargetLayerId || "";
 
       if (pointerId != null && this.canvas.hasPointerCapture?.(pointerId)) {
         this.canvas.releasePointerCapture(pointerId);
       }
 
+      this.documentRenderer?.invalidatePreviewCache?.("touch-navigation-cancel-stroke", {
+        layerId,
+      });
       this.clearStrokeLayer();
       this.releaseStrokeLayerTarget();
       this.documentRenderer?.deleteActiveStrokeScratchTarget?.();

@@ -548,10 +548,27 @@
   flex: 0 0 104px;
   width: 104px;
   height: 104px;
+  padding: 0;
   overflow: hidden;
+  border: 0;
   border-radius: 8px;
   background: rgb(44, 48, 58);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  color: #edf0f6;
+  font: inherit;
+  text-align: left;
+}
+
+button.drawer-image-placeholder {
+  cursor: pointer;
+}
+
+button.drawer-image-placeholder:hover,
+button.drawer-image-placeholder:focus-visible {
+  box-shadow:
+    inset 0 0 0 1px rgba(90, 220, 205, 0.72),
+    0 10px 26px rgba(0, 0, 0, 0.25);
+  outline: none;
 }
 
 .drawer-image {
@@ -559,6 +576,31 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.drawer-image-contain {
+  padding: 7px;
+  background: #050506;
+  object-fit: contain;
+}
+
+.drawer-image-label {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: 7px;
+  min-width: 0;
+  padding: 4px 5px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: rgba(7, 9, 13, 0.82);
+  color: #f4f7fb;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .drawer-content.category-mode .drawer-image-placeholder {

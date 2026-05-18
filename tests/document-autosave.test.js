@@ -128,7 +128,7 @@ test("document save is manual-only and does not show autosaving text", () => {
   assert.doesNotMatch(cssSource, /\.document-autosave-indicator/);
 });
 
-test("document autosave restores the latest session before the canvas is started", () => {
+test("document autosave can restore sessions while the start screen restores saved documents", () => {
   const source = readRepoFile("js", "document", "document-autosave.js");
   const editorCanvasSource = readRepoFile("js", "editor-canvas.js");
 
@@ -150,7 +150,7 @@ test("document autosave restores the latest session before the canvas is started
   assert.match(source, /namespace\.emitEditorCanvasReady\?\.\(\{ source: "autosave-restore" \}\)/);
   assert.match(editorCanvasSource, /createDocumentRecoveryButton\(summary\)/);
   assert.match(editorCanvasSource, /const projectName = String\(summary\?\.projectName \|\| ""\)\.trim\(\)/);
-  assert.match(editorCanvasSource, /saveSystem\.restoreLatest\(\)/);
+  assert.match(editorCanvasSource, /saveSystem\.restore\(sessionId\)/);
   assert.match(editorCanvasSource, /window\.CBO\.emitEditorCanvasReady = function emitEditorCanvasReady/);
   assert.match(editorCanvasSource, /if \(options\.deferReadyEvent === true\)/);
 });

@@ -32,6 +32,8 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   const ARTBOARD_LAYER_GROUP_PREFIX = "artboard-group-";
   const layerTouchLongPressDelay = 520;
   const layerTouchMoveTolerance = 10;
+  const layerTouchDragAutoScrollZone = 54;
+  const layerTouchDragAutoScrollStep = 18;
   const layerModel = window.CBO.documentLayerModel ||
     (window.CBO.DocumentLayerModel ? new window.CBO.DocumentLayerModel() : null);
 
@@ -1014,7 +1016,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     row.innerHTML = `
       <div class="layer-info">
         ${getDisclosureControl(type)}
-        <span class="layer-icon-stack">
+        <span class="layer-icon-stack" data-layer-drag-handle aria-hidden="true">
           ${getClippingMaskIndicator()}
           <span class="layer-file-icon" aria-hidden="true">
             ${getLayerIcon(type, state)}
@@ -1551,6 +1553,36 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     dragState.dropIntent = intent;
   }
 
+  function scrollLayerDrawerDuringTouchDrag(event) {
+    if (!dragState?.isDragging || dragState.pointerType !== "touch") {
+      return;
+    }
+
+    const scrollHost = panel.closest(".drawer-content");
+
+    if (!scrollHost) {
+      return;
+    }
+
+    const rect = scrollHost.getBoundingClientRect();
+    const distanceFromTop = event.clientY - rect.top;
+    const distanceFromBottom = rect.bottom - event.clientY;
+    const canScrollUp = scrollHost.scrollTop > 0;
+    const canScrollDown = scrollHost.scrollTop < scrollHost.scrollHeight - scrollHost.clientHeight - 1;
+    const delta = distanceFromTop < layerTouchDragAutoScrollZone && canScrollUp
+      ? -layerTouchDragAutoScrollStep
+      : distanceFromBottom < layerTouchDragAutoScrollZone && canScrollDown
+        ? layerTouchDragAutoScrollStep
+        : 0;
+
+    if (!delta) {
+      return;
+    }
+
+    scrollHost.scrollTop += delta;
+    scrollHost.dispatchEvent(new Event("scroll"));
+  }
+
   function findDropIntent(event) {
     const element = document.elementFromPoint(event.clientX, event.clientY);
     const targetRow = element?.closest("[data-layer-row]");
@@ -1625,6 +1657,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
   function isTouchLayerPointer(event) {
     return event.pointerType === "touch";
+  }
+
+  function isLayerTouchDragHandleTarget(target) {
+    return target instanceof Element && Boolean(target.closest("[data-layer-drag-handle]"));
   }
 
   function cancelLayerDrag(pointerId) {
@@ -1778,6 +1814,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     }
 
     showDropHint(findDropIntent(event));
+    scrollLayerDrawerDuringTouchDrag(event);
     event.preventDefault();
   }
 
@@ -2011,9 +2048,18 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
-    if (isTouchLayerPointer(event)) {
+    const isTouchPointer = isTouchLayerPointer(event);
+    const isTouchDragHandle = isTouchPointer && isLayerTouchDragHandleTarget(target);
+
+    if (isTouchPointer) {
       selectLayerFromPointer(row, event);
-      beginLayerLongPress(row, event);
+
+      if (!isTouchDragHandle) {
+        beginLayerLongPress(row, event);
+        return;
+      }
+
+      event.preventDefault();
     }
 
     startLayerDrag(row, event);

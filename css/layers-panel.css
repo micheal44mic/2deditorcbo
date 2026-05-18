@@ -212,6 +212,14 @@
   width: 18px;
   height: 18px;
   flex: 0 0 18px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.layer-entry.dragging .layer-icon-stack {
+  cursor: grabbing;
 }
 
 .layer-file-icon {
@@ -474,9 +482,15 @@
   }
 
   .layer-icon-stack {
-    width: 28px;
-    height: 28px;
-    flex-basis: 28px;
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+    border-radius: 9px;
+    touch-action: none;
+  }
+
+  .layer-icon-stack:active {
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .layer-file-icon,

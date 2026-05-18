@@ -60,24 +60,108 @@ window.CBO.initDrawer = function initDrawer() {
   }
 
   function getItemAlt(item, categoryTitle) {
-    return Array.isArray(item) ? categoryTitle : item.alt || categoryTitle;
+    return Array.isArray(item) ? categoryTitle : item.alt || item.name || categoryTitle;
+  }
+
+  function getItemName(item, categoryTitle) {
+    return Array.isArray(item) ? categoryTitle : item.name || item.alt || categoryTitle;
+  }
+
+  function isMockupItem(item) {
+    return !Array.isArray(item) && (item.type === "mockup" || item.mockup === true);
+  }
+
+  function getMockupItemById(id) {
+    const normalizedId = String(id || "").trim();
+
+    if (!normalizedId) {
+      return null;
+    }
+
+    for (const category of mockupCategories) {
+      const match = (category.items || []).find((item) => !Array.isArray(item) && item.id === normalizedId);
+
+      if (match) {
+        return {
+          ...match,
+          category: category.title,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function createMockupOpenDetail(mockupItem) {
+    return {
+      artboardHeight: mockupItem.artboardHeight || 2048,
+      artboardWidth: mockupItem.artboardWidth || 2048,
+      category: mockupItem.category || "",
+      id: mockupItem.id || "",
+      name: getItemName(mockupItem, "Mockup"),
+      placement: mockupItem.placement || null,
+      src: getItemSrc(mockupItem),
+    };
+  }
+
+  function openMockupItem(mockupItem) {
+    const detail = createMockupOpenDetail(mockupItem);
+
+    if (!detail.src) {
+      return;
+    }
+
+    window.CBO.closeDrawerPanel?.();
+
+    if (window.CBO.openMockupAsset) {
+      Promise.resolve(window.CBO.openMockupAsset(detail)).catch((error) => {
+        console.warn("Impossibile aprire il mockup.", error);
+      });
+      return;
+    }
+
+    window.dispatchEvent(new CustomEvent("cbo:open-mockup-asset", { detail }));
   }
 
   function createImagePlaceholder(categoryTitle, categoryItem, index) {
     const tags = getItemTags(categoryItem);
     const src = getItemSrc(categoryItem);
-    const item = document.createElement("span");
+    const mockupItem = isMockupItem(categoryItem);
+    const item = document.createElement(mockupItem ? "button" : "span");
     item.className = "drawer-image-placeholder";
     item.dataset.tags = tags.join(" ");
     item.dataset.category = categoryTitle.toLowerCase();
     item.dataset.preview = index < previewLimit ? "true" : "false";
 
+    if (mockupItem) {
+      const itemName = getItemName(categoryItem, categoryTitle);
+
+      item.type = "button";
+      item.dataset.mockupId = categoryItem.id || "";
+      item.setAttribute("aria-label", `Open ${itemName}`);
+      item.title = itemName;
+    }
+
     if (src) {
       const image = document.createElement("img");
       image.className = "drawer-image";
+
+      if (mockupItem || categoryItem.fit === "contain") {
+        image.classList.add("drawer-image-contain");
+      }
+
       image.src = src;
       image.alt = getItemAlt(categoryItem, categoryTitle);
+      image.loading = "lazy";
       item.append(image);
+    }
+
+    if (mockupItem) {
+      const label = document.createElement("span");
+
+      label.className = "drawer-image-label";
+      label.textContent = getItemName(categoryItem, categoryTitle);
+      item.append(label);
     }
 
     return item;
@@ -947,6 +1031,18 @@ window.CBO.initDrawer = function initDrawer() {
   });
 
   drawerContent.addEventListener("click", (event) => {
+    const mockupButton = event.target.closest("[data-mockup-id]");
+
+    if (mockupButton) {
+      const mockupItem = getMockupItemById(mockupButton.dataset.mockupId);
+
+      if (mockupItem) {
+        openMockupItem(mockupItem);
+      }
+
+      return;
+    }
+
     const backButton = event.target.closest("[data-category-back]");
 
     if (backButton) {

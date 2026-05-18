@@ -48,8 +48,32 @@ const TEMP_TEMPLATE_ITEMS_TO_REMOVE = [
   { tags: ["temporary", "template", "blank"] },
 ];
 
+const HOODIE_BODY_1_MOCKUP = {
+  id: "hoodie-body-1",
+  name: "hoodie body 1",
+  alt: "hoodie body 1",
+  src: "./assets/mockups/hoodie-body-1.svg",
+  type: "mockup",
+  fit: "contain",
+  artboardWidth: 2048,
+  artboardHeight: 2048,
+  placement: { x: 0, y: 0, width: 2048, height: 2048 },
+  tags: ["mockup", "hats", "hoodie", "body", "hoodie-body-1"],
+};
+
+const HOODIE_DETAIL_1_MOCKUP = {
+  id: "hoodie-detail-1",
+  name: "hoodie detail 1",
+  alt: "hoodie detail 1",
+  src: "./assets/mockups/hoodie-detail-1.svg",
+  type: "mockup-addon",
+  fit: "contain",
+  placement: { x: 0, y: 0, width: 2048, height: 2048 },
+  tags: ["mockup", "hoodie", "detail", "hoodie-detail-1"],
+};
+
 const TEMP_HAT_MOCKUPS_TO_REMOVE = [
-  { tags: ["temporary", "mockup", "hats"] },
+  HOODIE_BODY_1_MOCKUP,
   { tags: ["temporary", "mockup", "hats"] },
   { tags: ["temporary", "mockup", "hats"] },
   { tags: ["temporary", "mockup", "hats"] },
@@ -71,6 +95,10 @@ window.CBO_TEMPLATES = TEMP_TEMPLATE_ITEMS_TO_REMOVE;
 window.CBO_MOCKUP_CATEGORIES = [
   { title: "HATS", items: TEMP_HAT_MOCKUPS_TO_REMOVE },
   { title: "ACCESSORY", items: TEMP_ACCESSORY_MOCKUPS_TO_REMOVE },
+];
+
+window.CBO_MOCKUP_ADDON_LIBRARY = [
+  HOODIE_DETAIL_1_MOCKUP,
 ];
 
 window.CBO_CATEGORIES = [

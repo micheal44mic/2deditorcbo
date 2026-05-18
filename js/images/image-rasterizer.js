@@ -439,14 +439,35 @@ void main() {
       }
     }
 
+    async isSvgImageBlob(blob) {
+      const type = String(blob?.type || "").trim().toLowerCase();
+
+      if (type.includes("svg")) {
+        return true;
+      }
+
+      if (type && !type.includes("xml") && !type.includes("text")) {
+        return false;
+      }
+
+      try {
+        const sample = await blob.slice(0, 512).text();
+
+        return /<svg[\s>]/i.test(sample) || /<\?xml[\s\S]{0,320}<svg[\s>]/i.test(sample);
+      } catch (_error) {
+        return false;
+      }
+    }
+
     async decodeImageBlob(blob, options = {}) {
       const headerSize = await this.readBlobImageSize(blob);
+      const useHtmlImageDecode = await this.isSvgImageBlob(blob);
 
       if (headerSize) {
         this.assertImportOriginalWithinBudget(headerSize, options);
       }
 
-      if (window.createImageBitmap) {
+      if (window.createImageBitmap && !useHtmlImageDecode) {
         try {
           if (headerSize) {
             const decodedSize = this.fitImageSize(headerSize.width, headerSize.height, options);

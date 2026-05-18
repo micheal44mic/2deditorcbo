@@ -17,6 +17,11 @@ window.CBO = window.CBO || {};
   const PREVIEW_OVERLAY_OVERSCAN_CSS_PX = 512;
   const LABEL_HIT_HEIGHT_CSS_PX = 30;
   const SELECTION_TOOL_MODE = "selection";
+  const MOCKUP_BODY_ASSET_ID = "hoodie-body-1";
+  const MOCKUP_SLOT_CENTER_OFFSET_Y = 500;
+  const MOCKUP_SLOT_SIZE_DOC = 184;
+  const MOCKUP_SLOT_MIN_SCREEN_SIZE = 44;
+  const MOCKUP_SLOT_MAX_SCREEN_SIZE = 132;
 
   let lastCameraState = null;
   let isReady = false;
@@ -25,6 +30,8 @@ window.CBO = window.CBO || {};
   let artboardDragState = null;
   let artboardCreatePopover = null;
   let artboardCreateButton = null;
+  let mockupSlotPopover = null;
+  let activeMockupSlotArtboardId = "";
   let activeArtboardSizePreset = "current";
 
   function getStage() {
@@ -409,6 +416,388 @@ window.CBO = window.CBO || {};
       event.stopPropagation();
       closeArtboardCreatePopover();
     }
+  }
+
+  function getMockupAddonLibrary() {
+    return Array.isArray(window.CBO_MOCKUP_ADDON_LIBRARY)
+      ? window.CBO_MOCKUP_ADDON_LIBRARY.filter((item) => item && item.src)
+      : [];
+  }
+
+  function getFlatDocumentLayerEntries() {
+    const layerModel = namespace.documentLayerModel;
+    const flatLayers = layerModel?.flattenTopToBottom?.();
+
+    if (Array.isArray(flatLayers)) {
+      return flatLayers;
+    }
+
+    const entries = layerModel?.getEntries?.();
+    const flatEntries = [];
+    const collectEntries = (items) => {
+      if (!Array.isArray(items)) {
+        return;
+      }
+
+      items.forEach((entry) => {
+        if (!entry) {
+          return;
+        }
+
+        flatEntries.push(entry);
+        collectEntries(entry.children);
+      });
+    };
+
+    collectEntries(entries);
+    return flatEntries;
+  }
+
+  function isMockupBodyLayerEntry(entry, artboardId) {
+    const normalizedArtboardId = String(artboardId || "active-document").trim() || "active-document";
+    const entryArtboardId = String(entry?.artboardId || "active-document").trim() || "active-document";
+    const mockupAsset = entry?.mockupAsset || {};
+    const assetId = String(mockupAsset.id || "").trim();
+    const assetName = String(mockupAsset.name || entry?.name || "").trim().toLowerCase();
+    const assetSrc = String(mockupAsset.src || entry?.imageAsset?.src || "").trim();
+
+    return entryArtboardId === normalizedArtboardId &&
+      (
+        assetId === MOCKUP_BODY_ASSET_ID ||
+        assetName === "hoodie body 1" ||
+        assetSrc.includes(`${MOCKUP_BODY_ASSET_ID}.svg`) ||
+        assetSrc.includes(`${MOCKUP_BODY_ASSET_ID}.png`)
+      );
+  }
+
+  function isMockupAddonLayerEntry(entry, artboardId, addonLibrary = getMockupAddonLibrary()) {
+    const normalizedArtboardId = String(artboardId || "active-document").trim() || "active-document";
+    const entryArtboardId = String(entry?.artboardId || "active-document").trim() || "active-document";
+    const mockupAsset = entry?.mockupAsset || {};
+    const assetId = String(mockupAsset.id || "").trim();
+    const assetName = String(mockupAsset.name || entry?.name || "").trim().toLowerCase();
+    const assetSrc = String(mockupAsset.src || entry?.imageAsset?.src || "").trim();
+
+    if (entryArtboardId !== normalizedArtboardId) {
+      return false;
+    }
+
+    return addonLibrary.some((item) => {
+      const itemId = String(item?.id || "").trim();
+      const itemName = String(item?.name || item?.alt || "").trim().toLowerCase();
+      const itemSrc = String(item?.src || "").trim();
+
+      return (
+        (itemId && assetId === itemId) ||
+        (itemName && assetName === itemName) ||
+        (itemSrc && assetSrc.includes(itemSrc.replace(/^\.\//, "")))
+      );
+    });
+  }
+
+  function shouldRenderMockupSlot(artboard) {
+    const addonLibrary = getMockupAddonLibrary();
+
+    if (!artboard?.id || addonLibrary.length === 0) {
+      return false;
+    }
+
+    const entries = getFlatDocumentLayerEntries();
+    const hasBodyLayer = entries.some((entry) => isMockupBodyLayerEntry(entry, artboard.id));
+    const hasAddonLayer = entries.some((entry) => isMockupAddonLayerEntry(entry, artboard.id, addonLibrary));
+
+    return hasBodyLayer && !hasAddonLayer;
+  }
+
+  function getMockupSlotGeometry(artboard, frameWidth, frameHeight) {
+    const artboardWidth = Math.max(1, Number(artboard?.width) || 1);
+    const artboardHeight = Math.max(1, Number(artboard?.height) || 1);
+    const scaleX = Math.max(0.0001, Number(frameWidth) || 1) / artboardWidth;
+    const scaleY = Math.max(0.0001, Number(frameHeight) || 1) / artboardHeight;
+    const docX = artboardWidth * 0.5;
+    const docY = artboardHeight * 0.5 - MOCKUP_SLOT_CENTER_OFFSET_Y;
+    const rawSize = MOCKUP_SLOT_SIZE_DOC * Math.min(scaleX, scaleY);
+    const size = Math.round(Math.max(
+      MOCKUP_SLOT_MIN_SCREEN_SIZE,
+      Math.min(MOCKUP_SLOT_MAX_SCREEN_SIZE, rawSize),
+    ));
+
+    return {
+      docX: Math.round(docX),
+      docY: Math.round(docY),
+      left: (docX * scaleX) - size * 0.5,
+      size,
+      top: (docY * scaleY) - size * 0.5,
+    };
+  }
+
+  function createMockupSlotButton(artboard, frameWidth, frameHeight) {
+    if (!shouldRenderMockupSlot(artboard)) {
+      return null;
+    }
+
+    const geometry = getMockupSlotGeometry(artboard, frameWidth, frameHeight);
+    const button = document.createElement("button");
+    const plus = document.createElement("span");
+
+    button.className = "editor-mockup-slot-button";
+    button.type = "button";
+    button.dataset.mockupSlot = "true";
+    button.dataset.artboardId = artboard.id;
+    button.dataset.mockupSlotX = String(geometry.docX);
+    button.dataset.mockupSlotY = String(geometry.docY);
+    button.setAttribute("aria-label", "Add mockup");
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-expanded", "false");
+    button.style.left = `${geometry.left}px`;
+    button.style.top = `${geometry.top}px`;
+    button.style.setProperty("--mockup-slot-size", `${geometry.size}px`);
+    button.addEventListener("pointerdown", handleMockupSlotPointerDown, true);
+    button.addEventListener("click", handleMockupSlotClick);
+
+    plus.className = "editor-mockup-slot-plus";
+    plus.textContent = "+";
+    plus.setAttribute("aria-hidden", "true");
+    button.append(plus);
+
+    return button;
+  }
+
+  function handleMockupSlotPointerDown(event) {
+    const target = event.target;
+
+    if (
+      target instanceof Element &&
+      target.closest("[data-mockup-slot], [data-mockup-slot-popover]")
+    ) {
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+    }
+  }
+
+  function ensureMockupSlotPopover() {
+    const stage = getStage();
+
+    if (!stage) {
+      return null;
+    }
+
+    if (mockupSlotPopover?.isConnected && mockupSlotPopover.parentElement === stage) {
+      return mockupSlotPopover;
+    }
+
+    mockupSlotPopover?.remove();
+    mockupSlotPopover = document.createElement("section");
+    mockupSlotPopover.className = "editor-mockup-slot-popover";
+    mockupSlotPopover.dataset.mockupSlotPopover = "true";
+    mockupSlotPopover.hidden = true;
+    mockupSlotPopover.setAttribute("role", "dialog");
+    mockupSlotPopover.setAttribute("aria-label", "Mockup");
+    mockupSlotPopover.addEventListener("pointerdown", handleMockupSlotPointerDown, true);
+    mockupSlotPopover.addEventListener("click", handleMockupSlotPopoverClick);
+    stage.append(mockupSlotPopover);
+
+    return mockupSlotPopover;
+  }
+
+  function closeMockupSlotPopover() {
+    if (mockupSlotPopover) {
+      mockupSlotPopover.hidden = true;
+    }
+
+    document.querySelectorAll("[data-mockup-slot]").forEach((button) => {
+      button.setAttribute("aria-expanded", "false");
+      button.classList.remove("is-open");
+    });
+    activeMockupSlotArtboardId = "";
+  }
+
+  function createMockupSlotChoice(item) {
+    const button = document.createElement("button");
+    const thumb = document.createElement("span");
+    const image = document.createElement("img");
+    const label = document.createElement("span");
+    const name = String(item.name || item.alt || "Mockup").trim() || "Mockup";
+
+    button.className = "editor-mockup-slot-choice";
+    button.type = "button";
+    button.dataset.mockupAddonId = String(item.id || "");
+    button.setAttribute("aria-label", name);
+
+    thumb.className = "editor-mockup-slot-choice-thumb";
+    image.alt = item.alt || name;
+    image.draggable = false;
+    image.loading = "lazy";
+    image.src = item.src;
+    thumb.append(image);
+
+    label.className = "editor-mockup-slot-choice-label";
+    label.textContent = name;
+
+    button.append(thumb, label);
+    return button;
+  }
+
+  function renderMockupSlotChoices(popover) {
+    const items = getMockupAddonLibrary();
+
+    popover.replaceChildren(...items.map(createMockupSlotChoice));
+  }
+
+  function getActiveMockupSlotButton() {
+    const stage = getStage();
+
+    if (!stage || !activeMockupSlotArtboardId) {
+      return null;
+    }
+
+    return Array.from(stage.querySelectorAll("[data-mockup-slot]"))
+      .find((button) => button.dataset.artboardId === activeMockupSlotArtboardId) || null;
+  }
+
+  function positionMockupSlotPopover() {
+    const popover = mockupSlotPopover;
+
+    if (!popover || popover.hidden) {
+      return;
+    }
+
+    const stage = getStage();
+    const button = getActiveMockupSlotButton();
+
+    if (!stage || !button) {
+      closeMockupSlotPopover();
+      return;
+    }
+
+    const stageRect = stage.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const popoverRect = popover.getBoundingClientRect();
+    const gap = 10;
+    const maxLeft = Math.max(8, stageRect.width - popoverRect.width - 8);
+    const maxTop = Math.max(8, stageRect.height - popoverRect.height - 8);
+    const rightLeft = buttonRect.right - stageRect.left + gap;
+    const leftLeft = buttonRect.left - stageRect.left - popoverRect.width - gap;
+    const preferredTop = buttonRect.top - stageRect.top - ((popoverRect.height - buttonRect.height) * 0.5);
+    const left = Math.min(maxLeft, Math.max(8, rightLeft <= maxLeft ? rightLeft : leftLeft));
+    const top = Math.min(maxTop, Math.max(8, preferredTop));
+
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+  }
+
+  function openMockupSlotPopover(artboardId, button) {
+    const normalizedArtboardId = String(artboardId || "").trim();
+    const popover = ensureMockupSlotPopover();
+
+    if (!normalizedArtboardId || !popover || getMockupAddonLibrary().length === 0) {
+      return;
+    }
+
+    activeMockupSlotArtboardId = normalizedArtboardId;
+    renderMockupSlotChoices(popover);
+    popover.hidden = false;
+    document.querySelectorAll("[data-mockup-slot]").forEach((slotButton) => {
+      const isActive = slotButton === button;
+
+      slotButton.setAttribute("aria-expanded", String(isActive));
+      slotButton.classList.toggle("is-open", isActive);
+    });
+    positionMockupSlotPopover();
+  }
+
+  function getMockupAddonById(itemId) {
+    const normalizedId = String(itemId || "").trim();
+
+    return getMockupAddonLibrary().find((item) => String(item.id || "").trim() === normalizedId) ||
+      getMockupAddonLibrary()[0] ||
+      null;
+  }
+
+  async function placeMockupSlotAddon(itemId) {
+    const item = getMockupAddonById(itemId);
+    const artboardId = activeMockupSlotArtboardId;
+
+    if (!item || !artboardId) {
+      return false;
+    }
+
+    const detail = {
+      ...item,
+      artboardId,
+      placement: item.placement || { x: 0, y: 0, width: 2048, height: 2048 },
+    };
+    const slotButton = getActiveMockupSlotButton();
+
+    closeMockupSlotPopover();
+    slotButton?.remove();
+
+    if (typeof namespace.addMockupAssetToArtboard === "function") {
+      const didAdd = await namespace.addMockupAssetToArtboard(detail, { artboardId });
+
+      renderArtboardPreviews();
+      return didAdd;
+    }
+
+    window.dispatchEvent(new CustomEvent("cbo:add-mockup-asset-to-artboard", { detail }));
+    renderArtboardPreviews();
+    return true;
+  }
+
+  function handleMockupSlotPopoverClick(event) {
+    const target = event.target;
+    const choice = target instanceof Element ? target.closest("[data-mockup-addon-id]") : null;
+
+    if (!choice) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void placeMockupSlotAddon(choice.dataset.mockupAddonId).catch((error) => {
+      console.warn("Impossibile aggiungere il mockup allo slot.", error);
+    });
+  }
+
+  function handleMockupSlotDocumentClick(event) {
+    const target = event.target;
+
+    if (
+      !mockupSlotPopover ||
+      mockupSlotPopover.hidden ||
+      !(target instanceof Element) ||
+      mockupSlotPopover.contains(target) ||
+      target.closest("[data-mockup-slot]")
+    ) {
+      return;
+    }
+
+    closeMockupSlotPopover();
+  }
+
+  function handleMockupSlotKeydown(event) {
+    if (event.key === "Escape" && mockupSlotPopover && !mockupSlotPopover.hidden) {
+      event.stopPropagation();
+      closeMockupSlotPopover();
+    }
+  }
+
+  function handleMockupSlotClick(event) {
+    const target = event.target;
+    const button = target instanceof Element ? target.closest("[data-mockup-slot]") : null;
+
+    if (!button) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    focusPreviewArtboardView(button.dataset.artboardId, {
+      closeDrawer: true,
+      source: "mockup-slot-open",
+    });
+    openMockupSlotPopover(button.dataset.artboardId, button);
   }
 
   function emitArtboardPreviewChange(source = "artboard-preview") {
@@ -1193,7 +1582,7 @@ window.CBO = window.CBO || {};
   }
 
   function handleStagePointerDown(event) {
-    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-connection-menu], [data-ai-image-board]")) {
+    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-connection-menu], [data-ai-image-board], [data-mockup-slot], [data-mockup-slot-popover]")) {
       return;
     }
 
@@ -1237,6 +1626,8 @@ window.CBO = window.CBO || {};
     }
 
     stage.dataset.artboardSelectionReady = "true";
+    stage.addEventListener("pointerdown", handleMockupSlotPointerDown, true);
+    stage.addEventListener("click", handleMockupSlotClick, true);
     stage.addEventListener("pointerdown", handleStagePointerDown, true);
     stage.addEventListener("pointermove", updateArtboardDrag, true);
     stage.addEventListener("pointerup", finishArtboardDrag, true);
@@ -1319,6 +1710,12 @@ window.CBO = window.CBO || {};
       label.textContent = `${artboard.name} ${artboard.width} x ${artboard.height}`;
 
       frame.append(label);
+      const mockupSlotButton = createMockupSlotButton(artboard, width, height);
+
+      if (mockupSlotButton) {
+        frame.append(mockupSlotButton);
+      }
+
       return frame;
     }));
 
@@ -1334,6 +1731,7 @@ window.CBO = window.CBO || {};
       viewScale: zoom / dpr,
     });
     syncArtboardDragPreview();
+    positionMockupSlotPopover();
   }
 
   function fitPreviewRect(targetRect) {
@@ -1380,6 +1778,43 @@ window.CBO = window.CBO || {};
 
   function fitPreviewArtboards() {
     fitPreviewRect(resolveScaleTargetRect());
+  }
+
+  function fitPreviewArtboard(artboardId) {
+    const artboard = getArtboardById(artboardId);
+    const bounds = getArtboardBounds(artboard);
+
+    fitPreviewRect(bounds || resolveScaleTargetRect({ ignoreSelection: true }));
+  }
+
+  function focusPreviewArtboardView(artboardId, options = {}) {
+    const normalizedArtboardId = String(artboardId || "").trim();
+
+    if (!normalizedArtboardId) {
+      return false;
+    }
+
+    if (options.closeDrawer !== false) {
+      namespace.closeDrawerPanel?.();
+    }
+
+    selectArtboard(normalizedArtboardId, {
+      force: true,
+      source: options.source || "artboard-preview-focus-view",
+    });
+
+    const fit = () => fitPreviewArtboard(normalizedArtboardId);
+
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(fit);
+      });
+    } else {
+      window.setTimeout(fit, 0);
+    }
+
+    window.setTimeout(fit, 230);
+    return true;
   }
 
   function fitAllPreviewArtboards() {
@@ -1475,8 +1910,11 @@ window.CBO = window.CBO || {};
     });
     window.addEventListener("resize", () => renderArtboardPreviews());
     window.addEventListener("resize", positionArtboardCreatePopover);
+    window.addEventListener("resize", positionMockupSlotPopover);
     document.addEventListener("click", handleArtboardPopoverDocumentClick);
+    document.addEventListener("click", handleMockupSlotDocumentClick);
     document.addEventListener("keydown", handleArtboardPopoverKeydown);
+    document.addEventListener("keydown", handleMockupSlotKeydown);
 
     if (getRenderer()) {
       fitPreviewArtboards();
@@ -1525,6 +1963,14 @@ window.CBO = window.CBO || {};
 
   namespace.fitPreviewArtboards = function fitPreviewArtboardsFromTool() {
     fitPreviewArtboards();
+  };
+
+  namespace.fitPreviewArtboard = function fitPreviewArtboardFromTool(artboardId) {
+    fitPreviewArtboard(artboardId);
+  };
+
+  namespace.focusPreviewArtboardView = function focusPreviewArtboardViewFromTool(artboardId, options = {}) {
+    return focusPreviewArtboardView(artboardId, options);
   };
 
   namespace.fitAllPreviewArtboards = function fitAllPreviewArtboardsFromTool() {

@@ -5,6 +5,7 @@
   const SESSIONS_STORE = "sessions";
   const TILES_STORE = "tiles";
   const LATEST_META_KEY = "latest";
+  const PROJECTS_META_KEY = "projects";
   const PROJECT_NAME_STORAGE_KEY = namespace.documentProjectNameStorageKey || "cbo-project-name";
   const TILE_SIZE = 256;
   const DOCUMENT_SAVE_FORMAT_VERSION = 1;
@@ -147,6 +148,16 @@
     const transaction = db.transaction(SESSIONS_STORE, "readonly");
 
     return requestToPromise(transaction.objectStore(SESSIONS_STORE).get(sessionId));
+  }
+
+  async function getAllSessions() {
+    const db = await openDb();
+    const transaction = db.transaction(SESSIONS_STORE, "readonly");
+    const sessions = await requestToPromise(transaction.objectStore(SESSIONS_STORE).getAll());
+
+    return (Array.isArray(sessions) ? sessions : [])
+      .filter((session) => session?.id && session?.document)
+      .sort((a, b) => String(b?.savedAt || "").localeCompare(String(a?.savedAt || "")));
   }
 
   async function getTilesForSession(sessionId) {
@@ -365,6 +376,79 @@
       tileCount: Math.max(0, Math.round(session?.tileCount || 0)),
       width: Math.max(0, Math.round(document.width || 0)),
     };
+  }
+
+  function sortSummariesBySavedAt(summaries = []) {
+    return [...summaries].sort((a, b) => String(b?.savedAt || "").localeCompare(String(a?.savedAt || "")));
+  }
+
+  function normalizeSummary(value) {
+    if (!value?.sessionId) {
+      return null;
+    }
+
+    return {
+      height: Math.max(0, Math.round(value.height || 0)),
+      layerCount: Math.max(0, Math.round(value.layerCount || 0)),
+      projectName: typeof value.projectName === "string" ? value.projectName : "",
+      savedAt: value.savedAt || "",
+      sessionId: String(value.sessionId || ""),
+      tileCount: Math.max(0, Math.round(value.tileCount || 0)),
+      width: Math.max(0, Math.round(value.width || 0)),
+    };
+  }
+
+  async function readProjectIndex(db) {
+    const transaction = db.transaction(META_STORE, "readonly");
+    const record = await requestToPromise(transaction.objectStore(META_STORE).get(PROJECTS_META_KEY));
+    const projects = Array.isArray(record?.projects) ? record.projects : [];
+
+    return sortSummariesBySavedAt(projects.map(normalizeSummary).filter(Boolean));
+  }
+
+  async function writeProjectIndex(db, summaries = []) {
+    const projects = sortSummariesBySavedAt(summaries.map(normalizeSummary).filter(Boolean));
+    const transaction = db.transaction(META_STORE, "readwrite");
+
+    transaction.objectStore(META_STORE).put({
+      key: PROJECTS_META_KEY,
+      projects,
+      updatedAt: new Date().toISOString(),
+    });
+    await transactionDone(transaction);
+
+    return projects;
+  }
+
+  async function upsertProjectIndex(db, session) {
+    const summary = createSummary(session);
+    const projects = await readProjectIndex(db);
+    const nextProjects = [
+      summary,
+      ...projects.filter((project) => project.sessionId !== summary.sessionId),
+    ];
+
+    return writeProjectIndex(db, nextProjects);
+  }
+
+  function getCurrentDocumentSaveId() {
+    return String(
+      namespace.currentDocumentSaveId ||
+      namespace.documentSettings?.saveId ||
+      "",
+    ).trim();
+  }
+
+  function setCurrentDocumentSaveId(sessionId) {
+    const nextSessionId = String(sessionId || "").trim();
+
+    namespace.currentDocumentSaveId = nextSessionId;
+    namespace.documentSettings = {
+      ...(namespace.documentSettings || {}),
+      saveId: nextSessionId,
+    };
+
+    return nextSessionId;
   }
 
   function normalizeProjectName(value) {
@@ -635,6 +719,86 @@
     return true;
   }
 
+  function getCurrentDocumentView() {
+    const camera = namespace.brushEngine?.camera;
+
+    if (!camera) {
+      return null;
+    }
+
+    const x = Number(camera.x);
+    const y = Number(camera.y);
+    const zoom = Number(camera.zoom);
+
+    if (!Number.isFinite(zoom) || zoom <= 0) {
+      return null;
+    }
+
+    return {
+      camera: {
+        x: Number.isFinite(x) ? x : 0,
+        y: Number.isFinite(y) ? y : 0,
+        zoom,
+      },
+    };
+  }
+
+  function getSavedDocumentViewCamera(session) {
+    const camera = session?.view?.camera;
+
+    if (!camera) {
+      return null;
+    }
+
+    const x = Number(camera.x);
+    const y = Number(camera.y);
+    const zoom = Number(camera.zoom);
+
+    if (!Number.isFinite(zoom) || zoom <= 0) {
+      return null;
+    }
+
+    return {
+      x: Number.isFinite(x) ? x : 0,
+      y: Number.isFinite(y) ? y : 0,
+      zoom,
+    };
+  }
+
+  function applySavedDocumentView(session, source = "document-save-restore-view") {
+    const savedCamera = getSavedDocumentViewCamera(session);
+    const brushEngine = namespace.brushEngine;
+    const camera = brushEngine?.camera;
+
+    if (!savedCamera || !brushEngine || !camera) {
+      return false;
+    }
+
+    brushEngine.resizeViewport?.();
+
+    camera.x = savedCamera.x;
+    camera.y = savedCamera.y;
+    camera.zoom = savedCamera.zoom;
+    brushEngine.userManipulatedCamera = true;
+
+    const dpr = Math.max(1, Number(brushEngine.dpr || window.devicePixelRatio || 1));
+    const viewportWidth = Math.max(1, Math.round(Number(brushEngine.viewportWidth) || brushEngine.canvas?.width || 1));
+    const viewportHeight = Math.max(1, Math.round(Number(brushEngine.viewportHeight) || brushEngine.canvas?.height || 1));
+
+    window.dispatchEvent(new CustomEvent("cbo:camera-change", {
+      detail: {
+        camera: { ...camera },
+        dpr,
+        source,
+        viewportHeight,
+        viewportWidth,
+      },
+    }));
+    brushEngine.requestDraw?.();
+
+    return true;
+  }
+
   function getSessionArtboards(session) {
     return Array.isArray(session?.document?.artboards)
       ? cloneValue(session.document.artboards)
@@ -793,7 +957,7 @@
     };
   }
 
-  async function buildCurrentSession() {
+  async function buildCurrentSession(options = {}) {
     const renderer = namespace.documentRenderer;
     const layerModel = namespace.documentLayerModel;
     const history = namespace.documentHistory;
@@ -804,7 +968,8 @@
 
     history?.flushLayerState?.(layerModel);
 
-    const sessionId = createId("session");
+    const requestedSessionId = String(options.sessionId || "").trim();
+    const sessionId = requestedSessionId || getCurrentDocumentSaveId() || createId("project");
     const entries = layerModel.getEntries();
     const projectName = getCurrentProjectName();
     const rasterLayerIds = Array.from(collectRasterLayerIds(entries));
@@ -852,56 +1017,49 @@
         tileRawByteLength: rasterStorage.rawByteLength,
         tileStoredByteLength: rasterStorage.storedByteLength,
         version: DOCUMENT_SAVE_FORMAT_VERSION,
+        view: getCurrentDocumentView(),
       },
       tileRecords,
     };
   }
 
-  async function cleanupOldSessions(db, keepSessionId) {
-    const readTransaction = db.transaction([SESSIONS_STORE, TILES_STORE], "readonly");
-    const sessions = await requestToPromise(readTransaction.objectStore(SESSIONS_STORE).getAll());
-    const oldSessionIds = sessions
-      .map((session) => session?.id)
-      .filter((sessionId) => sessionId && sessionId !== keepSessionId);
+  async function cleanupSessionTiles(db, sessionId, keepKeys = null) {
+    const normalizedSessionId = String(sessionId || "").trim();
 
-    if (oldSessionIds.length === 0) {
+    if (!normalizedSessionId) {
       return;
     }
 
-    const writeTransaction = db.transaction([SESSIONS_STORE, TILES_STORE], "readwrite");
-    const sessionStore = writeTransaction.objectStore(SESSIONS_STORE);
-    const tileStore = writeTransaction.objectStore(TILES_STORE);
+    const transaction = db.transaction(TILES_STORE, "readwrite");
+    const tileStore = transaction.objectStore(TILES_STORE);
     const tileIndex = tileStore.index("sessionId");
+    const request = tileIndex.openCursor(IDBKeyRange.only(normalizedSessionId));
+    const keys = keepKeys instanceof Set ? keepKeys : null;
 
-    oldSessionIds.forEach((sessionId) => {
-      sessionStore.delete(sessionId);
-      const request = tileIndex.openCursor(IDBKeyRange.only(sessionId));
+    request.onsuccess = () => {
+      const cursor = request.result;
 
-      request.onsuccess = () => {
-        const cursor = request.result;
+      if (!cursor) {
+        return;
+      }
 
-        if (!cursor) {
-          return;
-        }
-
+      if (!keys || !keys.has(cursor.value?.key)) {
         cursor.delete();
-        cursor.continue();
-      };
-    });
+      }
 
-    await transactionDone(writeTransaction);
+      cursor.continue();
+    };
+
+    await transactionDone(transaction);
   }
 
-  async function writeSession(payload, options = {}) {
+  async function writeSession(payload) {
     if (!payload?.session) {
       return null;
     }
 
     const db = await openDb();
-
-    if (options.cleanupBeforeWrite === true) {
-      await cleanupOldSessions(db, payload.session.id);
-    }
+    const tileKeys = new Set((payload.tileRecords || []).map((tileRecord) => tileRecord?.key).filter(Boolean));
 
     const transaction = db.transaction([META_STORE, SESSIONS_STORE, TILES_STORE], "readwrite");
     const metaStore = transaction.objectStore(META_STORE);
@@ -920,10 +1078,8 @@
     });
 
     await transactionDone(transaction);
-
-    if (options.cleanupBeforeWrite !== true) {
-      await cleanupOldSessions(db, payload.session.id);
-    }
+    await cleanupSessionTiles(db, payload.session.id, tileKeys);
+    await upsertProjectIndex(db, payload.session);
 
     return payload.session;
   }
@@ -967,18 +1123,19 @@
 
     try {
       await prepareDocumentForSave(source);
-      payload = await buildCurrentSession();
+      payload = await buildCurrentSession({
+        sessionId: options.sessionId,
+      });
 
       if (!payload) {
         finishStatus = "skipped";
         return false;
       }
 
-      const session = await writeSession(payload, {
-        cleanupBeforeWrite: options.cleanupBeforeWrite === true,
-      });
+      const session = await writeSession(payload);
       const summary = createSummary(session);
 
+      setCurrentDocumentSaveId(session.id);
       namespace.lastDocumentSave = summary;
       namespace.lastDocumentSaveError = null;
       window.dispatchEvent(new CustomEvent("cbo:document-save", {
@@ -1253,9 +1410,12 @@
         projectName: applyProjectName(session.project?.name || ""),
         requestedHeight: session.document.requestedHeight || session.document.height,
         requestedWidth: session.document.requestedWidth || session.document.width,
+        saveId: session.id,
         width: session.document.width,
       };
+      setCurrentDocumentSaveId(session.id);
       syncRendererAfterRestore("document-save-restore-complete");
+      applySavedDocumentView(session);
 
       if (didDeferCanvasReady) {
         namespace.emitEditorCanvasReady?.({ source: "document-save-restore" });
@@ -1306,6 +1466,36 @@
     }
   }
 
+  async function restore(sessionId, options = {}) {
+    const normalizedSessionId = String(sessionId || "").trim();
+
+    if (!normalizedSessionId) {
+      return false;
+    }
+
+    const didBeginRestoreUi = beginDocumentRestoreUi({
+      ...options,
+      detail: options.detail || "Preparing saved artboards",
+    });
+
+    try {
+      const session = await getSession(normalizedSessionId);
+
+      if (!session) {
+        return false;
+      }
+
+      const tileRecords = await getTilesForSession(session.id);
+
+      return restoreSession(session, tileRecords, {
+        ...options,
+        restoreUiActive: didBeginRestoreUi || options.restoreUiActive === true,
+      });
+    } finally {
+      endDocumentRestoreUi(didBeginRestoreUi);
+    }
+  }
+
   async function getLatestSummary() {
     try {
       const sessionId = await getLatestSessionId();
@@ -1315,6 +1505,83 @@
     } catch (error) {
       return null;
     }
+  }
+
+  async function listSummaries() {
+    try {
+      const db = await openDb();
+      const indexedProjects = await readProjectIndex(db);
+
+      if (indexedProjects.length > 0) {
+        return indexedProjects;
+      }
+
+      const sessions = await getAllSessions();
+      const summaries = sessions.map(createSummary);
+
+      if (summaries.length > 0) {
+        await writeProjectIndex(db, summaries);
+      }
+
+      return summaries;
+    } catch (error) {
+      namespace.lastDocumentSaveListError = {
+        message: error?.message || String(error),
+        name: error?.name || "",
+      };
+      console.warn?.("Lettura progetti salvati non riuscita.", error);
+      return [];
+    }
+  }
+
+  async function deleteSession(sessionId) {
+    const normalizedSessionId = String(sessionId || "").trim();
+
+    if (!normalizedSessionId) {
+      return false;
+    }
+
+    const db = await openDb();
+
+    await cleanupSessionTiles(db, normalizedSessionId);
+
+    const latestSessionId = await getLatestSessionId();
+    const deleteTransaction = db.transaction([META_STORE, SESSIONS_STORE], "readwrite");
+    const metaStore = deleteTransaction.objectStore(META_STORE);
+
+    deleteTransaction.objectStore(SESSIONS_STORE).delete(normalizedSessionId);
+
+    if (latestSessionId === normalizedSessionId) {
+      metaStore.delete(LATEST_META_KEY);
+    }
+
+    await transactionDone(deleteTransaction);
+
+    if (getCurrentDocumentSaveId() === normalizedSessionId) {
+      setCurrentDocumentSaveId("");
+    }
+
+    const sessions = await getAllSessions();
+    const latestSession = sessions[0] || null;
+
+    if (latestSession) {
+      const metaTransaction = db.transaction(META_STORE, "readwrite");
+
+      metaTransaction.objectStore(META_STORE).put({
+        key: LATEST_META_KEY,
+        savedAt: latestSession.savedAt,
+        sessionId: latestSession.id,
+      });
+      await transactionDone(metaTransaction);
+    }
+
+    await writeProjectIndex(db, sessions.map(createSummary));
+
+    return true;
+  }
+
+  function clearCurrentDocument() {
+    setCurrentDocumentSaveId("");
   }
 
   async function clear() {
@@ -1329,7 +1596,11 @@
 
   namespace.documentSaveSystem = {
     clear,
+    clearCurrentDocument,
+    delete: deleteSession,
     getLatestSummary,
+    listSummaries,
+    restore,
     restoreLatest,
     saveNow,
   };
