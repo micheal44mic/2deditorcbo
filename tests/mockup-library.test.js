@@ -46,16 +46,16 @@ test("mockup drawer exposes hoodie body 1 as a 2048 artboard starter", () => {
   assert.match(editorCanvasSource, /const DEFAULT_MOCKUP_ARTBOARD_SIZE = 2048/);
   assert.match(editorCanvasSource, /function focusMockupArtboardView\(artboardId, options = \{\}\)/);
   assert.match(editorCanvasSource, /window\.CBO\.focusPreviewArtboardView\(normalizedArtboardId, \{/);
-  assert.match(editorCanvasSource, /function finalizeImportedImageLayerAsEditablePaint\(layerId, source = "image-import-auto-rasterize"\)/);
+  assert.doesNotMatch(editorCanvasSource, /function finalizeImportedImageLayerAsEditablePaint/);
   assert.match(editorCanvasSource, /window\.CBO\.openMockupAsset = async function openMockupAsset/);
   assert.match(editorCanvasSource, /window\.CBO\.addMockupAssetToArtboard = async function addMockupAssetToArtboard/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorCanvas\(\{[\s\S]*documentHeight: size\.height,[\s\S]*documentWidth: size\.width/);
   assert.match(editorCanvasSource, /window\.CBO\.createDocumentArtboard\?\.\(\{[\s\S]*height: size\.height,[\s\S]*width: size\.width/);
   assert.match(editorCanvasSource, /function getMockupPlacementRect\(detail = \{\}, artboardId\)/);
   assert.match(editorCanvasSource, /createMockupPlacementTarget\(imageLayer\.id, placementRect\)/);
-  assert.match(editorCanvasSource, /layerModel\.createLayer\(\{[\s\S]*mockupAsset:[\s\S]*name,[\s\S]*type: "paint"/);
+  assert.match(editorCanvasSource, /layerModel\.createLayer\(\{[\s\S]*mockupAsset:[\s\S]*name,[\s\S]*type: "image"/);
   assert.match(editorCanvasSource, /source: "mockup-rasterize"/);
-  assert.match(editorCanvasSource, /finalizeImportedImageLayerAsEditablePaint\(imageLayer\.id, "mockup-rasterize"\)/);
+  assert.doesNotMatch(editorCanvasSource, /finalizeImportedImageLayerAsEditablePaint\(imageLayer\.id, "mockup-rasterize"\)/);
 
   assert.match(artboardPreviewSource, /const MOCKUP_SLOT_CENTER_OFFSET_Y = 500/);
   assert.match(artboardPreviewSource, /function fitPreviewArtboard\(artboardId\)/);

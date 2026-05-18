@@ -185,6 +185,7 @@ document.addEventListener(
   const state = {
     active: false,
     blockUntil: 0,
+    guardTimer: 0,
   };
 
   function isStageEvent(event) {
@@ -210,8 +211,24 @@ document.addEventListener(
     const wasActive = state.active;
 
     state.active = nextActive;
-    if (!nextActive) {
+    if (state.guardTimer) {
+      window.clearTimeout(state.guardTimer);
+      state.guardTimer = 0;
+    }
+
+    if (nextActive) {
+      state.blockUntil = 0;
+      document.body?.classList.add("cbo-touch-navigation-guard");
+    } else {
       state.blockUntil = Date.now() + TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS;
+      document.body?.classList.add("cbo-touch-navigation-guard");
+      state.guardTimer = window.setTimeout(() => {
+        state.guardTimer = 0;
+
+        if (!state.active && Date.now() >= state.blockUntil) {
+          document.body?.classList.remove("cbo-touch-navigation-guard");
+        }
+      }, TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS);
     }
 
     document.body?.classList.toggle("cbo-touch-navigation-active", nextActive);
@@ -233,19 +250,17 @@ document.addEventListener(
       return;
     }
 
-    if (isTouchNavigationInteractiveTarget(event.target)) {
-      return;
-    }
-
     const isGhostActivation = event.type === "click" ||
       event.type === "dblclick" ||
       event.type === "contextmenu" ||
       event.type === "auxclick";
+    const isTouchPointerEvent = event.type.startsWith("pointer") && event.pointerType === "touch";
+    const isInteractiveTouchPointer = isTouchPointerEvent && isTouchNavigationInteractiveTarget(event.target);
     const isOffStageTouchPointer = event.type.startsWith("pointer") &&
       event.pointerType === "touch" &&
       !isStageEvent(event);
 
-    if (!isGhostActivation && !isOffStageTouchPointer) {
+    if (!isGhostActivation && !isOffStageTouchPointer && !isInteractiveTouchPointer) {
       return;
     }
 

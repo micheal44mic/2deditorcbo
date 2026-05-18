@@ -346,6 +346,20 @@
         visit(entry.snapshots.afterSnapshot, "snapshots.afterSnapshot");
       }
 
+      const visitSnapshotArray = (snapshots, key) => {
+        if (!Array.isArray(snapshots)) {
+          return;
+        }
+
+        snapshots.forEach((snapshot, index) => {
+          visit(snapshot, `${key}.${index}`);
+        });
+      };
+
+      visitSnapshotArray(entry.beforeSnapshots, "beforeSnapshots");
+      visitSnapshotArray(entry.afterSnapshots, "afterSnapshots");
+      visitSnapshotArray(entry.rasterSnapshots, "rasterSnapshots");
+
       if (Array.isArray(entry.dabs)) {
         entry.dabs.forEach((dab, index) => {
           visit(dab?.before, `dabs.${index}.before`);

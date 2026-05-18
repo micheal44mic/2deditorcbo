@@ -47,3 +47,17 @@ test("layers panel releases raster memory when clearing the last paint layer", (
   assert.match(source, /syncLayerModelFromDom\([\s\S]*isDeletingAllContent \? "delete-all-content-layers" : "delete"/);
   assert.match(source, /isDeletingAllContent \? \{ history: false \} : \{\}/);
 });
+
+test("layers panel exposes a visible merge layers action", () => {
+  const html = readRepoFile("index.html");
+  const source = readRepoFile("js", "layers-panel.js");
+  const cssSource = readRepoFile("css", "drawer.css");
+
+  assert.match(html, /drawer-merge-layer-button/);
+  assert.match(html, /data-tooltip="MERGE LAYERS"/);
+  assert.match(source, /const mergeLayerButton = document\.querySelector\("\.drawer-merge-layer-button"\)/);
+  assert.match(source, /function mergeLayersFromHeaderButton\(\)/);
+  assert.match(source, /source: "layers-panel-header-merge-down"/);
+  assert.match(source, /source: "layers-panel-header-merge-selected"/);
+  assert.match(cssSource, /drawer-merge-layer-button/);
+});

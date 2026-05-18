@@ -478,41 +478,6 @@ function focusMockupArtboardView(artboardId, options = {}) {
   return normalizedArtboardId;
 }
 
-function finalizeImportedImageLayerAsEditablePaint(layerId, source = "image-import-auto-rasterize") {
-  const layerModel = window.CBO.documentLayerModel;
-  const documentRenderer = window.CBO.documentRenderer;
-  const layer = layerModel?.findEntryById?.(layerId);
-  let didFinalize = false;
-
-  if (!layer || !layerId) {
-    return false;
-  }
-
-  if (layer.type === "image" && typeof layerModel.rasterizeImageLayerToPaint === "function") {
-    didFinalize = layerModel.rasterizeImageLayerToPaint(layerId, {
-      history: false,
-      source,
-    }) === true;
-  } else if (layer.type === "paint") {
-    didFinalize = Boolean(documentRenderer?.sparsifyRasterizedImageLayer?.(layerId, {
-      emit: false,
-      source: `${source}-retile`,
-    }));
-  }
-
-  if (didFinalize) {
-    documentRenderer?.requestDraw?.();
-    window.dispatchEvent(new CustomEvent("cbo:image-layer-rasterized", {
-      detail: {
-        layerId,
-        source,
-      },
-    }));
-  }
-
-  return didFinalize;
-}
-
 async function placeMockupImageLayer(detail = {}, artboardId) {
   const rasterizer = window.CBO.imageRasterizer;
   const layerModel = window.CBO.documentLayerModel;
@@ -538,7 +503,7 @@ async function placeMockupImageLayer(detail = {}, artboardId) {
       src,
     },
     name,
-    type: "paint",
+    type: "image",
   });
   const entries = layerModel.getEntries();
   const didInsertInArtboard = insertLayerAtTopOfArtboardEntries(
@@ -567,8 +532,6 @@ async function placeMockupImageLayer(detail = {}, artboardId) {
       layerId: imageLayer.id,
       source: "mockup-rasterize",
     });
-
-    finalizeImportedImageLayerAsEditablePaint(imageLayer.id, "mockup-rasterize");
 
     if (placement?.destinationRect && layerModel.updateLayer) {
       const didUpdateMetadata = layerModel.updateLayer(imageLayer.id, {
@@ -957,7 +920,6 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
       }
     }
 
-    finalizeImportedImageLayerAsEditablePaint(imageLayer.id, "image-upload-auto-rasterize");
   } catch (error) {
     const remainingEntries = removeLayerFromEntriesById(layerModel.getEntries(), imageLayer.id);
 

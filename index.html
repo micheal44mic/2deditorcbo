@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Editor 2D</title>
-    <link rel="stylesheet" href="./css/base.css?v=mobile-ios-keyboard-focus" />
+    <link rel="stylesheet" href="./css/base.css?v=mobile-touch-zoom-guard-v1" />
     <link rel="stylesheet" href="./css/layout.css?v=document-library-v2-mockup-slot-v2" />
     <link rel="stylesheet" href="./css/left-sidebar.css?v=mobile-ios-gesture-lock" />
     <link rel="stylesheet" href="./css/right-sidebar.css?v=mobile-ios-gesture-lock" />
@@ -107,6 +107,14 @@
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
                 <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+              </svg>
+            </button>
+            <button class="drawer-panel-action drawer-merge-layer-button" type="button" aria-label="Merge layers" data-tooltip="MERGE LAYERS">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12.83 2.18a2 2 0 0 0-1.66 0L3.2 5.8a1 1 0 0 0 0 1.82l7.97 3.63a2 2 0 0 0 1.66 0l7.97-3.63a1 1 0 0 0 0-1.82z" />
+                <path d="M4 12.2 11.17 15.5a2 2 0 0 0 1.66 0L20 12.2" />
+                <path d="M12 15v6" />
+                <path d="m8.5 17.5 3.5 3.5 3.5-3.5" />
               </svg>
             </button>
             <button class="drawer-panel-action drawer-new-folder-button" type="button" aria-label="New folder" data-tooltip="NEW FOLDER">
@@ -405,6 +413,7 @@
     <script src="./js/document/document-renderer-layer-effects.js?v=renderer-modules"></script>
     <script src="./js/document/document-renderer-compositing.js?v=renderer-modules"></script>
     <script src="./js/document/document-renderer.js?v=android-v4.5-no-fill-history-debug"></script>
+    <script src="./js/document/document-layer-merge.js"></script>
     <script src="./js/puppet-transform-tool.js?v=mobile-ios-gesture-lock"></script>
     <script src="./js/raster-transform-tool.js?v=android-v4.5-no-fill-history-debug"></script>
     <script src="./js/selection-region.js"></script>
@@ -413,9 +422,9 @@
     <script src="./js/brush-engine-target-gpu.js?v=brush-modules"></script>
     <script src="./js/brush-engine-history.js?v=brush-modules"></script>
     <script src="./js/brush-engine-sampler.js?v=brush-modules"></script>
-    <script src="./js/brush-engine-stroke-input.js?v=mobile-eraser-zoom-v1"></script>
+    <script src="./js/brush-engine-stroke-input.js?v=eraser-image-auto-rasterize-v2"></script>
     <script src="./js/brush-engine.js?v=android-v4.5-no-fill-history-debug"></script>
-    <script src="./js/brush-shape-outline-preview.js?v=android-v4.5-no-fill-history-debug"></script>
+    <script src="./js/brush-shape-outline-preview.js?v=mobile-touch-zoom-guard-v1"></script>
     <script src="./js/smudge-engine.js?v=mobile-ios-gesture-lock"></script>
     <script src="./js/images/image-rasterizer.js?v=image-dirty-target-svg-fallback"></script>
     <script src="./js/pixel/pixel-worker-client.js?v=android-v4.5-no-fill-history-debug"></script>
@@ -426,9 +435,9 @@
     <script src="./js/color-fill.js?v=android-v4.5-no-fill-history-debug"></script>
     <script src="./js/document/document-autosave.js"></script>
     <script src="./js/document/document-save-system.js?v=document-library-v2"></script>
-    <script src="./js/editor-canvas.js?v=mockup-library-v6"></script>
+    <script src="./js/editor-canvas.js?v=eraser-image-auto-rasterize-v2"></script>
     <script src="./js/artboard-connections.js?v=spaces-connections-loading-overlay"></script>
     <script src="./js/artboard-preview.js?v=android-v4.5-no-fill-history-debug-mockup-slot-v3"></script>
-    <script src="./js/app.js?v=android-v4.6-ios-keyboard-focus"></script>
+    <script src="./js/app.js?v=mobile-touch-zoom-guard-v1"></script>
   </body>
 </html>

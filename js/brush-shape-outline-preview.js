@@ -268,7 +268,9 @@ window.CBO = window.CBO || {};
     stage.dataset.brushShapeOutlinePreviewReady = "true";
 
     function syncVisibility() {
-      wrapper.hidden = !activeTool || !pointerInsideStage;
+      wrapper.hidden = !activeTool ||
+        !pointerInsideStage ||
+        namespace.isTouchNavigationExclusive?.({ includeGuard: true }) === true;
     }
 
     function resetPointerTracking() {
@@ -392,6 +394,19 @@ window.CBO = window.CBO || {};
     window.addEventListener("cbo:camera-change", (event) => {
       camera = event.detail?.camera || camera;
       updateTransform();
+    });
+
+    window.addEventListener("cbo:touch-navigation-start", () => {
+      pointerInsideStage = false;
+      resetPointerTracking();
+      syncVisibility();
+    });
+
+    window.addEventListener("cbo:touch-navigation-end", () => {
+      pointerInsideStage = false;
+      resetPointerTracking();
+      syncVisibility();
+      window.setTimeout(syncVisibility, 430);
     });
 
     window.addEventListener("cbo:tool-change", (event) => {

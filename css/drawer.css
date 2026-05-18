@@ -49,6 +49,7 @@
 
 .left-drawer[data-drawer-panel="upload"] .drawer-new-layer-button,
 .left-drawer[data-drawer-panel="upload"] .drawer-copy-layer-button,
+.left-drawer[data-drawer-panel="upload"] .drawer-merge-layer-button,
 .left-drawer[data-drawer-panel="upload"] .drawer-new-folder-button {
   display: none;
 }
@@ -81,6 +82,11 @@
 .drawer-panel-action.active {
   background: rgb(44, 48, 58);
   color: #ffffff;
+}
+
+.drawer-panel-action:disabled {
+  opacity: 0.36;
+  pointer-events: none;
 }
 
 .drawer-panel-action svg {

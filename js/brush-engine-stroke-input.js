@@ -549,6 +549,21 @@
     }
 ,
 
+    shouldSuppressTouchToolEvent(event) {
+      return Boolean(
+        event?.pointerType === "touch" &&
+        namespace.isTouchNavigationExclusive?.({ includeGuard: true })
+      );
+    }
+,
+
+    suppressTouchToolEvent(event) {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      event.stopImmediatePropagation?.();
+    }
+,
+
     markNavigationEvent(event) {
       event.__cboNavigationHandled = true;
       event.preventDefault();
@@ -961,6 +976,38 @@
     }
 ,
 
+    rasterizeImageLayerForEraser(activeId) {
+      const layerModel = this.documentRenderer?.layerModel || namespace.documentLayerModel;
+      const activeLayer = activeId && typeof layerModel?.findEntryById === "function"
+        ? layerModel.findEntryById(activeId)
+        : null;
+
+      if (activeLayer?.type !== "image") {
+        return activeLayer;
+      }
+
+      const rasterizeOptions = {
+        historyGroup: `eraser-image-auto-rasterize-${activeId}`,
+        source: "eraser-image-auto-rasterize",
+      };
+      const didRasterize = typeof namespace.rasterizeImageLayerToPaint === "function"
+        ? namespace.rasterizeImageLayerToPaint(activeId, rasterizeOptions)
+        : layerModel.rasterizeImageLayerToPaint?.(activeId, rasterizeOptions) === true;
+
+      if (!didRasterize) {
+        return null;
+      }
+
+      namespace.documentHistory?.flushLayerState?.(layerModel);
+      this.documentRenderer?.invalidatePreviewCache?.("eraser-image-auto-rasterize", {
+        layerId: activeId,
+      });
+      this.documentRenderer?.requestDraw?.();
+
+      return layerModel.findEntryById(activeId);
+    }
+,
+
     getActiveRasterTargetForEraser() {
       const layerModel = this.documentRenderer?.layerModel;
       const activeId = layerModel?.activeLayerId;
@@ -969,9 +1016,13 @@
         return this.getPaintTarget();
       }
 
-      const activeLayer = layerModel.findEntryById(activeId);
+      let activeLayer = layerModel.findEntryById(activeId);
 
-      if (activeLayer?.type !== "paint" && activeLayer?.type !== "image") {
+      if (activeLayer?.type === "image") {
+        activeLayer = this.rasterizeImageLayerForEraser(activeId);
+      }
+
+      if (activeLayer?.type !== "paint") {
         return null;
       }
 
@@ -1337,6 +1388,11 @@
         return;
       }
 
+      if (this.shouldSuppressTouchToolEvent(event)) {
+        this.suppressTouchToolEvent(event);
+        return;
+      }
+
       const isPanTrigger = this.isTemporaryPanTrigger(event);
 
       if (isPanTrigger) {
@@ -1433,6 +1489,11 @@
         return;
       }
 
+      if (this.shouldSuppressTouchToolEvent(event)) {
+        this.suppressTouchToolEvent(event);
+        return;
+      }
+
       if (this.isPanning && this.activePanPointerId === event.pointerId) {
         event.preventDefault();
         this.updatePan(event);
@@ -1452,6 +1513,11 @@
 
     handlePointerUp(event) {
       if (event.__cboNavigationHandled) {
+        return;
+      }
+
+      if (this.shouldSuppressTouchToolEvent(event)) {
+        this.suppressTouchToolEvent(event);
         return;
       }
 
@@ -1520,6 +1586,11 @@
 
     handlePointerCancel(event) {
       if (event.__cboNavigationHandled) {
+        return;
+      }
+
+      if (this.shouldSuppressTouchToolEvent(event)) {
+        this.suppressTouchToolEvent(event);
         return;
       }
 

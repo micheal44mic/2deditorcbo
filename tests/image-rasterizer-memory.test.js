@@ -84,9 +84,8 @@ test("uploaded image placement reports dirty bounds instead of forcing a full pr
   assert.match(source, /return \{\s*destinationRect,/);
   assert.match(editorCanvasSource, /const placement = await rasterizer\.placeBlob\(detail\.blob, \{\s*artboardId: uploadArtboardId,\s*layerId: imageLayer\.id,/);
   assert.match(editorCanvasSource, /imageBounds: placement\.destinationRect/);
-  assert.match(editorCanvasSource, /finalizeImportedImageLayerAsEditablePaint\(imageLayer\.id, "image-upload-auto-rasterize"\)/);
-  assert.match(editorCanvasSource, /layerModel\.rasterizeImageLayerToPaint\(layerId, \{\s*history: false,\s*source,/);
-  assert.match(editorCanvasSource, /documentRenderer\?\.sparsifyRasterizedImageLayer\?\.\(layerId, \{\s*emit: false,\s*source: `\$\{source\}-retile`,/);
+  assert.doesNotMatch(editorCanvasSource, /finalizeImportedImageLayerAsEditablePaint\(imageLayer\.id, "image-upload-auto-rasterize"\)/);
+  assert.match(editorCanvasSource, /layerModel\.createLayer\(\{\s*artboardId: uploadArtboardId,[\s\S]*type: "image"/);
   assert.match(editorCanvasSource, /invalidate: false/);
   assert.match(rendererSource, /const nonVisualSources = new Set\(\[/);
   assert.match(rendererSource, /changeType !== "active-layer"/);

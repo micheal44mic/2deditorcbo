@@ -77,6 +77,9 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /updateTouchNavigationGesture\(\)/);
   assert.match(source, /cancelActiveStrokeForTouchNavigation\(\)/);
   assert.match(source, /this\.documentRenderer\?\.invalidatePreviewCache\?\.?\("touch-navigation-cancel-stroke", \{\s*layerId,/);
+  assert.match(source, /shouldSuppressTouchToolEvent\(event\)/);
+  assert.match(source, /namespace\.isTouchNavigationExclusive\?\.?\(\{ includeGuard: true \}\)/);
+  assert.match(source, /this\.suppressTouchToolEvent\(event\);\s*return;/);
   assert.match(source, /shouldStartTouchCanvasPan\(event, point\)/);
   assert.match(source, /this\.isPrimaryTouchPointer\(event\)/);
   assert.match(source, /!this\.isDocumentPointOnAnyArtboard\(point\)/);
@@ -110,19 +113,27 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
 
 test("touch navigation exposes an exclusive mobile gesture guard", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
+  const baseCss = fs.readFileSync(path.join(repoRoot, "css", "base.css"), "utf8");
 
   assert.match(appSource, /TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 420/);
   assert.match(appSource, /function isTouchNavigationGuardActive\(\)/);
   assert.match(appSource, /function isTouchNavigationInteractiveTarget\(target\)/);
-  assert.match(appSource, /isTouchNavigationInteractiveTarget\(event\.target\)/);
+  assert.match(appSource, /guardTimer: 0/);
+  assert.match(appSource, /classList\.add\("cbo-touch-navigation-guard"\)/);
+  assert.match(appSource, /classList\.remove\("cbo-touch-navigation-guard"\)/);
+  assert.match(appSource, /const isInteractiveTouchPointer = isTouchPointerEvent && isTouchNavigationInteractiveTarget\(event\.target\)/);
   assert.match(appSource, /namespace\.isTouchNavigationExclusive = isTouchNavigationExclusive/);
   assert.match(appSource, /namespace\.isTouchNavigationGuardActive = isTouchNavigationGuardActive/);
   assert.match(appSource, /namespace\.setTouchNavigationExclusive = setTouchNavigationExclusive/);
   assert.match(appSource, /"cbo:touch-navigation-start"/);
   assert.match(appSource, /"cbo:touch-navigation-end"/);
   assert.match(appSource, /document\.body\?\.classList\.toggle\("cbo-touch-navigation-active", nextActive\)/);
+  assert.match(appSource, /!isGhostActivation && !isOffStageTouchPointer && !isInteractiveTouchPointer/);
   assert.match(appSource, /event\.pointerType === "touch"[\s\S]*!isStageEvent\(event\)/);
   assert.match(appSource, /event\.stopImmediatePropagation\(\)/);
+  assert.match(baseCss, /body\.cbo-touch-navigation-active \.side-panel/);
+  assert.match(baseCss, /body\.cbo-touch-navigation-guard \.toolbar-dock/);
+  assert.match(baseCss, /body\.cbo-touch-navigation-guard \.brush-shape-outline-preview/);
 });
 
 test("mobile pinch navigation cancels active touch tool interactions", () => {
@@ -130,6 +141,7 @@ test("mobile pinch navigation cancels active touch tool interactions", () => {
   const rasterSource = fs.readFileSync(path.join(repoRoot, "js", "raster-transform-tool.js"), "utf8");
   const puppetSource = fs.readFileSync(path.join(repoRoot, "js", "puppet-transform-tool.js"), "utf8");
   const smudgeSource = fs.readFileSync(path.join(repoRoot, "js", "smudge-engine.js"), "utf8");
+  const brushPreviewSource = fs.readFileSync(path.join(repoRoot, "js", "brush-shape-outline-preview.js"), "utf8");
   const textSource = fs.readFileSync(path.join(repoRoot, "js", "text", "vector-text-renderer.js"), "utf8");
 
   assert.match(areaSource, /window\.addEventListener\("cbo:touch-navigation-start", cancelActiveAreaSelectionForTouchNavigation\)/);
@@ -140,8 +152,24 @@ test("mobile pinch navigation cancels active touch tool interactions", () => {
   assert.match(puppetSource, /namespace\.isTouchNavigationExclusive\?\.\(\) \|\| !this\.isActive\(\)/);
   assert.match(smudgeSource, /window\.addEventListener\("cbo:touch-navigation-start", this\.handleTouchNavigationStart\)/);
   assert.match(smudgeSource, /namespace\.isTouchNavigationExclusive\?\.\(\) \|\|[\s\S]*this\.shouldIgnorePointer\(event\)/);
+  assert.match(brushPreviewSource, /namespace\.isTouchNavigationExclusive\?\.?\(\{ includeGuard: true \}\) === true/);
+  assert.match(brushPreviewSource, /window\.addEventListener\("cbo:touch-navigation-start"/);
+  assert.match(brushPreviewSource, /window\.addEventListener\("cbo:touch-navigation-end"/);
   assert.match(textSource, /window\.addEventListener\("cbo:touch-navigation-start", this\.handleTouchNavigationStart\)/);
   assert.match(textSource, /namespace\.isTouchNavigationExclusive\?\.\(\)/);
+});
+
+test("eraser rasterizes image layers through the same public rasterize path before erasing", () => {
+  const source = readBrushEngineSources();
+
+  assert.match(source, /rasterizeImageLayerForEraser\(activeId\)/);
+  assert.match(source, /activeLayer\?\.type === "image"[\s\S]*this\.rasterizeImageLayerForEraser\(activeId\)/);
+  assert.match(source, /const rasterizeOptions = \{[\s\S]*historyGroup: `eraser-image-auto-rasterize-\$\{activeId\}`,[\s\S]*source: "eraser-image-auto-rasterize"/);
+  assert.match(source, /namespace\.rasterizeImageLayerToPaint\(activeId, rasterizeOptions\)/);
+  assert.match(source, /layerModel\.rasterizeImageLayerToPaint\?\.?\(activeId, rasterizeOptions\) === true/);
+  assert.match(source, /namespace\.documentHistory\?\.flushLayerState\?\.?\(layerModel\)/);
+  assert.match(source, /invalidatePreviewCache\?\.?\("eraser-image-auto-rasterize", \{\s*layerId: activeId,/);
+  assert.match(source, /if \(activeLayer\?\.type !== "paint"\) \{\s*return null;\s*\}/);
 });
 
 test("brush pointer moves are coalesced into the render frame", () => {

@@ -4,6 +4,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   const panel = document.querySelector(".drawer-layers-panel");
   const addLayerButton = document.querySelector(".drawer-new-layer-button");
   const copyLayerButton = document.querySelector(".drawer-copy-layer-button");
+  const mergeLayerButton = document.querySelector(".drawer-merge-layer-button");
   const addGroupButton = document.querySelector(".drawer-new-folder-button");
 
   if (!panel || panel.dataset.layersReady === "true") {
@@ -201,6 +202,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     getLayerRows().forEach((layerRow) => {
       layerRow.classList.toggle("active", layerRow === activeRow);
     });
+    syncMergeLayerButtonUi();
   }
 
   function getReferenceLayerId() {
@@ -431,6 +433,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     rangeAnchor = null;
     focusedLayer = null;
     syncActiveLayerUi();
+    syncMergeLayerButtonUi();
   }
 
   function suppressUpcomingLayerClick(duration = 450) {
@@ -1087,6 +1090,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
       syncActiveLayerUi();
       syncReferenceLayerUi();
+      syncMergeLayerButtonUi();
     } finally {
       isRenderingLayerModel = false;
     }
@@ -1199,6 +1203,53 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return getLayerRows().filter(isContentLayerRow);
   }
 
+  function getSelectedContentLayerRows() {
+    return getLayerRows().filter((row) => row.classList.contains("selected") && isContentLayerRow(row));
+  }
+
+  function getSelectedContentLayerIds() {
+    return getSelectedContentLayerRows().map(getLayerId).filter(Boolean);
+  }
+
+  function getFocusedMergeLayerId() {
+    return getLayerId(focusedLayer) || layerModel?.activeLayerId || getLayerId(getFirstSelectedLayer());
+  }
+
+  function getHeaderMergeMode() {
+    const selectedLayerIds = getSelectedContentLayerIds();
+
+    if (selectedLayerIds.length > 1) {
+      return {
+        canMerge: window.CBO.getDocumentLayerMergePlan?.(selectedLayerIds)?.ok === true,
+        layerIds: selectedLayerIds,
+        mode: "selected",
+      };
+    }
+
+    const layerId = getFocusedMergeLayerId();
+
+    return {
+      canMerge: window.CBO.getDocumentLayerMergeDownPlan?.(layerId)?.ok === true,
+      layerId,
+      mode: "down",
+    };
+  }
+
+  function syncMergeLayerButtonUi() {
+    if (!mergeLayerButton) {
+      return;
+    }
+
+    const mergeMode = getHeaderMergeMode();
+    const label = mergeMode.mode === "selected" ? "Merge selected layers" : "Merge layer down";
+    const tooltip = mergeMode.mode === "selected" ? "MERGE SELECTED" : "MERGE DOWN";
+
+    mergeLayerButton.disabled = !mergeMode.canMerge;
+    mergeLayerButton.setAttribute("aria-disabled", String(!mergeMode.canMerge));
+    mergeLayerButton.setAttribute("aria-label", label);
+    mergeLayerButton.dataset.tooltip = tooltip;
+  }
+
   function getContentLayerRowsInside(entries) {
     const rows = entries.flatMap((entry) =>
       Array.from(entry.querySelectorAll("[data-layer-row]")).filter(isContentLayerRow),
@@ -1260,6 +1311,63 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     });
   }
 
+  function showLayerMergeError(fallbackMessage = "Can't merge these layers") {
+    const error = window.CBO.lastLayerMergeError;
+
+    showLayerLimitToast(error?.message || fallbackMessage);
+  }
+
+  function runLayerMerge(promise, fallbackMessage) {
+    Promise.resolve(promise)
+      .then((didMerge) => {
+        if (didMerge === false) {
+          showLayerMergeError(fallbackMessage);
+        } else {
+          syncMergeLayerButtonUi();
+        }
+      })
+      .catch((error) => {
+        window.CBO.lastLayerMergeError = {
+          error,
+          message: error?.message || fallbackMessage,
+          ok: false,
+          reason: "layers-panel-merge-failed",
+        };
+        showLayerMergeError(fallbackMessage);
+        syncMergeLayerButtonUi();
+      });
+  }
+
+  function mergeLayersFromHeaderButton() {
+    const mergeMode = getHeaderMergeMode();
+
+    if (!mergeMode.canMerge) {
+      showLayerMergeError(
+        mergeMode.mode === "selected"
+          ? "Can't merge the selected layers"
+          : "Can't merge this layer down",
+      );
+      return;
+    }
+
+    if (mergeMode.mode === "selected") {
+      runLayerMerge(
+        window.CBO.mergeDocumentLayers?.(mergeMode.layerIds, {
+          source: "layers-panel-header-merge-selected",
+        }),
+        "Can't merge the selected layers",
+      );
+      return;
+    }
+
+    runLayerMerge(
+      window.CBO.mergeLayerDown?.(mergeMode.layerId, {
+        source: "layers-panel-header-merge-down",
+      }),
+      "Can't merge this layer down",
+    );
+  }
+
   function releaseDeletedDocumentHistory(source = "layers-panel-delete-all-content-layers") {
     const renderer = window.CBO.documentRenderer;
 
@@ -1283,6 +1391,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     setLayerBranchSelected(row, true);
     rangeAnchor = row;
     setFocusedLayer(row);
+    syncMergeLayerButtonUi();
   }
 
   function toggleLayerSelection(row) {
@@ -1300,6 +1409,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     setLayerBranchSelected(row, shouldSelect);
     rangeAnchor = row;
     setFocusedLayer(shouldSelect ? row : getFirstSelectedLayer());
+    syncMergeLayerButtonUi();
   }
 
   function selectLayerRange(row, shouldAddToSelection) {
@@ -1329,6 +1439,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
     rangeAnchor = isLayerLocked(row) ? getFirstSelectedLayer() : anchor;
     setFocusedLayer(isLayerLocked(row) ? getFirstSelectedLayer() : row);
+    syncMergeLayerButtonUi();
   }
 
   function selectLayerFromPointer(row, event) {
@@ -1852,6 +1963,8 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     layerContextMenu.innerHTML = `
       <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="reference"></button>
       <button class="layer-context-menu-item" type="button" role="menuitemcheckbox" data-layer-context-action="clipping-mask"></button>
+      <button class="layer-context-menu-item" type="button" role="menuitem" data-layer-context-action="merge-down">MERGE DOWN</button>
+      <button class="layer-context-menu-item" type="button" role="menuitem" data-layer-context-action="merge-selected">MERGE SELECTED</button>
       <button class="layer-context-menu-item" type="button" role="menuitem" data-layer-context-action="select-alpha">SELECT ALPHA</button>
     `;
 
@@ -1883,6 +1996,32 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       if (actionButton.dataset.layerContextAction === "clipping-mask") {
         toggleClippingMask(contextMenuLayerId);
         closeLayerContextMenu();
+        return;
+      }
+
+      if (actionButton.dataset.layerContextAction === "merge-down") {
+        const layerId = contextMenuLayerId;
+
+        closeLayerContextMenu();
+        runLayerMerge(
+          window.CBO.mergeLayerDown?.(layerId, {
+            source: "layers-panel-merge-down",
+          }),
+          "Can't merge this layer down",
+        );
+        return;
+      }
+
+      if (actionButton.dataset.layerContextAction === "merge-selected") {
+        const layerIds = getSelectedContentLayerIds();
+
+        closeLayerContextMenu();
+        runLayerMerge(
+          window.CBO.mergeDocumentLayers?.(layerIds, {
+            source: "layers-panel-merge-selected",
+          }),
+          "Can't merge the selected layers",
+        );
         return;
       }
 
@@ -1934,6 +2073,8 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const menu = ensureLayerContextMenu();
     const referenceButton = menu.querySelector("[data-layer-context-action='reference']");
     const clippingButton = menu.querySelector("[data-layer-context-action='clipping-mask']");
+    const mergeDownButton = menu.querySelector("[data-layer-context-action='merge-down']");
+    const mergeSelectedButton = menu.querySelector("[data-layer-context-action='merge-selected']");
     const selectAlphaButton = menu.querySelector("[data-layer-context-action='select-alpha']");
     const layerId = getLayerId(row);
     const layer = layerModel?.findEntryById?.(layerId);
@@ -1942,6 +2083,11 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const canClip = layer?.locked !== true && (isClippingMaskAllowed(layerId) || isClipping);
     const canSelectAlpha = typeof window.CBO.areaSelection?.selectLayerAlpha === "function" &&
       window.CBO.areaSelection?.canSelectLayerAlpha?.(layerId) !== false;
+    const selectedLayerIds = getSelectedContentLayerIds();
+    const canMergeDown = window.CBO.getDocumentLayerMergeDownPlan?.(layerId)?.ok === true;
+    const canMergeSelected = selectedLayerIds.length > 1 &&
+      row.classList.contains("selected") &&
+      window.CBO.getDocumentLayerMergePlan?.(selectedLayerIds)?.ok === true;
 
     contextMenuLayerId = layerId;
     referenceButton.textContent = isReference ? "REMOVE REFERENCE" : "SET AS REFERENCE";
@@ -1951,6 +2097,16 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       clippingButton.setAttribute("aria-checked", String(isClipping));
       clippingButton.disabled = !canClip;
       clippingButton.classList.toggle("disabled", !canClip);
+    }
+    if (mergeDownButton) {
+      mergeDownButton.textContent = "MERGE DOWN";
+      mergeDownButton.disabled = !canMergeDown;
+      mergeDownButton.classList.toggle("disabled", !canMergeDown);
+    }
+    if (mergeSelectedButton) {
+      mergeSelectedButton.textContent = "MERGE SELECTED";
+      mergeSelectedButton.disabled = !canMergeSelected;
+      mergeSelectedButton.classList.toggle("disabled", !canMergeSelected);
     }
     if (selectAlphaButton) {
       selectAlphaButton.textContent = "SELECT ALPHA";
@@ -1999,6 +2155,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
   addLayerButton?.addEventListener("click", addPaintLayer);
   copyLayerButton?.addEventListener("click", copySelectedLayers);
+  mergeLayerButton?.addEventListener("click", mergeLayersFromHeaderButton);
   addGroupButton?.addEventListener("click", addGroup);
 
   document.addEventListener("keydown", (event) => {
