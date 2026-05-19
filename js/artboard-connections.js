@@ -20,6 +20,10 @@ window.CBO = window.CBO || {};
   const AI_IMAGE_PROMPT_PLACEHOLDER = "Neon product shot";
   const AI_IMAGE_PROMPT_INPUT_MIN_HEIGHT_CSS_PX = 84;
   const AI_IMAGE_BOARD_FOOTER_MIN_HEIGHT_CSS_PX = 210;
+  const AI_IMAGE_CAPTION_PLACEHOLDER = "Add text";
+  const AI_IMAGE_CAPTION_MIN_SCREEN_BOARD_PX = 140;
+  const AI_IMAGE_CAPTION_MIN_FONT_PX = 12;
+  const AI_IMAGE_CAPTION_MAX_FONT_PX = 22;
   const AI_IMAGE_INPUT_HANDLE_SIZE_DOC_PX = ACTION_BUBBLE_SIZE_DOC_PX;
   const AI_IMAGE_INPUT_HANDLE_GAP_DOC_PX = ACTION_BUBBLE_GAP_DOC_PX;
   const AI_IMAGE_GENERATE_HANDLE_SIZE_DOC_PX = ACTION_BUBBLE_SIZE_DOC_PX;
@@ -80,6 +84,7 @@ window.CBO = window.CBO || {};
   let lastConnectionsGeometryKey = "";
   let spaceBoardPaneTransformIdleTimer = 0;
   let promptEditState = null;
+  let captionEditState = null;
   let promptFocusViewportTimers = [];
   let aiImageGeneratingBoardIds = new Set();
   let aiImageGenerationPreviewTimers = new Map();
@@ -1216,10 +1221,12 @@ window.CBO = window.CBO || {};
 
   function getActionBubbleMetrics(scale = getViewScale()) {
     const safeScale = Math.max(0.0001, Number(scale) || 1);
-    const size = ACTION_BUBBLE_SIZE_DOC_PX * safeScale;
-    const gap = ACTION_BUBBLE_GAP_DOC_PX * safeScale;
-    const iconSize = ACTION_BUBBLE_ICON_DOC_PX * safeScale;
-    const borderWidth = 3 * safeScale;
+    const rawSize = ACTION_BUBBLE_SIZE_DOC_PX * safeScale;
+    const rawGap = ACTION_BUBBLE_GAP_DOC_PX * safeScale;
+    const size = Math.max(18, Math.min(34, Math.round(rawSize)));
+    const gap = Math.max(6, Math.min(10, Math.round(rawGap * 0.25)));
+    const iconSize = Math.round(size * 0.58);
+    const borderWidth = 1.5;
 
     return {
       borderWidth,
@@ -1621,6 +1628,10 @@ window.CBO = window.CBO || {};
           <span class="editor-artboard-frame-label" data-ai-image-board-drag-handle></span>
           <div class="editor-ai-image-board-surface editor-artboard-paper">
             <div class="editor-ai-image-board-media" data-ai-image-board-media></div>
+            <div class="editor-ai-image-board-caption" data-ai-image-board-caption hidden>
+              <div class="editor-ai-image-board-caption-text" data-ai-image-board-caption-text></div>
+              <div class="editor-ai-image-board-caption-editor" data-ai-image-board-caption-editor role="textbox" aria-label="AI image caption" data-placeholder="${AI_IMAGE_CAPTION_PLACEHOLDER}" spellcheck="true"></div>
+            </div>
           </div>
           <div class="editor-ai-image-board-input" data-ai-image-board-input-handle aria-hidden="true"></div>
           <button class="editor-ai-image-board-play" type="button" aria-label="Generate image" data-ai-image-board-generate>
@@ -1646,6 +1657,7 @@ window.CBO = window.CBO || {};
       board.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerup", handleAiImageGenerateClick);
       board.querySelector("[data-ai-image-board-generate]")?.addEventListener("click", handleAiImageGenerateClick);
       board.addEventListener("wheel", handleSpaceBoardWheel, { passive: false });
+      ensureAiImageBoardCaptionControls(board);
       pane.appendChild(board);
     }
 
@@ -1659,8 +1671,45 @@ window.CBO = window.CBO || {};
           <div class="editor-ai-image-board-media" data-ai-image-board-media></div>
         `);
       }
+      ensureAiImageBoardCaptionControls(board);
     }
     return board;
+  }
+
+  function ensureAiImageBoardCaptionControls(element) {
+    const surface = element?.querySelector?.(".editor-ai-image-board-surface");
+
+    if (!surface) {
+      return null;
+    }
+
+    let caption = surface.querySelector("[data-ai-image-board-caption]");
+
+    if (!caption) {
+      surface.insertAdjacentHTML("beforeend", `
+        <div class="editor-ai-image-board-caption" data-ai-image-board-caption hidden>
+          <div class="editor-ai-image-board-caption-text" data-ai-image-board-caption-text></div>
+          <div class="editor-ai-image-board-caption-editor" data-ai-image-board-caption-editor role="textbox" aria-label="AI image caption" data-placeholder="${AI_IMAGE_CAPTION_PLACEHOLDER}" spellcheck="true"></div>
+        </div>
+      `);
+      caption = surface.querySelector("[data-ai-image-board-caption]");
+    }
+
+    if (caption && caption.dataset.captionControlsBound !== "true") {
+      caption.dataset.captionControlsBound = "true";
+      caption.addEventListener("pointerdown", handleAiImageCaptionPointerDown);
+      caption.addEventListener("click", handleAiImageCaptionClick);
+      const editor = caption.querySelector("[data-ai-image-board-caption-editor]");
+
+      editor?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
+      editor?.addEventListener("click", stopSpaceBoardControlEvent);
+      editor?.addEventListener("focus", handleAiImageCaptionFocus);
+      editor?.addEventListener("input", handleAiImageCaptionInput);
+      editor?.addEventListener("blur", handleAiImageCaptionBlur);
+      editor?.addEventListener("keydown", stopSpaceBoardControlEvent);
+    }
+
+    return caption;
   }
 
   function ensureAiImageBoardHeavyContent(element) {
@@ -1860,12 +1909,8 @@ window.CBO = window.CBO || {};
 
     return {
       x: (Number(artboard.x) || 0) +
-        (Number(artboard.width) || 0) +
-        ACTION_BUBBLE_GAP_DOC_PX +
-        ACTION_BUBBLE_SIZE_DOC_PX,
-      y: (Number(artboard.y) || 0) +
-        ACTION_BUBBLE_GAP_DOC_PX +
-        ACTION_BUBBLE_SIZE_DOC_PX * 0.5,
+        (Number(artboard.width) || 0),
+      y: Number(artboard.y) || 0,
     };
   }
 
@@ -3369,6 +3414,167 @@ window.CBO = window.CBO || {};
     });
   }
 
+  function focusAiImageCaptionEditor(boardId, options = {}) {
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!normalizedBoardId) {
+      return false;
+    }
+
+    selectedSpaceBoardId = normalizedBoardId;
+    renderSpaceBoards();
+    scheduleAiImagePromptFocusViewport(normalizedBoardId);
+
+    window.requestAnimationFrame?.(() => {
+      const element = Array.from(ensureSpaceBoardPane()?.querySelectorAll("[data-ai-image-board]") || [])
+        .find((entry) => entry.dataset.boardId === normalizedBoardId) || null;
+      const editor = element?.querySelector?.("[data-ai-image-board-caption-editor]");
+
+      if (!editor) {
+        return;
+      }
+
+      editor.focus({ preventScroll: true });
+
+      if (options.select !== false) {
+        const selection = window.getSelection?.();
+        const range = document.createRange?.();
+
+        if (selection && range) {
+          range.selectNodeContents(editor);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      }
+    });
+
+    return true;
+  }
+
+  function handleAiImageCaptionPointerDown(event) {
+    event.stopPropagation();
+  }
+
+  function handleAiImageCaptionClick(event) {
+    const board = getBoardFromControlEvent(event);
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (board) {
+      focusAiImageCaptionEditor(board.id, { select: false });
+    }
+  }
+
+  function handleAiImageCaptionFocus(event) {
+    const board = getBoardFromControlEvent(event);
+
+    if (!board) {
+      return;
+    }
+
+    selectedSpaceBoardId = board.id;
+    captionEditState = {
+      beforeState: captureConnectionsHistoryState(),
+      boardId: board.id,
+      value: String(board.captionText || ""),
+    };
+    scheduleAiImagePromptFocusViewport(board.id);
+    renderSpaceBoards();
+  }
+
+  function handleAiImageCaptionInput(event) {
+    const board = getBoardFromControlEvent(event);
+
+    if (!board) {
+      return;
+    }
+
+    board.captionText = getAiImageCaptionEditorText(event.currentTarget);
+    updateAiImageCaptionControls(event.currentTarget?.closest?.("[data-ai-image-board]"), board, true);
+    emitConnectionsChange("space-board-caption-input");
+  }
+
+  function handleAiImageCaptionBlur(event) {
+    const board = getBoardFromControlEvent(event);
+    const editState = captionEditState;
+
+    captionEditState = null;
+
+    if (!board || !editState || editState.boardId !== board.id) {
+      renderSpaceBoards();
+      return;
+    }
+
+    const nextValue = getAiImageCaptionEditorText(event.currentTarget);
+
+    if (nextValue !== editState.value) {
+      pushConnectionsHistoryEntry(editState.beforeState, captureConnectionsHistoryState(), {
+        historyGroup: `space-board-caption-${board.id}`,
+        source: "space-board-caption-input",
+        type: "space-board-caption",
+      });
+    }
+
+    renderSpaceBoards();
+  }
+
+  function getAiImageCaptionEditorText(editor) {
+    return String(editor?.textContent || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\n{4,}/g, "\n\n\n");
+  }
+
+  function updateAiImageCaptionControls(element, board, isSelected = false) {
+    const caption = ensureAiImageBoardCaptionControls(element);
+
+    if (!caption || !board) {
+      return false;
+    }
+
+    const text = String(board.captionText || "");
+    const hasCaption = text.trim().length > 0;
+    const textNode = caption.querySelector("[data-ai-image-board-caption-text]");
+    const editor = caption.querySelector("[data-ai-image-board-caption-editor]");
+    const isEditing = document.activeElement === editor;
+    const captionLod = String(element.dataset.aiCaptionLod || "");
+    const shouldShow = (captionLod !== "hidden" || isEditing) && (isSelected || hasCaption);
+
+    caption.hidden = !shouldShow;
+    element.classList.toggle("has-caption", hasCaption);
+    element.classList.toggle("is-caption-editing", isSelected);
+    element.classList.toggle("is-caption-lod-hidden", captionLod === "hidden" && !isEditing);
+
+    if (textNode) {
+      textNode.textContent = text;
+    }
+
+    if (editor) {
+      if (document.activeElement !== editor) {
+        editor.textContent = text;
+      }
+
+      editor.tabIndex = isSelected ? 0 : -1;
+      editor.contentEditable = isSelected ? "plaintext-only" : "false";
+      editor.dataset.placeholder = AI_IMAGE_CAPTION_PLACEHOLDER;
+      editor.setAttribute("aria-hidden", isSelected ? "false" : "true");
+      editor.setAttribute("aria-multiline", "true");
+    }
+
+    window.requestAnimationFrame?.(() => {
+      const measuredNode = isSelected ? editor : textNode;
+      const isOverflowing = Boolean(
+        shouldShow &&
+        measuredNode &&
+        (measuredNode.scrollHeight || 0) > (caption.clientHeight || 0) + 1
+      );
+
+      caption.classList.toggle("is-overflowing", isOverflowing);
+    });
+
+    return true;
+  }
+
   function isMobilePromptFocusViewport() {
     return Boolean(
       window.matchMedia?.("(pointer: coarse)")?.matches ||
@@ -3870,12 +4076,27 @@ window.CBO = window.CBO || {};
       const shouldUnloadMedia = shouldUnloadAiBoardMedia(board, visibilityState, element);
       const shouldUpdatePreviewLod = visibilityState === "visible";
       const mediaHost = element.querySelector("[data-ai-image-board-media]");
+      const isSelected = selectedSpaceBoardId === board.id;
+      const captionScreenSize = Math.min(width, height);
+      const captionLod = captionScreenSize < AI_IMAGE_CAPTION_MIN_SCREEN_BOARD_PX ? "hidden" : "visible";
+      const captionInset = Math.max(8, Math.min(30, Math.round(width * 0.035)));
+      const captionFontSize = Math.max(
+        AI_IMAGE_CAPTION_MIN_FONT_PX,
+        Math.min(AI_IMAGE_CAPTION_MAX_FONT_PX, Math.round(width * 0.048))
+      );
+      const captionLineHeight = Math.round(captionFontSize * 1.18);
+      const captionMaxHeight = Math.max(captionLineHeight * 2, Math.min(height * 0.32, captionLineHeight * 3 + captionInset));
 
       setStylePropertyIfChanged(element, "left", `${point.x}px`);
       setStylePropertyIfChanged(element, "top", `${point.y}px`);
       setStylePropertyIfChanged(element, "width", `${width}px`);
       setStylePropertyIfChanged(element, "height", `${height}px`);
       setCssVarIfChanged(element, "--ai-plain-control-size", `${plainControlSize}px`);
+      setCssVarIfChanged(element, "--ai-caption-inset", `${captionInset}px`);
+      setCssVarIfChanged(element, "--ai-caption-font-size", `${captionFontSize}px`);
+      setCssVarIfChanged(element, "--ai-caption-line-height", `${captionLineHeight}px`);
+      setCssVarIfChanged(element, "--ai-caption-max-height", `${captionMaxHeight}px`);
+      element.dataset.aiCaptionLod = captionLod;
       const boardTransform = plainArtboardMode
         ? "none"
         : `translate3d(${Number(board.x) || 0}px, ${Number(board.y) || 0}px, 0)`;
@@ -3895,9 +4116,10 @@ window.CBO = window.CBO || {};
       element.classList.toggle("is-generating", isGenerating && (plainArtboardMode || isHeavyMounted));
       element.classList.toggle("is-heavy-mounted", isHeavyMounted);
       element.classList.toggle("is-near-viewport", isNearViewport);
-      element.classList.toggle("is-selected", selectedSpaceBoardId === board.id);
+      element.classList.toggle("is-selected", isSelected);
       element.classList.toggle("is-mobile-lean", isMobileLean);
       element.classList.toggle("has-generated-media", Boolean(board.generatedMedia?.src));
+      updateAiImageCaptionControls(element, board, isSelected);
       if (generateButton) {
         generateButton.disabled = isGenerating;
         generateButton.classList.toggle("is-loading", isGenerating);
@@ -4187,6 +4409,7 @@ window.CBO = window.CBO || {};
     const board = {
       height: AI_IMAGE_BOARD_SIZE_DOC_PX,
       id: createBoardId(),
+      captionText: "",
       name: `AI Image board #${spaceBoards.filter((entry) => entry.type === "ai-image").length + 1}`,
       promptText: "",
       type: "ai-image",
@@ -4634,10 +4857,10 @@ window.CBO = window.CBO || {};
 
       renderedIds.add(view.artboard.id);
       const left = view.left + view.width + gap;
-      const top = view.top + gap;
+      const top = view.top - size * 0.5;
 
       nextAnchorOverrides.set(view.artboard.id, stagePointToDocumentPoint({
-        x: left + size,
+        x: left + size * 0.5,
         y: top + size * 0.5,
       }));
 
@@ -4717,6 +4940,7 @@ window.CBO = window.CBO || {};
     aiBoardPreviewDebugByBoardId = new Map();
     aiBoardPreviewDebugEventId = 1;
     promptEditState = null;
+    captionEditState = null;
     clearPromptFocusViewportTimers();
     clearAiImageGenerationPreview();
     removeSpaceBoardDragListeners();
