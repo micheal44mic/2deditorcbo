@@ -4,9 +4,12 @@ window.CBO = window.CBO || {};
   const ACTION_BUBBLE_SIZE_DOC_PX = 120;
   const ACTION_BUBBLE_GAP_DOC_PX = 24;
   const ACTION_BUBBLE_ICON_DOC_PX = 76;
+  const ACTION_BUBBLE_BORDER_DOC_PX = 3;
   const CONNECTION_MIN_DRAG_CSS_PX = 6;
   const CONNECTION_CLICK_DISTANCE_CSS_PX = 220;
   const CONNECTION_ARROW_LENGTH_STROKE_UNITS = 5;
+  const CONNECTION_PLAIN_STROKE_CSS_PX = 1.5;
+  const CONNECTION_PLAIN_GEOMETRY_SCALE = 0.5;
   const CONNECTION_MENU_GAP_CSS_PX = 14;
   const CANVAS_DOT_GRID_PATTERN_ID = "cbo-editor-dot-grid-pattern";
   const CANVAS_DOT_GRID_BASE_WORLD_PX = 20;
@@ -17,17 +20,35 @@ window.CBO = window.CBO || {};
   const CANVAS_DOT_GRID_MAX_OPACITY = 1;
   const AI_IMAGE_BOARD_SIZE_DOC_PX = 1024;
   const AI_IMAGE_BOARD_RADIUS_DOC_PX = 38;
+  const AI_IMAGE_BOARD_OUTLINE_DOC_PX = 3;
+  const AI_IMAGE_BOARD_SELECTION_SHADOW_Y_DOC_PX = 34;
+  const AI_IMAGE_BOARD_SELECTION_SHADOW_BLUR_DOC_PX = 86;
+  const AI_IMAGE_BOARD_SELECTION_SHADOW_SECONDARY_Y_DOC_PX = 9;
+  const AI_IMAGE_BOARD_SELECTION_SHADOW_SECONDARY_BLUR_DOC_PX = 26;
+  const AI_IMAGE_BOARD_SELECTION_SHADOW_RISE_DOC_PX = 18;
   const AI_IMAGE_PROMPT_PLACEHOLDER = "Neon product shot";
   const AI_IMAGE_PROMPT_INPUT_MIN_HEIGHT_CSS_PX = 84;
   const AI_IMAGE_BOARD_FOOTER_MIN_HEIGHT_CSS_PX = 210;
-  const AI_IMAGE_CAPTION_PLACEHOLDER = "Add text";
-  const AI_IMAGE_CAPTION_MIN_SCREEN_BOARD_PX = 140;
-  const AI_IMAGE_CAPTION_MIN_FONT_PX = 12;
-  const AI_IMAGE_CAPTION_MAX_FONT_PX = 22;
-  const AI_IMAGE_INPUT_HANDLE_SIZE_DOC_PX = ACTION_BUBBLE_SIZE_DOC_PX;
-  const AI_IMAGE_INPUT_HANDLE_GAP_DOC_PX = ACTION_BUBBLE_GAP_DOC_PX;
-  const AI_IMAGE_GENERATE_HANDLE_SIZE_DOC_PX = ACTION_BUBBLE_SIZE_DOC_PX;
-  const AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX = ACTION_BUBBLE_GAP_DOC_PX;
+  const AI_IMAGE_CAPTION_PLACEHOLDER = "Write the image you want to generate";
+  const AI_IMAGE_CAPTION_INSET_DOC_PX = 32;
+  const AI_IMAGE_CAPTION_FONT_DOC_PX = 56;
+  const AI_IMAGE_CAPTION_LINE_HEIGHT_DOC_PX = 66;
+  const AI_IMAGE_CAPTION_MIN_HEIGHT_DOC_PX = 74;
+  const AI_IMAGE_CAPTION_PREVIEW_LINES = 2;
+  const AI_IMAGE_CAPTION_PADDING_X_DOC_PX = 6;
+  const AI_IMAGE_CAPTION_PADDING_Y_DOC_PX = 4;
+  const AI_IMAGE_CAPTION_EDITOR_RADIUS_DOC_PX = 6;
+  const AI_IMAGE_CAPTION_FOCUS_RING_DOC_PX = 1;
+  const AI_IMAGE_CAPTION_SHADOW_Y_DOC_PX = 1;
+  const AI_IMAGE_CAPTION_SHADOW_BLUR_DOC_PX = 2;
+  const AI_IMAGE_CAPTION_FOCUS_TOP_GAP_CSS_PX = 16;
+  const AI_IMAGE_CAPTION_FOCUS_BOTTOM_GAP_CSS_PX = 18;
+  const AI_IMAGE_CAPTION_FOCUS_VERTICAL_RATIO = 0.56;
+  const ARTBOARD_LABEL_FONT_RATIO = 0.036;
+  const ARTBOARD_LABEL_HEIGHT_RATIO = 1.35;
+  const ARTBOARD_LABEL_PADDING_X_RATIO = 0.55;
+  const ARTBOARD_LABEL_RADIUS_RATIO = 0.28;
+  const ARTBOARD_LABEL_TOP_GAP_RATIO = 0.32;
   const AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX = 96;
   const AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX = 42;
   const AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX = 24;
@@ -67,8 +88,6 @@ window.CBO = window.CBO || {};
   const SPACE_BOARD_LAZY_OVERSCAN_CSS_PX = 640;
   const SPACE_BOARD_MOBILE_HEAVY_MIN_SCREEN_PX = 140;
   const AI_BOARD_ARTBOARD_PLAIN_MODE = true;
-  const AI_BOARD_METRICS_PANEL_ID = "cbo-ai-board-metrics";
-  const AI_BOARD_METRICS_COPY_RESET_MS = 900;
   const AI_IMAGE_GENERATE_DUPLICATE_GUARD_MS = 650;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -102,7 +121,6 @@ window.CBO = window.CBO || {};
   let connectionIdSeed = 1;
   let boardIdSeed = 1;
   let aiBoardMetrics = createEmptyAiBoardMetrics();
-  let aiBoardMetricsCopyResetTimer = 0;
   let lastRenderContext = {
     artboardViews: [],
     camera: { x: 0, y: 0, zoom: 1 },
@@ -135,10 +153,62 @@ window.CBO = window.CBO || {};
     return Math.round(number * multiplier) / multiplier;
   }
 
+  function getBoardLabelReferenceSideDoc(width, height, fallback = AI_IMAGE_BOARD_SIZE_DOC_PX) {
+    const resolvedWidth = Math.max(1, Number(width) || fallback);
+    const resolvedHeight = Math.max(1, Number(height) || fallback);
+
+    return Math.max(1, Math.max(resolvedWidth, resolvedHeight));
+  }
+
+  function getArtboardLabelMetrics(width, height, scale = 1) {
+    const safeScale = Math.max(0.0001, Number(scale) || 1);
+    const labelSide = getBoardLabelReferenceSideDoc(width, height);
+    const fontSizeDoc = labelSide * ARTBOARD_LABEL_FONT_RATIO;
+    const heightDoc = fontSizeDoc * ARTBOARD_LABEL_HEIGHT_RATIO;
+    const paddingXDoc = fontSizeDoc * ARTBOARD_LABEL_PADDING_X_RATIO;
+    const radiusDoc = fontSizeDoc * ARTBOARD_LABEL_RADIUS_RATIO;
+    const topDoc = (heightDoc + fontSizeDoc * ARTBOARD_LABEL_TOP_GAP_RATIO) * -1;
+
+    return {
+      fontSize: fontSizeDoc * safeScale,
+      height: heightDoc * safeScale,
+      paddingX: paddingXDoc * safeScale,
+      radius: radiusDoc * safeScale,
+      top: topDoc * safeScale,
+    };
+  }
+
+  function getAiImagePlainControlMetrics(scale = 1, width = AI_IMAGE_BOARD_SIZE_DOC_PX, height = AI_IMAGE_BOARD_SIZE_DOC_PX) {
+    const metrics = getActionBubbleMetrics(scale, width, height);
+
+    return {
+      borderWidth: metrics.borderWidth,
+      gap: metrics.gap,
+      iconSize: metrics.iconSize,
+      lod: "visible",
+      outsideOffset: metrics.outsideOffset,
+      size: metrics.size,
+    };
+  }
+
+  function getAiImageSelectionShadowMetrics(scale = 1) {
+    const safeScale = Math.max(0.0001, Number(scale) || 1);
+
+    return {
+      blur: AI_IMAGE_BOARD_SELECTION_SHADOW_BLUR_DOC_PX * safeScale,
+      rise: AI_IMAGE_BOARD_SELECTION_SHADOW_RISE_DOC_PX * safeScale,
+      secondaryBlur: AI_IMAGE_BOARD_SELECTION_SHADOW_SECONDARY_BLUR_DOC_PX * safeScale,
+      secondaryY: AI_IMAGE_BOARD_SELECTION_SHADOW_SECONDARY_Y_DOC_PX * safeScale,
+      y: AI_IMAGE_BOARD_SELECTION_SHADOW_Y_DOC_PX * safeScale,
+    };
+  }
+
   function createEmptyAiBoardMetrics(overrides = {}) {
     return {
       activePreviewCount: 0,
       boards: [],
+      cameraMoving: false,
+      deferredPreviewBoards: 0,
       dpr: 1,
       estimatedDecodedMB: 0,
       frameMs: 0,
@@ -283,6 +353,10 @@ window.CBO = window.CBO || {};
     return mediaHost?.dataset?.mediaLod || getAiBoardAssetLodFromSrc(mediaHost?.dataset?.mediaPreviewSrc || src) || "full";
   }
 
+  function getAiImageRuntimePreviewCacheKey(src, lod) {
+    return `${String(src || "").trim()}::${String(lod || "").trim()}`;
+  }
+
   function estimateAiBoardDecodedMB(board, currentLod, isActivePreview) {
     const media = board?.generatedMedia || null;
 
@@ -304,10 +378,6 @@ window.CBO = window.CBO || {};
 
   function estimateDecodedMBFromDimensions(width, height) {
     return (Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0) * 4) / (1024 * 1024);
-  }
-
-  function getAiImageRuntimePreviewCacheKey(src, lod) {
-    return `${String(src || "").trim()}::${String(lod || "").trim()}`;
   }
 
   function getAiImageRuntimePreviewCacheStats() {
@@ -723,14 +793,6 @@ window.CBO = window.CBO || {};
     return value.length > 18 ? value.slice(-18) : value;
   }
 
-  function escapeMetricText(value) {
-    return String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
   function summarizeAiBoardPreviewSrc(src) {
     const value = String(src || "");
 
@@ -913,180 +975,6 @@ window.CBO = window.CBO || {};
     };
   }
 
-  function formatAiBoardMetricsReport(metrics = aiBoardMetrics) {
-    const rows = Array.isArray(metrics.boards) ? metrics.boards : [];
-    const boardLines = rows.length
-      ? rows.map((board) => [
-          board.id,
-          board.visibility,
-          `current=${board.currentLod}`,
-          `recommended=${board.recommendedLod}`,
-          `preview=${["placeholder", "unloaded"].includes(board.currentLod) ? board.currentLod : board.activePreview ? "on" : "off"}`,
-          `source=${board.previewSource || "none"}`,
-          `debug=${board.previewDebug?.diagnosis || "none"}`,
-          `layer=${board.previewDebug?.activeLayer?.name || "none"}`,
-          `complete=${board.previewDebug?.activeLayer?.complete ? "yes" : "no"}`,
-          `natural=${board.previewDebug?.activeLayer?.naturalWidth || 0}x${board.previewDebug?.activeLayer?.naturalHeight || 0}`,
-          `generating=${board.isGenerating ? "yes" : "no"}`,
-          `generation=${board.generationStatus || "none"}`,
-          `screen=${board.screenWidth}x${board.screenHeight}`,
-          `est=${board.estimatedDecodedMB}MB`,
-        ].join(" | ")).join("\n")
-      : "none";
-    const debugEvents = Array.isArray(metrics.previewDebugEvents) && metrics.previewDebugEvents.length
-      ? metrics.previewDebugEvents.slice(-40).map((event) => [
-          `#${event.id}`,
-          new Date(event.at).toLocaleTimeString(),
-          event.eventName,
-          event.detail?.boardId ? `board=${getShortAiBoardId(event.detail.boardId)}` : "",
-          event.detail?.lod ? `lod=${event.detail.lod}` : "",
-          event.detail?.previewSource ? `source=${event.detail.previewSource}` : "",
-          event.detail?.status ? `status=${event.detail.status}` : "",
-          event.detail?.message ? `message=${event.detail.message}` : "",
-        ].filter(Boolean).join(" | ")).join("\n")
-      : "none";
-
-    return [
-      "AI BOARD METRICS",
-      `copiedAt=${new Date().toISOString()}`,
-      `stateBoards=${metrics.stateBoards}`,
-      `renderedAiBoards=${metrics.renderedAiBoards}`,
-      `visibleAiBoards=${metrics.visibleAiBoards}`,
-      `nearAiBoards=${metrics.nearAiBoards}`,
-      `offscreenAiBoards=${metrics.offscreenAiBoards}`,
-      `activePreviewCount=${metrics.activePreviewCount}`,
-      `estimatedDecodedMB=${metrics.estimatedDecodedMB}`,
-      `frameMs=${metrics.frameMs}`,
-      `generatingBoards=${metrics.generatingBoards}`,
-      `lastGenerateStatus=${metrics.lastGenerateStatus}`,
-      `runtimePreviewCacheCount=${metrics.runtimePreviewCacheCount}`,
-      `runtimePreviewLoadingCount=${metrics.runtimePreviewLoadingCount}`,
-      `runtimePreviewCacheMB=${metrics.runtimePreviewCacheMB}`,
-      `zoom=${metrics.zoom}`,
-      `dpr=${metrics.dpr}`,
-      "",
-      "BOARDS",
-      boardLines,
-      "",
-      "PREVIEW DEBUG EVENTS",
-      debugEvents,
-      "",
-      "RAW",
-      JSON.stringify(metrics, null, 2),
-    ].join("\n");
-  }
-
-  function copyAiBoardMetricsText(text) {
-    if (navigator.clipboard?.writeText && window.isSecureContext) {
-      return navigator.clipboard.writeText(text);
-    }
-
-    return new Promise((resolve, reject) => {
-      const textarea = document.createElement("textarea");
-
-      textarea.value = text;
-      textarea.setAttribute("readonly", "true");
-      textarea.style.position = "fixed";
-      textarea.style.left = "12px";
-      textarea.style.top = "12px";
-      textarea.style.width = "1px";
-      textarea.style.height = "1px";
-      textarea.style.fontSize = "16px";
-      textarea.style.opacity = "0.01";
-      textarea.style.pointerEvents = "none";
-      document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      textarea.setSelectionRange?.(0, textarea.value.length);
-
-      try {
-        if (!document.execCommand("copy")) {
-          throw new Error("copy command failed");
-        }
-
-        resolve();
-      } catch (error) {
-        reject(error);
-      } finally {
-        textarea.remove();
-      }
-    });
-  }
-
-  function handleAiBoardMetricsCopy(event) {
-    const button = event.currentTarget;
-
-    copyAiBoardMetricsText(formatAiBoardMetricsReport())
-      .then(() => {
-        if (!button) {
-          return;
-        }
-
-        button.textContent = "Copied";
-        window.clearTimeout(aiBoardMetricsCopyResetTimer);
-        aiBoardMetricsCopyResetTimer = window.setTimeout(() => {
-          button.textContent = "Copy";
-        }, AI_BOARD_METRICS_COPY_RESET_MS);
-      })
-      .catch((error) => {
-        console.warn("[CBO] Unable to copy AI board metrics.", error);
-        if (button) {
-          button.textContent = "Copy failed";
-        }
-      });
-  }
-
-  function ensureAiBoardMetricsPanel() {
-    if (!document.body) {
-      return null;
-    }
-
-    let panel = document.getElementById(AI_BOARD_METRICS_PANEL_ID);
-
-    if (!panel) {
-      panel = document.createElement("section");
-      panel.id = AI_BOARD_METRICS_PANEL_ID;
-      panel.className = "editor-ai-board-metrics";
-      panel.innerHTML = `
-        <div class="editor-ai-board-metrics-header">
-          <span>AI METRICS</span>
-          <button type="button" data-ai-board-metrics-copy>Copy</button>
-        </div>
-        <div class="editor-ai-board-metrics-body" data-ai-board-metrics-body></div>
-      `;
-      panel.querySelector("[data-ai-board-metrics-copy]")?.addEventListener("click", handleAiBoardMetricsCopy);
-      document.body.appendChild(panel);
-    }
-
-    return panel;
-  }
-
-  function renderAiBoardMetricsPanel(metrics = aiBoardMetrics) {
-    const panel = ensureAiBoardMetricsPanel();
-    const body = panel?.querySelector?.("[data-ai-board-metrics-body]");
-
-    if (!body) {
-      return;
-    }
-
-    const boards = Array.isArray(metrics.boards) ? metrics.boards : [];
-    const previewRows = boards.slice(0, 4).map((board) => (
-      `<div>${escapeMetricText(getShortAiBoardId(board.id))}: ${escapeMetricText(board.visibility)} ` +
-      `${escapeMetricText(board.currentLod)} -> ${escapeMetricText(board.recommendedLod)} ` +
-      `${escapeMetricText(board.previewDebug?.diagnosis || "no-debug")} ` +
-      `${board.isGenerating ? "generating " : ""}` +
-      `${escapeMetricText(board.screenWidth)}x${escapeMetricText(board.screenHeight)}</div>`
-    )).join("");
-    const hiddenCount = Math.max(0, boards.length - 4);
-
-    body.innerHTML = `
-      <div>state ${metrics.stateBoards} | rendered ${metrics.renderedAiBoards} | visible ${metrics.visibleAiBoards} | near ${metrics.nearAiBoards} | off ${metrics.offscreenAiBoards}</div>
-      <div>preview ${metrics.activePreviewCount} | runtime ${metrics.runtimePreviewCacheCount}/${metrics.runtimePreviewLoadingCount} | est ${metrics.estimatedDecodedMB}MB | frame ${metrics.frameMs}ms | z ${metrics.zoom}</div>
-      ${previewRows || "<div>boards: none</div>"}
-      ${hiddenCount ? `<div>+${hiddenCount} more</div>` : ""}
-    `;
-  }
-
   function publishAiBoardMetrics(metrics) {
     aiBoardMetrics = {
       ...metrics,
@@ -1095,7 +983,6 @@ window.CBO = window.CBO || {};
       updatedAt: new Date().toISOString(),
     };
     namespace.aiBoardMetrics = aiBoardMetrics;
-    renderAiBoardMetricsPanel(aiBoardMetrics);
   }
 
   function shouldUsePlainAiBoardArtboards() {
@@ -1219,24 +1106,33 @@ window.CBO = window.CBO || {};
     return Math.max(0.5, 3 * (Number(viewScale) || 1));
   }
 
-  function getActionBubbleMetrics(scale = getViewScale()) {
+  function getPlainConnectionStrokeWidth() {
+    return CONNECTION_PLAIN_STROKE_CSS_PX;
+  }
+
+  function getActionBubbleMetrics(
+    scale = getViewScale(),
+    width = AI_IMAGE_BOARD_SIZE_DOC_PX,
+    height = AI_IMAGE_BOARD_SIZE_DOC_PX,
+  ) {
     const safeScale = Math.max(0.0001, Number(scale) || 1);
-    const rawSize = ACTION_BUBBLE_SIZE_DOC_PX * safeScale;
-    const rawGap = ACTION_BUBBLE_GAP_DOC_PX * safeScale;
-    const size = Math.max(18, Math.min(34, Math.round(rawSize)));
-    const gap = Math.max(6, Math.min(10, Math.round(rawGap * 0.25)));
-    const iconSize = Math.round(size * 0.58);
-    const borderWidth = 1.5;
+    const sizeDoc = ACTION_BUBBLE_SIZE_DOC_PX;
+    const gapDoc = ACTION_BUBBLE_GAP_DOC_PX;
+    const iconSizeDoc = ACTION_BUBBLE_ICON_DOC_PX;
+    const borderWidthDoc = ACTION_BUBBLE_BORDER_DOC_PX;
+    const outsideOffsetDoc = gapDoc + sizeDoc * 0.5;
 
     return {
-      borderWidth,
-      borderWidthDoc: 3,
-      gap,
-      gapDoc: ACTION_BUBBLE_GAP_DOC_PX,
-      iconSize,
-      iconSizeDoc: ACTION_BUBBLE_ICON_DOC_PX,
-      size,
-      sizeDoc: ACTION_BUBBLE_SIZE_DOC_PX,
+      borderWidth: borderWidthDoc * safeScale,
+      borderWidthDoc,
+      gap: gapDoc * safeScale,
+      gapDoc,
+      iconSize: iconSizeDoc * safeScale,
+      iconSizeDoc,
+      outsideOffset: outsideOffsetDoc * safeScale,
+      outsideOffsetDoc,
+      size: sizeDoc * safeScale,
+      sizeDoc,
       visualScale: safeScale,
     };
   }
@@ -1360,6 +1256,18 @@ window.CBO = window.CBO || {};
 
   function ensureSpaceBoardPane() {
     return ensureSpaceBoardLayer()?.querySelector("[data-space-board-pane]") || null;
+  }
+
+  function getSpaceBoardElement(boardId) {
+    const pane = ensureSpaceBoardPane();
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!pane || !normalizedBoardId) {
+      return null;
+    }
+
+    return Array.from(pane.querySelectorAll("[data-ai-image-board]"))
+      .find((element) => element.dataset.boardId === normalizedBoardId) || null;
   }
 
   function setStylePropertyIfChanged(element, property, value) {
@@ -1561,8 +1469,13 @@ window.CBO = window.CBO || {};
     if (shouldUsePlainAiBoardArtboards()) {
       setStylePropertyIfChanged(pane, "transform", "none");
       setCssVarIfChanged(pane, "--editor-space-board-scale", "1");
-      setCssVarIfChanged(pane, "--editor-space-board-inverse-scale", "1");
-      setCssVarIfChanged(pane, "--editor-space-board-label-top", "-25px");
+      const labelMetrics = getArtboardLabelMetrics(AI_IMAGE_BOARD_SIZE_DOC_PX, AI_IMAGE_BOARD_SIZE_DOC_PX);
+
+      setCssVarIfChanged(pane, "--editor-space-board-label-height", `${labelMetrics.height}px`);
+      setCssVarIfChanged(pane, "--editor-space-board-label-padding-x", `${labelMetrics.paddingX}px`);
+      setCssVarIfChanged(pane, "--editor-space-board-label-radius", `${labelMetrics.radius}px`);
+      setCssVarIfChanged(pane, "--editor-space-board-label-font-size", `${labelMetrics.fontSize}px`);
+      setCssVarIfChanged(pane, "--editor-space-board-label-top", `${labelMetrics.top}px`);
       return pane;
     }
 
@@ -1572,11 +1485,15 @@ window.CBO = window.CBO || {};
     const ty = (Number(camera.y) || 0) / dpr;
     const transform = `matrix(${scale}, 0, 0, ${scale}, ${tx}, ${ty})`;
     const didChangeTransform = setStylePropertyIfChanged(pane, "transform", transform);
-    const inverseScale = 1 / Math.max(0.0001, scale);
 
     setCssVarIfChanged(pane, "--editor-space-board-scale", String(scale));
-    setCssVarIfChanged(pane, "--editor-space-board-inverse-scale", String(inverseScale));
-    setCssVarIfChanged(pane, "--editor-space-board-label-top", `${-25 * inverseScale}px`);
+    const labelMetrics = getArtboardLabelMetrics(AI_IMAGE_BOARD_SIZE_DOC_PX, AI_IMAGE_BOARD_SIZE_DOC_PX);
+
+    setCssVarIfChanged(pane, "--editor-space-board-label-height", `${labelMetrics.height}px`);
+    setCssVarIfChanged(pane, "--editor-space-board-label-padding-x", `${labelMetrics.paddingX}px`);
+    setCssVarIfChanged(pane, "--editor-space-board-label-radius", `${labelMetrics.radius}px`);
+    setCssVarIfChanged(pane, "--editor-space-board-label-font-size", `${labelMetrics.fontSize}px`);
+    setCssVarIfChanged(pane, "--editor-space-board-label-top", `${labelMetrics.top}px`);
 
     if (didChangeTransform) {
       scheduleSpaceBoardPaneTransformIdle(pane);
@@ -1605,6 +1522,26 @@ window.CBO = window.CBO || {};
     renderSpaceBoards();
   }
 
+  function shouldStartSpaceBoardDragFromEvent(event) {
+    const target = event.target;
+
+    if (!target?.closest) {
+      return true;
+    }
+
+    return !target.closest([
+      "[data-ai-image-board-caption]",
+      "[data-ai-image-board-footer]",
+      "[data-ai-image-board-generate]",
+      "[data-ai-image-board-prompt-input]",
+      "[contenteditable]",
+      "button",
+      "input",
+      "textarea",
+      "select",
+    ].join(","));
+  }
+
   function ensureAiImageBoardElement(boardId) {
     const pane = ensureSpaceBoardPane();
     const normalizedBoardId = String(boardId || "").trim();
@@ -1626,6 +1563,8 @@ window.CBO = window.CBO || {};
       board.innerHTML = shouldUsePlainAiBoardArtboards()
         ? `
           <span class="editor-artboard-frame-label" data-ai-image-board-drag-handle></span>
+          <span class="editor-ai-image-board-dimensions" data-ai-image-board-dimensions></span>
+          <span class="editor-ai-image-board-selection-shadow" data-ai-image-board-selection-shadow aria-hidden="true"></span>
           <div class="editor-ai-image-board-surface editor-artboard-paper">
             <div class="editor-ai-image-board-media" data-ai-image-board-media></div>
             <div class="editor-ai-image-board-caption" data-ai-image-board-caption hidden>
@@ -1652,6 +1591,7 @@ window.CBO = window.CBO || {};
           </div>
         `;
       board.addEventListener("pointerdown", handleAiImageBoardPointerDown, true);
+      board.addEventListener("pointerdown", startSpaceBoardDrag);
       board.querySelector("[data-ai-image-board-drag-handle]")?.addEventListener("pointerdown", startSpaceBoardDrag);
       board.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
       board.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerup", handleAiImageGenerateClick);
@@ -1665,6 +1605,18 @@ window.CBO = window.CBO || {};
     board.classList.toggle("is-plain-artboard", shouldUsePlainAiBoardArtboards());
     if (shouldUsePlainAiBoardArtboards()) {
       const surface = board.querySelector(".editor-ai-image-board-surface");
+
+      if (!board.querySelector("[data-ai-image-board-dimensions]")) {
+        surface?.insertAdjacentHTML?.("beforebegin", `
+          <span class="editor-ai-image-board-dimensions" data-ai-image-board-dimensions></span>
+        `);
+      }
+
+      if (!board.querySelector("[data-ai-image-board-selection-shadow]")) {
+        surface?.insertAdjacentHTML?.("beforebegin", `
+          <span class="editor-ai-image-board-selection-shadow" data-ai-image-board-selection-shadow aria-hidden="true"></span>
+        `);
+      }
 
       if (surface && !surface.querySelector("[data-ai-image-board-media]")) {
         surface.insertAdjacentHTML("afterbegin", `
@@ -3423,7 +3375,7 @@ window.CBO = window.CBO || {};
 
     selectedSpaceBoardId = normalizedBoardId;
     renderSpaceBoards();
-    scheduleAiImagePromptFocusViewport(normalizedBoardId);
+    scheduleAiImagePromptFocusViewport(normalizedBoardId, { target: "caption" });
 
     window.requestAnimationFrame?.(() => {
       const element = Array.from(ensureSpaceBoardPane()?.querySelectorAll("[data-ai-image-board]") || [])
@@ -3445,10 +3397,48 @@ window.CBO = window.CBO || {};
           selection.removeAllRanges();
           selection.addRange(range);
         }
+      } else {
+        moveAiImageCaptionCaretToEnd(editor);
       }
     });
 
     return true;
+  }
+
+  function moveAiImageCaptionCaretToEnd(editor) {
+    if (!editor) {
+      return false;
+    }
+
+    const selection = window.getSelection?.();
+    const range = document.createRange?.();
+
+    if (!selection || !range) {
+      return false;
+    }
+
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    keepAiImageCaptionCaretVisible(editor);
+    return true;
+  }
+
+  function keepAiImageCaptionCaretVisible(editor) {
+    if (!editor) {
+      return;
+    }
+
+    const scrollToBottom = () => {
+      editor.scrollTop = editor.scrollHeight || 0;
+    };
+
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(scrollToBottom);
+    } else {
+      scrollToBottom();
+    }
   }
 
   function handleAiImageCaptionPointerDown(event) {
@@ -3479,7 +3469,7 @@ window.CBO = window.CBO || {};
       boardId: board.id,
       value: String(board.captionText || ""),
     };
-    scheduleAiImagePromptFocusViewport(board.id);
+    scheduleAiImagePromptFocusViewport(board.id, { target: "caption" });
     renderSpaceBoards();
   }
 
@@ -3492,6 +3482,10 @@ window.CBO = window.CBO || {};
 
     board.captionText = getAiImageCaptionEditorText(event.currentTarget);
     updateAiImageCaptionControls(event.currentTarget?.closest?.("[data-ai-image-board]"), board, true);
+    keepAiImageCaptionCaretVisible(event.currentTarget);
+    if (isMobilePromptFocusViewport()) {
+      focusAiImagePromptBoard(board.id, { target: "caption" });
+    }
     emitConnectionsChange("space-board-caption-input");
   }
 
@@ -3525,6 +3519,78 @@ window.CBO = window.CBO || {};
       .replace(/\n{4,}/g, "\n\n\n");
   }
 
+  function parseCssPixelValue(value, fallback = 0) {
+    const number = Number.parseFloat(String(value || ""));
+
+    return Number.isFinite(number) ? number : fallback;
+  }
+
+  function getAiImageCaptionMinHeightDoc() {
+    return Math.max(
+      AI_IMAGE_CAPTION_MIN_HEIGHT_DOC_PX,
+      AI_IMAGE_CAPTION_LINE_HEIGHT_DOC_PX + AI_IMAGE_CAPTION_PADDING_Y_DOC_PX * 2,
+    );
+  }
+
+  function getAiImageCaptionPreviewHeightDoc() {
+    return Math.max(
+      getAiImageCaptionMinHeightDoc(),
+      AI_IMAGE_CAPTION_LINE_HEIGHT_DOC_PX * AI_IMAGE_CAPTION_PREVIEW_LINES +
+        AI_IMAGE_CAPTION_PADDING_Y_DOC_PX * 2,
+    );
+  }
+
+  function getAiImageCaptionMaxHeightDoc(boardHeight = AI_IMAGE_BOARD_SIZE_DOC_PX) {
+    const safeBoardHeight = Math.max(1, Number(boardHeight) || AI_IMAGE_BOARD_SIZE_DOC_PX);
+    const availableHeight = safeBoardHeight - AI_IMAGE_CAPTION_INSET_DOC_PX * 2;
+
+    return Math.max(getAiImageCaptionPreviewHeightDoc(), availableHeight);
+  }
+
+  function getAiImageCaptionStoredHeightDoc(element) {
+    const storedHeight = Number(element?.dataset?.aiCaptionHeightDoc || 0);
+
+    return Number.isFinite(storedHeight) && storedHeight > 0
+      ? storedHeight
+      : getAiImageCaptionMinHeightDoc();
+  }
+
+  function syncAiImageCaptionHeight(element, caption, measuredNode, shouldShow = true, allowGrowth = true) {
+    if (!element || !caption) {
+      return false;
+    }
+
+    const computedStyle = window.getComputedStyle?.(caption);
+    const minHeight = parseCssPixelValue(
+      computedStyle?.getPropertyValue("--ai-caption-min-height"),
+      caption.clientHeight || getAiImageCaptionMinHeightDoc(),
+    );
+    const maxHeight = Math.max(
+      minHeight,
+      parseCssPixelValue(computedStyle?.getPropertyValue("--ai-caption-max-height"), minHeight),
+    );
+    const contentHeight = shouldShow && measuredNode
+      ? Math.ceil(measuredNode.scrollHeight || minHeight)
+      : minHeight;
+    const previewHeight = Math.min(
+      maxHeight,
+      Math.max(
+        minHeight,
+        parseCssPixelValue(computedStyle?.getPropertyValue("--ai-caption-preview-height"), minHeight),
+      ),
+    );
+    const nextHeight = allowGrowth
+      ? Math.min(maxHeight, Math.max(previewHeight, contentHeight))
+      : previewHeight;
+    const viewScale = Math.max(0.0001, getViewScale());
+
+    setCssVarIfChanged(element, "--ai-caption-height", `${nextHeight}px`);
+    element.dataset.aiCaptionHeightDoc = String(roundMetricValue(nextHeight / viewScale, 3));
+    caption.classList.toggle("is-overflowing", contentHeight > maxHeight + 1);
+
+    return true;
+  }
+
   function updateAiImageCaptionControls(element, board, isSelected = false) {
     const caption = ensureAiImageBoardCaptionControls(element);
 
@@ -3536,14 +3602,13 @@ window.CBO = window.CBO || {};
     const hasCaption = text.trim().length > 0;
     const textNode = caption.querySelector("[data-ai-image-board-caption-text]");
     const editor = caption.querySelector("[data-ai-image-board-caption-editor]");
-    const isEditing = document.activeElement === editor;
-    const captionLod = String(element.dataset.aiCaptionLod || "");
-    const shouldShow = (captionLod !== "hidden" || isEditing) && (isSelected || hasCaption);
+    const canEditCaption = isSelected;
+    const shouldShow = isSelected || hasCaption;
 
     caption.hidden = !shouldShow;
     element.classList.toggle("has-caption", hasCaption);
-    element.classList.toggle("is-caption-editing", isSelected);
-    element.classList.toggle("is-caption-lod-hidden", captionLod === "hidden" && !isEditing);
+    element.classList.toggle("is-caption-editing", canEditCaption);
+    element.classList.remove("is-caption-lod-hidden");
 
     if (textNode) {
       textNode.textContent = text;
@@ -3554,22 +3619,17 @@ window.CBO = window.CBO || {};
         editor.textContent = text;
       }
 
-      editor.tabIndex = isSelected ? 0 : -1;
-      editor.contentEditable = isSelected ? "plaintext-only" : "false";
+      editor.tabIndex = canEditCaption ? 0 : -1;
+      editor.contentEditable = canEditCaption ? "plaintext-only" : "false";
       editor.dataset.placeholder = AI_IMAGE_CAPTION_PLACEHOLDER;
-      editor.setAttribute("aria-hidden", isSelected ? "false" : "true");
+      editor.setAttribute("aria-hidden", canEditCaption ? "false" : "true");
       editor.setAttribute("aria-multiline", "true");
     }
 
     window.requestAnimationFrame?.(() => {
       const measuredNode = isSelected ? editor : textNode;
-      const isOverflowing = Boolean(
-        shouldShow &&
-        measuredNode &&
-        (measuredNode.scrollHeight || 0) > (caption.clientHeight || 0) + 1
-      );
 
-      caption.classList.toggle("is-overflowing", isOverflowing);
+      syncAiImageCaptionHeight(element, caption, measuredNode, shouldShow, isSelected);
     });
 
     return true;
@@ -3590,7 +3650,7 @@ window.CBO = window.CBO || {};
     promptFocusViewportTimers = [];
   }
 
-  function scheduleAiImagePromptFocusViewport(boardId) {
+  function scheduleAiImagePromptFocusViewport(boardId, options = {}) {
     if (!isMobilePromptFocusViewport()) {
       return;
     }
@@ -3602,10 +3662,10 @@ window.CBO = window.CBO || {};
     }
 
     clearPromptFocusViewportTimers();
-    focusAiImagePromptBoard(normalizedBoardId);
-    [80, 260, 520].forEach((delay) => {
+    focusAiImagePromptBoard(normalizedBoardId, options);
+    [80, 260, 520, 900, 1300].forEach((delay) => {
       const timerId = window.setTimeout(() => {
-        focusAiImagePromptBoard(normalizedBoardId);
+        focusAiImagePromptBoard(normalizedBoardId, options);
         window.scrollTo?.(0, 0);
       }, delay);
 
@@ -3613,7 +3673,109 @@ window.CBO = window.CBO || {};
     });
   }
 
-  function focusAiImagePromptBoard(boardId) {
+  function getVisibleViewportRectCss(stage, stageRect) {
+    const visualViewport = window.visualViewport;
+    const left = Math.max(0, Number(visualViewport?.offsetLeft) || 0);
+    const top = Math.max(0, Number(visualViewport?.offsetTop) || 0);
+    const width = Math.max(1, visualViewport?.width || window.innerWidth || stage.clientWidth || stageRect.width || 1);
+    const height = Math.max(1, visualViewport?.height || window.innerHeight || stage.clientHeight || stageRect.height || 1);
+
+    return {
+      bottom: top + height,
+      height,
+      left,
+      right: left + width,
+      top,
+      width,
+    };
+  }
+
+  function getVisibleFixedElementRect(selector) {
+    const element = document.querySelector(selector);
+    const rect = element?.getBoundingClientRect?.();
+
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    const style = window.getComputedStyle?.(element);
+
+    if (style && (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0)) {
+      return null;
+    }
+
+    return rect;
+  }
+
+  function getAiImageMobileFocusBand(stage, stageRect, isCaptionTarget = false) {
+    const viewportRect = getVisibleViewportRectCss(stage, stageRect);
+    const stageTop = Number(stageRect.top) || 0;
+    const viewportTopInStage = Math.max(0, viewportRect.top - stageTop);
+    const viewportBottomInStage = Math.max(viewportTopInStage + 1, viewportRect.bottom - stageTop);
+    const topGap = isCaptionTarget ? AI_IMAGE_CAPTION_FOCUS_TOP_GAP_CSS_PX : AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX;
+    let top = viewportTopInStage + topGap;
+    let bottom = viewportBottomInStage - (
+      isCaptionTarget ? AI_IMAGE_CAPTION_FOCUS_BOTTOM_GAP_CSS_PX : AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX
+    );
+
+    [
+      ".top-toolbar-dock",
+      ".brush-quick-controls:not([hidden])",
+    ].forEach((selector) => {
+      const rect = getVisibleFixedElementRect(selector);
+
+      if (rect && rect.bottom > viewportRect.top && rect.top < viewportRect.bottom) {
+        top = Math.max(top, rect.bottom - stageTop + topGap);
+      }
+    });
+
+    [
+      ".toolbar-dock",
+      ".mobile-text-panel:not([hidden])",
+      ".mobile-layer-effects-panel:not([hidden])",
+      ".area-selection-operation-toolbar",
+      ".transform-mode-toolbar",
+      ".text-add-toolbar:not([hidden])",
+    ].forEach((selector) => {
+      const rect = getVisibleFixedElementRect(selector);
+
+      if (rect && rect.bottom > viewportRect.top && rect.top < viewportRect.bottom) {
+        bottom = Math.min(bottom, rect.top - stageTop - (
+          isCaptionTarget ? AI_IMAGE_CAPTION_FOCUS_BOTTOM_GAP_CSS_PX : AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX
+        ));
+      }
+    });
+
+    if (bottom <= top + 24) {
+      top = Math.max(0, viewportTopInStage + topGap);
+      bottom = Math.max(top + 24, viewportBottomInStage - (
+        isCaptionTarget ? AI_IMAGE_CAPTION_FOCUS_BOTTOM_GAP_CSS_PX : AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX
+      ));
+    }
+
+    return {
+      bottom,
+      height: Math.max(1, bottom - top),
+      top,
+    };
+  }
+
+  function getAiImageMobileTargetTopCss(targetScreenHeight, focusBand, isCaptionTarget = false) {
+    const targetHeight = Math.max(1, Number(targetScreenHeight) || 1);
+    const availableHeight = Math.max(1, focusBand.height);
+    const maxTop = Math.max(focusBand.top, focusBand.bottom - Math.min(targetHeight, availableHeight));
+
+    if (!isCaptionTarget) {
+      return Math.min(maxTop, Math.max(focusBand.top, AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX));
+    }
+
+    const availableTravel = Math.max(0, availableHeight - Math.min(targetHeight, availableHeight));
+    const preferredTop = focusBand.top + availableTravel * AI_IMAGE_CAPTION_FOCUS_VERTICAL_RATIO;
+
+    return Math.min(maxTop, Math.max(focusBand.top, preferredTop));
+  }
+
+  function focusAiImagePromptBoard(boardId, options = {}) {
     const board = getSpaceBoardById(boardId);
     const brushEngine = getBrushEngine();
     const stage = getStage();
@@ -3626,25 +3788,34 @@ window.CBO = window.CBO || {};
     const zoom = Math.max(0.0001, Number(brushEngine.camera.zoom) || 1);
     const stageRect = stage.getBoundingClientRect();
     const viewportWidthCss = Math.max(1, stage.clientWidth || stageRect.width || 1);
-    const viewportHeightCss = Math.max(
-      1,
-      Math.min(
-        stage.clientHeight || stageRect.height || 1,
-        window.visualViewport?.height || stage.clientHeight || stageRect.height || 1,
-      ),
-    );
     const boardWidth = Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
     const boardHeight = Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
-    const boardScreenHeight = boardHeight * zoom / dpr;
-    const maxTop = Math.max(
-      AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX,
-      viewportHeightCss - Math.min(boardScreenHeight, viewportHeightCss) - AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX,
+    const isCaptionTarget = options.target === "caption";
+    const captionElement = isCaptionTarget
+      ? getSpaceBoardElement(board.id)?.querySelector?.("[data-ai-image-board-caption]")
+      : null;
+    const captionHeightCss = Number.parseFloat(
+      captionElement ? window.getComputedStyle?.(captionElement)?.height || "" : "",
     );
-    const targetTopCss = Math.min(AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX, maxTop);
+    const captionHeightDoc = Math.min(
+      getAiImageCaptionMaxHeightDoc(boardHeight),
+      Math.max(
+        getAiImageCaptionMinHeightDoc(),
+        Number.isFinite(captionHeightCss) && captionHeightCss > 0
+          ? captionHeightCss / Math.max(0.0001, getViewScale())
+          : getAiImageCaptionStoredHeightDoc(getSpaceBoardElement(board.id)),
+      ),
+    );
+    const targetDocHeight = isCaptionTarget ? captionHeightDoc : boardHeight;
+    const targetTopY = isCaptionTarget
+      ? (Number(board.y) || 0) + Math.max(0, boardHeight - AI_IMAGE_CAPTION_INSET_DOC_PX - captionHeightDoc)
+      : Number(board.y) || 0;
+    const targetScreenHeight = targetDocHeight * zoom / dpr;
+    const focusBand = getAiImageMobileFocusBand(stage, stageRect, isCaptionTarget);
+    const targetTopCss = getAiImageMobileTargetTopCss(targetScreenHeight, focusBand, isCaptionTarget);
     const boardCenterX = (Number(board.x) || 0) + boardWidth * 0.5;
-    const boardTopY = Number(board.y) || 0;
     const nextCameraX = viewportWidthCss * 0.5 * dpr - boardCenterX * zoom;
-    const nextCameraY = targetTopCss * dpr - boardTopY * zoom;
+    const nextCameraY = targetTopCss * dpr - targetTopY * zoom;
 
     if (
       Math.abs((Number(brushEngine.camera.x) || 0) - nextCameraX) < 0.5 &&
@@ -3774,24 +3945,16 @@ window.CBO = window.CBO || {};
       return null;
     }
 
-    if (shouldUsePlainAiBoardArtboards()) {
-      return {
-        x: Number(board.x) || 0,
-        y: (Number(board.y) || 0) +
-          (Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX),
-      };
-    }
-
-    const metrics = getActionBubbleMetrics();
+    const boardWidth = Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const boardHeight = Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const metrics = getActionBubbleMetrics(1, boardWidth, boardHeight);
 
     return {
       x: (Number(board.x) || 0) -
-        metrics.gapDoc -
-        metrics.sizeDoc * 0.5,
+        metrics.outsideOffsetDoc,
       y: (Number(board.y) || 0) +
-        (Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX) -
-        metrics.gapDoc -
-        metrics.sizeDoc * 0.5,
+        boardHeight -
+        metrics.outsideOffsetDoc,
     };
   }
 
@@ -3868,8 +4031,9 @@ window.CBO = window.CBO || {};
     const plainArtboardMode = shouldUsePlainAiBoardArtboards();
     const source = plainArtboardMode ? documentPointToStagePoint(sourceDoc) : sourceDoc;
     const target = plainArtboardMode ? documentPointToStagePoint(targetDoc) : targetDoc;
-    const pathScale = plainArtboardMode ? 0.5 : 1;
-    const strokeWidth = plainArtboardMode ? 1.5 : getConnectionStrokeWidth(1);
+    const viewScale = getViewScale();
+    const pathScale = plainArtboardMode ? CONNECTION_PLAIN_GEOMETRY_SCALE * viewScale : 1;
+    const strokeWidth = plainArtboardMode ? getPlainConnectionStrokeWidth() : getConnectionStrokeWidth(1);
 
     return createSvgElement("path", {
       class: `editor-artboard-connection-path${options.active ? " is-active" : ""}`,
@@ -4004,7 +4168,9 @@ window.CBO = window.CBO || {};
     const visibleViewportRect = getSpaceBoardVisibleDocumentRect(0);
     const nearViewportRect = getSpaceBoardVisibleDocumentRect(getSpaceBoardLazyMarginDocPx());
     const runtimePreviewCacheStats = getAiImageRuntimePreviewCacheStats();
+    const cameraMotionActive = isAiBoardCameraMotionActive();
     const metrics = createEmptyAiBoardMetrics({
+      cameraMoving: cameraMotionActive,
       dpr: roundMetricValue(viewState.dpr, 2),
       generatingBoards: aiImageGeneratingBoardIds.size,
       lastGenerateStatus: formatAiImageGenerationStatus(getLastAiImageGenerationStatus()),
@@ -4021,7 +4187,6 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    const handleMetrics = getActionBubbleMetrics(1);
     const renderedIds = new Set();
 
     aiBoards.forEach((board) => {
@@ -4055,8 +4220,8 @@ window.CBO = window.CBO || {};
       const height = plainArtboardMode
         ? Math.max(1, docHeight * viewScale)
         : docHeight;
-      const plainControlSize = Math.max(18, Math.min(34, Math.round(ACTION_BUBBLE_SIZE_DOC_PX * viewScale)));
       const label = element.querySelector("[data-ai-image-board-drag-handle]");
+      const dimensions = element.querySelector("[data-ai-image-board-dimensions]");
       const shouldMountHeavy = !plainArtboardMode && shouldMountAiImageBoardHeavyContent(board, element);
       const isNearViewport = visibilityState !== "offscreen";
       const isMobileLean = isMobileLikeSpaceBoardViewport() &&
@@ -4073,44 +4238,87 @@ window.CBO = window.CBO || {};
       const isGenerating = aiImageGeneratingBoardIds.has(board.id);
       const generationStatus = getAiImageGenerationStatus(board.id);
       const generateButton = element.querySelector("[data-ai-image-board-generate]");
-      const shouldUnloadMedia = shouldUnloadAiBoardMedia(board, visibilityState, element);
-      const shouldUpdatePreviewLod = visibilityState === "visible";
       const mediaHost = element.querySelector("[data-ai-image-board-media]");
       const isSelected = selectedSpaceBoardId === board.id;
-      const captionScreenSize = Math.min(width, height);
-      const captionLod = captionScreenSize < AI_IMAGE_CAPTION_MIN_SCREEN_BOARD_PX ? "hidden" : "visible";
-      const captionInset = Math.max(8, Math.min(30, Math.round(width * 0.035)));
-      const captionFontSize = Math.max(
-        AI_IMAGE_CAPTION_MIN_FONT_PX,
-        Math.min(AI_IMAGE_CAPTION_MAX_FONT_PX, Math.round(width * 0.048))
+      const isFocusedOrSelected = isSelected || isSpaceBoardFocusedOrSelected(board, element);
+      const shouldDeferPreviewWork = cameraMotionActive && !isGenerating && !isFocusedOrSelected;
+      const shouldUnloadMedia = !shouldDeferPreviewWork && shouldUnloadAiBoardMedia(board, visibilityState, element);
+      const shouldUpdatePreviewLod = visibilityState === "visible" && !shouldDeferPreviewWork;
+      const handleMetrics = getActionBubbleMetrics(1, docWidth, docHeight);
+      const plainControlMetrics = getAiImagePlainControlMetrics(plainArtboardMode ? viewScale : 1, docWidth, docHeight);
+      const selectionShadowMetrics = getAiImageSelectionShadowMetrics(plainArtboardMode ? viewScale : 1);
+      const boardRadius = AI_IMAGE_BOARD_RADIUS_DOC_PX * (plainArtboardMode ? viewScale : 1);
+      const boardOutlineWidth = AI_IMAGE_BOARD_OUTLINE_DOC_PX * (plainArtboardMode ? viewScale : 1);
+      const captionScale = plainArtboardMode ? viewScale : 1;
+      const captionInset = AI_IMAGE_CAPTION_INSET_DOC_PX * captionScale;
+      const captionFontSize = AI_IMAGE_CAPTION_FONT_DOC_PX * captionScale;
+      const captionLineHeight = AI_IMAGE_CAPTION_LINE_HEIGHT_DOC_PX * captionScale;
+      const captionMinHeight = getAiImageCaptionMinHeightDoc() * captionScale;
+      const captionPreviewHeight = getAiImageCaptionPreviewHeightDoc() * captionScale;
+      const captionMaxHeight = getAiImageCaptionMaxHeightDoc(docHeight) * captionScale;
+      const captionHeight = Math.min(
+        captionMaxHeight,
+        isSelected
+          ? Math.max(captionPreviewHeight, getAiImageCaptionStoredHeightDoc(element) * captionScale)
+          : captionPreviewHeight,
       );
-      const captionLineHeight = Math.round(captionFontSize * 1.18);
-      const captionMaxHeight = Math.max(captionLineHeight * 2, Math.min(height * 0.32, captionLineHeight * 3 + captionInset));
+      const captionPaddingX = AI_IMAGE_CAPTION_PADDING_X_DOC_PX * captionScale;
+      const captionPaddingY = AI_IMAGE_CAPTION_PADDING_Y_DOC_PX * captionScale;
+      const captionEditorRadius = AI_IMAGE_CAPTION_EDITOR_RADIUS_DOC_PX * captionScale;
+      const captionFocusRingWidth = AI_IMAGE_CAPTION_FOCUS_RING_DOC_PX * captionScale;
+      const captionShadowY = AI_IMAGE_CAPTION_SHADOW_Y_DOC_PX * captionScale;
+      const captionShadowBlur = AI_IMAGE_CAPTION_SHADOW_BLUR_DOC_PX * captionScale;
+      const labelScale = plainArtboardMode ? viewScale : 1;
+      const labelMetrics = getArtboardLabelMetrics(docWidth, docHeight, labelScale);
 
       setStylePropertyIfChanged(element, "left", `${point.x}px`);
       setStylePropertyIfChanged(element, "top", `${point.y}px`);
       setStylePropertyIfChanged(element, "width", `${width}px`);
       setStylePropertyIfChanged(element, "height", `${height}px`);
-      setCssVarIfChanged(element, "--ai-plain-control-size", `${plainControlSize}px`);
+      setCssVarIfChanged(element, "--ai-plain-control-size", `${plainControlMetrics.size}px`);
+      setCssVarIfChanged(element, "--ai-plain-control-outside-offset", `${plainControlMetrics.outsideOffset}px`);
+      setCssVarIfChanged(element, "--ai-plain-control-border-width", `${plainControlMetrics.borderWidth}px`);
+      setCssVarIfChanged(element, "--ai-plain-control-icon-size", `${plainControlMetrics.iconSize}px`);
+      setCssVarIfChanged(element, "--ai-image-board-selection-shadow-y", `${selectionShadowMetrics.y}px`);
+      setCssVarIfChanged(element, "--ai-image-board-selection-shadow-blur", `${selectionShadowMetrics.blur}px`);
+      setCssVarIfChanged(element, "--ai-image-board-selection-shadow-secondary-y", `${selectionShadowMetrics.secondaryY}px`);
+      setCssVarIfChanged(element, "--ai-image-board-selection-shadow-secondary-blur", `${selectionShadowMetrics.secondaryBlur}px`);
+      setCssVarIfChanged(element, "--ai-image-board-selection-shadow-rise", `${selectionShadowMetrics.rise}px`);
       setCssVarIfChanged(element, "--ai-caption-inset", `${captionInset}px`);
       setCssVarIfChanged(element, "--ai-caption-font-size", `${captionFontSize}px`);
       setCssVarIfChanged(element, "--ai-caption-line-height", `${captionLineHeight}px`);
+      setCssVarIfChanged(element, "--ai-caption-min-height", `${captionMinHeight}px`);
+      setCssVarIfChanged(element, "--ai-caption-preview-height", `${captionPreviewHeight}px`);
       setCssVarIfChanged(element, "--ai-caption-max-height", `${captionMaxHeight}px`);
-      element.dataset.aiCaptionLod = captionLod;
+      setCssVarIfChanged(element, "--ai-caption-height", `${captionHeight}px`);
+      setCssVarIfChanged(element, "--ai-caption-padding-x", `${captionPaddingX}px`);
+      setCssVarIfChanged(element, "--ai-caption-padding-y", `${captionPaddingY}px`);
+      setCssVarIfChanged(element, "--ai-caption-editor-radius", `${captionEditorRadius}px`);
+      setCssVarIfChanged(element, "--ai-caption-focus-ring-width", `${captionFocusRingWidth}px`);
+      setCssVarIfChanged(element, "--ai-caption-shadow-y", `${captionShadowY}px`);
+      setCssVarIfChanged(element, "--ai-caption-shadow-blur", `${captionShadowBlur}px`);
+      setCssVarIfChanged(element, "--editor-artboard-label-height", `${labelMetrics.height}px`);
+      setCssVarIfChanged(element, "--editor-artboard-label-padding-x", `${labelMetrics.paddingX}px`);
+      setCssVarIfChanged(element, "--editor-artboard-label-radius", `${labelMetrics.radius}px`);
+      setCssVarIfChanged(element, "--editor-artboard-label-font-size", `${labelMetrics.fontSize}px`);
+      setCssVarIfChanged(element, "--editor-artboard-label-top", `${labelMetrics.top}px`);
+      element.dataset.aiCaptionLod = "visible";
+      element.dataset.aiControlLod = "visible";
       const boardTransform = plainArtboardMode
         ? "none"
         : `translate3d(${Number(board.x) || 0}px, ${Number(board.y) || 0}px, 0)`;
 
       setStylePropertyIfChanged(element, "transform", boardTransform);
-      setCssVarIfChanged(element, "--ai-image-board-radius", `${AI_IMAGE_BOARD_RADIUS_DOC_PX}px`);
+      setCssVarIfChanged(element, "--ai-image-board-radius", `${boardRadius}px`);
+      setCssVarIfChanged(element, "--ai-image-board-outline-width", `${boardOutlineWidth}px`);
       setCssVarIfChanged(element, "--ai-image-input-handle-size", `${handleMetrics.sizeDoc}px`);
       setCssVarIfChanged(element, "--ai-image-input-handle-left", `${(handleMetrics.sizeDoc + handleMetrics.gapDoc) * -1}px`);
       setCssVarIfChanged(element, "--ai-image-input-handle-top", `${docHeight - handleMetrics.gapDoc - handleMetrics.sizeDoc}px`);
       setCssVarIfChanged(element, "--ai-image-input-border-width", `${handleMetrics.borderWidthDoc}px`);
       setCssVarIfChanged(element, "--ai-image-input-icon-size", `${handleMetrics.iconSizeDoc}px`);
-      setCssVarIfChanged(element, "--ai-image-generate-handle-size", `${AI_IMAGE_GENERATE_HANDLE_SIZE_DOC_PX}px`);
-      setCssVarIfChanged(element, "--ai-image-generate-handle-left", `${docWidth + AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
-      setCssVarIfChanged(element, "--ai-image-generate-handle-top", `${AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
+      setCssVarIfChanged(element, "--ai-image-generate-handle-size", `${handleMetrics.sizeDoc}px`);
+      setCssVarIfChanged(element, "--ai-image-generate-handle-left", `${docWidth + handleMetrics.gapDoc}px`);
+      setCssVarIfChanged(element, "--ai-image-generate-handle-top", `${handleMetrics.gapDoc}px`);
       setCssVarIfChanged(element, "--ai-image-generate-border-width", `${handleMetrics.borderWidthDoc}px`);
       setCssVarIfChanged(element, "--ai-image-generate-icon-size", `${handleMetrics.iconSizeDoc}px`);
       element.classList.toggle("is-generating", isGenerating && (plainArtboardMode || isHeavyMounted));
@@ -4118,7 +4326,9 @@ window.CBO = window.CBO || {};
       element.classList.toggle("is-near-viewport", isNearViewport);
       element.classList.toggle("is-selected", isSelected);
       element.classList.toggle("is-mobile-lean", isMobileLean);
+      element.classList.remove("is-control-lod-hidden", "is-control-lod-compact");
       element.classList.toggle("has-generated-media", Boolean(board.generatedMedia?.src));
+      element.classList.toggle("is-preview-work-deferred", shouldDeferPreviewWork);
       updateAiImageCaptionControls(element, board, isSelected);
       if (generateButton) {
         generateButton.disabled = isGenerating;
@@ -4131,6 +4341,11 @@ window.CBO = window.CBO || {};
       }
 
       const currentMediaLod = getAiBoardCurrentLod(board, mediaHost);
+      const hasActivePreviewBeforeRender = isAiBoardPreviewActive(mediaHost);
+      const shouldAllowInitialPreviewPaint = Boolean(board.generatedMedia?.src) &&
+        visibilityState === "visible" &&
+        !hasActivePreviewBeforeRender;
+      const shouldRenderEmptyPreviewState = !board.generatedMedia?.src && (isGenerating || !shouldDeferPreviewWork);
       const rawRecommendedLod = shouldUnloadMedia
         ? "unloaded"
         : shouldUpdatePreviewLod
@@ -4148,7 +4363,14 @@ window.CBO = window.CBO || {};
         preloadAiImageBoardRuntimeLod(board.generatedMedia, rawRecommendedLod);
       }
 
-      if ((plainArtboardMode || isHeavyMounted) && (shouldUpdatePreviewLod || shouldUnloadMedia || !board.generatedMedia?.src)) {
+      if (shouldDeferPreviewWork) {
+        metrics.deferredPreviewBoards += 1;
+      }
+
+      if (
+        (plainArtboardMode || isHeavyMounted) &&
+        (shouldAllowInitialPreviewPaint || shouldUpdatePreviewLod || shouldUnloadMedia || shouldRenderEmptyPreviewState)
+      ) {
         renderAiImageBoardGeneratedMedia(element, board, { recommendedLod });
       }
 
@@ -4188,6 +4410,8 @@ window.CBO = window.CBO || {};
         isGenerating,
         mediaKind: board.generatedMedia?.kind || "",
         name: board.name || "AI Image board",
+        controlLod: plainControlMetrics.lod,
+        previewDeferred: shouldDeferPreviewWork,
         previewDebug,
         previewSource: mediaHost?.dataset?.mediaPreviewSource || "",
         previewSrc: summarizeAiBoardPreviewSrc(mediaHost?.dataset?.mediaPreviewSrc || ""),
@@ -4198,7 +4422,11 @@ window.CBO = window.CBO || {};
       });
 
       if (label) {
-        label.textContent = `${board.name || "AI Image board"} ${docWidth} x ${docHeight}`;
+        label.textContent = board.name || "AI Image board";
+      }
+
+      if (dimensions) {
+        dimensions.textContent = `${Math.round(docWidth)} \u00d7 ${Math.round(docHeight)}`;
       }
 
       if (promptInput && document.activeElement !== promptInput) {
@@ -4400,8 +4628,8 @@ window.CBO = window.CBO || {};
 
     const handleMetrics = getActionBubbleMetrics();
     const preferredRect = createRect(
-      anchor.x + handleMetrics.gapDoc + handleMetrics.sizeDoc * 0.5,
-      anchor.y - AI_IMAGE_BOARD_SIZE_DOC_PX + handleMetrics.gapDoc + handleMetrics.sizeDoc * 0.5,
+      anchor.x + handleMetrics.outsideOffsetDoc,
+      anchor.y - AI_IMAGE_BOARD_SIZE_DOC_PX + handleMetrics.outsideOffsetDoc,
       AI_IMAGE_BOARD_SIZE_DOC_PX,
       AI_IMAGE_BOARD_SIZE_DOC_PX,
     );
@@ -4524,6 +4752,10 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    if (!shouldStartSpaceBoardDragFromEvent(event)) {
+      return;
+    }
+
     const boardElement = event.currentTarget?.closest?.("[data-ai-image-board]");
     const boardId = String(boardElement?.dataset?.boardId || "").trim();
     const board = getSpaceBoardById(boardId);
@@ -4568,8 +4800,33 @@ window.CBO = window.CBO || {};
     event.stopPropagation();
   }
 
+  function cancelSpaceBoardDragForTouchNavigation(source = "space-board-touch-navigation-cancel") {
+    const state = spaceBoardDrag;
+
+    if (!state) {
+      return false;
+    }
+
+    try {
+      state.sourceElement?.releasePointerCapture?.(state.pointerId);
+    } catch (error) {
+      // Pointer capture may already be released when the browser promotes the touch gesture.
+    }
+
+    restoreConnectionsHistoryState(state.beforeState, source);
+    return true;
+  }
+
   function updateSpaceBoardDrag(event) {
     if (!spaceBoardDrag || event.pointerId !== spaceBoardDrag.pointerId) {
+      return;
+    }
+
+    if (
+      event.pointerType === "touch" &&
+      namespace.isTouchNavigationExclusive?.({ includeGuard: true })
+    ) {
+      cancelSpaceBoardDragForTouchNavigation();
       return;
     }
 
@@ -4840,7 +5097,6 @@ window.CBO = window.CBO || {};
     }
 
     const scale = Math.max(0.0001, Number(lastRenderContext.viewScale) || 1);
-    const { borderWidth, gap, iconSize, size } = getActionBubbleMetrics(scale);
     const renderedIds = new Set();
     const nextAnchorOverrides = new Map();
 
@@ -4856,8 +5112,13 @@ window.CBO = window.CBO || {};
       }
 
       renderedIds.add(view.artboard.id);
+      const { borderWidth, gap, iconSize, size } = getActionBubbleMetrics(
+        scale,
+        view.artboard.width,
+        view.artboard.height,
+      );
       const left = view.left + view.width + gap;
-      const top = view.top - size * 0.5;
+      const top = view.top + gap;
 
       nextAnchorOverrides.set(view.artboard.id, stagePointToDocumentPoint({
         x: left + size * 0.5,
@@ -4949,6 +5210,9 @@ window.CBO = window.CBO || {};
   };
 
   document.addEventListener("pointerdown", handleDocumentSpaceBoardSelectionPointerDown, true);
+  window.addEventListener("cbo:touch-navigation-start", () => {
+    cancelSpaceBoardDragForTouchNavigation();
+  });
   window.addEventListener("cbo:camera-change", (event) => {
     updateInfiniteCanvasDotGrid(event.detail || getCameraState());
   });

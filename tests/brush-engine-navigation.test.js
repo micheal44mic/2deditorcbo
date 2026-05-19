@@ -111,6 +111,23 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.smudgeEngine\?\.isDragging/);
 });
 
+test("selection tool touch drag on empty stage starts camera pan before overlays", () => {
+  const source = readBrushEngineSources();
+
+  assert.match(source, /isSelectionToolActiveForTouchPan\(\)/);
+  assert.match(source, /document\.querySelector\("\[data-tool\]\.active"\)/);
+  assert.match(source, /toolMode === "selection" \|\| label === "selection"/);
+  assert.match(source, /isTouchCanvasPanInteractiveTarget\(target\)/);
+  assert.match(source, /\[data-ai-image-board\]/);
+  assert.match(source, /shouldStartSelectionTouchCanvasPan\(event, point\)/);
+  assert.match(source, /this\.activeTouchPointers\.size === 1/);
+  assert.match(source, /this\.shouldStartTouchCanvasPan\(event, point\)/);
+  assert.match(source, /!this\.isTouchCanvasPanInteractiveTarget\(event\.target\)/);
+  assert.match(source, /const documentPoint = this\.screenToDocumentSpace\(event\.clientX, event\.clientY\)/);
+  assert.match(source, /this\.shouldStartSelectionTouchCanvasPan\(event, documentPoint\)/);
+  assert.match(source, /selection-touch-empty-canvas-pan-start/);
+});
+
 test("touch navigation exposes an exclusive mobile gesture guard", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, "js", "app.js"), "utf8");
   const baseCss = fs.readFileSync(path.join(repoRoot, "css", "base.css"), "utf8");

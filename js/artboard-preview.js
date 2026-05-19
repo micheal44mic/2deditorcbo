@@ -6,6 +6,16 @@ window.CBO = window.CBO || {};
   const PREVIEW_ARTBOARD_GAP = 256;
   const DEFAULT_PREVIEW_ARTBOARD_COUNT = 0;
   const ARTBOARD_SIZE_MAX = 32768;
+  const ARTBOARD_LABEL_FONT_RATIO = 0.036;
+  const ARTBOARD_LABEL_HEIGHT_RATIO = 1.35;
+  const ARTBOARD_LABEL_PADDING_X_RATIO = 0.55;
+  const ARTBOARD_LABEL_RADIUS_RATIO = 0.28;
+  const ARTBOARD_LABEL_TOP_GAP_RATIO = 0.32;
+  const ARTBOARD_FRAME_BORDER_DOC_PX = 2;
+  const ARTBOARD_FRAME_ACTIVE_BORDER_DOC_PX = 1;
+  const ARTBOARD_FRAME_SELECTED_SHADOW_Y_DOC_PX = 10;
+  const ARTBOARD_FRAME_SELECTED_SHADOW_BLUR_DOC_PX = 24;
+  const ARTBOARD_FRAME_SELECTED_RING_DOC_PX = 2;
   const ARTBOARD_SIZE_PRESETS = [
     { id: "current", label: "SAME AS CURRENT" },
     { id: "document", label: "DOCUMENT SIZE" },
@@ -1076,6 +1086,43 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function getBoardLabelReferenceSideDoc(width, height) {
+    const resolvedWidth = Math.max(1, Number(width) || PREVIEW_ARTBOARD_WIDTH);
+    const resolvedHeight = Math.max(1, Number(height) || PREVIEW_ARTBOARD_HEIGHT);
+
+    return Math.max(1, Math.max(resolvedWidth, resolvedHeight));
+  }
+
+  function getArtboardLabelMetrics(width, height, scale = 1) {
+    const safeScale = Math.max(0.0001, Number(scale) || 1);
+    const labelSide = getBoardLabelReferenceSideDoc(width, height);
+    const fontSizeDoc = labelSide * ARTBOARD_LABEL_FONT_RATIO;
+    const heightDoc = fontSizeDoc * ARTBOARD_LABEL_HEIGHT_RATIO;
+    const paddingXDoc = fontSizeDoc * ARTBOARD_LABEL_PADDING_X_RATIO;
+    const radiusDoc = fontSizeDoc * ARTBOARD_LABEL_RADIUS_RATIO;
+    const topDoc = (heightDoc + fontSizeDoc * ARTBOARD_LABEL_TOP_GAP_RATIO) * -1;
+
+    return {
+      fontSize: fontSizeDoc * safeScale,
+      height: heightDoc * safeScale,
+      paddingX: paddingXDoc * safeScale,
+      radius: radiusDoc * safeScale,
+      top: topDoc * safeScale,
+    };
+  }
+
+  function getArtboardFrameMetrics(scale = 1) {
+    const safeScale = Math.max(0.0001, Number(scale) || 1);
+
+    return {
+      activeBorderWidth: ARTBOARD_FRAME_ACTIVE_BORDER_DOC_PX * safeScale,
+      borderWidth: ARTBOARD_FRAME_BORDER_DOC_PX * safeScale,
+      selectedRingWidth: ARTBOARD_FRAME_SELECTED_RING_DOC_PX * safeScale,
+      selectedShadowBlur: ARTBOARD_FRAME_SELECTED_SHADOW_BLUR_DOC_PX * safeScale,
+      selectedShadowY: ARTBOARD_FRAME_SELECTED_SHADOW_Y_DOC_PX * safeScale,
+    };
+  }
+
   function resolveVisibleDocRect() {
     const stage = getStage();
 
@@ -1654,6 +1701,7 @@ window.CBO = window.CBO || {};
 
     const { camera, dpr } = getCameraState();
     const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
+    const labelScale = Math.max(0.0001, zoom / dpr);
     const allArtboards = getAllArtboards();
     const cullRect = getPreviewOverlayCullRect();
     const draggedArtboardId = String(artboardDragState?.artboardId || "").trim();
@@ -1705,6 +1753,19 @@ window.CBO = window.CBO || {};
       frame.style.top = `${top}px`;
       frame.style.width = `${width}px`;
       frame.style.height = `${height}px`;
+      const labelMetrics = getArtboardLabelMetrics(artboard.width, artboard.height, labelScale);
+      const frameMetrics = getArtboardFrameMetrics(labelScale);
+
+      frame.style.setProperty("--editor-artboard-frame-border-width", `${frameMetrics.borderWidth}px`);
+      frame.style.setProperty("--editor-artboard-frame-active-border-width", `${frameMetrics.activeBorderWidth}px`);
+      frame.style.setProperty("--editor-artboard-frame-selected-ring-width", `${frameMetrics.selectedRingWidth}px`);
+      frame.style.setProperty("--editor-artboard-frame-selected-shadow-y", `${frameMetrics.selectedShadowY}px`);
+      frame.style.setProperty("--editor-artboard-frame-selected-shadow-blur", `${frameMetrics.selectedShadowBlur}px`);
+      frame.style.setProperty("--editor-artboard-label-height", `${labelMetrics.height}px`);
+      frame.style.setProperty("--editor-artboard-label-padding-x", `${labelMetrics.paddingX}px`);
+      frame.style.setProperty("--editor-artboard-label-radius", `${labelMetrics.radius}px`);
+      frame.style.setProperty("--editor-artboard-label-font-size", `${labelMetrics.fontSize}px`);
+      frame.style.setProperty("--editor-artboard-label-top", `${labelMetrics.top}px`);
 
       label.className = "editor-artboard-frame-label";
       label.textContent = `${artboard.name} ${artboard.width} x ${artboard.height}`;

@@ -622,6 +622,31 @@
     }
 ,
 
+    isSelectionToolActiveForTouchPan() {
+      const activeTool = document.querySelector("[data-tool].active");
+      const toolMode = String(activeTool?.dataset?.toolMode || "").trim().toLowerCase();
+      const label = String(activeTool?.getAttribute?.("aria-label") || "").trim().toLowerCase();
+
+      return toolMode === "selection" || label === "selection";
+    }
+,
+
+    isTouchCanvasPanInteractiveTarget(target) {
+      return target instanceof Element && Boolean(target.closest([
+        "a[href]",
+        "button",
+        "input",
+        "textarea",
+        "select",
+        "[contenteditable='true']",
+        "[role='button']",
+        "[data-ai-image-board]",
+        "[data-artboard-action-bubble]",
+        "[data-artboard-connection-menu]",
+      ].join(", ")));
+    }
+,
+
     isPrimaryTouchPointer(event) {
       return event.pointerType === "touch" && event.isPrimary !== false;
     }
@@ -713,9 +738,14 @@
       if (event.pointerType === "touch") {
         this.pruneStaleTouchNavigationPointers();
         this.rememberTouchNavigationPointer(event);
+        const documentPoint = this.screenToDocumentSpace(event.clientX, event.clientY);
 
         if (this.activeTouchPointers.size >= 2 && this.beginTouchNavigationGesture()) {
           this.markNavigationEvent(event);
+        } else if (this.shouldStartSelectionTouchCanvasPan(event, documentPoint)) {
+          this.markNavigationEvent(event);
+          this.beginPan(event, event.currentTarget || this.stage || this.canvas);
+          namespace.EngineGovernor?.markActivity?.({ source: "selection-touch-empty-canvas-pan-start" });
         } else if (this.touchNavigationExclusive) {
           this.markNavigationEvent(event);
         }
@@ -999,7 +1029,18 @@
         !this.isDrawing &&
         !this.isPanning &&
         !this.touchNavigationGesture &&
+        !this.touchNavigationExclusive &&
         !this.isDocumentPointOnAnyArtboard(point)
+      );
+    }
+,
+
+    shouldStartSelectionTouchCanvasPan(event, point) {
+      return (
+        this.activeTouchPointers.size === 1 &&
+        this.isSelectionToolActiveForTouchPan() &&
+        this.shouldStartTouchCanvasPan(event, point) &&
+        !this.isTouchCanvasPanInteractiveTarget(event.target)
       );
     }
 ,
