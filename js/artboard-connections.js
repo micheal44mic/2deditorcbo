@@ -20,7 +20,24 @@ window.CBO = window.CBO || {};
   const AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX = 96;
   const AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX = 42;
   const AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX = 24;
-  const AI_IMAGE_GENERATION_PREVIEW_MS = 3000;
+  const AI_IMAGE_GENERATION_PREVIEW_MS = 0;
+  const AI_IMAGE_PREVIEW_VARIANT_SIZES = [128, 256, 512, 1024];
+  const AI_IMAGE_PREVIEW_LOD_THRESHOLDS = [
+    { lod: "128", max: 80 },
+    { lod: "256", max: 250 },
+    { lod: "512", max: 700 },
+    { lod: "1024", max: 1400 },
+  ];
+  const AI_IMAGE_PREVIEW_LOD_UP_HYSTERESIS = 1.15;
+  const AI_IMAGE_PREVIEW_LOD_DOWN_HYSTERESIS = 0.72;
+  const AI_IMAGE_PREVIEW_CROSSFADE_MS = 0;
+  const AI_IMAGE_PREVIEW_PAINT_FRAMES = 2;
+  const AI_IMAGE_PREVIEW_OLD_LAYER_RELEASE_FRAMES = 2;
+  const AI_IMAGE_PREVIEW_LOD_CAMERA_IDLE_MS = 240;
+  const AI_IMAGE_RUNTIME_PREVIEW_CACHE_MAX_ENTRIES = 80;
+  const AI_IMAGE_RUNTIME_PREVIEW_QUALITY = 0.78;
+  const AI_IMAGE_UNSTABLE_RUNTIME_LODS = new Set([512]);
+  const AI_BOARD_PREVIEW_DEBUG_EVENT_LIMIT = 80;
   const AI_IMAGE_SAMPLE_ASSETS = [
     { kind: "image", name: "Badge", src: "assets/ai-board-samples/sample-01-badge.png" },
     { kind: "image", name: "Balenciaga", src: "assets/ai-board-samples/sample-02-balenciaga.png" },
@@ -38,6 +55,9 @@ window.CBO = window.CBO || {};
   const SPACE_BOARD_LAZY_OVERSCAN_CSS_PX = 640;
   const SPACE_BOARD_MOBILE_HEAVY_MIN_SCREEN_PX = 140;
   const AI_BOARD_ARTBOARD_PLAIN_MODE = true;
+  const AI_BOARD_METRICS_PANEL_ID = "cbo-ai-board-metrics";
+  const AI_BOARD_METRICS_COPY_RESET_MS = 900;
+  const AI_IMAGE_GENERATE_DUPLICATE_GUARD_MS = 650;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
   let connectionDrag = null;
@@ -56,8 +76,20 @@ window.CBO = window.CBO || {};
   let aiImageGeneratingBoardIds = new Set();
   let aiImageGenerationPreviewTimers = new Map();
   let aiImageGenerationRuns = new Map();
+  let aiImageGenerationStatusByBoardId = new Map();
+  let aiImageLastGenerateActivation = { at: 0, boardId: "" };
+  let aiImageRuntimePreviewCache = new Map();
+  let aiImagePreviewSwapSeed = 1;
+  let aiBoardPreviewDebugEventId = 1;
+  let aiBoardPreviewDebugEvents = [];
+  let aiBoardPreviewDebugByBoardId = new Map();
+  let aiBoardCameraMotionUntil = 0;
+  let aiBoardCameraMotionTimer = 0;
+  let aiBoardLastCameraMotionKey = "";
   let connectionIdSeed = 1;
   let boardIdSeed = 1;
+  let aiBoardMetrics = createEmptyAiBoardMetrics();
+  let aiBoardMetricsCopyResetTimer = 0;
   let lastRenderContext = {
     artboardViews: [],
     camera: { x: 0, y: 0, zoom: 1 },
@@ -76,6 +108,981 @@ window.CBO = window.CBO || {};
 
   function getBrushEngine() {
     return namespace.brushEngine || null;
+  }
+
+  function roundMetricValue(value, precision = 2) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+      return 0;
+    }
+
+    const multiplier = 10 ** Math.max(0, Number(precision) || 0);
+
+    return Math.round(number * multiplier) / multiplier;
+  }
+
+  function createEmptyAiBoardMetrics(overrides = {}) {
+    return {
+      activePreviewCount: 0,
+      boards: [],
+      dpr: 1,
+      estimatedDecodedMB: 0,
+      frameMs: 0,
+      generatingBoards: 0,
+      lastGenerateStatus: "",
+      nearAiBoards: 0,
+      offscreenAiBoards: 0,
+      previewDebugEvents: [],
+      renderedAiBoards: 0,
+      runtimePreviewCacheCount: 0,
+      runtimePreviewCacheMB: 0,
+      runtimePreviewLoadingCount: 0,
+      stateBoards: 0,
+      updatedAt: new Date().toISOString(),
+      visibleAiBoards: 0,
+      zoom: 1,
+      ...overrides,
+    };
+  }
+
+  function getAiBoardAssetLodFromSrc(src) {
+    const match = String(src || "").match(/(?:^|[-_/@])(128|256|512|1024|2048)(?=[^0-9]|$)/);
+
+    return match?.[1] || "";
+  }
+
+  function getAiBoardNeededPreviewPixels(screenWidth = 0, screenHeight = 0, dpr = 1) {
+    return Math.max(Number(screenWidth) || 0, Number(screenHeight) || 0) *
+      Math.max(1, Number(dpr) || 1);
+  }
+
+  function getAiBoardNumericLod(value) {
+    const match = String(value || "").match(/(?:^|[^0-9])(128|256|512|1024|2048)(?:[^0-9]|$)/);
+    const lod = Number(match?.[1] || 0);
+
+    return Number.isFinite(lod) && lod > 0 ? lod : 0;
+  }
+
+  function getAiBoardLodTransitionThreshold(fromLod, toLod) {
+    const from = Number(fromLod) || 0;
+    const to = Number(toLod) || 0;
+    const lower = Math.min(from, to);
+    const threshold = AI_IMAGE_PREVIEW_LOD_THRESHOLDS.find((entry) => Number(entry.lod) === lower)?.max;
+
+    return Number(threshold) || 0;
+  }
+
+  function getAiBoardRecommendedLod(board, screenWidth = 0, screenHeight = 0, dpr = 1) {
+    const media = board?.generatedMedia || null;
+    const kind = media?.kind === "video" ? "video" : "image";
+    const src = String(media?.src || "").trim();
+
+    if (!src) {
+      return "empty";
+    }
+
+    if (kind === "video") {
+      return "video-poster";
+    }
+
+    const neededPixels = getAiBoardNeededPreviewPixels(screenWidth, screenHeight, dpr);
+
+    let recommendedLod = "2048";
+
+    if (neededPixels < 80) {
+      recommendedLod = "128";
+    } else if (neededPixels < 250) {
+      recommendedLod = "256";
+    } else if (neededPixels < 700) {
+      recommendedLod = "512";
+    } else if (neededPixels < 1400) {
+      recommendedLod = "1024";
+    }
+
+    return getAiBoardRuntimeSafeLod(media, recommendedLod);
+  }
+
+  function getStableAiBoardRecommendedLod(board, screenWidth = 0, screenHeight = 0, dpr = 1, mediaHost = null) {
+    const rawLod = getAiBoardRecommendedLod(board, screenWidth, screenHeight, dpr);
+    const rawNumericLod = getAiBoardNumericLod(rawLod);
+    const currentNumericLod = getAiBoardNumericLod(mediaHost?.dataset?.mediaLod || "");
+
+    if (!rawNumericLod || !currentNumericLod || rawNumericLod === currentNumericLod) {
+      return rawLod;
+    }
+
+    const threshold = getAiBoardLodTransitionThreshold(currentNumericLod, rawNumericLod);
+    const neededPixels = getAiBoardNeededPreviewPixels(screenWidth, screenHeight, dpr);
+
+    if (!threshold) {
+      return rawLod;
+    }
+
+    if (rawNumericLod > currentNumericLod && neededPixels < threshold * AI_IMAGE_PREVIEW_LOD_UP_HYSTERESIS) {
+      return String(currentNumericLod);
+    }
+
+    if (rawNumericLod < currentNumericLod && neededPixels > threshold * AI_IMAGE_PREVIEW_LOD_DOWN_HYSTERESIS) {
+      return String(currentNumericLod);
+    }
+
+    return rawLod;
+  }
+
+  function isAiBoardPreviewActive(mediaHost) {
+    const activeImageLayer = getAiImageBoardActivePreviewLayer(mediaHost);
+
+    return Boolean(
+      mediaHost?.dataset?.mediaPreview &&
+      (
+        mediaHost.classList.contains("is-video-preview") ||
+        (
+          mediaHost.classList.contains("is-image-preview") &&
+          Boolean(activeImageLayer?.currentSrc || activeImageLayer?.src || activeImageLayer?.dataset?.previewKey)
+        ) ||
+        mediaHost.style.backgroundImage
+      )
+    );
+  }
+
+  function getAiBoardCurrentLod(board, mediaHost) {
+    const media = board?.generatedMedia || null;
+    const src = String(media?.src || "").trim();
+    const previewMode = String(mediaHost?.dataset?.mediaPreview || "");
+
+    if (!src) {
+      return "empty";
+    }
+
+    if (previewMode === "placeholder") {
+      return mediaHost?.dataset?.mediaLod || "placeholder";
+    }
+
+    if (!isAiBoardPreviewActive(mediaHost)) {
+      return "unloaded";
+    }
+
+    if (media?.kind === "video") {
+      return "video-poster";
+    }
+
+    return mediaHost?.dataset?.mediaLod || getAiBoardAssetLodFromSrc(mediaHost?.dataset?.mediaPreviewSrc || src) || "full";
+  }
+
+  function estimateAiBoardDecodedMB(board, currentLod, isActivePreview) {
+    const media = board?.generatedMedia || null;
+
+    if (!isActivePreview || !media || media.kind === "video" || !media.src) {
+      return 0;
+    }
+
+    const originalWidth = Math.max(0, Number(media.width) || 0);
+    const originalHeight = Math.max(0, Number(media.height) || 0);
+    const lodSize = Number(currentLod);
+    const scale = Number.isFinite(lodSize) && lodSize > 0
+      ? Math.min(1, lodSize / Math.max(1, originalWidth, originalHeight))
+      : 1;
+    const width = originalWidth * scale;
+    const height = originalHeight * scale;
+
+    return (width * height * 4) / (1024 * 1024);
+  }
+
+  function estimateDecodedMBFromDimensions(width, height) {
+    return (Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0) * 4) / (1024 * 1024);
+  }
+
+  function getAiImageRuntimePreviewCacheKey(src, lod) {
+    return `${String(src || "").trim()}::${String(lod || "").trim()}`;
+  }
+
+  function getAiImageRuntimePreviewCacheStats() {
+    let readyCount = 0;
+    let loadingCount = 0;
+    let decodedMB = 0;
+
+    aiImageRuntimePreviewCache.forEach((entry) => {
+      if (entry.status === "loading") {
+        loadingCount += 1;
+      }
+
+      if (entry.status === "ready") {
+        readyCount += 1;
+        decodedMB += estimateDecodedMBFromDimensions(entry.width, entry.height);
+      }
+    });
+
+    return {
+      decodedMB: roundMetricValue(decodedMB, 2),
+      loadingCount,
+      readyCount,
+    };
+  }
+
+  function pruneAiImageRuntimePreviewCache() {
+    const entries = Array.from(aiImageRuntimePreviewCache.entries())
+      .filter(([, entry]) => entry.status !== "loading")
+      .sort(([, first], [, second]) => (Number(first.lastUsedAt) || 0) - (Number(second.lastUsedAt) || 0));
+
+    while (aiImageRuntimePreviewCache.size > AI_IMAGE_RUNTIME_PREVIEW_CACHE_MAX_ENTRIES && entries.length > 0) {
+      const [key, entry] = entries.shift();
+
+      if (String(entry.objectUrl || "").startsWith("blob:")) {
+        URL.revokeObjectURL(entry.objectUrl);
+      }
+
+      aiImageRuntimePreviewCache.delete(key);
+    }
+  }
+
+  function shouldUseDataUrlRuntimePreview() {
+    const ua = String(navigator.userAgent || "");
+    const isIos = /iPad|iPhone|iPod/.test(ua) ||
+      (navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints) > 1);
+    const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS/i.test(ua);
+
+    return isIos && isSafari;
+  }
+
+  function getAiBoardRuntimeSafeLod(media, lod) {
+    const requestedLod = String(lod || "").trim();
+
+    if (
+      AI_IMAGE_UNSTABLE_RUNTIME_LODS.has(Number(requestedLod)) &&
+      !getAiImageBoardMediaVariantSrc(media, requestedLod)
+    ) {
+      recordAiBoardPreviewDebugEvent("runtime-lod-skip", {
+        lod: requestedLod,
+        nextLod: "1024",
+        reason: "unstable-runtime-lod",
+        src: media?.src || "",
+      });
+      return "1024";
+    }
+
+    return requestedLod;
+  }
+
+  function loadImageElementForRuntimePreview(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      const cleanup = () => {
+        image.onload = null;
+        image.onerror = null;
+      };
+
+      image.decoding = "async";
+      image.onload = () => {
+        cleanup();
+        resolve(image);
+      };
+      image.onerror = () => {
+        cleanup();
+        reject(new Error(`Unable to load AI preview source: ${src}`));
+      };
+      image.src = src;
+
+      if (image.decode) {
+        image.decode().then(() => {
+          cleanup();
+          resolve(image);
+        }).catch(() => {
+          // Keep the load/error handlers as the compatibility fallback.
+        });
+      }
+    });
+  }
+
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise((resolve, reject) => {
+      if (!canvas.toBlob) {
+        try {
+          const dataUrl = canvas.toDataURL(type, quality);
+          resolve(dataUrl);
+        } catch (error) {
+          reject(error);
+        }
+        return;
+      }
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error("Unable to create AI preview blob."));
+        }
+      }, type, quality);
+    });
+  }
+
+  function probeAiImagePreviewDrawable(drawable) {
+    const width = Math.max(
+      1,
+      Number(drawable?.naturalWidth || drawable?.videoWidth || drawable?.width) || 0,
+    );
+    const height = Math.max(
+      1,
+      Number(drawable?.naturalHeight || drawable?.videoHeight || drawable?.height) || 0,
+    );
+    const probeSize = 32;
+    const probeCanvas = document.createElement("canvas");
+    const probeContext = probeCanvas.getContext("2d", { willReadFrequently: true });
+
+    if (!probeContext) {
+      return {
+        blank: false,
+        error: "missing-2d-context",
+        height,
+        width,
+      };
+    }
+
+    probeCanvas.width = probeSize;
+    probeCanvas.height = probeSize;
+
+    try {
+      probeContext.drawImage(drawable, 0, 0, probeSize, probeSize);
+
+      const data = probeContext.getImageData(0, 0, probeSize, probeSize).data;
+      const total = probeSize * probeSize;
+      let alphaPixels = 0;
+      let lumaMax = 0;
+      let lumaMin = 255;
+      let nonWhitePixels = 0;
+
+      for (let index = 0; index < data.length; index += 4) {
+        const red = data[index];
+        const green = data[index + 1];
+        const blue = data[index + 2];
+        const alpha = data[index + 3];
+
+        if (alpha <= 12) {
+          continue;
+        }
+
+        const luma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+
+        alphaPixels += 1;
+        lumaMin = Math.min(lumaMin, luma);
+        lumaMax = Math.max(lumaMax, luma);
+
+        if (!(red >= 248 && green >= 248 && blue >= 248)) {
+          nonWhitePixels += 1;
+        }
+      }
+
+      const alphaRatio = alphaPixels / total;
+      const nonWhiteRatio = nonWhitePixels / total;
+      const lumaRange = alphaPixels > 0 ? lumaMax - lumaMin : 0;
+      const blank = alphaRatio < 0.01 || (nonWhiteRatio < 0.003 && lumaRange < 8);
+
+      return {
+        alphaRatio: roundMetricValue(alphaRatio, 4),
+        blank,
+        height,
+        lumaRange: roundMetricValue(lumaRange, 2),
+        nonWhiteRatio: roundMetricValue(nonWhiteRatio, 4),
+        width,
+      };
+    } catch (error) {
+      return {
+        blank: false,
+        error: error?.message || String(error || "probe-error"),
+        height,
+        width,
+      };
+    } finally {
+      probeCanvas.width = 1;
+      probeCanvas.height = 1;
+    }
+  }
+
+  function evictAiImageRuntimePreviewVariantsForSrc(src) {
+    const normalizedSrc = String(src || "").trim();
+    let evictedCount = 0;
+
+    if (!normalizedSrc) {
+      return 0;
+    }
+
+    Array.from(aiImageRuntimePreviewCache.entries()).forEach(([key, entry]) => {
+      if (entry?.src !== normalizedSrc || entry.status === "loading") {
+        return;
+      }
+
+      if (String(entry.objectUrl || "").startsWith("blob:")) {
+        URL.revokeObjectURL(entry.objectUrl);
+      }
+
+      aiImageRuntimePreviewCache.delete(key);
+      evictedCount += 1;
+    });
+
+    return evictedCount;
+  }
+
+  function probeAiImageRuntimePreviewCanvas(canvas) {
+    return probeAiImagePreviewDrawable(canvas);
+  }
+
+  function probeAiImagePreviewLayer(image) {
+    return probeAiImagePreviewDrawable(image);
+  }
+
+  async function canvasToRuntimePreviewUrl(canvas) {
+    if (shouldUseDataUrlRuntimePreview()) {
+      return {
+        sourceType: "data-url",
+        url: canvas.toDataURL("image/png"),
+      };
+    }
+
+    const blobOrDataUrl = await canvasToBlob(canvas, "image/webp", AI_IMAGE_RUNTIME_PREVIEW_QUALITY);
+
+    return {
+      sourceType: typeof blobOrDataUrl === "string" ? "data-url" : "blob",
+      url: typeof blobOrDataUrl === "string" ? blobOrDataUrl : URL.createObjectURL(blobOrDataUrl),
+    };
+  }
+
+  async function buildAiImageRuntimePreviewVariant(src, lod) {
+    const image = await loadImageElementForRuntimePreview(src);
+    const sourceWidth = Math.max(1, Number(image.naturalWidth || image.width) || 1);
+    const sourceHeight = Math.max(1, Number(image.naturalHeight || image.height) || 1);
+    const targetMax = Math.max(1, Number(lod) || 1);
+    const scale = Math.min(1, targetMax / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d")?.drawImage(image, 0, 0, width, height);
+
+    try {
+      const probe = probeAiImageRuntimePreviewCanvas(canvas);
+
+      if (probe.blank) {
+        const error = new Error(`Blank AI runtime preview canvas for LOD ${lod}.`);
+
+        error.previewProbe = probe;
+        throw error;
+      }
+
+      const previewUrl = await canvasToRuntimePreviewUrl(canvas);
+
+      return {
+        height,
+        objectUrl: previewUrl.url,
+        probe,
+        sourceType: previewUrl.sourceType,
+        width,
+      };
+    } finally {
+      canvas.width = 1;
+      canvas.height = 1;
+      image.removeAttribute("src");
+    }
+  }
+
+  function requestAiImageRuntimePreviewVariant(src, lod) {
+    const normalizedSrc = String(src || "").trim();
+    const normalizedLod = String(lod || "").trim();
+
+    if (!normalizedSrc || !AI_IMAGE_PREVIEW_VARIANT_SIZES.includes(Number(normalizedLod))) {
+      return null;
+    }
+
+    const key = getAiImageRuntimePreviewCacheKey(normalizedSrc, normalizedLod);
+    const cached = aiImageRuntimePreviewCache.get(key);
+
+    if (cached) {
+      cached.lastUsedAt = performance.now?.() || Date.now();
+      return cached;
+    }
+
+    const entry = {
+      height: 0,
+      lastUsedAt: performance.now?.() || Date.now(),
+      lod: normalizedLod,
+      objectUrl: "",
+      probe: null,
+      sourceType: "",
+      src: normalizedSrc,
+      status: "loading",
+      width: 0,
+    };
+
+    aiImageRuntimePreviewCache.set(key, entry);
+    recordAiBoardPreviewDebugEvent("runtime-preview-request", {
+      lod: normalizedLod,
+      src: normalizedSrc,
+    });
+    buildAiImageRuntimePreviewVariant(normalizedSrc, normalizedLod)
+      .then((result) => {
+        entry.height = result.height;
+        entry.objectUrl = result.objectUrl;
+        entry.probe = result.probe || null;
+        entry.sourceType = result.sourceType;
+        entry.status = "ready";
+        entry.width = result.width;
+        entry.lastUsedAt = performance.now?.() || Date.now();
+        recordAiBoardPreviewDebugEvent("runtime-preview-ready", {
+          height: result.height,
+          lod: normalizedLod,
+          probe: result.probe || null,
+          sourceType: result.sourceType,
+          src: normalizedSrc,
+          status: "ready",
+          width: result.width,
+        });
+        pruneAiImageRuntimePreviewCache();
+        renderSpaceBoards();
+      })
+      .catch((error) => {
+        entry.error = error?.message || String(error || "error");
+        entry.probe = error?.previewProbe || null;
+        entry.status = "error";
+        recordAiBoardPreviewDebugEvent(entry.probe?.blank ? "runtime-preview-blank" : "runtime-preview-error", {
+          lod: normalizedLod,
+          message: entry.error,
+          probe: entry.probe,
+          src: normalizedSrc,
+          status: "error",
+        });
+        console.warn("[CBO] Unable to create runtime AI preview variant.", error);
+        renderSpaceBoards();
+      });
+
+    return entry;
+  }
+
+  function markAiImageRuntimePreviewVariantError(src, lod, message, probe = null) {
+    const key = getAiImageRuntimePreviewCacheKey(src, lod);
+    const entry = aiImageRuntimePreviewCache.get(key);
+
+    if (!entry) {
+      return;
+    }
+
+    if (String(entry.objectUrl || "").startsWith("blob:")) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+
+    entry.error = String(message || "Runtime AI preview failed.");
+    entry.objectUrl = "";
+    entry.probe = probe || entry.probe || null;
+    entry.status = "error";
+  }
+
+  function preloadAiImageBoardRuntimeLod(media, recommendedLod) {
+    const kind = media?.kind === "video" ? "video" : "image";
+    const src = String(media?.src || "").trim();
+    const safeRecommendedLod = getAiBoardRuntimeSafeLod(media, recommendedLod);
+
+    if (kind !== "image" || !src || !AI_IMAGE_PREVIEW_VARIANT_SIZES.includes(Number(safeRecommendedLod))) {
+      return;
+    }
+
+    if (getAiImageBoardMediaVariantSrc(media, safeRecommendedLod)) {
+      return;
+    }
+
+    requestAiImageRuntimePreviewVariant(src, safeRecommendedLod);
+  }
+
+  function getAiBoardVisibilityState(boardRect, visibleViewportRect, nearViewportRect) {
+    if (boardRect && visibleViewportRect && rectsOverlap(boardRect, visibleViewportRect)) {
+      return "visible";
+    }
+
+    if (boardRect && nearViewportRect && rectsOverlap(boardRect, nearViewportRect)) {
+      return "near";
+    }
+
+    return "offscreen";
+  }
+
+  function getShortAiBoardId(boardId) {
+    const value = String(boardId || "");
+
+    return value.length > 18 ? value.slice(-18) : value;
+  }
+
+  function escapeMetricText(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function summarizeAiBoardPreviewSrc(src) {
+    const value = String(src || "");
+
+    if (value.startsWith("data:")) {
+      return `${value.slice(0, 32)}...(${value.length} chars)`;
+    }
+
+    return value;
+  }
+
+  function getAiBoardDebugBoardIdFromMediaHost(mediaHost) {
+    return String(mediaHost?.closest?.("[data-ai-image-board]")?.dataset?.boardId || "").trim();
+  }
+
+  function roundAiBoardDebugRect(rect) {
+    if (!rect) {
+      return null;
+    }
+
+    return {
+      bottom: roundMetricValue(rect.bottom, 2),
+      height: roundMetricValue(rect.height, 2),
+      left: roundMetricValue(rect.left, 2),
+      right: roundMetricValue(rect.right, 2),
+      top: roundMetricValue(rect.top, 2),
+      width: roundMetricValue(rect.width, 2),
+    };
+  }
+
+  function summarizeAiBoardDebugValue(key, value) {
+    if (value == null) {
+      return value;
+    }
+
+    if (/src|url|key/i.test(String(key || ""))) {
+      return summarizeAiBoardPreviewSrc(value);
+    }
+
+    return value;
+  }
+
+  function normalizeAiBoardDebugDetail(detail = {}) {
+    return Object.fromEntries(Object.entries(detail).map(([key, value]) => [
+      key,
+      summarizeAiBoardDebugValue(key, value),
+    ]));
+  }
+
+  function recordAiBoardPreviewDebugEvent(eventName, detail = {}) {
+    const normalizedDetail = normalizeAiBoardDebugDetail(detail);
+    const boardId = String(normalizedDetail.boardId || "").trim();
+    const event = {
+      at: new Date().toISOString(),
+      detail: normalizedDetail,
+      eventName,
+      id: aiBoardPreviewDebugEventId++,
+    };
+
+    aiBoardPreviewDebugEvents.push(event);
+
+    while (aiBoardPreviewDebugEvents.length > AI_BOARD_PREVIEW_DEBUG_EVENT_LIMIT) {
+      aiBoardPreviewDebugEvents.shift();
+    }
+
+    if (boardId) {
+      aiBoardPreviewDebugByBoardId.set(boardId, event);
+    }
+
+    return event;
+  }
+
+  function getAiBoardLayerDebug(layer) {
+    if (!layer) {
+      return null;
+    }
+
+    const style = window.getComputedStyle?.(layer);
+
+    return {
+      active: layer.classList.contains("is-active"),
+      complete: Boolean(layer.complete),
+      currentSrc: summarizeAiBoardPreviewSrc(layer.currentSrc || ""),
+      display: style?.display || "",
+      naturalHeight: Number(layer.naturalHeight) || 0,
+      naturalWidth: Number(layer.naturalWidth) || 0,
+      name: String(layer.dataset.aiImageBoardPreviewLayer || ""),
+      probe: {
+        alphaRatio: layer.dataset.previewProbeAlpha || "",
+        blank: layer.dataset.previewProbeBlank || "",
+        lumaRange: layer.dataset.previewProbeLumaRange || "",
+        nonWhiteRatio: layer.dataset.previewProbeNonWhite || "",
+      },
+      opacity: style?.opacity || "",
+      previewKey: summarizeAiBoardPreviewSrc(layer.dataset.previewKey || ""),
+      previewLod: layer.dataset.previewLod || "",
+      previewSource: layer.dataset.previewSource || "",
+      rect: roundAiBoardDebugRect(layer.getBoundingClientRect?.()),
+      src: summarizeAiBoardPreviewSrc(layer.getAttribute("src") || layer.src || ""),
+      visibility: style?.visibility || "",
+      zIndex: style?.zIndex || "",
+    };
+  }
+
+  function getAiBoardPreviewDiagnosis(mediaHost, activeLayer) {
+    if (!mediaHost) {
+      return "no-media-host";
+    }
+
+    if (mediaHost.classList.contains("is-placeholder-preview")) {
+      return `placeholder-${mediaHost.dataset.mediaPreviewSource || "unknown"}`;
+    }
+
+    if (!activeLayer) {
+      return "no-active-layer";
+    }
+
+    const activeStyle = window.getComputedStyle?.(activeLayer);
+    const hostRect = mediaHost.getBoundingClientRect?.();
+    const layerRect = activeLayer.getBoundingClientRect?.();
+
+    if (!(activeLayer.currentSrc || activeLayer.src || activeLayer.getAttribute("src"))) {
+      return "active-layer-no-src";
+    }
+
+    if (!activeLayer.complete || Number(activeLayer.naturalWidth) <= 0 || Number(activeLayer.naturalHeight) <= 0) {
+      return "active-layer-not-decoded";
+    }
+
+    if (activeStyle?.display === "none" || activeStyle?.visibility === "hidden" || activeStyle?.opacity === "0") {
+      return "active-layer-hidden";
+    }
+
+    if (!hostRect || hostRect.width <= 0 || hostRect.height <= 0 || !layerRect || layerRect.width <= 0 || layerRect.height <= 0) {
+      return "zero-rect";
+    }
+
+    return "painted-or-compositor";
+  }
+
+  function getAiBoardPreviewDebugSnapshot(element, mediaHost) {
+    const activeLayer = getAiImageBoardActivePreviewLayer(mediaHost);
+    const layers = mediaHost
+      ? Array.from(mediaHost.querySelectorAll("[data-ai-image-board-preview-layer]")).map(getAiBoardLayerDebug)
+      : [];
+    const hostStyle = mediaHost ? window.getComputedStyle?.(mediaHost) : null;
+    const boardId = String(element?.dataset?.boardId || getAiBoardDebugBoardIdFromMediaHost(mediaHost)).trim();
+    const lastEvent = boardId ? aiBoardPreviewDebugByBoardId.get(boardId) : null;
+
+    return {
+      activeLayer: getAiBoardLayerDebug(activeLayer),
+      diagnosis: getAiBoardPreviewDiagnosis(mediaHost, activeLayer),
+      host: mediaHost ? {
+        activeLayerName: mediaHost.dataset.mediaActiveLayer || "",
+        className: mediaHost.className || "",
+        display: hostStyle?.display || "",
+        kind: mediaHost.dataset.mediaKind || "",
+        lod: mediaHost.dataset.mediaLod || "",
+        opacity: hostStyle?.opacity || "",
+        pendingKind: mediaHost.dataset.mediaPendingKind || "",
+        pendingLod: mediaHost.dataset.mediaPendingLod || "",
+        pendingPreviewKey: summarizeAiBoardPreviewSrc(mediaHost.dataset.mediaPendingPreviewKey || ""),
+        pendingSource: mediaHost.dataset.mediaPendingPreviewSource || "",
+        pendingSrc: summarizeAiBoardPreviewSrc(mediaHost.dataset.mediaPendingSrc || ""),
+        preview: mediaHost.dataset.mediaPreview || "",
+        previewKey: summarizeAiBoardPreviewSrc(mediaHost.dataset.mediaPreviewKey || ""),
+        previewSource: mediaHost.dataset.mediaPreviewSource || "",
+        previewSrc: summarizeAiBoardPreviewSrc(mediaHost.dataset.mediaPreviewSrc || ""),
+        rect: roundAiBoardDebugRect(mediaHost.getBoundingClientRect?.()),
+        src: summarizeAiBoardPreviewSrc(mediaHost.dataset.mediaSrc || ""),
+        swapRequest: mediaHost.dataset.mediaPreviewSwapRequest || "",
+        visibility: hostStyle?.visibility || "",
+      } : null,
+      lastEvent: lastEvent ? {
+        at: lastEvent.at,
+        detail: lastEvent.detail,
+        eventName: lastEvent.eventName,
+        id: lastEvent.id,
+      } : null,
+      layers,
+    };
+  }
+
+  function formatAiBoardMetricsReport(metrics = aiBoardMetrics) {
+    const rows = Array.isArray(metrics.boards) ? metrics.boards : [];
+    const boardLines = rows.length
+      ? rows.map((board) => [
+          board.id,
+          board.visibility,
+          `current=${board.currentLod}`,
+          `recommended=${board.recommendedLod}`,
+          `preview=${["placeholder", "unloaded"].includes(board.currentLod) ? board.currentLod : board.activePreview ? "on" : "off"}`,
+          `source=${board.previewSource || "none"}`,
+          `debug=${board.previewDebug?.diagnosis || "none"}`,
+          `layer=${board.previewDebug?.activeLayer?.name || "none"}`,
+          `complete=${board.previewDebug?.activeLayer?.complete ? "yes" : "no"}`,
+          `natural=${board.previewDebug?.activeLayer?.naturalWidth || 0}x${board.previewDebug?.activeLayer?.naturalHeight || 0}`,
+          `generating=${board.isGenerating ? "yes" : "no"}`,
+          `generation=${board.generationStatus || "none"}`,
+          `screen=${board.screenWidth}x${board.screenHeight}`,
+          `est=${board.estimatedDecodedMB}MB`,
+        ].join(" | ")).join("\n")
+      : "none";
+    const debugEvents = Array.isArray(metrics.previewDebugEvents) && metrics.previewDebugEvents.length
+      ? metrics.previewDebugEvents.slice(-40).map((event) => [
+          `#${event.id}`,
+          new Date(event.at).toLocaleTimeString(),
+          event.eventName,
+          event.detail?.boardId ? `board=${getShortAiBoardId(event.detail.boardId)}` : "",
+          event.detail?.lod ? `lod=${event.detail.lod}` : "",
+          event.detail?.previewSource ? `source=${event.detail.previewSource}` : "",
+          event.detail?.status ? `status=${event.detail.status}` : "",
+          event.detail?.message ? `message=${event.detail.message}` : "",
+        ].filter(Boolean).join(" | ")).join("\n")
+      : "none";
+
+    return [
+      "AI BOARD METRICS",
+      `copiedAt=${new Date().toISOString()}`,
+      `stateBoards=${metrics.stateBoards}`,
+      `renderedAiBoards=${metrics.renderedAiBoards}`,
+      `visibleAiBoards=${metrics.visibleAiBoards}`,
+      `nearAiBoards=${metrics.nearAiBoards}`,
+      `offscreenAiBoards=${metrics.offscreenAiBoards}`,
+      `activePreviewCount=${metrics.activePreviewCount}`,
+      `estimatedDecodedMB=${metrics.estimatedDecodedMB}`,
+      `frameMs=${metrics.frameMs}`,
+      `generatingBoards=${metrics.generatingBoards}`,
+      `lastGenerateStatus=${metrics.lastGenerateStatus}`,
+      `runtimePreviewCacheCount=${metrics.runtimePreviewCacheCount}`,
+      `runtimePreviewLoadingCount=${metrics.runtimePreviewLoadingCount}`,
+      `runtimePreviewCacheMB=${metrics.runtimePreviewCacheMB}`,
+      `zoom=${metrics.zoom}`,
+      `dpr=${metrics.dpr}`,
+      "",
+      "BOARDS",
+      boardLines,
+      "",
+      "PREVIEW DEBUG EVENTS",
+      debugEvents,
+      "",
+      "RAW",
+      JSON.stringify(metrics, null, 2),
+    ].join("\n");
+  }
+
+  function copyAiBoardMetricsText(text) {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+
+    return new Promise((resolve, reject) => {
+      const textarea = document.createElement("textarea");
+
+      textarea.value = text;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "12px";
+      textarea.style.top = "12px";
+      textarea.style.width = "1px";
+      textarea.style.height = "1px";
+      textarea.style.fontSize = "16px";
+      textarea.style.opacity = "0.01";
+      textarea.style.pointerEvents = "none";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange?.(0, textarea.value.length);
+
+      try {
+        if (!document.execCommand("copy")) {
+          throw new Error("copy command failed");
+        }
+
+        resolve();
+      } catch (error) {
+        reject(error);
+      } finally {
+        textarea.remove();
+      }
+    });
+  }
+
+  function handleAiBoardMetricsCopy(event) {
+    const button = event.currentTarget;
+
+    copyAiBoardMetricsText(formatAiBoardMetricsReport())
+      .then(() => {
+        if (!button) {
+          return;
+        }
+
+        button.textContent = "Copied";
+        window.clearTimeout(aiBoardMetricsCopyResetTimer);
+        aiBoardMetricsCopyResetTimer = window.setTimeout(() => {
+          button.textContent = "Copy";
+        }, AI_BOARD_METRICS_COPY_RESET_MS);
+      })
+      .catch((error) => {
+        console.warn("[CBO] Unable to copy AI board metrics.", error);
+        if (button) {
+          button.textContent = "Copy failed";
+        }
+      });
+  }
+
+  function ensureAiBoardMetricsPanel() {
+    if (!document.body) {
+      return null;
+    }
+
+    let panel = document.getElementById(AI_BOARD_METRICS_PANEL_ID);
+
+    if (!panel) {
+      panel = document.createElement("section");
+      panel.id = AI_BOARD_METRICS_PANEL_ID;
+      panel.className = "editor-ai-board-metrics";
+      panel.innerHTML = `
+        <div class="editor-ai-board-metrics-header">
+          <span>AI METRICS</span>
+          <button type="button" data-ai-board-metrics-copy>Copy</button>
+        </div>
+        <div class="editor-ai-board-metrics-body" data-ai-board-metrics-body></div>
+      `;
+      panel.querySelector("[data-ai-board-metrics-copy]")?.addEventListener("click", handleAiBoardMetricsCopy);
+      document.body.appendChild(panel);
+    }
+
+    return panel;
+  }
+
+  function renderAiBoardMetricsPanel(metrics = aiBoardMetrics) {
+    const panel = ensureAiBoardMetricsPanel();
+    const body = panel?.querySelector?.("[data-ai-board-metrics-body]");
+
+    if (!body) {
+      return;
+    }
+
+    const boards = Array.isArray(metrics.boards) ? metrics.boards : [];
+    const previewRows = boards.slice(0, 4).map((board) => (
+      `<div>${escapeMetricText(getShortAiBoardId(board.id))}: ${escapeMetricText(board.visibility)} ` +
+      `${escapeMetricText(board.currentLod)} -> ${escapeMetricText(board.recommendedLod)} ` +
+      `${escapeMetricText(board.previewDebug?.diagnosis || "no-debug")} ` +
+      `${board.isGenerating ? "generating " : ""}` +
+      `${escapeMetricText(board.screenWidth)}x${escapeMetricText(board.screenHeight)}</div>`
+    )).join("");
+    const hiddenCount = Math.max(0, boards.length - 4);
+
+    body.innerHTML = `
+      <div>state ${metrics.stateBoards} | rendered ${metrics.renderedAiBoards} | visible ${metrics.visibleAiBoards} | near ${metrics.nearAiBoards} | off ${metrics.offscreenAiBoards}</div>
+      <div>preview ${metrics.activePreviewCount} | runtime ${metrics.runtimePreviewCacheCount}/${metrics.runtimePreviewLoadingCount} | est ${metrics.estimatedDecodedMB}MB | frame ${metrics.frameMs}ms | z ${metrics.zoom}</div>
+      ${previewRows || "<div>boards: none</div>"}
+      ${hiddenCount ? `<div>+${hiddenCount} more</div>` : ""}
+    `;
+  }
+
+  function publishAiBoardMetrics(metrics) {
+    aiBoardMetrics = {
+      ...metrics,
+      boards: Array.isArray(metrics.boards) ? metrics.boards.map((board) => ({ ...board })) : [],
+      previewDebugEvents: Array.isArray(metrics.previewDebugEvents) ? metrics.previewDebugEvents.map((event) => ({ ...event })) : [],
+      updatedAt: new Date().toISOString(),
+    };
+    namespace.aiBoardMetrics = aiBoardMetrics;
+    renderAiBoardMetricsPanel(aiBoardMetrics);
   }
 
   function shouldUsePlainAiBoardArtboards() {
@@ -478,6 +1485,7 @@ window.CBO = window.CBO || {};
       board.addEventListener("pointerdown", handleAiImageBoardPointerDown, true);
       board.querySelector("[data-ai-image-board-drag-handle]")?.addEventListener("pointerdown", startSpaceBoardDrag);
       board.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
+      board.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerup", handleAiImageGenerateClick);
       board.querySelector("[data-ai-image-board-generate]")?.addEventListener("click", handleAiImageGenerateClick);
       board.addEventListener("wheel", handleSpaceBoardWheel, { passive: false });
       pane.appendChild(board);
@@ -530,6 +1538,7 @@ window.CBO = window.CBO || {};
     element.querySelector("[data-ai-image-board-footer]")?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
     element.querySelector("[data-ai-image-board-footer]")?.addEventListener("click", stopSpaceBoardControlEvent);
     element.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
+    element.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerup", handleAiImageGenerateClick);
     element.querySelector("[data-ai-image-board-generate]")?.addEventListener("click", handleAiImageGenerateClick);
     element.querySelector("[data-ai-image-board-prompt-input]")?.addEventListener("focus", handleAiImagePromptFocus);
     element.querySelector("[data-ai-image-board-prompt-input]")?.addEventListener("input", handleAiImagePromptInput);
@@ -542,7 +1551,7 @@ window.CBO = window.CBO || {};
   }
 
   function unmountAiImageBoardHeavyContent(element) {
-    if (!element || element.matches?.(":focus-within")) {
+    if (shouldUsePlainAiBoardArtboards() || !element || element.matches?.(":focus-within")) {
       return false;
     }
 
@@ -775,6 +1784,10 @@ window.CBO = window.CBO || {};
     );
   }
 
+  function shouldUnloadAiBoardMedia(board, visibilityState, element) {
+    return visibilityState !== "visible" && !isSpaceBoardFocusedOrSelected(board, element);
+  }
+
   function shouldMountAiImageBoardHeavyContent(board, element) {
     if (!board) {
       return false;
@@ -904,6 +1917,68 @@ window.CBO = window.CBO || {};
     event.stopPropagation();
   }
 
+  function setAiImageGenerationStatus(boardId, status, detail = {}) {
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!normalizedBoardId) {
+      return null;
+    }
+
+    const record = {
+      at: new Date().toISOString(),
+      boardId: normalizedBoardId,
+      status: String(status || "unknown"),
+      ...detail,
+    };
+
+    aiImageGenerationStatusByBoardId.set(normalizedBoardId, record);
+
+    return record;
+  }
+
+  function getAiImageGenerationStatus(boardId) {
+    return aiImageGenerationStatusByBoardId.get(String(boardId || "").trim()) || null;
+  }
+
+  function getLastAiImageGenerationStatus() {
+    return Array.from(aiImageGenerationStatusByBoardId.values())
+      .sort((first, second) => String(second.at || "").localeCompare(String(first.at || "")))[0] || null;
+  }
+
+  function formatAiImageGenerationStatus(record) {
+    if (!record) {
+      return "";
+    }
+
+    const boardId = getShortAiBoardId(record.boardId);
+    const status = String(record.status || "unknown");
+    const sample = record.sampleName ? `:${record.sampleName}` : "";
+    const message = record.message ? `:${record.message}` : "";
+
+    return `${boardId}:${status}${sample}${message}`;
+  }
+
+  function shouldHandleAiImageGenerateActivation(event, boardId) {
+    const normalizedBoardId = String(boardId || "").trim();
+    const now = performance.now?.() || Date.now();
+
+    if (
+      event?.type === "click" &&
+      normalizedBoardId &&
+      aiImageLastGenerateActivation.boardId === normalizedBoardId &&
+      now - aiImageLastGenerateActivation.at < AI_IMAGE_GENERATE_DUPLICATE_GUARD_MS
+    ) {
+      return false;
+    }
+
+    aiImageLastGenerateActivation = {
+      at: now,
+      boardId: normalizedBoardId,
+    };
+
+    return true;
+  }
+
   function handleSpaceBoardWheel(event) {
     const brushEngine = getBrushEngine();
 
@@ -921,7 +1996,7 @@ window.CBO = window.CBO || {};
     event.preventDefault();
     event.stopPropagation();
 
-    if (!board) {
+    if (!board || !shouldHandleAiImageGenerateActivation(event, board.id)) {
       return;
     }
 
@@ -936,12 +2011,52 @@ window.CBO = window.CBO || {};
   }
 
   function pickRandomAiImageSample(currentSrc = "") {
-    const current = String(currentSrc || "").trim();
-    const candidates = AI_IMAGE_SAMPLE_ASSETS.filter((sample) => sample.src !== current);
-    const pool = candidates.length > 0 ? candidates : AI_IMAGE_SAMPLE_ASSETS;
-    const index = Math.floor(Math.random() * pool.length);
+    const candidates = getAiImageSampleCandidates(currentSrc, "image");
 
-    return pool[index] || null;
+    return candidates[0] || null;
+  }
+
+  function getAiImageSampleCandidates(currentSrc = "", preferredKind = "image") {
+    const current = String(currentSrc || "").trim();
+    const kind = String(preferredKind || "").trim();
+    const preferredSamples = kind
+      ? AI_IMAGE_SAMPLE_ASSETS.filter((sample) => (sample.kind === "video" ? "video" : "image") === kind)
+      : AI_IMAGE_SAMPLE_ASSETS;
+    const sourcePool = preferredSamples.length > 0 ? preferredSamples : AI_IMAGE_SAMPLE_ASSETS;
+    const pool = sourcePool.filter((sample) => sample.src !== current);
+    const candidates = pool.length > 0 ? pool : sourcePool;
+    const shuffled = [...candidates];
+
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      const value = shuffled[index];
+
+      shuffled[index] = shuffled[swapIndex];
+      shuffled[swapIndex] = value;
+    }
+
+    return shuffled;
+  }
+
+  function loadFirstAvailableAiImageSampleMetadata(samples) {
+    const candidates = Array.isArray(samples) ? samples.filter((sample) => sample?.src) : [];
+    let lastError = null;
+
+    const tryCandidate = (index = 0) => {
+      const sample = candidates[index];
+
+      if (!sample) {
+        return Promise.reject(lastError || new Error("No available fake AI image sample."));
+      }
+
+      return loadAiImageSampleMetadata(sample).catch((error) => {
+        lastError = error;
+        console.warn("[CBO] Fake AI sample failed, trying next sample.", error);
+        return tryCandidate(index + 1);
+      });
+    };
+
+    return tryCandidate();
   }
 
   function loadAiImageSampleMetadata(sample) {
@@ -1012,12 +2127,12 @@ window.CBO = window.CBO || {};
       kind: sample.kind === "video" ? "video" : "image",
       name: String(sample.name || "Generated sample"),
       src: String(sample.src || ""),
+      variants: sample.variants && typeof sample.variants === "object" ? { ...sample.variants } : undefined,
       width: Math.max(1, Math.round(Number(sample.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
     };
     board.height = board.generatedMedia.height;
     board.width = board.generatedMedia.width;
     board.name = board.generatedMedia.name;
-
     return true;
   }
 
@@ -1026,14 +2141,20 @@ window.CBO = window.CBO || {};
     const activeRunId = aiImageGenerationRuns.get(normalizedBoardId);
 
     if (!normalizedBoardId || activeRunId !== runId) {
+      setAiImageGenerationStatus(normalizedBoardId, "stale", { runId });
       return;
     }
 
     const board = getSpaceBoardById(normalizedBoardId);
     const beforeState = captureConnectionsHistoryState();
-    const sample = pickRandomAiImageSample(board?.generatedMedia?.src || "");
+    const samples = getAiImageSampleCandidates(board?.generatedMedia?.src || "", "image");
+    const sample = samples[0] || pickRandomAiImageSample(board?.generatedMedia?.src || "");
 
     if (!board || !sample) {
+      setAiImageGenerationStatus(normalizedBoardId, "error", {
+        message: "missing-board-or-sample",
+        runId,
+      });
       aiImageGeneratingBoardIds.delete(normalizedBoardId);
       aiImageGenerationRuns.delete(normalizedBoardId);
       aiImageGenerationPreviewTimers.delete(normalizedBoardId);
@@ -1041,9 +2162,20 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    loadAiImageSampleMetadata(sample)
+    setAiImageGenerationStatus(normalizedBoardId, "metadata", {
+      runId,
+      sampleKind: sample.kind || "",
+      sampleName: sample.name || "",
+      sampleSrc: sample.src || "",
+    });
+
+    loadFirstAvailableAiImageSampleMetadata(samples)
       .then((sampleWithMeta) => {
         if (aiImageGenerationRuns.get(normalizedBoardId) !== runId) {
+          setAiImageGenerationStatus(normalizedBoardId, "stale", {
+            runId,
+            sampleName: sampleWithMeta?.name || sample.name || "",
+          });
           return;
         }
 
@@ -1054,18 +2186,35 @@ window.CBO = window.CBO || {};
         aiImageGenerationPreviewTimers.delete(normalizedBoardId);
 
         if (didApply) {
+          setAiImageGenerationStatus(normalizedBoardId, "complete", {
+            runId,
+            sampleKind: sampleWithMeta.kind || "",
+            sampleName: sampleWithMeta.name || "",
+            sampleSrc: sampleWithMeta.src || "",
+          });
           pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
             historyGroup: `ai-image-board-sample-${normalizedBoardId}`,
             source: "ai-image-board-sample-generation",
             type: "space-board-generate-sample",
           });
           emitConnectionsChange("ai-image-board-sample-generation");
+        } else {
+          setAiImageGenerationStatus(normalizedBoardId, "error", {
+            message: "apply-failed",
+            runId,
+            sampleName: sampleWithMeta?.name || sample.name || "",
+          });
         }
 
         renderConnectionOverlay();
       })
       .catch((error) => {
         console.warn("[CBO] Unable to apply AI image sample.", error);
+        setAiImageGenerationStatus(normalizedBoardId, "error", {
+          message: error?.message || String(error || "error"),
+          runId,
+          sampleName: sample.name || "",
+        });
         aiImageGeneratingBoardIds.delete(normalizedBoardId);
         aiImageGenerationRuns.delete(normalizedBoardId);
         aiImageGenerationPreviewTimers.delete(normalizedBoardId);
@@ -1086,6 +2235,10 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    if (aiImageGeneratingBoardIds.has(normalizedBoardId)) {
+      return false;
+    }
+
     if (aiImageGenerationPreviewTimers.has(normalizedBoardId)) {
       window.clearTimeout(aiImageGenerationPreviewTimers.get(normalizedBoardId));
     }
@@ -1094,7 +2247,7 @@ window.CBO = window.CBO || {};
 
     aiImageGenerationRuns.set(normalizedBoardId, runId);
     aiImageGeneratingBoardIds.add(normalizedBoardId);
-    renderSpaceBoards();
+    setAiImageGenerationStatus(normalizedBoardId, "loading", { runId });
 
     const timerId = window.setTimeout(() => {
       completeAiImageSampleGeneration(normalizedBoardId, runId);
@@ -1116,6 +2269,7 @@ window.CBO = window.CBO || {};
       aiImageGenerationPreviewTimers.delete(normalizedBoardId);
       aiImageGenerationRuns.delete(normalizedBoardId);
       aiImageGeneratingBoardIds.delete(normalizedBoardId);
+      aiImageGenerationStatusByBoardId.delete(normalizedBoardId);
       return;
     }
 
@@ -1125,13 +2279,761 @@ window.CBO = window.CBO || {};
     aiImageGenerationPreviewTimers = new Map();
     aiImageGenerationRuns = new Map();
     aiImageGeneratingBoardIds = new Set();
+    aiImageGenerationStatusByBoardId = new Map();
   }
 
-  function renderAiImageBoardGeneratedMedia(element, board) {
+  function getAiImageBoardPreviewCssUrl(src) {
+    return `url("${String(src || "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}")`;
+  }
+
+  function getAiImageBoardMediaVariantSrc(media, lod) {
+    const variants = media?.variants && typeof media.variants === "object" ? media.variants : null;
+    const key = String(lod || "");
+    const explicitVariant = String(variants?.[key] || "").trim();
+
+    return explicitVariant;
+  }
+
+  function getAiImageBoardActivePreviewLayer(mediaHost) {
+    if (!mediaHost) {
+      return null;
+    }
+
+    const activeLayerName = String(mediaHost.dataset.mediaActiveLayer || "").trim();
+
+    if (activeLayerName) {
+      const layer = mediaHost.querySelector(`[data-ai-image-board-preview-layer="${activeLayerName}"]`);
+
+      if (layer) {
+        return layer;
+      }
+    }
+
+    return mediaHost.querySelector("[data-ai-image-board-preview-layer].is-active") || null;
+  }
+
+  function hasAiImageBoardPaintedImagePreview(mediaHost, src = "", kind = "image") {
+    const activeLayer = getAiImageBoardActivePreviewLayer(mediaHost);
+    const expectedSrc = String(src || "").trim();
+    const expectedKind = String(kind || "").trim();
+
+    return Boolean(
+      mediaHost &&
+      mediaHost.classList.contains("is-image-preview") &&
+      activeLayer &&
+      (activeLayer.currentSrc || activeLayer.src || activeLayer.dataset.previewKey) &&
+      (!expectedSrc || mediaHost.dataset.mediaSrc === expectedSrc) &&
+      (!expectedKind || mediaHost.dataset.mediaKind === expectedKind)
+    );
+  }
+
+  function createAiImageBoardPreviewLayer(name) {
+    const image = document.createElement("img");
+
+    image.className = "editor-ai-image-board-media-item editor-ai-image-board-preview-layer";
+    image.dataset.aiImageBoardPreviewLayer = name;
+    image.alt = "";
+    image.decoding = "async";
+    image.loading = "eager";
+    image.draggable = false;
+    image.setAttribute("aria-hidden", "true");
+
+    return image;
+  }
+
+  function ensureAiImageBoardImagePreviewLayers(mediaHost) {
+    if (!mediaHost) {
+      return { active: null, inactive: null };
+    }
+
+    let layerA = mediaHost.querySelector('[data-ai-image-board-preview-layer="a"]');
+    let layerB = mediaHost.querySelector('[data-ai-image-board-preview-layer="b"]');
+
+    if (!layerA) {
+      layerA = createAiImageBoardPreviewLayer("a");
+      mediaHost.appendChild(layerA);
+    }
+
+    if (!layerB) {
+      layerB = createAiImageBoardPreviewLayer("b");
+      mediaHost.appendChild(layerB);
+    }
+
+    const active = getAiImageBoardActivePreviewLayer(mediaHost);
+    const inactive = active === layerA ? layerB : layerA;
+
+    return { active, inactive };
+  }
+
+  function clearAiImageBoardPreviewLayer(layer) {
+    if (!layer) {
+      return;
+    }
+
+    layer.onload = null;
+    layer.onerror = null;
+    layer.classList.remove("is-active");
+    layer.removeAttribute("src");
+    delete layer.dataset.previewKey;
+    delete layer.dataset.previewKind;
+    delete layer.dataset.previewLod;
+    delete layer.dataset.previewMediaSrc;
+    delete layer.dataset.previewProbeAlpha;
+    delete layer.dataset.previewProbeBlank;
+    delete layer.dataset.previewProbeLumaRange;
+    delete layer.dataset.previewProbeNonWhite;
+    delete layer.dataset.previewSource;
+    delete layer.dataset.previewSrc;
+    delete layer.dataset.previewSwapRequest;
+  }
+
+  function clearAiImageBoardMediaDataset(mediaHost) {
+    if (!mediaHost) {
+      return;
+    }
+
+    delete mediaHost.dataset.mediaActiveLayer;
+    delete mediaHost.dataset.mediaKind;
+    delete mediaHost.dataset.mediaLod;
+    delete mediaHost.dataset.mediaName;
+    delete mediaHost.dataset.mediaPendingKind;
+    delete mediaHost.dataset.mediaPendingLod;
+    delete mediaHost.dataset.mediaPendingPreviewKey;
+    delete mediaHost.dataset.mediaPendingPreviewSource;
+    delete mediaHost.dataset.mediaPendingSrc;
+    delete mediaHost.dataset.mediaPreview;
+    delete mediaHost.dataset.mediaPreviewKey;
+    delete mediaHost.dataset.mediaPreviewSource;
+    delete mediaHost.dataset.mediaPreviewSrc;
+    delete mediaHost.dataset.mediaPreviewSwapRequest;
+    delete mediaHost.dataset.mediaSrc;
+  }
+
+  function resetAiImageBoardMediaHost(mediaHost) {
+    if (!mediaHost) {
+      return;
+    }
+
+    mediaHost.querySelectorAll("[data-ai-image-board-preview-layer]").forEach(clearAiImageBoardPreviewLayer);
+    mediaHost.replaceChildren();
+    mediaHost.classList.remove("is-crossfading", "is-image-preview", "is-placeholder-preview", "is-video-preview");
+    mediaHost.style.removeProperty("background-image");
+    clearAiImageBoardMediaDataset(mediaHost);
+  }
+
+  function setAiImageBoardMediaDataset(mediaHost, media, preview, previewKey, previewSrcForDataset, src, kind) {
+    if (!mediaHost) {
+      return;
+    }
+
+    mediaHost.dataset.mediaLod = preview.lod;
+    mediaHost.dataset.mediaKind = kind;
+    mediaHost.dataset.mediaName = String(media?.name || "");
+    mediaHost.dataset.mediaPreview = preview.previewMode;
+    mediaHost.dataset.mediaPreviewKey = previewKey;
+    mediaHost.dataset.mediaPreviewSource = preview.previewSource || "";
+    mediaHost.dataset.mediaPreviewSrc = previewSrcForDataset;
+    mediaHost.dataset.mediaSrc = src;
+    delete mediaHost.dataset.mediaPendingKind;
+    delete mediaHost.dataset.mediaPendingLod;
+    delete mediaHost.dataset.mediaPendingPreviewKey;
+    delete mediaHost.dataset.mediaPendingPreviewSource;
+    delete mediaHost.dataset.mediaPendingSrc;
+    delete mediaHost.dataset.mediaPreviewSwapRequest;
+  }
+
+  function markAiImageBoardPreviewPending(mediaHost, src, kind, preview, previewKey = "") {
+    if (!mediaHost) {
+      return;
+    }
+
+    mediaHost.dataset.mediaPendingSrc = src;
+    mediaHost.dataset.mediaPendingKind = kind;
+    mediaHost.dataset.mediaPendingLod = preview.lod;
+    mediaHost.dataset.mediaPendingPreviewSource = preview.previewSource || "";
+
+    if (previewKey) {
+      mediaHost.dataset.mediaPendingPreviewKey = previewKey;
+    }
+  }
+
+  function decodeAiImageBoardPreviewSource(src) {
+    const nextSrc = String(src || "").trim();
+
+    return new Promise((resolve, reject) => {
+      if (!nextSrc) {
+        reject(new Error("Missing AI preview image source."));
+        return;
+      }
+
+      const image = new Image();
+      let settled = false;
+      const cleanup = () => {
+        image.onload = null;
+        image.onerror = null;
+      };
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        resolve(image);
+      };
+      const fail = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        reject(new Error(`Unable to decode AI preview image: ${nextSrc}`));
+      };
+      const decodeLoadedImage = () => {
+        if (image.decode) {
+          image.decode().then(finish).catch(() => {
+            if (image.complete && Number(image.naturalWidth) > 0) {
+              finish();
+            } else {
+              fail();
+            }
+          });
+          return;
+        }
+
+        if (image.complete && Number(image.naturalWidth) > 0) {
+          finish();
+        }
+      };
+
+      image.onload = decodeLoadedImage;
+      image.onerror = fail;
+      image.decoding = "async";
+      image.loading = "eager";
+      image.src = nextSrc;
+
+      if (image.complete && Number(image.naturalWidth) > 0) {
+        decodeLoadedImage();
+      }
+    });
+  }
+
+  function decodeAiImageBoardPreviewLayer(image, src) {
+    const nextSrc = String(src || "").trim();
+
+    if (!image || !nextSrc) {
+      return Promise.reject(new Error("Missing AI preview image layer."));
+    }
+
+    return decodeAiImageBoardPreviewSource(nextSrc).then(() => {
+      image.onload = null;
+      image.onerror = null;
+      image.decoding = "async";
+      image.loading = "eager";
+
+      if (image.getAttribute("src") !== nextSrc) {
+        image.src = nextSrc;
+      }
+
+      return image;
+    });
+  }
+
+  function waitAiImageBoardPreviewPaintFrames(frameCount = AI_IMAGE_PREVIEW_PAINT_FRAMES) {
+    const frames = Math.max(1, Number(frameCount) || 1);
+
+    return new Promise((resolve) => {
+      if (typeof window.requestAnimationFrame !== "function") {
+        window.setTimeout(resolve, 0);
+        return;
+      }
+
+      let remaining = frames;
+      const tick = () => {
+        remaining -= 1;
+
+        if (remaining <= 0) {
+          resolve();
+          return;
+        }
+
+        window.requestAnimationFrame(tick);
+      };
+
+      window.requestAnimationFrame(tick);
+    });
+  }
+
+  function isAiImageBoardPreviewSwapCurrent(mediaHost, layer, requestId, previewKey, src, kind) {
+    return Boolean(
+      mediaHost?.isConnected &&
+      layer?.isConnected &&
+      mediaHost.dataset.mediaPreviewSwapRequest === requestId &&
+      mediaHost.dataset.mediaPendingPreviewKey === previewKey &&
+      mediaHost.dataset.mediaPendingSrc === src &&
+      mediaHost.dataset.mediaPendingKind === kind &&
+      layer.dataset.previewSwapRequest === requestId &&
+      layer.dataset.previewKey === previewKey
+    );
+  }
+
+  function commitAiImageBoardPreviewLayer(mediaHost, incomingLayer, media, preview, previewKey, previewSrcForDataset, src, kind) {
+    const previousLayer = getAiImageBoardActivePreviewLayer(mediaHost);
+    const incomingLayerName = String(incomingLayer?.dataset?.aiImageBoardPreviewLayer || "").trim();
+
+    if (!mediaHost || !incomingLayer || !incomingLayerName) {
+      return;
+    }
+
+    mediaHost.style.removeProperty("background-image");
+    mediaHost.classList.add("is-image-preview");
+    mediaHost.classList.remove("is-crossfading", "is-placeholder-preview", "is-video-preview");
+
+    if (previousLayer && previousLayer !== incomingLayer) {
+      previousLayer.style.zIndex = "1";
+    }
+
+    incomingLayer.classList.add("is-active");
+    incomingLayer.style.zIndex = "2";
+    mediaHost.dataset.mediaActiveLayer = incomingLayerName;
+    setAiImageBoardMediaDataset(mediaHost, media, preview, previewKey, previewSrcForDataset, src, kind);
+    recordAiBoardPreviewDebugEvent("layer-swap-commit", {
+      boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+      complete: incomingLayer.complete,
+      height: incomingLayer.naturalHeight,
+      layer: incomingLayerName,
+      lod: preview.lod,
+      previewKey,
+      previewSource: preview.previewSource || "",
+      src,
+      width: incomingLayer.naturalWidth,
+    });
+
+    if (previousLayer && previousLayer !== incomingLayer) {
+      waitAiImageBoardPreviewPaintFrames(AI_IMAGE_PREVIEW_OLD_LAYER_RELEASE_FRAMES).then(() => {
+        if (mediaHost.dataset.mediaActiveLayer === incomingLayerName) {
+          previousLayer.classList.remove("is-active");
+          previousLayer.style.zIndex = "1";
+        }
+      });
+    }
+
+    if (AI_IMAGE_PREVIEW_CROSSFADE_MS > 0) {
+      mediaHost.classList.add("is-crossfading");
+      window.setTimeout(() => {
+        if (mediaHost.dataset.mediaActiveLayer === incomingLayerName) {
+          mediaHost.classList.remove("is-crossfading");
+        }
+      }, AI_IMAGE_PREVIEW_CROSSFADE_MS + 40);
+    } else {
+      mediaHost.classList.remove("is-crossfading");
+    }
+
+    renderSpaceBoards();
+  }
+
+  function renderAiImageBoardPlaceholderPreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset) {
+    if (shouldHoldAiImageBoardPreviewForPendingLod(mediaHost, src, kind, preview)) {
+      markAiImageBoardPreviewPending(mediaHost, src, kind, preview, previewKey);
+      recordAiBoardPreviewDebugEvent("placeholder-held", {
+        boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+        lod: preview.lod,
+        previewKey,
+        previewSource: preview.previewSource || "",
+        src,
+      });
+      return;
+    }
+
+    resetAiImageBoardMediaHost(mediaHost);
+    mediaHost.classList.add("is-placeholder-preview");
+    setAiImageBoardMediaDataset(mediaHost, media, preview, previewKey, previewSrcForDataset, src, kind);
+    recordAiBoardPreviewDebugEvent("placeholder-render", {
+      boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+      lod: preview.lod,
+      previewKey,
+      previewSource: preview.previewSource || "",
+      src,
+    });
+  }
+
+  function renderAiImageBoardVideoPreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset) {
+    resetAiImageBoardMediaHost(mediaHost);
+    mediaHost.classList.add("is-video-preview");
+    setAiImageBoardMediaDataset(mediaHost, media, preview, previewKey, previewSrcForDataset, src, kind);
+  }
+
+  function renderAiImageBoardImagePreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset) {
+    const previewSrc = String(preview?.previewSrc || "").trim();
+
+    if (!previewSrc) {
+      recordAiBoardPreviewDebugEvent("image-preview-missing-src", {
+        boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+        lod: preview?.lod || "",
+        previewKey,
+        previewSource: preview?.previewSource || "",
+        src,
+      });
+      renderAiImageBoardPlaceholderPreview(mediaHost, media, {
+        ...preview,
+        previewMode: "placeholder",
+        previewSource: preview?.previewSource || "missing-src",
+      }, src, kind, previewKey, previewSrcForDataset);
+      return;
+    }
+
+    const activeLayer = getAiImageBoardActivePreviewLayer(mediaHost);
+    const activeKey = String(activeLayer?.dataset?.previewKey || "");
+    const isCurrent = mediaHost.dataset.mediaSrc === src &&
+      mediaHost.dataset.mediaKind === kind &&
+      mediaHost.dataset.mediaLod === preview.lod &&
+      mediaHost.dataset.mediaPreviewKey === previewKey &&
+      mediaHost.dataset.mediaPreviewSource === preview.previewSource &&
+      mediaHost.dataset.mediaPreviewSrc === previewSrcForDataset &&
+      activeKey === previewKey;
+
+    if (isCurrent) {
+      mediaHost.classList.add("is-image-preview");
+      mediaHost.classList.remove("is-placeholder-preview", "is-video-preview");
+      mediaHost.style.removeProperty("background-image");
+      return;
+    }
+
+    if (
+      mediaHost.dataset.mediaPendingPreviewKey === previewKey &&
+      mediaHost.dataset.mediaPendingSrc === src &&
+      mediaHost.dataset.mediaPendingKind === kind
+    ) {
+      return;
+    }
+
+    const { active, inactive } = ensureAiImageBoardImagePreviewLayers(mediaHost);
+    const incomingLayer = inactive || active;
+
+    if (!incomingLayer) {
+      return;
+    }
+
+    const requestId = String(aiImagePreviewSwapSeed++);
+
+    mediaHost.style.removeProperty("background-image");
+    mediaHost.classList.add("is-image-preview");
+    mediaHost.classList.remove("is-placeholder-preview", "is-video-preview");
+    mediaHost.dataset.mediaPreviewSwapRequest = requestId;
+    markAiImageBoardPreviewPending(mediaHost, src, kind, preview, previewKey);
+    recordAiBoardPreviewDebugEvent("layer-swap-start", {
+      boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+      layer: String(incomingLayer.dataset.aiImageBoardPreviewLayer || ""),
+      lod: preview.lod,
+      previewKey,
+      previewSource: preview.previewSource || "",
+      requestId,
+      src,
+      targetSrc: previewSrc,
+    });
+
+    incomingLayer.classList.remove("is-active");
+    incomingLayer.style.zIndex = "2";
+    incomingLayer.dataset.previewSwapRequest = requestId;
+    incomingLayer.dataset.previewKey = previewKey;
+    incomingLayer.dataset.previewKind = kind;
+    incomingLayer.dataset.previewLod = preview.lod;
+    incomingLayer.dataset.previewMediaSrc = src;
+    incomingLayer.dataset.previewSource = preview.previewSource || "";
+    incomingLayer.dataset.previewSrc = previewSrcForDataset;
+
+    decodeAiImageBoardPreviewLayer(incomingLayer, previewSrc)
+      .then(() => {
+        if (!isAiImageBoardPreviewSwapCurrent(mediaHost, incomingLayer, requestId, previewKey, src, kind)) {
+          return;
+        }
+
+        return waitAiImageBoardPreviewPaintFrames().then(() => {
+          if (!isAiImageBoardPreviewSwapCurrent(mediaHost, incomingLayer, requestId, previewKey, src, kind)) {
+            return;
+          }
+
+          const paintProbe = probeAiImagePreviewLayer(incomingLayer);
+          const isRuntimePreview = String(preview.previewSource || "").startsWith("runtime");
+
+          incomingLayer.dataset.previewProbeAlpha = String(paintProbe.alphaRatio ?? "");
+          incomingLayer.dataset.previewProbeBlank = paintProbe.blank ? "1" : "0";
+          incomingLayer.dataset.previewProbeLumaRange = String(paintProbe.lumaRange ?? "");
+          incomingLayer.dataset.previewProbeNonWhite = String(paintProbe.nonWhiteRatio ?? "");
+          recordAiBoardPreviewDebugEvent("layer-paint-probe", {
+            boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+            layer: String(incomingLayer.dataset.aiImageBoardPreviewLayer || ""),
+            lod: preview.lod,
+            previewKey,
+            previewSource: preview.previewSource || "",
+            probe: paintProbe,
+            requestId,
+            src,
+            targetSrc: previewSrc,
+          });
+
+          if (paintProbe.blank && isRuntimePreview) {
+            const error = new Error(`Blank AI preview layer for LOD ${preview.lod}.`);
+
+            error.previewProbe = paintProbe;
+            error.runtimePreviewBlank = true;
+            throw error;
+          }
+
+          commitAiImageBoardPreviewLayer(mediaHost, incomingLayer, media, preview, previewKey, previewSrcForDataset, src, kind);
+        });
+      })
+      .catch((error) => {
+        if (!isAiImageBoardPreviewSwapCurrent(mediaHost, incomingLayer, requestId, previewKey, src, kind)) {
+          return;
+        }
+
+        delete mediaHost.dataset.mediaPreviewSwapRequest;
+        delete mediaHost.dataset.mediaPendingKind;
+        delete mediaHost.dataset.mediaPendingLod;
+        delete mediaHost.dataset.mediaPendingPreviewKey;
+        delete mediaHost.dataset.mediaPendingPreviewSource;
+        delete mediaHost.dataset.mediaPendingSrc;
+        clearAiImageBoardPreviewLayer(incomingLayer);
+
+        const isRuntimePreview = String(preview.previewSource || "").startsWith("runtime");
+        const shouldFallbackToOriginal = Boolean(
+          isRuntimePreview &&
+          error?.runtimePreviewBlank &&
+          src &&
+          previewSrc !== src
+        );
+
+        if (shouldFallbackToOriginal) {
+          markAiImageRuntimePreviewVariantError(src, preview.lod, error?.message || "Blank AI preview layer.", error?.previewProbe || null);
+          recordAiBoardPreviewDebugEvent("runtime-preview-layer-blank", {
+            boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+            layer: String(incomingLayer.dataset.aiImageBoardPreviewLayer || ""),
+            lod: preview.lod,
+            message: error?.message || String(error || "error"),
+            previewKey,
+            previewSource: preview.previewSource || "",
+            probe: error?.previewProbe || null,
+            src,
+            targetSrc: previewSrc,
+          });
+          renderAiImageBoardImagePreview(mediaHost, media, {
+            kind,
+            lod: "full",
+            previewKey: `${src}::runtime-layer-blank-original::${preview.lod}`,
+            previewMode: "image-background",
+            previewSource: "runtime-layer-blank-original",
+            previewSrc: src,
+          }, src, kind, `${src}::runtime-layer-blank-original::${preview.lod}`, summarizeAiBoardPreviewSrc(src));
+          return;
+        }
+
+        if (!hasAiImageBoardPaintedImagePreview(mediaHost)) {
+          renderAiImageBoardPlaceholderPreview(mediaHost, media, {
+            ...preview,
+            lod: `error-${preview.lod}`,
+            previewMode: "placeholder",
+            previewSource: "decode-error",
+          }, src, kind, `error-${previewKey}`, "");
+        }
+
+        recordAiBoardPreviewDebugEvent("layer-swap-error", {
+          boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+          layer: String(incomingLayer.dataset.aiImageBoardPreviewLayer || ""),
+          lod: preview.lod,
+          message: error?.message || String(error || "error"),
+          previewKey,
+          previewSource: preview.previewSource || "",
+          src,
+          targetSrc: previewSrc,
+        });
+        console.warn("[CBO] Unable to paint AI preview layer.", error);
+      });
+  }
+
+  function getAiBoardCameraMotionKey(camera, dpr) {
+    return [
+      Math.round((Number(camera?.x) || 0) * 10) / 10,
+      Math.round((Number(camera?.y) || 0) * 10) / 10,
+      Math.round((Math.max(0.0001, Number(camera?.zoom) || 1)) * 100000) / 100000,
+      Math.round((Math.max(1, Number(dpr) || 1)) * 100) / 100,
+    ].join(":");
+  }
+
+  function noteAiBoardCameraMotion(camera, dpr) {
+    const key = getAiBoardCameraMotionKey(camera, dpr);
+
+    if (!aiBoardLastCameraMotionKey) {
+      aiBoardLastCameraMotionKey = key;
+      return;
+    }
+
+    if (key === aiBoardLastCameraMotionKey) {
+      return;
+    }
+
+    aiBoardLastCameraMotionKey = key;
+    aiBoardCameraMotionUntil = (performance.now?.() || Date.now()) + AI_IMAGE_PREVIEW_LOD_CAMERA_IDLE_MS;
+
+    if (aiBoardCameraMotionTimer) {
+      window.clearTimeout(aiBoardCameraMotionTimer);
+    }
+
+    aiBoardCameraMotionTimer = window.setTimeout(() => {
+      aiBoardCameraMotionTimer = 0;
+      renderSpaceBoards();
+    }, AI_IMAGE_PREVIEW_LOD_CAMERA_IDLE_MS + 16);
+  }
+
+  function isAiBoardCameraMotionActive() {
+    return (performance.now?.() || Date.now()) < aiBoardCameraMotionUntil;
+  }
+
+  function getAiBoardHeldLodDuringCameraMotion(mediaHost, media) {
+    const currentLod = String(mediaHost?.dataset?.mediaLod || "");
+
+    if (
+      !isAiBoardCameraMotionActive() ||
+      !mediaHost ||
+      media?.kind === "video" ||
+      mediaHost.dataset.mediaSrc !== String(media?.src || "").trim() ||
+      !hasAiImageBoardPaintedImagePreview(mediaHost, String(media?.src || "").trim(), "image")
+    ) {
+      return "";
+    }
+
+    return getAiBoardNumericLod(currentLod) ? currentLod : "";
+  }
+
+  function shouldHoldAiImageBoardPreviewForPendingLod(mediaHost, src, kind, preview) {
+    const previewMode = String(preview?.previewMode || "");
+    const previewSource = String(preview?.previewSource || "");
+    const previewLod = String(preview?.lod || "");
+
+    return Boolean(
+      previewMode === "placeholder" &&
+      (previewSource === "loading" || previewSource === "runtime" || previewSource === "error" || previewLod.startsWith("loading-") || previewLod.startsWith("error-")) &&
+      hasAiImageBoardPaintedImagePreview(mediaHost, src, kind)
+    );
+  }
+
+  function resolveAiImageBoardPreview(media, recommendedLod) {
+    const src = String(media?.src || "").trim();
+    const kind = media?.kind === "video" ? "video" : "image";
+    const safeRecommendedLod = getAiBoardRuntimeSafeLod(media, recommendedLod);
+
+    if (!src) {
+      return {
+        kind,
+        lod: "empty",
+        previewKey: "empty",
+        previewMode: "empty",
+        previewSource: "none",
+        previewSrc: "",
+      };
+    }
+
+    if (kind === "video") {
+      return {
+        kind,
+        lod: "video-poster",
+        previewKey: `${src}::video-poster`,
+        previewMode: "video-poster",
+        previewSource: "poster",
+        previewSrc: "",
+      };
+    }
+
+    if (safeRecommendedLod === "placeholder" || safeRecommendedLod === "unloaded") {
+      return {
+        kind,
+        lod: safeRecommendedLod,
+        previewKey: `${src}::${safeRecommendedLod}`,
+        previewMode: "placeholder",
+        previewSource: safeRecommendedLod === "unloaded" ? "unloaded" : "none",
+        previewSrc: "",
+      };
+    }
+
+    if (!AI_IMAGE_PREVIEW_VARIANT_SIZES.includes(Number(safeRecommendedLod))) {
+      return {
+        kind,
+        lod: "full",
+        previewKey: src,
+        previewMode: "image-background",
+        previewSource: "original",
+        previewSrc: src,
+      };
+    }
+
+    const variantSrc = getAiImageBoardMediaVariantSrc(media, safeRecommendedLod);
+
+    if (variantSrc) {
+      return {
+        kind,
+        lod: safeRecommendedLod,
+        previewKey: variantSrc,
+        previewMode: "image-background",
+        previewSource: "provided",
+        previewSrc: variantSrc,
+      };
+    }
+
+    const runtimeVariant = requestAiImageRuntimePreviewVariant(src, safeRecommendedLod);
+
+    if (runtimeVariant?.status === "ready" && runtimeVariant.objectUrl) {
+      const runtimeSource = runtimeVariant.sourceType === "data-url"
+        ? "runtime-data-url"
+        : runtimeVariant.sourceType === "blob"
+          ? "runtime-blob"
+          : "runtime";
+
+      return {
+        kind,
+        lod: safeRecommendedLod,
+        previewKey: `${getAiImageRuntimePreviewCacheKey(src, safeRecommendedLod)}::${runtimeSource}`,
+        previewMode: "image-background",
+        previewSource: runtimeSource,
+        previewSrc: runtimeVariant.objectUrl,
+      };
+    }
+
+    if (runtimeVariant?.status === "error") {
+      recordAiBoardPreviewDebugEvent("runtime-preview-original-fallback", {
+        lod: safeRecommendedLod,
+        message: runtimeVariant.error || "",
+        probe: runtimeVariant.probe || null,
+        src,
+        status: runtimeVariant.status,
+      });
+
+      return {
+        kind,
+        lod: "full",
+        previewKey: `${src}::runtime-error-original::${safeRecommendedLod}`,
+        previewMode: "image-background",
+        previewSource: "runtime-error-original",
+        previewSrc: src,
+      };
+    }
+
+    return {
+      kind,
+      lod: `loading-${safeRecommendedLod}`,
+      previewKey: `${getAiImageRuntimePreviewCacheKey(src, safeRecommendedLod)}::${runtimeVariant?.status || "runtime"}`,
+      previewMode: "placeholder",
+      previewSource: runtimeVariant?.status || "runtime",
+      previewSrc: "",
+    };
+  }
+
+  function renderAiImageBoardGeneratedMedia(element, board, options = {}) {
     const mediaHost = element?.querySelector?.("[data-ai-image-board-media]");
     const media = board?.generatedMedia || null;
     const src = String(media?.src || "").trim();
-    const kind = media?.kind === "video" ? "video" : "image";
+    let preview = resolveAiImageBoardPreview(media, options.recommendedLod);
+    const kind = preview.kind;
 
     if (!mediaHost) {
       return;
@@ -1140,42 +3042,82 @@ window.CBO = window.CBO || {};
     element.classList.toggle("has-generated-media", Boolean(src));
 
     if (!src) {
-      mediaHost.replaceChildren();
-      delete mediaHost.dataset.mediaKind;
-      delete mediaHost.dataset.mediaSrc;
+      resetAiImageBoardMediaHost(mediaHost);
       return;
     }
 
-    if (mediaHost.dataset.mediaSrc === src && mediaHost.dataset.mediaKind === kind) {
+    if (
+      kind === "image" &&
+      preview.previewMode === "placeholder" &&
+      preview.lod !== "unloaded" &&
+      preview.previewSource !== "unloaded" &&
+      !hasAiImageBoardPaintedImagePreview(mediaHost, src, kind)
+    ) {
+      preview = {
+        kind,
+        lod: "full",
+        previewKey: src,
+        previewMode: "image-background",
+        previewSource: "original-first-paint",
+        previewSrc: src,
+      };
+    }
+
+    const previewMode = preview.previewMode;
+    const previewSrc = String(preview.previewSrc || "").trim();
+    const previewSrcForDataset = summarizeAiBoardPreviewSrc(previewSrc);
+    const previewKey = String(preview.previewKey || previewSrcForDataset || previewMode);
+
+    if (shouldHoldAiImageBoardPreviewForPendingLod(mediaHost, src, kind, preview)) {
+      markAiImageBoardPreviewPending(mediaHost, src, kind, preview, previewKey);
+      recordAiBoardPreviewDebugEvent("preview-held", {
+        boardId: board?.id || getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+        lod: preview.lod,
+        previewKey,
+        previewMode,
+        previewSource: preview.previewSource || "",
+        src,
+      });
       return;
     }
 
-    const node = document.createElement(kind === "video" ? "video" : "img");
+    const activeImageLayer = getAiImageBoardActivePreviewLayer(mediaHost);
+    const isStablePreviewCurrent = (
+      mediaHost.dataset.mediaSrc === src &&
+      mediaHost.dataset.mediaKind === kind &&
+      mediaHost.dataset.mediaLod === preview.lod &&
+      mediaHost.dataset.mediaPreviewKey === previewKey &&
+      mediaHost.dataset.mediaPreview === previewMode &&
+      mediaHost.dataset.mediaPreviewSource === preview.previewSource &&
+      mediaHost.dataset.mediaPreviewSrc === previewSrcForDataset &&
+      (
+        (previewMode === "placeholder" && mediaHost.classList.contains("is-placeholder-preview")) ||
+        (kind === "video" && mediaHost.classList.contains("is-video-preview")) ||
+        (kind === "image" && activeImageLayer?.dataset?.previewKey === previewKey)
+      )
+    );
 
-    node.className = "editor-ai-image-board-media-item";
+    if (isStablePreviewCurrent) {
+      return;
+    }
 
-    if (kind === "video") {
-      node.muted = true;
-      node.loop = false;
-      node.autoplay = false;
-      node.controls = false;
-      node.playsInline = true;
-      node.preload = "metadata";
-      node.addEventListener("loadedmetadata", () => {
-        node.pause();
-      }, { once: true });
+    recordAiBoardPreviewDebugEvent("preview-target", {
+      boardId: board?.id || getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+      currentLod: mediaHost.dataset.mediaLod || "",
+      lod: preview.lod,
+      previewKey,
+      previewMode,
+      previewSource: preview.previewSource || "",
+      src,
+    });
+
+    if (previewMode === "placeholder") {
+      renderAiImageBoardPlaceholderPreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset);
+    } else if (kind === "image") {
+      renderAiImageBoardImagePreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset);
     } else {
-      node.alt = String(media.name || "Generated AI sample");
-      node.decoding = "async";
-      node.loading = "eager";
+      renderAiImageBoardVideoPreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset);
     }
-
-    node.setAttribute("width", String(Math.max(1, Math.round(Number(media.width) || AI_IMAGE_BOARD_SIZE_DOC_PX))));
-    node.setAttribute("height", String(Math.max(1, Math.round(Number(media.height) || AI_IMAGE_BOARD_SIZE_DOC_PX))));
-    node.src = src;
-    mediaHost.dataset.mediaKind = kind;
-    mediaHost.dataset.mediaSrc = src;
-    mediaHost.replaceChildren(node);
   }
 
   function handleAiImagePromptFocus(event) {
@@ -1661,24 +3603,47 @@ window.CBO = window.CBO || {};
   }
 
   function renderSpaceBoards() {
+    const renderStartedAt = performance.now?.() || Date.now();
+    const aiBoards = spaceBoards.filter((board) => board.type === "ai-image");
     const layer = ensureSpaceBoardLayer();
     const pane = renderSpaceBoardPaneTransform();
+    const viewState = getCameraState();
+    const viewScale = getViewScale();
+    const visibleViewportRect = getSpaceBoardVisibleDocumentRect(0);
+    const nearViewportRect = getSpaceBoardVisibleDocumentRect(getSpaceBoardLazyMarginDocPx());
+    const runtimePreviewCacheStats = getAiImageRuntimePreviewCacheStats();
+    const metrics = createEmptyAiBoardMetrics({
+      dpr: roundMetricValue(viewState.dpr, 2),
+      generatingBoards: aiImageGeneratingBoardIds.size,
+      lastGenerateStatus: formatAiImageGenerationStatus(getLastAiImageGenerationStatus()),
+      runtimePreviewCacheCount: runtimePreviewCacheStats.readyCount,
+      runtimePreviewCacheMB: runtimePreviewCacheStats.decodedMB,
+      runtimePreviewLoadingCount: runtimePreviewCacheStats.loadingCount,
+      stateBoards: aiBoards.length,
+      zoom: roundMetricValue(viewState.camera.zoom, 5),
+    });
 
     if (!layer || !pane) {
+      metrics.frameMs = roundMetricValue((performance.now?.() || Date.now()) - renderStartedAt, 2);
+      publishAiBoardMetrics(metrics);
       return;
     }
 
-    const viewState = getCameraState();
-    const viewScale = getViewScale();
     const handleMetrics = getActionBubbleMetrics(1);
     const renderedIds = new Set();
 
-    spaceBoards.forEach((board) => {
-      if (board.type !== "ai-image") {
-        return;
-      }
-
+    aiBoards.forEach((board) => {
+      const boardRect = getSpaceBoardRect(board);
+      const visibilityState = getAiBoardVisibilityState(boardRect, visibleViewportRect, nearViewportRect);
       const element = ensureAiImageBoardElement(board.id);
+
+      if (visibilityState === "visible") {
+        metrics.visibleAiBoards += 1;
+      } else if (visibilityState === "near") {
+        metrics.nearAiBoards += 1;
+      } else {
+        metrics.offscreenAiBoards += 1;
+      }
 
       if (!element) {
         return;
@@ -1701,7 +3666,7 @@ window.CBO = window.CBO || {};
       const plainControlSize = Math.max(18, Math.min(34, Math.round(ACTION_BUBBLE_SIZE_DOC_PX * viewScale)));
       const label = element.querySelector("[data-ai-image-board-drag-handle]");
       const shouldMountHeavy = !plainArtboardMode && shouldMountAiImageBoardHeavyContent(board, element);
-      const isNearViewport = isSpaceBoardNearViewport(board);
+      const isNearViewport = visibilityState !== "offscreen";
       const isMobileLean = isMobileLikeSpaceBoardViewport() &&
         getSpaceBoardMinScreenSize(board) < SPACE_BOARD_MOBILE_HEAVY_MIN_SCREEN_PX;
 
@@ -1714,7 +3679,11 @@ window.CBO = window.CBO || {};
       const promptInput = element.querySelector("[data-ai-image-board-prompt-input]");
       const isHeavyMounted = element.dataset.aiImageBoardHeavyMounted === "true";
       const isGenerating = aiImageGeneratingBoardIds.has(board.id);
+      const generationStatus = getAiImageGenerationStatus(board.id);
       const generateButton = element.querySelector("[data-ai-image-board-generate]");
+      const shouldUnloadMedia = shouldUnloadAiBoardMedia(board, visibilityState, element);
+      const shouldUpdatePreviewLod = visibilityState === "visible";
+      const mediaHost = element.querySelector("[data-ai-image-board-media]");
 
       setStylePropertyIfChanged(element, "left", `${point.x}px`);
       setStylePropertyIfChanged(element, "top", `${point.y}px`);
@@ -1737,7 +3706,7 @@ window.CBO = window.CBO || {};
       setCssVarIfChanged(element, "--ai-image-generate-handle-top", `${AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
       setCssVarIfChanged(element, "--ai-image-generate-border-width", `${handleMetrics.borderWidthDoc}px`);
       setCssVarIfChanged(element, "--ai-image-generate-icon-size", `${handleMetrics.iconSizeDoc}px`);
-      element.classList.toggle("is-generating", isGenerating && (plainArtboardMode || isHeavyMounted));
+      element.classList.toggle("is-generating", isGenerating && isHeavyMounted && !plainArtboardMode);
       element.classList.toggle("is-heavy-mounted", isHeavyMounted);
       element.classList.toggle("is-near-viewport", isNearViewport);
       element.classList.toggle("is-selected", selectedSpaceBoardId === board.id);
@@ -1753,9 +3722,72 @@ window.CBO = window.CBO || {};
         }
       }
 
-      if (plainArtboardMode || isHeavyMounted) {
-        renderAiImageBoardGeneratedMedia(element, board);
+      const currentMediaLod = getAiBoardCurrentLod(board, mediaHost);
+      const rawRecommendedLod = shouldUnloadMedia
+        ? "unloaded"
+        : shouldUpdatePreviewLod
+          ? getAiBoardRecommendedLod(board, width, height, viewState.dpr)
+          : currentMediaLod || "deferred";
+      const stableRecommendedLod = shouldUnloadMedia || !shouldUpdatePreviewLod
+        ? rawRecommendedLod
+        : getStableAiBoardRecommendedLod(board, width, height, viewState.dpr, mediaHost);
+      const heldLodForCameraMotion = shouldUnloadMedia || !shouldUpdatePreviewLod
+        ? ""
+        : getAiBoardHeldLodDuringCameraMotion(mediaHost, board.generatedMedia);
+      const recommendedLod = heldLodForCameraMotion || stableRecommendedLod;
+
+      if (shouldUpdatePreviewLod && rawRecommendedLod !== recommendedLod) {
+        preloadAiImageBoardRuntimeLod(board.generatedMedia, rawRecommendedLod);
       }
+
+      if ((plainArtboardMode || isHeavyMounted) && (shouldUpdatePreviewLod || shouldUnloadMedia || !board.generatedMedia?.src)) {
+        renderAiImageBoardGeneratedMedia(element, board, { recommendedLod });
+      }
+
+      if (shouldUnloadMedia) {
+        const evictedCount = evictAiImageRuntimePreviewVariantsForSrc(board.generatedMedia?.src || "");
+
+        if (evictedCount > 0) {
+          recordAiBoardPreviewDebugEvent("runtime-preview-evict-offscreen", {
+            boardId: board.id,
+            count: evictedCount,
+            src: board.generatedMedia?.src || "",
+            visibility: visibilityState,
+          });
+        }
+      }
+
+      const activePreview = isAiBoardPreviewActive(mediaHost);
+      const currentLod = getAiBoardCurrentLod(board, mediaHost);
+      const decodedMB = roundMetricValue(estimateAiBoardDecodedMB(board, currentLod, activePreview), 2);
+      const previewDebug = getAiBoardPreviewDebugSnapshot(element, mediaHost);
+
+      if (activePreview) {
+        metrics.activePreviewCount += 1;
+      }
+
+      metrics.estimatedDecodedMB += decodedMB;
+      metrics.boards.push({
+        activePreview,
+        currentLod,
+        estimatedDecodedMB: decodedMB,
+        generationMessage: generationStatus?.message || "",
+        generationSampleKind: generationStatus?.sampleKind || "",
+        generationSampleName: generationStatus?.sampleName || "",
+        generationStatus: generationStatus?.status || "",
+        generated: Boolean(board.generatedMedia?.src),
+        id: board.id,
+        isGenerating,
+        mediaKind: board.generatedMedia?.kind || "",
+        name: board.name || "AI Image board",
+        previewDebug,
+        previewSource: mediaHost?.dataset?.mediaPreviewSource || "",
+        previewSrc: summarizeAiBoardPreviewSrc(mediaHost?.dataset?.mediaPreviewSrc || ""),
+        recommendedLod,
+        screenHeight: roundMetricValue(height, 2),
+        screenWidth: roundMetricValue(width, 2),
+        visibility: visibilityState,
+      });
 
       if (label) {
         label.textContent = `${board.name || "AI Image board"} ${docWidth} x ${docHeight}`;
@@ -1780,6 +3812,16 @@ window.CBO = window.CBO || {};
       }
     });
 
+    const finalRuntimePreviewCacheStats = getAiImageRuntimePreviewCacheStats();
+
+    metrics.renderedAiBoards = renderedIds.size;
+    metrics.runtimePreviewCacheCount = finalRuntimePreviewCacheStats.readyCount;
+    metrics.runtimePreviewCacheMB = finalRuntimePreviewCacheStats.decodedMB;
+    metrics.runtimePreviewLoadingCount = finalRuntimePreviewCacheStats.loadingCount;
+    metrics.previewDebugEvents = aiBoardPreviewDebugEvents.map((event) => ({ ...event }));
+    metrics.estimatedDecodedMB = roundMetricValue(metrics.estimatedDecodedMB, 2);
+    metrics.frameMs = roundMetricValue((performance.now?.() || Date.now()) - renderStartedAt, 2);
+    publishAiBoardMetrics(metrics);
   }
 
   function getConnectionById(connectionId) {
@@ -2438,6 +4480,8 @@ window.CBO = window.CBO || {};
       ? Number(options.viewScale)
       : Math.max(0.0001, Number(camera?.zoom) || 1) / dpr;
 
+    noteAiBoardCameraMotion(camera, dpr);
+
     lastRenderContext = {
       artboardViews: Array.isArray(options.artboardViews) ? options.artboardViews : [],
       camera: cloneCamera(camera),
@@ -2464,6 +4508,18 @@ window.CBO = window.CBO || {};
       .map((rect) => ({ ...rect }));
   };
 
+  namespace.getAiBoardMetrics = function getAiBoardMetrics() {
+    return {
+      ...aiBoardMetrics,
+      boards: Array.isArray(aiBoardMetrics.boards)
+        ? aiBoardMetrics.boards.map((board) => ({ ...board }))
+        : [],
+      previewDebugEvents: Array.isArray(aiBoardMetrics.previewDebugEvents)
+        ? aiBoardMetrics.previewDebugEvents.map((event) => ({ ...event }))
+        : [],
+    };
+  };
+
   namespace.clearArtboardConnections = function clearArtboardConnections() {
     connections = [];
     spaceBoards = [];
@@ -2471,6 +4527,9 @@ window.CBO = window.CBO || {};
     spaceBoardDrag = null;
     selectedSpaceBoardId = "";
     lastConnectionsGeometryKey = "";
+    aiBoardPreviewDebugEvents = [];
+    aiBoardPreviewDebugByBoardId = new Map();
+    aiBoardPreviewDebugEventId = 1;
     promptEditState = null;
     clearPromptFocusViewportTimers();
     clearAiImageGenerationPreview();

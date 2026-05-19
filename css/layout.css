@@ -401,6 +401,72 @@
   pointer-events: auto;
 }
 
+.editor-ai-board-metrics {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 30000;
+  box-sizing: border-box;
+  width: min(390px, calc(100vw - 28px));
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(15, 17, 20, 0.9);
+  color: #f1f3f7;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.45;
+  pointer-events: auto;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+}
+
+.editor-ai-board-metrics-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.editor-ai-board-metrics button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  touch-action: manipulation;
+}
+
+.editor-ai-board-metrics-body {
+  display: grid;
+  gap: 2px;
+  color: rgba(241, 243, 247, 0.86);
+  white-space: normal;
+}
+
+@media (max-width: 720px) {
+  .editor-ai-board-metrics {
+    right: 8px;
+    bottom: 8px;
+    width: min(330px, calc(100vw - 16px));
+    max-height: 34vh;
+    overflow: auto;
+    font-size: 10px;
+  }
+}
+
 @property --editor-ai-loading-angle {
   syntax: "<angle>";
   inherits: false;
@@ -499,23 +565,11 @@
 }
 
 .editor-ai-image-board.is-plain-artboard.is-generating .editor-ai-image-board-play {
-  border-color: #f05023;
-  box-shadow:
-    0 0 0 3px rgba(240, 80, 35, 0.18),
-    0 0 18px rgba(240, 80, 35, 0.32);
-  color: transparent;
   cursor: default;
 }
 
 .editor-ai-image-board.is-plain-artboard.is-generating .editor-ai-image-board-play::before {
-  position: absolute;
-  inset: 24%;
-  box-sizing: border-box;
-  border: 2px solid rgba(240, 80, 35, 0.24);
-  border-top-color: #f05023;
-  border-radius: 999px;
-  content: "";
-  animation: editor-ai-image-board-loading-spin 850ms linear infinite;
+  content: none;
 }
 
 .editor-ai-image-board.is-plain-artboard .editor-ai-image-board-play svg {
@@ -525,7 +579,7 @@
 }
 
 .editor-ai-image-board.is-plain-artboard.is-generating .editor-ai-image-board-play svg {
-  opacity: 0;
+  opacity: 1;
 }
 
 .editor-ai-image-board::before {
@@ -579,18 +633,8 @@
   }
 }
 
-@keyframes editor-ai-image-board-loading-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .editor-ai-image-board.is-heavy-mounted.is-generating::before {
-    animation: none;
-  }
-
-  .editor-ai-image-board.is-plain-artboard.is-generating .editor-ai-image-board-play::before {
     animation: none;
   }
 
@@ -647,7 +691,69 @@
   inset: 0;
   display: grid;
   place-items: stretch;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
   overflow: hidden;
+}
+
+.editor-ai-image-board-media.is-image-preview {
+  background-color: #f7f7f2;
+}
+
+.editor-ai-image-board-preview-layer {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.editor-ai-image-board-preview-layer.is-active {
+  visibility: visible;
+}
+
+.editor-ai-image-board-media.is-placeholder-preview {
+  background:
+    linear-gradient(135deg, rgba(240, 80, 35, 0.14), rgba(17, 17, 17, 0) 44%),
+    #f7f7f2;
+}
+
+.editor-ai-image-board-media.is-video-preview {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.18), transparent 32%),
+    linear-gradient(135deg, #191b20, #343944);
+}
+
+.editor-ai-image-board-media.is-video-preview::before {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  box-sizing: border-box;
+  width: 18%;
+  min-width: 28px;
+  max-width: 88px;
+  aspect-ratio: 1;
+  border: 2px solid rgba(255, 255, 255, 0.74);
+  border-radius: 999px;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.editor-ai-image-board-media.is-video-preview::after {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-top: clamp(8px, 2.2vw, 18px) solid transparent;
+  border-bottom: clamp(8px, 2.2vw, 18px) solid transparent;
+  border-left: clamp(12px, 3.3vw, 28px) solid rgba(255, 255, 255, 0.86);
+  content: "";
+  transform: translate(-36%, -50%);
 }
 
 .editor-ai-image-board-media-item {
@@ -738,6 +844,10 @@
     animation: none;
     opacity: 0.34;
     transform: scale(1);
+  }
+
+  .editor-ai-image-board-preview-layer {
+    transition: none;
   }
 }
 
