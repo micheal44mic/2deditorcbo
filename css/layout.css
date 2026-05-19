@@ -299,11 +299,16 @@
   transform-origin: 0 0;
 }
 
+.editor-space-board-pane > .editor-artboard-connection-layer {
+  z-index: 0;
+}
+
 .editor-artboard-connection-path {
   fill: none;
   stroke: #f05023;
   stroke-linecap: butt;
   stroke-linejoin: round;
+  opacity: 0.72;
   pointer-events: none;
 }
 
@@ -413,6 +418,116 @@
   pointer-events: auto;
 }
 
+.editor-ai-image-board.is-plain-artboard {
+  min-width: 1px;
+  min-height: 1px;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  background: transparent;
+  box-shadow: none;
+  contain: layout style;
+  isolation: isolate;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.editor-ai-image-board.is-plain-artboard.is-selected {
+  border-color: #ffd166;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    0 0 0 2px rgba(255, 209, 102, 0.42);
+}
+
+.editor-ai-image-board.is-plain-artboard::before,
+.editor-ai-image-board.is-plain-artboard::after {
+  display: none;
+}
+
+.editor-ai-image-board.is-plain-artboard .editor-artboard-frame-label {
+  position: absolute;
+  z-index: 4;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.editor-ai-image-board.is-plain-artboard .editor-ai-image-board-surface {
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  border-radius: 0;
+  background: #f7f7f2;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.editor-ai-image-board.is-plain-artboard .editor-ai-image-board-input,
+.editor-ai-image-board.is-plain-artboard .editor-ai-image-board-play {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: var(--ai-plain-control-size, 22px);
+  height: var(--ai-plain-control-size, 22px);
+  padding: 0;
+  border: 1.5px solid #f05023;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111111;
+  transform: translate(-50%, -50%);
+}
+
+.editor-ai-image-board.is-plain-artboard .editor-ai-image-board-input {
+  left: 0;
+  top: 100%;
+  pointer-events: none;
+}
+
+.editor-ai-image-board.is-plain-artboard .editor-ai-image-board-play {
+  left: 0;
+  top: 0;
+  appearance: none;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.editor-ai-image-board.is-plain-artboard .editor-ai-image-board-play:disabled {
+  opacity: 1;
+}
+
+.editor-ai-image-board.is-plain-artboard.is-generating .editor-ai-image-board-play {
+  border-color: #f05023;
+  box-shadow:
+    0 0 0 3px rgba(240, 80, 35, 0.18),
+    0 0 18px rgba(240, 80, 35, 0.32);
+  color: transparent;
+  cursor: default;
+}
+
+.editor-ai-image-board.is-plain-artboard.is-generating .editor-ai-image-board-play::before {
+  position: absolute;
+  inset: 24%;
+  box-sizing: border-box;
+  border: 2px solid rgba(240, 80, 35, 0.24);
+  border-top-color: #f05023;
+  border-radius: 999px;
+  content: "";
+  animation: editor-ai-image-board-loading-spin 850ms linear infinite;
+}
+
+.editor-ai-image-board.is-plain-artboard .editor-ai-image-board-play svg {
+  width: 58%;
+  height: 58%;
+  pointer-events: none;
+}
+
+.editor-ai-image-board.is-plain-artboard.is-generating .editor-ai-image-board-play svg {
+  opacity: 0;
+}
+
 .editor-ai-image-board::before {
   position: absolute;
   inset: -28px;
@@ -464,8 +579,18 @@
   }
 }
 
+@keyframes editor-ai-image-board-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .editor-ai-image-board.is-heavy-mounted.is-generating::before {
+    animation: none;
+  }
+
+  .editor-ai-image-board.is-plain-artboard.is-generating .editor-ai-image-board-play::before {
     animation: none;
   }
 

@@ -37,6 +37,7 @@ window.CBO = window.CBO || {};
   const SPACE_BOARD_PANE_TRANSFORM_IDLE_MS = 180;
   const SPACE_BOARD_LAZY_OVERSCAN_CSS_PX = 640;
   const SPACE_BOARD_MOBILE_HEAVY_MIN_SCREEN_PX = 140;
+  const AI_BOARD_ARTBOARD_PLAIN_MODE = true;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
   let connectionDrag = null;
@@ -75,6 +76,10 @@ window.CBO = window.CBO || {};
 
   function getBrushEngine() {
     return namespace.brushEngine || null;
+  }
+
+  function shouldUsePlainAiBoardArtboards() {
+    return AI_BOARD_ARTBOARD_PLAIN_MODE === true;
   }
 
   function cloneCamera(camera) {
@@ -381,6 +386,14 @@ window.CBO = window.CBO || {};
       return null;
     }
 
+    if (shouldUsePlainAiBoardArtboards()) {
+      setStylePropertyIfChanged(pane, "transform", "none");
+      setCssVarIfChanged(pane, "--editor-space-board-scale", "1");
+      setCssVarIfChanged(pane, "--editor-space-board-inverse-scale", "1");
+      setCssVarIfChanged(pane, "--editor-space-board-label-top", "-25px");
+      return pane;
+    }
+
     const { camera, dpr } = getCameraState();
     const scale = getViewScale();
     const tx = (Number(camera.x) || 0) / dpr;
@@ -411,6 +424,15 @@ window.CBO = window.CBO || {};
     renderSpaceBoards();
   }
 
+  function handleDocumentSpaceBoardSelectionPointerDown(event) {
+    if (!selectedSpaceBoardId || event.target?.closest?.("[data-ai-image-board]")) {
+      return;
+    }
+
+    selectedSpaceBoardId = "";
+    renderSpaceBoards();
+  }
+
   function ensureAiImageBoardElement(boardId) {
     const pane = ensureSpaceBoardPane();
     const normalizedBoardId = String(boardId || "").trim();
@@ -424,31 +446,62 @@ window.CBO = window.CBO || {};
 
     if (!board) {
       board = document.createElement("div");
-      board.className = "editor-ai-image-board";
+      board.className = shouldUsePlainAiBoardArtboards()
+        ? "editor-ai-image-board is-plain-artboard editor-artboard-frame"
+        : "editor-ai-image-board";
       board.dataset.aiImageBoard = "";
       board.dataset.boardId = normalizedBoardId;
-      board.innerHTML = `
-        <div class="editor-ai-image-board-label" data-ai-image-board-drag-handle></div>
-        <div class="editor-ai-image-board-surface"></div>
-        <div class="editor-ai-image-board-input" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
-            <circle cx="9" cy="9" r="2"></circle>
-            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
-          </svg>
-        </div>
-      `;
+      board.innerHTML = shouldUsePlainAiBoardArtboards()
+        ? `
+          <span class="editor-artboard-frame-label" data-ai-image-board-drag-handle></span>
+          <div class="editor-ai-image-board-surface editor-artboard-paper">
+            <div class="editor-ai-image-board-media" data-ai-image-board-media></div>
+          </div>
+          <div class="editor-ai-image-board-input" data-ai-image-board-input-handle aria-hidden="true"></div>
+          <button class="editor-ai-image-board-play" type="button" aria-label="Generate image" data-ai-image-board-generate>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path>
+            </svg>
+          </button>
+        `
+        : `
+          <div class="editor-ai-image-board-label" data-ai-image-board-drag-handle></div>
+          <div class="editor-ai-image-board-surface"></div>
+          <div class="editor-ai-image-board-input" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+              <circle cx="9" cy="9" r="2"></circle>
+              <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
+            </svg>
+          </div>
+        `;
       board.addEventListener("pointerdown", handleAiImageBoardPointerDown, true);
       board.querySelector("[data-ai-image-board-drag-handle]")?.addEventListener("pointerdown", startSpaceBoardDrag);
+      board.querySelector("[data-ai-image-board-generate]")?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
+      board.querySelector("[data-ai-image-board-generate]")?.addEventListener("click", handleAiImageGenerateClick);
       board.addEventListener("wheel", handleSpaceBoardWheel, { passive: false });
       pane.appendChild(board);
     }
 
     board.dataset.boardId = normalizedBoardId;
+    board.classList.toggle("is-plain-artboard", shouldUsePlainAiBoardArtboards());
+    if (shouldUsePlainAiBoardArtboards()) {
+      const surface = board.querySelector(".editor-ai-image-board-surface");
+
+      if (surface && !surface.querySelector("[data-ai-image-board-media]")) {
+        surface.insertAdjacentHTML("afterbegin", `
+          <div class="editor-ai-image-board-media" data-ai-image-board-media></div>
+        `);
+      }
+    }
     return board;
   }
 
   function ensureAiImageBoardHeavyContent(element) {
+    if (shouldUsePlainAiBoardArtboards()) {
+      return false;
+    }
+
     if (!element || element.dataset.aiImageBoardHeavyMounted === "true") {
       return Boolean(element);
     }
@@ -521,9 +574,23 @@ window.CBO = window.CBO || {};
       pane.insertBefore(svg, pane.firstElementChild || null);
     }
 
-    svg.setAttribute("width", "1");
-    svg.setAttribute("height", "1");
-    svg.setAttribute("viewBox", "0 0 1 1");
+    if (shouldUsePlainAiBoardArtboards()) {
+      const rect = stage.getBoundingClientRect?.() || { width: 1, height: 1 };
+      const width = Math.max(1, Number(stage.clientWidth || rect.width) || 1);
+      const height = Math.max(1, Number(stage.clientHeight || rect.height) || 1);
+
+      setStylePropertyIfChanged(svg, "width", `${width}px`);
+      setStylePropertyIfChanged(svg, "height", `${height}px`);
+      svg.setAttribute("width", String(width));
+      svg.setAttribute("height", String(height));
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    } else {
+      setStylePropertyIfChanged(svg, "width", "1px");
+      setStylePropertyIfChanged(svg, "height", "1px");
+      svg.setAttribute("width", "1");
+      svg.setAttribute("height", "1");
+      svg.setAttribute("viewBox", "0 0 1 1");
+    }
 
     return svg;
   }
@@ -858,11 +925,6 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    namespace.AiBoardMediaDebug?.log?.("generate-click", {
-      boardId: board.id,
-      height: Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX,
-      width: Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX,
-    });
     startAiImageGenerationPreview(board.id);
 
     window.dispatchEvent(new CustomEvent("cbo:ai-image-board-generate-click", {
@@ -879,16 +941,7 @@ window.CBO = window.CBO || {};
     const pool = candidates.length > 0 ? candidates : AI_IMAGE_SAMPLE_ASSETS;
     const index = Math.floor(Math.random() * pool.length);
 
-    const sample = pool[index] || null;
-
-    namespace.AiBoardMediaDebug?.log?.("sample-picked", {
-      kind: sample?.kind || "",
-      name: sample?.name || "",
-      poolSize: pool.length,
-      src: sample?.src || "",
-    });
-
-    return sample;
+    return pool[index] || null;
   }
 
   function loadAiImageSampleMetadata(sample) {
@@ -896,15 +949,9 @@ window.CBO = window.CBO || {};
       return Promise.reject(new Error("Missing AI image sample source."));
     }
 
-    const startedAt = performance.now();
+    const kind = sample.kind === "video" ? "video" : "image";
 
-    namespace.AiBoardMediaDebug?.log?.("metadata-load-start", {
-      kind: sample.kind || "image",
-      name: sample.name || "",
-      src: sample.src,
-    });
-
-    if (sample.kind === "video") {
+    if (kind === "video") {
       return new Promise((resolve, reject) => {
         const video = document.createElement("video");
         const cleanup = () => {
@@ -918,20 +965,7 @@ window.CBO = window.CBO || {};
         video.addEventListener("loadedmetadata", () => {
           const width = Math.round(Number(video.videoWidth) || AI_IMAGE_BOARD_SIZE_DOC_PX);
           const height = Math.round(Number(video.videoHeight) || AI_IMAGE_BOARD_SIZE_DOC_PX);
-          const durationMs = performance.now() - startedAt;
 
-          namespace.AiBoardMediaDebug?.recordTiming?.("metadata-load-ok", {
-            durationMs,
-            height,
-            kind: "video",
-            name: sample.name || "",
-            src: sample.src,
-            width,
-          }, {
-            always: true,
-            metric: "metadataMs",
-            warnAtMs: 250,
-          });
           cleanup();
           resolve({
             ...sample,
@@ -940,12 +974,6 @@ window.CBO = window.CBO || {};
           });
         }, { once: true });
         video.addEventListener("error", () => {
-          namespace.AiBoardMediaDebug?.warn?.("metadata-load-error", {
-            durationMs: performance.now() - startedAt,
-            kind: "video",
-            name: sample.name || "",
-            src: sample.src,
-          });
           cleanup();
           reject(new Error(`Unable to load AI board video sample: ${sample.src}`));
         }, { once: true });
@@ -958,18 +986,6 @@ window.CBO = window.CBO || {};
       const image = new Image();
 
       image.addEventListener("load", () => {
-        namespace.AiBoardMediaDebug?.recordTiming?.("metadata-load-ok", {
-          durationMs: performance.now() - startedAt,
-          height: Math.round(Number(image.naturalHeight) || AI_IMAGE_BOARD_SIZE_DOC_PX),
-          kind: "image",
-          name: sample.name || "",
-          src: sample.src,
-          width: Math.round(Number(image.naturalWidth) || AI_IMAGE_BOARD_SIZE_DOC_PX),
-        }, {
-          always: true,
-          metric: "metadataMs",
-          warnAtMs: 250,
-        });
         resolve({
           ...sample,
           height: Math.round(Number(image.naturalHeight) || AI_IMAGE_BOARD_SIZE_DOC_PX),
@@ -977,12 +993,6 @@ window.CBO = window.CBO || {};
         });
       }, { once: true });
       image.addEventListener("error", () => {
-        namespace.AiBoardMediaDebug?.warn?.("metadata-load-error", {
-          durationMs: performance.now() - startedAt,
-          kind: "image",
-          name: sample.name || "",
-          src: sample.src,
-        });
         reject(new Error(`Unable to load AI board image sample: ${sample.src}`));
       }, { once: true });
       image.decoding = "async";
@@ -1007,15 +1017,6 @@ window.CBO = window.CBO || {};
     board.height = board.generatedMedia.height;
     board.width = board.generatedMedia.width;
     board.name = board.generatedMedia.name;
-    namespace.AiBoardMediaDebug?.log?.("sample-applied", {
-      boardId,
-      height: board.generatedMedia.height,
-      kind: board.generatedMedia.kind,
-      name: board.generatedMedia.name,
-      pixelMB: (board.generatedMedia.width * board.generatedMedia.height * 4) / 1048576,
-      src: board.generatedMedia.src,
-      width: board.generatedMedia.width,
-    });
 
     return true;
   }
@@ -1025,10 +1026,6 @@ window.CBO = window.CBO || {};
     const activeRunId = aiImageGenerationRuns.get(normalizedBoardId);
 
     if (!normalizedBoardId || activeRunId !== runId) {
-      namespace.AiBoardMediaDebug?.warn?.("generate-stale-run", {
-        boardId: normalizedBoardId,
-        runId,
-      });
       return;
     }
 
@@ -1037,10 +1034,6 @@ window.CBO = window.CBO || {};
     const sample = pickRandomAiImageSample(board?.generatedMedia?.src || "");
 
     if (!board || !sample) {
-      namespace.AiBoardMediaDebug?.warn?.("generate-missing-board-or-sample", {
-        boardId: normalizedBoardId,
-        runId,
-      });
       aiImageGeneratingBoardIds.delete(normalizedBoardId);
       aiImageGenerationRuns.delete(normalizedBoardId);
       aiImageGenerationPreviewTimers.delete(normalizedBoardId);
@@ -1051,10 +1044,6 @@ window.CBO = window.CBO || {};
     loadAiImageSampleMetadata(sample)
       .then((sampleWithMeta) => {
         if (aiImageGenerationRuns.get(normalizedBoardId) !== runId) {
-          namespace.AiBoardMediaDebug?.warn?.("metadata-stale-run", {
-            boardId: normalizedBoardId,
-            runId,
-          });
           return;
         }
 
@@ -1077,11 +1066,6 @@ window.CBO = window.CBO || {};
       })
       .catch((error) => {
         console.warn("[CBO] Unable to apply AI image sample.", error);
-        namespace.AiBoardMediaDebug?.warn?.("generate-error", {
-          boardId: normalizedBoardId,
-          message: error?.message || String(error || "error"),
-          runId,
-        });
         aiImageGeneratingBoardIds.delete(normalizedBoardId);
         aiImageGenerationRuns.delete(normalizedBoardId);
         aiImageGenerationPreviewTimers.delete(normalizedBoardId);
@@ -1110,11 +1094,6 @@ window.CBO = window.CBO || {};
 
     aiImageGenerationRuns.set(normalizedBoardId, runId);
     aiImageGeneratingBoardIds.add(normalizedBoardId);
-    namespace.AiBoardMediaDebug?.log?.("generate-start", {
-      boardId: normalizedBoardId,
-      loadingBoards: aiImageGeneratingBoardIds.size,
-      runId,
-    });
     renderSpaceBoards();
 
     const timerId = window.setTimeout(() => {
@@ -1171,7 +1150,6 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    const startedAt = performance.now();
     const node = document.createElement(kind === "video" ? "video" : "img");
 
     node.className = "editor-ai-image-board-media-item";
@@ -1184,78 +1162,14 @@ window.CBO = window.CBO || {};
       node.playsInline = true;
       node.preload = "metadata";
       node.addEventListener("loadedmetadata", () => {
-        namespace.AiBoardMediaDebug?.recordTiming?.("media-node-metadata", {
-          boardId: board?.id || "",
-          durationMs: performance.now() - startedAt,
-          height: Number(node.videoHeight) || 0,
-          kind,
-          networkState: node.networkState,
-          readyState: node.readyState,
-          src,
-          width: Number(node.videoWidth) || 0,
-        }, {
-          always: true,
-          metric: "mediaLoadMs",
-          warnAtMs: 250,
-        });
         node.pause();
-      }, { once: true });
-      node.addEventListener("error", () => {
-        namespace.AiBoardMediaDebug?.warn?.("media-node-error", {
-          boardId: board?.id || "",
-          kind,
-          networkState: node.networkState,
-          readyState: node.readyState,
-          src,
-        });
-      }, { once: true });
-      node.addEventListener("stalled", () => {
-        namespace.AiBoardMediaDebug?.warn?.("media-node-stalled", {
-          boardId: board?.id || "",
-          kind,
-          networkState: node.networkState,
-          readyState: node.readyState,
-          src,
-        });
       }, { once: true });
     } else {
       node.alt = String(media.name || "Generated AI sample");
       node.decoding = "async";
       node.loading = "eager";
-      node.addEventListener("load", () => {
-        namespace.AiBoardMediaDebug?.recordTiming?.("media-node-load", {
-          boardId: board?.id || "",
-          complete: node.complete,
-          durationMs: performance.now() - startedAt,
-          height: Number(node.naturalHeight) || 0,
-          kind,
-          src,
-          width: Number(node.naturalWidth) || 0,
-        }, {
-          always: true,
-          metric: "mediaLoadMs",
-          warnAtMs: 250,
-        });
-      }, { once: true });
-      node.addEventListener("error", () => {
-        namespace.AiBoardMediaDebug?.warn?.("media-node-error", {
-          boardId: board?.id || "",
-          complete: node.complete,
-          kind,
-          src,
-        });
-      }, { once: true });
     }
 
-    namespace.AiBoardMediaDebug?.log?.("media-node-create", {
-      boardId: board?.id || "",
-      height: Number(media.height) || 0,
-      kind,
-      name: media.name || "",
-      pixelMB: ((Number(media.width) || 0) * (Number(media.height) || 0) * 4) / 1048576,
-      src,
-      width: Number(media.width) || 0,
-    });
     node.setAttribute("width", String(Math.max(1, Math.round(Number(media.width) || AI_IMAGE_BOARD_SIZE_DOC_PX))));
     node.setAttribute("height", String(Math.max(1, Math.round(Number(media.height) || AI_IMAGE_BOARD_SIZE_DOC_PX))));
     node.src = src;
@@ -1526,6 +1440,14 @@ window.CBO = window.CBO || {};
       return null;
     }
 
+    if (shouldUsePlainAiBoardArtboards()) {
+      return {
+        x: Number(board.x) || 0,
+        y: (Number(board.y) || 0) +
+          (Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX),
+      };
+    }
+
     const metrics = getActionBubbleMetrics();
 
     return {
@@ -1602,19 +1524,25 @@ window.CBO = window.CBO || {};
 
   function createConnectionPath(connection, options = {}) {
     const sourceArtboard = getArtboardById(connection.sourceArtboardId);
-    const source = getActionAnchorPoint(sourceArtboard);
-    const target = getConnectionEndPoint(connection);
+    const sourceDoc = getActionAnchorPoint(sourceArtboard);
+    const targetDoc = getConnectionEndPoint(connection);
 
-    if (!source || !target) {
+    if (!sourceDoc || !targetDoc) {
       return null;
     }
 
+    const plainArtboardMode = shouldUsePlainAiBoardArtboards();
+    const source = plainArtboardMode ? documentPointToStagePoint(sourceDoc) : sourceDoc;
+    const target = plainArtboardMode ? documentPointToStagePoint(targetDoc) : targetDoc;
+    const pathScale = plainArtboardMode ? 0.5 : 1;
+    const strokeWidth = plainArtboardMode ? 1.5 : getConnectionStrokeWidth(1);
+
     return createSvgElement("path", {
       class: `editor-artboard-connection-path${options.active ? " is-active" : ""}`,
-      d: createConnectionPathD(source, target, 1),
+      d: createConnectionPathD(source, target, pathScale),
       "data-connection-id": connection.id || "",
       "marker-end": "url(#editor-artboard-connection-arrow)",
-      "stroke-width": getConnectionStrokeWidth(1),
+      "stroke-width": strokeWidth,
     });
   }
 
@@ -1683,6 +1611,18 @@ window.CBO = window.CBO || {};
       ].join(":"));
     }
 
+    if (shouldUsePlainAiBoardArtboards()) {
+      const { camera, dpr } = getCameraState();
+
+      records.push([
+        "plain-view",
+        roundConnectionGeometryValue(camera.x),
+        roundConnectionGeometryValue(camera.y),
+        roundConnectionGeometryValue(camera.zoom),
+        roundConnectionGeometryValue(dpr),
+      ].join(":"));
+    }
+
     return records.join("|");
   }
 
@@ -1721,7 +1661,6 @@ window.CBO = window.CBO || {};
   }
 
   function renderSpaceBoards() {
-    const debugStartedAt = performance.now();
     const layer = ensureSpaceBoardLayer();
     const pane = renderSpaceBoardPaneTransform();
 
@@ -1729,6 +1668,8 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    const viewState = getCameraState();
+    const viewScale = getViewScale();
     const handleMetrics = getActionBubbleMetrics(1);
     const renderedIds = new Set();
 
@@ -1745,10 +1686,21 @@ window.CBO = window.CBO || {};
 
       renderedIds.add(board.id);
 
-      const width = Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
-      const height = Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+      const docWidth = Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+      const docHeight = Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+      const plainArtboardMode = shouldUsePlainAiBoardArtboards();
+      const point = plainArtboardMode
+        ? documentPointToStagePoint({ x: board.x, y: board.y }, viewState)
+        : { x: 0, y: 0 };
+      const width = plainArtboardMode
+        ? Math.max(1, docWidth * viewScale)
+        : docWidth;
+      const height = plainArtboardMode
+        ? Math.max(1, docHeight * viewScale)
+        : docHeight;
+      const plainControlSize = Math.max(18, Math.min(34, Math.round(ACTION_BUBBLE_SIZE_DOC_PX * viewScale)));
       const label = element.querySelector("[data-ai-image-board-drag-handle]");
-      const shouldMountHeavy = shouldMountAiImageBoardHeavyContent(board, element);
+      const shouldMountHeavy = !plainArtboardMode && shouldMountAiImageBoardHeavyContent(board, element);
       const isNearViewport = isSpaceBoardNearViewport(board);
       const isMobileLean = isMobileLikeSpaceBoardViewport() &&
         getSpaceBoardMinScreenSize(board) < SPACE_BOARD_MOBILE_HEAVY_MIN_SCREEN_PX;
@@ -1761,36 +1713,52 @@ window.CBO = window.CBO || {};
 
       const promptInput = element.querySelector("[data-ai-image-board-prompt-input]");
       const isHeavyMounted = element.dataset.aiImageBoardHeavyMounted === "true";
+      const isGenerating = aiImageGeneratingBoardIds.has(board.id);
+      const generateButton = element.querySelector("[data-ai-image-board-generate]");
 
-      setStylePropertyIfChanged(element, "left", "0px");
-      setStylePropertyIfChanged(element, "top", "0px");
+      setStylePropertyIfChanged(element, "left", `${point.x}px`);
+      setStylePropertyIfChanged(element, "top", `${point.y}px`);
       setStylePropertyIfChanged(element, "width", `${width}px`);
       setStylePropertyIfChanged(element, "height", `${height}px`);
-      setStylePropertyIfChanged(element, "transform", `translate3d(${Number(board.x) || 0}px, ${Number(board.y) || 0}px, 0)`);
+      setCssVarIfChanged(element, "--ai-plain-control-size", `${plainControlSize}px`);
+      const boardTransform = plainArtboardMode
+        ? "none"
+        : `translate3d(${Number(board.x) || 0}px, ${Number(board.y) || 0}px, 0)`;
+
+      setStylePropertyIfChanged(element, "transform", boardTransform);
       setCssVarIfChanged(element, "--ai-image-board-radius", `${AI_IMAGE_BOARD_RADIUS_DOC_PX}px`);
       setCssVarIfChanged(element, "--ai-image-input-handle-size", `${handleMetrics.sizeDoc}px`);
       setCssVarIfChanged(element, "--ai-image-input-handle-left", `${(handleMetrics.sizeDoc + handleMetrics.gapDoc) * -1}px`);
-      setCssVarIfChanged(element, "--ai-image-input-handle-top", `${height - handleMetrics.gapDoc - handleMetrics.sizeDoc}px`);
+      setCssVarIfChanged(element, "--ai-image-input-handle-top", `${docHeight - handleMetrics.gapDoc - handleMetrics.sizeDoc}px`);
       setCssVarIfChanged(element, "--ai-image-input-border-width", `${handleMetrics.borderWidthDoc}px`);
       setCssVarIfChanged(element, "--ai-image-input-icon-size", `${handleMetrics.iconSizeDoc}px`);
       setCssVarIfChanged(element, "--ai-image-generate-handle-size", `${AI_IMAGE_GENERATE_HANDLE_SIZE_DOC_PX}px`);
-      setCssVarIfChanged(element, "--ai-image-generate-handle-left", `${width + AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
+      setCssVarIfChanged(element, "--ai-image-generate-handle-left", `${docWidth + AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
       setCssVarIfChanged(element, "--ai-image-generate-handle-top", `${AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
       setCssVarIfChanged(element, "--ai-image-generate-border-width", `${handleMetrics.borderWidthDoc}px`);
       setCssVarIfChanged(element, "--ai-image-generate-icon-size", `${handleMetrics.iconSizeDoc}px`);
-      element.classList.toggle("is-generating", isHeavyMounted && aiImageGeneratingBoardIds.has(board.id));
+      element.classList.toggle("is-generating", isGenerating && (plainArtboardMode || isHeavyMounted));
       element.classList.toggle("is-heavy-mounted", isHeavyMounted);
       element.classList.toggle("is-near-viewport", isNearViewport);
       element.classList.toggle("is-selected", selectedSpaceBoardId === board.id);
       element.classList.toggle("is-mobile-lean", isMobileLean);
       element.classList.toggle("has-generated-media", Boolean(board.generatedMedia?.src));
+      if (generateButton) {
+        generateButton.disabled = isGenerating;
+        generateButton.classList.toggle("is-loading", isGenerating);
+        if (isGenerating) {
+          generateButton.setAttribute("aria-busy", "true");
+        } else {
+          generateButton.removeAttribute("aria-busy");
+        }
+      }
 
-      if (isHeavyMounted) {
+      if (plainArtboardMode || isHeavyMounted) {
         renderAiImageBoardGeneratedMedia(element, board);
       }
 
       if (label) {
-        label.textContent = `${board.name || "AI Image board"} ${width} x ${height}`;
+        label.textContent = `${board.name || "AI Image board"} ${docWidth} x ${docHeight}`;
       }
 
       if (promptInput && document.activeElement !== promptInput) {
@@ -1812,18 +1780,6 @@ window.CBO = window.CBO || {};
       }
     });
 
-    namespace.AiBoardMediaDebug?.recordTiming?.("render-space-boards", {
-      boards: spaceBoards.length,
-      durationMs: performance.now() - debugStartedAt,
-      generatedBoards: spaceBoards.filter((board) => board?.generatedMedia).length,
-      heavyBoards: layer.querySelectorAll("[data-ai-image-board][data-ai-image-board-heavy-mounted='true']").length,
-      imageNodes: layer.querySelectorAll("[data-ai-image-board-media] img").length,
-      loadingBoards: aiImageGeneratingBoardIds.size,
-      videoNodes: layer.querySelectorAll("[data-ai-image-board-media] video").length,
-    }, {
-      metric: "renderBoardsMs",
-      warnAtMs: 12,
-    });
   }
 
   function getConnectionById(connectionId) {
@@ -1873,21 +1829,10 @@ window.CBO = window.CBO || {};
   }
 
   function renderConnectionOverlay() {
-    const debugStartedAt = performance.now();
     renderSpaceBoards();
     renderActions();
     renderConnections();
     renderConnectionMenu();
-    namespace.AiBoardMediaDebug?.recordTiming?.("render-overlay", {
-      boards: spaceBoards.length,
-      connectionPaths: getStage()?.querySelectorAll?.("[data-artboard-connection-layer] path.editor-artboard-connection-path")?.length || 0,
-      connections: connections.length,
-      durationMs: performance.now() - debugStartedAt,
-      generatedBoards: spaceBoards.filter((board) => board?.generatedMedia).length,
-    }, {
-      metric: "renderBoardsMs",
-      warnAtMs: 16,
-    });
   }
 
   function dismissConnectionMenu(options = {}) {
@@ -2023,15 +1968,6 @@ window.CBO = window.CBO || {};
     };
 
     spaceBoards.push(board);
-    namespace.AiBoardMediaDebug?.log?.("empty-board-created", {
-      boardDomNodes: getStage()?.querySelectorAll?.("[data-ai-image-board]")?.length || 0,
-      boardId: board.id,
-      boards: spaceBoards.length,
-      height: board.height,
-      width: board.width,
-      x: board.x,
-      y: board.y,
-    });
 
     const targetAnchor = getAiImageBoardInputAnchor(board);
 
@@ -2261,22 +2197,13 @@ window.CBO = window.CBO || {};
   }
 
   function materializeAiImageBoardFromMenu() {
-    const debugStartedAt = performance.now();
     const connection = getConnectionById(menuState?.connectionId);
 
     if (!connection) {
-      namespace.AiBoardMediaDebug?.warn?.("materialize-empty-board-missing-connection", {
-        connectionId: menuState?.connectionId || "",
-      });
       dismissConnectionMenu();
       return;
     }
 
-    namespace.AiBoardMediaDebug?.log?.("materialize-empty-board-start", {
-      boards: spaceBoards.length,
-      connectionId: connection.id,
-      connections: connections.length,
-    });
     const beforeState = captureConnectionsHistoryState({
       excludeConnectionIds: [connection.id],
     });
@@ -2292,16 +2219,6 @@ window.CBO = window.CBO || {};
       type: "space-board-create",
     });
     renderConnectionOverlay();
-    namespace.AiBoardMediaDebug?.recordTiming?.("materialize-empty-board-end", {
-      boardDomNodes: getStage()?.querySelectorAll?.("[data-ai-image-board]")?.length || 0,
-      boardId: board?.id || "",
-      boards: spaceBoards.length,
-      connections: connections.length,
-      durationMs: performance.now() - debugStartedAt,
-    }, {
-      always: true,
-      warnAtMs: 16,
-    });
   }
 
   function getDefaultConnectionEndPoint(sourceArtboardId) {
@@ -2547,14 +2464,6 @@ window.CBO = window.CBO || {};
       .map((rect) => ({ ...rect }));
   };
 
-  namespace.isSpaceBoardNearViewport = function isSpaceBoardNearViewportForDebug(boardOrId, marginDocPx) {
-    const board = typeof boardOrId === "string"
-      ? getSpaceBoardById(boardOrId)
-      : boardOrId;
-
-    return isSpaceBoardNearViewport(board, marginDocPx);
-  };
-
   namespace.clearArtboardConnections = function clearArtboardConnections() {
     connections = [];
     spaceBoards = [];
@@ -2569,4 +2478,6 @@ window.CBO = window.CBO || {};
     dismissConnectionMenu({ render: false });
     renderConnectionOverlay();
   };
+
+  document.addEventListener("pointerdown", handleDocumentSpaceBoardSelectionPointerDown, true);
 })(window.CBO);
