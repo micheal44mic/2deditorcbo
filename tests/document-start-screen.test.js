@@ -37,6 +37,8 @@ test("editor starts from a preset-only document chooser", () => {
   assert.match(editorCanvasSource, /window\.CBO\.initEditorDocumentStart = function initEditorDocumentStart\(\)/);
   assert.match(editorCanvasSource, /button\.dataset\.documentPreset = preset\.id/);
   assert.match(editorCanvasSource, /window\.CBO\.initEditorCanvas\(\{[\s\S]*documentHeight: preset\.height,[\s\S]*documentWidth: preset\.width/);
+  assert.match(editorCanvasSource, /startWithNoActiveLayer: true/);
+  assert.match(editorCanvasSource, /layerModel\.setActiveLayer\(null, \{[\s\S]*source: "editor-canvas-start-clear-layer-selection"/);
   assert.match(editorCanvasSource, /documentSaveSystem/);
   assert.match(editorCanvasSource, /saveSystem\.listSummaries\(\)/);
   assert.match(editorCanvasSource, /saveSystem\.restore\(sessionId\)/);

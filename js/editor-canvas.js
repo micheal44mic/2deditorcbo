@@ -774,6 +774,7 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
       documentHeight: preset.height,
       documentWidth: preset.width,
       presetId: preset.id,
+      startWithNoActiveLayer: true,
     });
   });
 
@@ -1271,4 +1272,11 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   dispatchEditorCanvasReady(documentRenderer, documentSize, {
     source: "editor-canvas-init",
   });
+
+  if (options.startWithNoActiveLayer === true) {
+    layerModel.setActiveLayer(null, {
+      history: false,
+      source: "editor-canvas-start-clear-layer-selection",
+    });
+  }
 };

@@ -744,6 +744,7 @@
           this.markNavigationEvent(event);
         } else if (this.shouldStartSelectionTouchCanvasPan(event, documentPoint)) {
           this.markNavigationEvent(event);
+          this.clearSelectionForTouchCanvasPan();
           this.beginPan(event, event.currentTarget || this.stage || this.canvas);
           namespace.EngineGovernor?.markActivity?.({ source: "selection-touch-empty-canvas-pan-start" });
         } else if (this.touchNavigationExclusive) {
@@ -1042,6 +1043,21 @@
         this.shouldStartTouchCanvasPan(event, point) &&
         !this.isTouchCanvasPanInteractiveTarget(event.target)
       );
+    }
+,
+
+    clearSelectionForTouchCanvasPan() {
+      const transformTool = namespace.rasterTransformTool;
+
+      if (transformTool?.hasPendingTransform?.()) {
+        transformTool.commitTransform?.();
+      }
+
+      namespace.documentLayerModel?.setActiveLayer?.(null, {
+        history: false,
+        source: "selection-touch-empty-canvas-pan-clear-layer",
+      });
+      transformTool?.activateLayer?.(null, { selection: true });
     }
 ,
 

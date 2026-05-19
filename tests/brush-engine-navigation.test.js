@@ -125,6 +125,9 @@ test("selection tool touch drag on empty stage starts camera pan before overlays
   assert.match(source, /!this\.isTouchCanvasPanInteractiveTarget\(event\.target\)/);
   assert.match(source, /const documentPoint = this\.screenToDocumentSpace\(event\.clientX, event\.clientY\)/);
   assert.match(source, /this\.shouldStartSelectionTouchCanvasPan\(event, documentPoint\)/);
+  assert.match(source, /clearSelectionForTouchCanvasPan\(\)/);
+  assert.match(source, /source: "selection-touch-empty-canvas-pan-clear-layer"/);
+  assert.match(source, /this\.clearSelectionForTouchCanvasPan\(\);\s*this\.beginPan\(event, event\.currentTarget \|\| this\.stage \|\| this\.canvas\)/);
   assert.match(source, /selection-touch-empty-canvas-pan-start/);
 });
 

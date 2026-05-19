@@ -461,7 +461,7 @@
   box-shadow: none;
   contain: layout style;
   isolation: isolate;
-  outline: var(--ai-image-board-outline-width, 3px) solid #dbdbdb;
+  outline: var(--ai-image-board-outline-width, 5px) solid #dbdbdb;
   outline-offset: 0;
   cursor: default;
   pointer-events: auto;

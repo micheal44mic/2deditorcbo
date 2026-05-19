@@ -228,7 +228,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_LINE_HEIGHT_DOC_PX = 66/);
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_MIN_HEIGHT_DOC_PX = 74/);
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_PREVIEW_LINES = 2/);
-  assert.match(connectionsSource, /AI_IMAGE_BOARD_OUTLINE_DOC_PX = 3/);
+  assert.match(connectionsSource, /AI_IMAGE_BOARD_OUTLINE_DOC_PX = 5/);
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_PADDING_X_DOC_PX = 6/);
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_PADDING_Y_DOC_PX = 4/);
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_EDITOR_RADIUS_DOC_PX = 6/);
@@ -499,7 +499,7 @@ test("artboard connections live in their own module", () => {
   assert.match(cssSource, /visibility: hidden/);
   assert.match(cssSource, /visibility: visible/);
   assert.doesNotMatch(cssSource, /\.editor-ai-image-board-preview-layer\s*\{[^}]*transition: opacity/);
-  assert.match(indexSource, /fixed-board-coordinates-v47/);
+  assert.match(indexSource, /fixed-board-coordinates-v48/);
   assert.match(cssSource, /\.editor-stage[\s\S]*background-color: #f7f7f4/);
   assert.doesNotMatch(cssSource, /background-image: radial-gradient/);
   assert.match(cssSource, /\.editor-canvas-grid-pattern-overlay[\s\S]*contain: strict/);
@@ -551,7 +551,7 @@ test("artboard connections live in their own module", () => {
   assert.doesNotMatch(cssSource, /editor-ai-image-board-loading-spin/);
   assert.match(cssSource, /\.editor-ai-image-board\.is-plain-artboard \{[\s\S]*isolation: isolate/);
   assert.match(cssSource, /\.editor-ai-image-board\.is-plain-artboard \{[\s\S]*border-radius: var\(--ai-image-board-radius, 16px\)/);
-  assert.match(cssSource, /\.editor-ai-image-board\.is-plain-artboard \{[\s\S]*outline: var\(--ai-image-board-outline-width, 3px\) solid #dbdbdb/);
+  assert.match(cssSource, /\.editor-ai-image-board\.is-plain-artboard \{[\s\S]*outline: var\(--ai-image-board-outline-width, 5px\) solid #dbdbdb/);
   assert.match(cssSource, /\.editor-ai-image-board\.is-plain-artboard \{[\s\S]*pointer-events: auto/);
   assert.match(cssSource, /\.editor-ai-image-board\.is-plain-artboard \{[\s\S]*transition: outline-color 150ms ease-in-out/);
   assert.match(cssSource, /\.editor-ai-image-board\.is-plain-artboard\.is-selected \{[\s\S]*outline-color: #f05023/);
