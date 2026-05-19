@@ -89,6 +89,13 @@ window.CBO = window.CBO || {};
   const SPACE_BOARD_MOBILE_HEAVY_MIN_SCREEN_PX = 140;
   const AI_BOARD_ARTBOARD_PLAIN_MODE = true;
   const AI_IMAGE_GENERATE_DUPLICATE_GUARD_MS = 650;
+  const AI_IMAGE_ENLARGE_MIN_VIEWPORT_PX = 280;
+  const AI_IMAGE_ENLARGE_MIN_SCALE = 1;
+  const AI_IMAGE_ENLARGE_MAX_SCALE = 6;
+  const AI_IMAGE_ENLARGE_WHEEL_SPEED = 0.0014;
+  const AI_IMAGE_ENLARGE_EDGE_SLACK_RATIO = 0.35;
+  const AI_IMAGE_ENLARGE_EDGE_SLACK_MAX_PX = 360;
+  const AI_IMAGE_ENLARGE_PINCH_MIN_DISTANCE_PX = 24;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
   let connectionDrag = null;
@@ -101,6 +108,9 @@ window.CBO = window.CBO || {};
   let spaceBoardDrag = null;
   let selectedSpaceBoardId = "";
   let mobileActionToolbar = null;
+  let aiImageEnlargeViewer = null;
+  let aiImageEnlargeState = null;
+  let aiImageEditPreviewViewer = null;
   let lastConnectionsGeometryKey = "";
   let spaceBoardPaneTransformIdleTimer = 0;
   let promptEditState = null;
@@ -1517,7 +1527,7 @@ window.CBO = window.CBO || {};
   function handleDocumentSpaceBoardSelectionPointerDown(event) {
     if (
       !selectedSpaceBoardId ||
-      event.target?.closest?.("[data-ai-image-board], [data-ai-image-board-action-toolbar]")
+      event.target?.closest?.("[data-ai-image-board], [data-ai-image-board-action-toolbar], [data-ai-image-enlarge-viewer], [data-ai-image-edit-preview-viewer]")
     ) {
       return;
     }
@@ -1563,7 +1573,10 @@ window.CBO = window.CBO || {};
       element.prepend(toolbar);
     }
 
-    if (!toolbar.querySelector("[data-ai-image-board-toolbar-action]")) {
+    if (
+      !toolbar.querySelector("[data-ai-image-board-toolbar-action]") ||
+      !toolbar.querySelector('[data-ai-image-board-toolbar-action="edit-preview"]')
+    ) {
       toolbar.innerHTML = getAiImageBoardActionToolbarMarkup();
     }
 
@@ -1583,6 +1596,11 @@ window.CBO = window.CBO || {};
             <rect width="10" height="8" x="7" y="8" rx="1"></rect>
           </svg>
         </button>
+        <button class="editor-ai-image-board-action-toolbar-button" type="button" aria-label="Create with AI" data-ai-image-board-toolbar-action="edit-preview" data-ai-image-board-toolbar-label="Create with AI">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-astroid-icon lucide-astroid" aria-hidden="true">
+            <path d="M12.983 21.186a1 1 0 0 1-1.966 0 10 10 0 0 0-8.203-8.203 1 1 0 0 1 0-1.966 10 10 0 0 0 8.203-8.203 1 1 0 0 1 1.966 0 10 10 0 0 0 8.203 8.203 1 1 0 0 1 0 1.966 10 10 0 0 0-8.203 8.203"></path>
+          </svg>
+        </button>
       </div>
     `;
   }
@@ -1594,7 +1612,7 @@ window.CBO = window.CBO || {};
 
     toolbar.dataset.actionToolbarBound = "true";
     toolbar.addEventListener("pointerdown", stopSpaceBoardControlEvent, true);
-    toolbar.addEventListener("click", stopSpaceBoardControlEvent);
+    toolbar.addEventListener("click", handleAiImageBoardActionToolbarClick);
   }
 
   function ensureAiImageBoardMobileActionToolbar() {
@@ -1626,6 +1644,1104 @@ window.CBO = window.CBO || {};
     toolbar.dataset.boardId = normalizedBoardId;
     toolbar.classList.toggle("is-active", Boolean(normalizedBoardId));
     toolbar.setAttribute("aria-hidden", normalizedBoardId ? "false" : "true");
+    updateAiImageBoardActionToolbarState(toolbar, getSpaceBoardById(normalizedBoardId));
+  }
+
+  function updateAiImageBoardActionToolbarState(toolbar, board) {
+    const fullscreenButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="fullscreen"]');
+    const editPreviewButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="edit-preview"]');
+    const canEnlarge = Boolean(getAiImageBoardEnlargeMedia(board));
+    const canEditPreview = Boolean(getAiImageBoardEditPreviewMedia(board));
+
+    setAiImageBoardToolbarButtonEnabled(fullscreenButton, canEnlarge);
+    setAiImageBoardToolbarButtonEnabled(editPreviewButton, canEditPreview);
+  }
+
+  function setAiImageBoardToolbarButtonEnabled(button, enabled) {
+    if (!button) {
+      return;
+    }
+
+    button.disabled = !enabled;
+    button.setAttribute("aria-disabled", enabled ? "false" : "true");
+  }
+
+  function handleAiImageBoardActionToolbarClick(event) {
+    const actionButton = event.target?.closest?.("[data-ai-image-board-toolbar-action]");
+
+    stopSpaceBoardControlEvent(event);
+
+    if (!actionButton) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (actionButton.disabled) {
+      return;
+    }
+
+    const action = actionButton.dataset.aiImageBoardToolbarAction;
+
+    if (action !== "fullscreen" && action !== "edit-preview") {
+      return;
+    }
+
+    const toolbar = actionButton.closest("[data-ai-image-board-action-toolbar]");
+    const boardId = String(
+      actionButton.closest("[data-ai-image-board]")?.dataset?.boardId ||
+      toolbar?.dataset?.boardId ||
+      ""
+    ).trim();
+
+    if (action === "fullscreen") {
+      openAiImageBoardEnlargeViewer(boardId);
+    } else {
+      openAiImageBoardEditPreview(boardId);
+    }
+  }
+
+  function isAiImageBoardEnlargeViewportAllowed() {
+    const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0);
+
+    return viewportWidth >= AI_IMAGE_ENLARGE_MIN_VIEWPORT_PX;
+  }
+
+  function getAiImageBoardEnlargeMedia(board) {
+    const media = board?.generatedMedia || null;
+    const src = String(media?.src || "").trim();
+    const kind = media?.kind === "video" ? "video" : "image";
+
+    if (!src || kind !== "image") {
+      return null;
+    }
+
+    return {
+      height: Math.max(1, Math.round(Number(media?.height || board?.height) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+      name: String(media?.name || board?.name || "AI Image board"),
+      src,
+      width: Math.max(1, Math.round(Number(media?.width || board?.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+    };
+  }
+
+  function getAiImageBoardEditPreviewMedia(board) {
+    if (!board || board.type !== "ai-image" || !shouldUsePlainAiBoardArtboards()) {
+      return null;
+    }
+
+    const media = getAiImageBoardEnlargeMedia(board);
+
+    return {
+      height: media?.height || Math.max(1, Math.round(Number(board?.height) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+      name: media?.name || String(board?.name || "AI Image board"),
+      src: media?.src || "",
+      width: media?.width || Math.max(1, Math.round(Number(board?.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+    };
+  }
+
+  function isAiImageBoardEditPreviewViewportAllowed() {
+    const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0);
+
+    return viewportWidth >= AI_IMAGE_ENLARGE_MIN_VIEWPORT_PX;
+  }
+
+  function ensureAiImageBoardEditPreviewViewer() {
+    if (aiImageEditPreviewViewer?.isConnected) {
+      return aiImageEditPreviewViewer;
+    }
+
+    aiImageEditPreviewViewer?.remove();
+    aiImageEditPreviewViewer = document.createElement("div");
+    aiImageEditPreviewViewer.className = "editor-ai-image-edit-preview-viewer";
+    aiImageEditPreviewViewer.dataset.aiImageEditPreviewViewer = "";
+    aiImageEditPreviewViewer.hidden = true;
+    aiImageEditPreviewViewer.setAttribute("aria-hidden", "true");
+    aiImageEditPreviewViewer.setAttribute("aria-label", "Create with AI");
+    aiImageEditPreviewViewer.setAttribute("aria-modal", "true");
+    aiImageEditPreviewViewer.setAttribute("role", "dialog");
+    aiImageEditPreviewViewer.innerHTML = `
+      <div class="editor-ai-image-edit-preview-shell" data-ai-image-edit-preview-shell>
+        <div class="editor-ai-image-edit-preview-header">
+          <button class="editor-ai-image-edit-preview-close" type="button" aria-label="Close edit preview" data-ai-image-edit-preview-close>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18"></path>
+              <path d="m6 6 12 12"></path>
+            </svg>
+          </button>
+          <div class="editor-ai-image-edit-preview-title">Create with AI</div>
+        </div>
+        <div class="editor-ai-image-edit-preview-body">
+          <div class="editor-ai-image-edit-preview-media-frame" data-ai-image-edit-preview-media-frame>
+            <img class="editor-ai-image-edit-preview-image" data-ai-image-edit-preview-image alt="" draggable="false">
+          </div>
+          <div class="editor-ai-image-edit-preview-prompt">
+            <textarea class="editor-ai-image-edit-preview-prompt-input" data-ai-image-edit-preview-prompt-input aria-label="Create with AI prompt" placeholder="What do you want to create?" spellcheck="true"></textarea>
+            <div class="editor-ai-image-edit-preview-prompt-row">
+              <span class="editor-ai-image-edit-preview-chip is-active">Prompt</span>
+              <span class="editor-ai-image-edit-preview-chip">Visual</span>
+              <span class="editor-ai-image-edit-preview-attach">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.82-2.83l8.49-8.48"></path>
+                </svg>
+              </span>
+              <span class="editor-ai-image-edit-preview-mode">Automatic</span>
+              <button class="editor-ai-image-edit-preview-send" type="button" aria-label="Generate image" data-ai-image-edit-preview-send>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 19V5"></path>
+                  <path d="m5 12 7-7 7 7"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="editor-ai-image-edit-preview-meta">
+            <span>37%</span>
+            <span data-ai-image-edit-preview-dimensions></span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-close]")
+      ?.addEventListener("click", (event) => {
+        event.preventDefault();
+        stopSpaceBoardControlEvent(event);
+        closeAiImageBoardEditPreview();
+      });
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      ?.addEventListener("focus", handleAiImageEditPreviewPromptFocus);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      ?.addEventListener("input", handleAiImageEditPreviewPromptInput);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      ?.addEventListener("blur", handleAiImageEditPreviewPromptBlur);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      ?.addEventListener("keydown", handleAiImageEditPreviewPromptKeyDown);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-send]")
+      ?.addEventListener("click", handleAiImageEditPreviewSendClick);
+    aiImageEditPreviewViewer.addEventListener("pointerdown", stopSpaceBoardControlEvent, true);
+    aiImageEditPreviewViewer.addEventListener("click", stopSpaceBoardControlEvent);
+    document.body.appendChild(aiImageEditPreviewViewer);
+    return aiImageEditPreviewViewer;
+  }
+
+  function openAiImageBoardEditPreview(boardId) {
+    const board = getSpaceBoardById(boardId);
+    const media = getAiImageBoardEditPreviewMedia(board);
+
+    if (!media || !isAiImageBoardEditPreviewViewportAllowed()) {
+      return false;
+    }
+
+    closeAiImageBoardEnlargeViewer();
+
+    const viewer = ensureAiImageBoardEditPreviewViewer();
+
+    viewer.dataset.boardId = board.id;
+    viewer.hidden = false;
+    viewer.setAttribute("aria-hidden", "false");
+    document.body.classList.add("editor-ai-image-edit-preview-open");
+
+    syncAiImageEditPreviewViewerFromBoard({ forcePrompt: true });
+
+    window.addEventListener("keydown", handleAiImageBoardEditPreviewKeyDown, true);
+    window.addEventListener("resize", handleAiImageBoardEditPreviewResize);
+    viewer.querySelector("[data-ai-image-edit-preview-close]")?.focus?.({ preventScroll: true });
+    return true;
+  }
+
+  function closeAiImageBoardEditPreview() {
+    const viewer = aiImageEditPreviewViewer;
+    const image = viewer?.querySelector?.("[data-ai-image-edit-preview-image]");
+    const promptInput = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
+
+    commitAiImageEditPreviewPromptInput(promptInput);
+
+    window.removeEventListener("keydown", handleAiImageBoardEditPreviewKeyDown, true);
+    window.removeEventListener("resize", handleAiImageBoardEditPreviewResize);
+    document.body.classList.remove("editor-ai-image-edit-preview-open");
+
+    if (!viewer) {
+      return;
+    }
+
+    viewer.hidden = true;
+    viewer.classList.remove("is-empty", "is-generating");
+    viewer.setAttribute("aria-hidden", "true");
+    delete viewer.dataset.boardId;
+
+    if (image) {
+      image.alt = "";
+      image.hidden = false;
+      image.removeAttribute("src");
+    }
+  }
+
+  function syncAiImageEditPreviewViewerFromBoard(options = {}) {
+    const viewer = aiImageEditPreviewViewer;
+    const board = getSpaceBoardById(viewer?.dataset?.boardId || "");
+    const media = getAiImageBoardEditPreviewMedia(board);
+    const frame = viewer?.querySelector?.("[data-ai-image-edit-preview-media-frame]");
+    const image = viewer?.querySelector?.("[data-ai-image-edit-preview-image]");
+    const dimensions = viewer?.querySelector?.("[data-ai-image-edit-preview-dimensions]");
+    const promptInput = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
+    const sendButton = viewer?.querySelector?.("[data-ai-image-edit-preview-send]");
+
+    if (!viewer || viewer.hidden || !board || !media || !image) {
+      return false;
+    }
+
+    const hasImage = Boolean(media.src);
+    const isGenerating = aiImageGeneratingBoardIds.has(board.id);
+
+    viewer.classList.toggle("is-empty", !hasImage);
+    viewer.classList.toggle("is-generating", isGenerating);
+    frame?.classList.toggle("is-empty", !hasImage);
+    frame?.classList.toggle("is-generating", isGenerating);
+    frame?.style.setProperty("--editor-ai-image-edit-preview-media-ratio", `${media.width} / ${media.height}`);
+
+    image.hidden = !hasImage;
+    image.alt = hasImage ? media.name : "";
+    image.decoding = "async";
+    image.loading = "eager";
+
+    if (hasImage) {
+      if (image.getAttribute("src") !== media.src) {
+        image.src = media.src;
+      }
+    } else {
+      image.removeAttribute("src");
+    }
+
+    if (dimensions) {
+      dimensions.textContent = `${media.width}x${media.height} px`;
+    }
+
+    if (promptInput && (options.forcePrompt || document.activeElement !== promptInput)) {
+      promptInput.value = getAiImageBoardPromptText(board);
+    }
+
+    if (sendButton) {
+      sendButton.disabled = isGenerating;
+      sendButton.classList.toggle("is-loading", isGenerating);
+
+      if (isGenerating) {
+        sendButton.setAttribute("aria-busy", "true");
+      } else {
+        sendButton.removeAttribute("aria-busy");
+      }
+    }
+
+    return true;
+  }
+
+  function getAiImageBoardPromptText(board) {
+    const promptText = String(board?.promptText || "");
+
+    return promptText || String(board?.captionText || "");
+  }
+
+  function setAiImageBoardPromptText(board, value, options = {}) {
+    if (!board) {
+      return false;
+    }
+
+    const nextValue = String(value || "");
+    const changed = String(board.promptText || "") !== nextValue || String(board.captionText || "") !== nextValue;
+
+    board.promptText = nextValue;
+    board.captionText = nextValue;
+    syncAiImageBoardPromptTextControls(board, options);
+
+    if (options.emitSource) {
+      emitConnectionsChange(options.emitSource);
+    }
+
+    return changed;
+  }
+
+  function syncAiImageBoardPromptTextControls(board, options = {}) {
+    if (!board) {
+      return false;
+    }
+
+    const value = getAiImageBoardPromptText(board);
+    const boardElement = getSpaceBoardElement(board.id);
+    const boardPromptInput = boardElement?.querySelector?.("[data-ai-image-board-prompt-input]");
+
+    if (boardPromptInput && (options.force || document.activeElement !== boardPromptInput)) {
+      boardPromptInput.value = value;
+      resizeAiImagePromptInput(boardPromptInput);
+    }
+
+    updateAiImageCaptionControls(boardElement, board, selectedSpaceBoardId === board.id);
+
+    const previewInput = aiImageEditPreviewViewer?.dataset?.boardId === board.id
+      ? aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      : null;
+
+    if (previewInput && (options.force || document.activeElement !== previewInput)) {
+      previewInput.value = value;
+    }
+
+    return true;
+  }
+
+  function getAiImageEditPreviewBoardFromEvent(event) {
+    const viewer = event.currentTarget?.closest?.("[data-ai-image-edit-preview-viewer]");
+
+    return getSpaceBoardById(viewer?.dataset?.boardId || "");
+  }
+
+  function syncAiImageEditPreviewPromptToBoard(input) {
+    const viewer = input?.closest?.("[data-ai-image-edit-preview-viewer]");
+    const board = getSpaceBoardById(viewer?.dataset?.boardId || "");
+    const value = String(input?.value || "");
+
+    if (!board) {
+      return false;
+    }
+
+    setAiImageBoardPromptText(board, value, {
+      emitSource: "ai-image-edit-preview-prompt-input",
+    });
+    return true;
+  }
+
+  function handleAiImageEditPreviewPromptFocus(event) {
+    const board = getAiImageEditPreviewBoardFromEvent(event);
+
+    if (!board) {
+      return;
+    }
+
+    promptEditState = {
+      beforeState: captureConnectionsHistoryState(),
+      boardId: board.id,
+      value: getAiImageBoardPromptText(board),
+    };
+  }
+
+  function handleAiImageEditPreviewPromptInput(event) {
+    syncAiImageEditPreviewPromptToBoard(event.currentTarget);
+  }
+
+  function commitAiImageEditPreviewPromptInput(input) {
+    const viewer = input?.closest?.("[data-ai-image-edit-preview-viewer]");
+    const board = getSpaceBoardById(viewer?.dataset?.boardId || "");
+    const editState = promptEditState;
+
+    if (!board || !editState || editState.boardId !== board.id) {
+      return;
+    }
+
+    promptEditState = null;
+
+    const nextValue = String(input?.value || "");
+
+    if (nextValue === editState.value) {
+      return;
+    }
+
+    pushConnectionsHistoryEntry(editState.beforeState, captureConnectionsHistoryState(), {
+      historyGroup: `space-board-prompt-${board.id}`,
+      source: "ai-image-edit-preview-prompt-input",
+      type: "space-board-prompt",
+    });
+  }
+
+  function handleAiImageEditPreviewPromptBlur(event) {
+    commitAiImageEditPreviewPromptInput(event.currentTarget);
+  }
+
+  function handleAiImageEditPreviewPromptKeyDown(event) {
+    if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      triggerAiImageEditPreviewGenerate(event.currentTarget?.closest?.("[data-ai-image-edit-preview-viewer]"));
+      return;
+    }
+
+    stopSpaceBoardControlEvent(event);
+  }
+
+  function handleAiImageEditPreviewSendClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    triggerAiImageEditPreviewGenerate(event.currentTarget?.closest?.("[data-ai-image-edit-preview-viewer]"));
+  }
+
+  function triggerAiImageEditPreviewGenerate(viewer) {
+    const promptInput = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
+    const board = getSpaceBoardById(viewer?.dataset?.boardId || "");
+
+    if (!board || !shouldHandleAiImageGenerateActivation({ type: "click" }, board.id)) {
+      return false;
+    }
+
+    syncAiImageEditPreviewPromptToBoard(promptInput);
+    requestAiImageBoardGeneration(board.id, "ai-image-edit-preview");
+    syncAiImageEditPreviewViewerFromBoard();
+    return true;
+  }
+
+  function handleAiImageBoardEditPreviewKeyDown(event) {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    closeAiImageBoardEditPreview();
+  }
+
+  function handleAiImageBoardEditPreviewResize() {
+    if (!aiImageEditPreviewViewer || aiImageEditPreviewViewer.hidden) {
+      return;
+    }
+
+    if (!isAiImageBoardEditPreviewViewportAllowed()) {
+      closeAiImageBoardEditPreview();
+    }
+  }
+
+  function ensureAiImageBoardEnlargeViewer() {
+    if (aiImageEnlargeViewer?.isConnected) {
+      return aiImageEnlargeViewer;
+    }
+
+    aiImageEnlargeViewer?.remove();
+    aiImageEnlargeViewer = document.createElement("div");
+    aiImageEnlargeViewer.className = "editor-ai-image-enlarge-viewer";
+    aiImageEnlargeViewer.dataset.aiImageEnlargeViewer = "";
+    aiImageEnlargeViewer.hidden = true;
+    aiImageEnlargeViewer.setAttribute("aria-hidden", "true");
+    aiImageEnlargeViewer.setAttribute("aria-label", "Image preview");
+    aiImageEnlargeViewer.setAttribute("aria-modal", "true");
+    aiImageEnlargeViewer.setAttribute("role", "dialog");
+    aiImageEnlargeViewer.innerHTML = `
+      <div class="editor-ai-image-enlarge-shell" data-ai-image-enlarge-shell>
+        <div class="editor-ai-image-enlarge-header" data-ai-image-enlarge-header>
+          <button class="editor-ai-image-enlarge-close" type="button" aria-label="Close preview" data-ai-image-enlarge-close>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18"></path>
+              <path d="m6 6 12 12"></path>
+            </svg>
+          </button>
+          <div class="editor-ai-image-enlarge-title" data-ai-image-enlarge-title></div>
+          <div class="editor-ai-image-enlarge-actions">
+            <button class="editor-ai-image-enlarge-download" type="button" data-ai-image-enlarge-download disabled aria-disabled="true">Download</button>
+          </div>
+        </div>
+        <div class="editor-ai-image-enlarge-stage" data-ai-image-enlarge-stage>
+          <img class="editor-ai-image-enlarge-image" data-ai-image-enlarge-image alt="" draggable="false">
+          <div class="editor-ai-image-enlarge-meta">
+            <span data-ai-image-enlarge-zoom>100%</span>
+            <span data-ai-image-enlarge-dimensions></span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const stage = aiImageEnlargeViewer.querySelector("[data-ai-image-enlarge-stage]");
+    const image = aiImageEnlargeViewer.querySelector("[data-ai-image-enlarge-image]");
+
+    aiImageEnlargeViewer.querySelector("[data-ai-image-enlarge-close]")
+      ?.addEventListener("click", (event) => {
+        event.preventDefault();
+        stopSpaceBoardControlEvent(event);
+        closeAiImageBoardEnlargeViewer();
+      });
+    aiImageEnlargeViewer.querySelector("[data-ai-image-enlarge-download]")
+      ?.addEventListener("click", stopSpaceBoardControlEvent);
+    stage?.addEventListener("wheel", handleAiImageBoardEnlargeWheel, { passive: false });
+    stage?.addEventListener("auxclick", handleAiImageBoardEnlargeAuxClick);
+    stage?.addEventListener("pointerdown", handleAiImageBoardEnlargePointerDown);
+    stage?.addEventListener("pointermove", handleAiImageBoardEnlargePointerMove);
+    stage?.addEventListener("pointerup", handleAiImageBoardEnlargePointerEnd);
+    stage?.addEventListener("pointercancel", handleAiImageBoardEnlargePointerEnd);
+    image?.addEventListener("load", requestAiImageBoardEnlargeRender);
+
+    document.body.appendChild(aiImageEnlargeViewer);
+    return aiImageEnlargeViewer;
+  }
+
+  function openAiImageBoardEnlargeViewer(boardId) {
+    const board = getSpaceBoardById(boardId);
+    const media = getAiImageBoardEnlargeMedia(board);
+
+    if (!media || !isAiImageBoardEnlargeViewportAllowed()) {
+      return false;
+    }
+
+    closeAiImageBoardEditPreview();
+
+    const viewer = ensureAiImageBoardEnlargeViewer();
+    const stage = viewer.querySelector("[data-ai-image-enlarge-stage]");
+    const image = viewer.querySelector("[data-ai-image-enlarge-image]");
+    const title = viewer.querySelector("[data-ai-image-enlarge-title]");
+    const dimensions = viewer.querySelector("[data-ai-image-enlarge-dimensions]");
+    const closeButton = viewer.querySelector("[data-ai-image-enlarge-close]");
+
+    if (!stage || !image) {
+      return false;
+    }
+
+    cancelAiImageBoardEnlargeRender();
+    aiImageEnlargeState = {
+      activePointers: new Map(),
+      boardId: board.id,
+      frame: 0,
+      gesture: "",
+      image,
+      isPanning: false,
+      lastPointerX: 0,
+      lastPointerY: 0,
+      mediaHeight: media.height,
+      mediaWidth: media.width,
+      offsetX: 0,
+      offsetY: 0,
+      pinchCenterX: 0,
+      pinchCenterY: 0,
+      pinchStartDistance: 0,
+      pinchStartOffsetX: 0,
+      pinchStartOffsetY: 0,
+      pinchStartScale: AI_IMAGE_ENLARGE_MIN_SCALE,
+      pointerId: null,
+      scale: AI_IMAGE_ENLARGE_MIN_SCALE,
+      src: media.src,
+      stage,
+      viewer,
+    };
+
+    viewer.dataset.boardId = board.id;
+    viewer.classList.remove("is-panning", "is-zoomed");
+    viewer.hidden = false;
+    viewer.setAttribute("aria-hidden", "false");
+    document.body.classList.add("editor-ai-image-enlarge-open");
+
+    if (title) {
+      title.textContent = media.name;
+    }
+
+    if (dimensions) {
+      dimensions.textContent = `${media.width}x${media.height} px`;
+    }
+
+    image.alt = media.name;
+    image.decoding = "async";
+    image.loading = "eager";
+    image.style.removeProperty("height");
+    image.style.transform = "translate3d(0px, 0px, 0) scale(1)";
+    image.style.removeProperty("width");
+
+    if (image.getAttribute("src") !== media.src) {
+      image.src = media.src;
+    }
+
+    window.addEventListener("keydown", handleAiImageBoardEnlargeKeyDown, true);
+    window.addEventListener("resize", handleAiImageBoardEnlargeResize);
+    requestAiImageBoardEnlargeRender();
+    closeButton?.focus?.({ preventScroll: true });
+    return true;
+  }
+
+  function closeAiImageBoardEnlargeViewer() {
+    cancelAiImageBoardEnlargeRender();
+
+    const viewer = aiImageEnlargeViewer;
+    const image = viewer?.querySelector?.("[data-ai-image-enlarge-image]");
+
+    aiImageEnlargeState = null;
+    window.removeEventListener("keydown", handleAiImageBoardEnlargeKeyDown, true);
+    window.removeEventListener("resize", handleAiImageBoardEnlargeResize);
+    document.body.classList.remove("editor-ai-image-enlarge-open");
+
+    if (!viewer) {
+      return;
+    }
+
+    viewer.hidden = true;
+    viewer.classList.remove("is-panning", "is-zoomed");
+    viewer.setAttribute("aria-hidden", "true");
+    delete viewer.dataset.boardId;
+
+    if (image) {
+      image.alt = "";
+      image.style.removeProperty("height");
+      image.style.removeProperty("transform");
+      image.style.removeProperty("width");
+      image.removeAttribute("src");
+    }
+  }
+
+  function cancelAiImageBoardEnlargeRender() {
+    if (!aiImageEnlargeState?.frame || typeof window.cancelAnimationFrame !== "function") {
+      if (aiImageEnlargeState) {
+        aiImageEnlargeState.frame = 0;
+      }
+      return;
+    }
+
+    window.cancelAnimationFrame(aiImageEnlargeState.frame);
+    aiImageEnlargeState.frame = 0;
+  }
+
+  function requestAiImageBoardEnlargeRender() {
+    if (!aiImageEnlargeState || aiImageEnlargeState.frame) {
+      return;
+    }
+
+    if (typeof window.requestAnimationFrame !== "function") {
+      renderAiImageBoardEnlargeTransform();
+      return;
+    }
+
+    aiImageEnlargeState.frame = window.requestAnimationFrame(renderAiImageBoardEnlargeTransform);
+  }
+
+  function renderAiImageBoardEnlargeTransform() {
+    const state = aiImageEnlargeState;
+
+    if (!state) {
+      return;
+    }
+
+    state.frame = 0;
+    syncAiImageBoardEnlargeBaseSize();
+    clampAiImageBoardEnlargePan();
+
+    const scale = roundAiImageBoardEnlargeNumber(state.scale);
+    const offsetX = roundAiImageBoardEnlargeNumber(state.offsetX);
+    const offsetY = roundAiImageBoardEnlargeNumber(state.offsetY);
+    const isZoomed = state.scale > AI_IMAGE_ENLARGE_MIN_SCALE + 0.01;
+    const zoomLabel = state.viewer.querySelector("[data-ai-image-enlarge-zoom]");
+
+    state.image.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0) scale(${scale})`;
+    state.viewer.classList.toggle("is-zoomed", isZoomed);
+    state.stage.dataset.zoomed = isZoomed ? "true" : "false";
+
+    if (zoomLabel) {
+      zoomLabel.textContent = `${Math.round(state.scale * 100)}%`;
+    }
+  }
+
+  function handleAiImageBoardEnlargeWheel(event) {
+    const state = aiImageEnlargeState;
+
+    if (!state) {
+      return;
+    }
+
+    event.preventDefault();
+    stopSpaceBoardControlEvent(event);
+
+    const wheelDelta = getAiImageBoardEnlargeWheelDelta(event, state.stage);
+    const deltaY = wheelDelta.y || wheelDelta.x;
+    const nextScale = clampAiImageBoardEnlargeValue(
+      state.scale * Math.exp(-deltaY * AI_IMAGE_ENLARGE_WHEEL_SPEED),
+      AI_IMAGE_ENLARGE_MIN_SCALE,
+      AI_IMAGE_ENLARGE_MAX_SCALE,
+    );
+
+    if (Math.abs(nextScale - state.scale) < 0.001) {
+      return;
+    }
+
+    if (nextScale <= AI_IMAGE_ENLARGE_MIN_SCALE + 0.001) {
+      state.scale = AI_IMAGE_ENLARGE_MIN_SCALE;
+      state.offsetX = 0;
+      state.offsetY = 0;
+      requestAiImageBoardEnlargeRender();
+      return;
+    }
+
+    const stageRect = state.stage.getBoundingClientRect();
+    const pointerX = event.clientX - stageRect.left - (stageRect.width / 2);
+    const pointerY = event.clientY - stageRect.top - (stageRect.height / 2);
+    const imagePointX = (pointerX - state.offsetX) / state.scale;
+    const imagePointY = (pointerY - state.offsetY) / state.scale;
+
+    state.scale = nextScale;
+    state.offsetX = pointerX - (imagePointX * nextScale);
+    state.offsetY = pointerY - (imagePointY * nextScale);
+    clampAiImageBoardEnlargePan();
+    requestAiImageBoardEnlargeRender();
+  }
+
+  function handleAiImageBoardEnlargePointerDown(event) {
+    const state = aiImageEnlargeState;
+
+    if (!state || !isAiImageBoardEnlargePanPointer(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    stopSpaceBoardControlEvent(event);
+    state.activePointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+
+    try {
+      state.stage.setPointerCapture?.(event.pointerId);
+    } catch (_error) {
+      // Pointer capture is a smoothness improvement, not a hard requirement.
+    }
+
+    if (state.activePointers.size >= 2) {
+      beginAiImageBoardEnlargePinch();
+      return;
+    }
+
+    if (state.scale <= AI_IMAGE_ENLARGE_MIN_SCALE + 0.01) {
+      return;
+    }
+
+    state.gesture = "pan";
+    state.isPanning = true;
+    state.pointerId = event.pointerId;
+    state.lastPointerX = event.clientX;
+    state.lastPointerY = event.clientY;
+    state.viewer.classList.add("is-panning");
+  }
+
+  function handleAiImageBoardEnlargeAuxClick(event) {
+    if (event.button !== 1) {
+      return;
+    }
+
+    event.preventDefault();
+    stopSpaceBoardControlEvent(event);
+  }
+
+  function isAiImageBoardEnlargePanPointer(event) {
+    return event.pointerType === "touch" ||
+      event.button === 0 ||
+      event.button === 1;
+  }
+
+  function handleAiImageBoardEnlargePointerMove(event) {
+    const state = aiImageEnlargeState;
+
+    if (!state?.activePointers?.has(event.pointerId)) {
+      return;
+    }
+
+    event.preventDefault();
+    stopSpaceBoardControlEvent(event);
+
+    state.activePointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+
+    if (state.activePointers.size >= 2) {
+      updateAiImageBoardEnlargePinch();
+      return;
+    }
+
+    if (!state.isPanning || state.pointerId !== event.pointerId) {
+      if (state.scale <= AI_IMAGE_ENLARGE_MIN_SCALE + 0.01) {
+        return;
+      }
+
+      state.gesture = "pan";
+      state.isPanning = true;
+      state.pointerId = event.pointerId;
+      state.lastPointerX = event.clientX;
+      state.lastPointerY = event.clientY;
+      state.viewer.classList.add("is-panning");
+      return;
+    }
+
+    state.offsetX += event.clientX - state.lastPointerX;
+    state.offsetY += event.clientY - state.lastPointerY;
+    state.lastPointerX = event.clientX;
+    state.lastPointerY = event.clientY;
+    clampAiImageBoardEnlargePan();
+    requestAiImageBoardEnlargeRender();
+  }
+
+  function handleAiImageBoardEnlargePointerEnd(event) {
+    const state = aiImageEnlargeState;
+
+    if (!state?.activePointers?.has(event.pointerId)) {
+      return;
+    }
+
+    stopSpaceBoardControlEvent(event);
+    state.activePointers.delete(event.pointerId);
+
+    try {
+      state.stage.releasePointerCapture?.(event.pointerId);
+    } catch (_error) {
+      // The browser may release capture before pointerup.
+    }
+
+    if (state.activePointers.size >= 2) {
+      beginAiImageBoardEnlargePinch();
+      return;
+    }
+
+    const remainingPointer = getAiImageBoardEnlargePrimaryPointer(state);
+
+    if (remainingPointer && state.scale > AI_IMAGE_ENLARGE_MIN_SCALE + 0.01) {
+      state.gesture = "pan";
+      state.isPanning = true;
+      state.pointerId = remainingPointer.id;
+      state.lastPointerX = remainingPointer.x;
+      state.lastPointerY = remainingPointer.y;
+      state.viewer.classList.add("is-panning");
+      return;
+    }
+
+    state.gesture = "";
+    state.isPanning = false;
+    state.pointerId = null;
+    state.viewer.classList.remove("is-panning");
+  }
+
+  function beginAiImageBoardEnlargePinch() {
+    const state = aiImageEnlargeState;
+    const pinch = getAiImageBoardEnlargePinchMetrics(state);
+
+    if (!state || !pinch) {
+      return;
+    }
+
+    state.gesture = "pinch";
+    state.isPanning = false;
+    state.pointerId = null;
+    state.pinchStartDistance = pinch.distance;
+    state.pinchStartScale = state.scale;
+    state.pinchStartOffsetX = state.offsetX;
+    state.pinchStartOffsetY = state.offsetY;
+    state.pinchCenterX = pinch.centerX;
+    state.pinchCenterY = pinch.centerY;
+    state.viewer.classList.remove("is-panning");
+  }
+
+  function updateAiImageBoardEnlargePinch() {
+    const state = aiImageEnlargeState;
+    const pinch = getAiImageBoardEnlargePinchMetrics(state);
+
+    if (!state || !pinch) {
+      return;
+    }
+
+    if (state.gesture !== "pinch" || state.pinchStartDistance <= 0) {
+      beginAiImageBoardEnlargePinch();
+      return;
+    }
+
+    const nextScale = clampAiImageBoardEnlargeValue(
+      state.pinchStartScale * (pinch.distance / state.pinchStartDistance),
+      AI_IMAGE_ENLARGE_MIN_SCALE,
+      AI_IMAGE_ENLARGE_MAX_SCALE,
+    );
+    const imagePointX = (state.pinchCenterX - state.pinchStartOffsetX) / state.pinchStartScale;
+    const imagePointY = (state.pinchCenterY - state.pinchStartOffsetY) / state.pinchStartScale;
+
+    state.scale = nextScale;
+    state.offsetX = pinch.centerX - (imagePointX * nextScale);
+    state.offsetY = pinch.centerY - (imagePointY * nextScale);
+    clampAiImageBoardEnlargePan();
+    requestAiImageBoardEnlargeRender();
+  }
+
+  function getAiImageBoardEnlargePinchMetrics(state) {
+    const pointers = Array.from(state?.activePointers?.entries?.() || []);
+
+    if (pointers.length < 2) {
+      return null;
+    }
+
+    const first = pointers[0][1];
+    const second = pointers[1][1];
+    const stageRect = state.stage.getBoundingClientRect();
+    const firstX = first.x - stageRect.left - (stageRect.width / 2);
+    const firstY = first.y - stageRect.top - (stageRect.height / 2);
+    const secondX = second.x - stageRect.left - (stageRect.width / 2);
+    const secondY = second.y - stageRect.top - (stageRect.height / 2);
+    const distance = Math.hypot(secondX - firstX, secondY - firstY);
+
+    if (distance < AI_IMAGE_ENLARGE_PINCH_MIN_DISTANCE_PX) {
+      return null;
+    }
+
+    return {
+      centerX: (firstX + secondX) / 2,
+      centerY: (firstY + secondY) / 2,
+      distance,
+    };
+  }
+
+  function getAiImageBoardEnlargePrimaryPointer(state) {
+    const pointer = Array.from(state?.activePointers?.entries?.() || [])[0];
+
+    if (!pointer) {
+      return null;
+    }
+
+    return {
+      id: pointer[0],
+      x: pointer[1].x,
+      y: pointer[1].y,
+    };
+  }
+
+  function handleAiImageBoardEnlargeKeyDown(event) {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    closeAiImageBoardEnlargeViewer();
+  }
+
+  function handleAiImageBoardEnlargeResize() {
+    if (!aiImageEnlargeState) {
+      return;
+    }
+
+    if (!isAiImageBoardEnlargeViewportAllowed()) {
+      closeAiImageBoardEnlargeViewer();
+      return;
+    }
+
+    requestAiImageBoardEnlargeRender();
+  }
+
+  function clampAiImageBoardEnlargePan() {
+    const state = aiImageEnlargeState;
+
+    if (!state) {
+      return;
+    }
+
+    state.scale = clampAiImageBoardEnlargeValue(
+      state.scale,
+      AI_IMAGE_ENLARGE_MIN_SCALE,
+      AI_IMAGE_ENLARGE_MAX_SCALE,
+    );
+
+    if (state.scale <= AI_IMAGE_ENLARGE_MIN_SCALE + 0.001) {
+      state.scale = AI_IMAGE_ENLARGE_MIN_SCALE;
+      state.offsetX = 0;
+      state.offsetY = 0;
+      return;
+    }
+
+    const stageSize = getAiImageBoardEnlargeStageContentSize(state.stage);
+    const baseWidth = Number(state.image.offsetWidth) || 0;
+    const baseHeight = Number(state.image.offsetHeight) || 0;
+
+    if (!stageSize.width || !stageSize.height || !baseWidth || !baseHeight) {
+      state.offsetX = 0;
+      state.offsetY = 0;
+      return;
+    }
+
+    const scaledWidth = baseWidth * state.scale;
+    const scaledHeight = baseHeight * state.scale;
+    const overflowX = Math.max(0, (scaledWidth - stageSize.width) / 2);
+    const overflowY = Math.max(0, (scaledHeight - stageSize.height) / 2);
+    const edgeSlackX = overflowX
+      ? Math.min(stageSize.width * AI_IMAGE_ENLARGE_EDGE_SLACK_RATIO, AI_IMAGE_ENLARGE_EDGE_SLACK_MAX_PX)
+      : 0;
+    const edgeSlackY = overflowY
+      ? Math.min(stageSize.height * AI_IMAGE_ENLARGE_EDGE_SLACK_RATIO, AI_IMAGE_ENLARGE_EDGE_SLACK_MAX_PX)
+      : 0;
+    const maxOffsetX = overflowX + edgeSlackX;
+    const maxOffsetY = overflowY + edgeSlackY;
+
+    state.offsetX = maxOffsetX
+      ? clampAiImageBoardEnlargeValue(state.offsetX, -maxOffsetX, maxOffsetX)
+      : 0;
+    state.offsetY = maxOffsetY
+      ? clampAiImageBoardEnlargeValue(state.offsetY, -maxOffsetY, maxOffsetY)
+      : 0;
+  }
+
+  function syncAiImageBoardEnlargeBaseSize() {
+    const state = aiImageEnlargeState;
+
+    if (!state) {
+      return false;
+    }
+
+    const stageSize = getAiImageBoardEnlargeStageContentSize(state.stage);
+    const naturalWidth = Math.max(1, Number(state.image.naturalWidth) || Number(state.mediaWidth) || 1);
+    const naturalHeight = Math.max(1, Number(state.image.naturalHeight) || Number(state.mediaHeight) || 1);
+
+    if (!stageSize.width || !stageSize.height || !naturalWidth || !naturalHeight) {
+      return false;
+    }
+
+    const fitScale = Math.min(stageSize.width / naturalWidth, stageSize.height / naturalHeight);
+    const baseWidth = Math.max(1, Math.floor(naturalWidth * fitScale));
+    const baseHeight = Math.max(1, Math.floor(naturalHeight * fitScale));
+    const nextWidth = `${baseWidth}px`;
+    const nextHeight = `${baseHeight}px`;
+
+    if (state.image.style.width !== nextWidth) {
+      state.image.style.width = nextWidth;
+    }
+
+    if (state.image.style.height !== nextHeight) {
+      state.image.style.height = nextHeight;
+    }
+
+    return true;
+  }
+
+  function getAiImageBoardEnlargeStageContentSize(stage) {
+    const rect = stage?.getBoundingClientRect?.();
+
+    if (!rect) {
+      return { height: 0, width: 0 };
+    }
+
+    const style = typeof window.getComputedStyle === "function"
+      ? window.getComputedStyle(stage)
+      : null;
+    const paddingLeft = Number.parseFloat(style?.paddingLeft || "0") || 0;
+    const paddingRight = Number.parseFloat(style?.paddingRight || "0") || 0;
+    const paddingTop = Number.parseFloat(style?.paddingTop || "0") || 0;
+    const paddingBottom = Number.parseFloat(style?.paddingBottom || "0") || 0;
+
+    return {
+      height: Math.max(1, rect.height - paddingTop - paddingBottom),
+      width: Math.max(1, rect.width - paddingLeft - paddingRight),
+    };
+  }
+
+  function getAiImageBoardEnlargeWheelDelta(event, stage) {
+    const stageSize = getAiImageBoardEnlargeStageContentSize(stage);
+    const multiplier = event.deltaMode === 1
+      ? 18
+      : event.deltaMode === 2
+        ? Math.max(1, stageSize.height)
+        : 1;
+
+    return {
+      x: (Number(event.deltaX) || 0) * multiplier,
+      y: (Number(event.deltaY) || 0) * multiplier,
+    };
+  }
+
+  function clampAiImageBoardEnlargeValue(value, min, max) {
+    const nextValue = Number(value);
+
+    if (!Number.isFinite(nextValue)) {
+      return min;
+    }
+
+    return Math.min(max, Math.max(min, nextValue));
+  }
+
+  function roundAiImageBoardEnlargeNumber(value) {
+    return Math.round((Number(value) || 0) * 1000) / 1000;
   }
 
   function ensureAiImageBoardElement(boardId) {
@@ -2251,6 +3367,26 @@ window.CBO = window.CBO || {};
     brushEngine.handleWheel.call(brushEngine, event);
   }
 
+  function requestAiImageBoardGeneration(boardId, triggerSource = "ai-image-board") {
+    const board = getSpaceBoardById(boardId);
+
+    if (!board) {
+      return false;
+    }
+
+    setAiImageBoardPromptText(board, getAiImageBoardPromptText(board), { force: true });
+    startAiImageGenerationPreview(board.id);
+    window.dispatchEvent(new CustomEvent("cbo:ai-image-board-generate-click", {
+      detail: {
+        board: cloneSpaceBoard(board),
+        source: "artboard-connections",
+        triggerSource,
+      },
+    }));
+
+    return true;
+  }
+
   function handleAiImageGenerateClick(event) {
     const board = getBoardFromControlEvent(event);
 
@@ -2261,14 +3397,7 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    startAiImageGenerationPreview(board.id);
-
-    window.dispatchEvent(new CustomEvent("cbo:ai-image-board-generate-click", {
-      detail: {
-        board: cloneSpaceBoard(board),
-        source: "artboard-connections",
-      },
-    }));
+    requestAiImageBoardGeneration(board.id, "ai-image-board");
   }
 
   function pickRandomAiImageSample(currentSrc = "") {
@@ -3414,7 +4543,7 @@ window.CBO = window.CBO || {};
     promptEditState = {
       beforeState: captureConnectionsHistoryState(),
       boardId: board.id,
-      value: String(board.promptText || ""),
+      value: getAiImageBoardPromptText(board),
     };
   }
 
@@ -3425,9 +4554,10 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    board.promptText = String(event.currentTarget?.value || "");
+    setAiImageBoardPromptText(board, String(event.currentTarget?.value || ""), {
+      emitSource: "space-board-prompt-input",
+    });
     resizeAiImagePromptInput(event.currentTarget);
-    emitConnectionsChange("space-board-prompt-input");
   }
 
   function handleAiImagePromptBlur(event) {
@@ -3462,7 +4592,7 @@ window.CBO = window.CBO || {};
   function focusAiImageCaptionEditor(boardId, options = {}) {
     const normalizedBoardId = String(boardId || "").trim();
 
-    if (!normalizedBoardId) {
+    if (!normalizedBoardId || !canEditAiImageCaption()) {
       return false;
     }
 
@@ -3544,7 +4674,7 @@ window.CBO = window.CBO || {};
     event.preventDefault();
     event.stopPropagation();
 
-    if (board) {
+    if (board && canEditAiImageCaption()) {
       focusAiImageCaptionEditor(board.id, { select: false });
     }
   }
@@ -3556,11 +4686,17 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    if (!canEditAiImageCaption()) {
+      event.currentTarget?.blur?.();
+      renderSpaceBoards();
+      return;
+    }
+
     selectedSpaceBoardId = board.id;
     captionEditState = {
       beforeState: captureConnectionsHistoryState(),
       boardId: board.id,
-      value: String(board.captionText || ""),
+      value: getAiImageBoardPromptText(board),
     };
     scheduleAiImagePromptFocusViewport(board.id, { target: "caption" });
     renderSpaceBoards();
@@ -3573,13 +4709,20 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    board.captionText = getAiImageCaptionEditorText(event.currentTarget);
-    updateAiImageCaptionControls(event.currentTarget?.closest?.("[data-ai-image-board]"), board, true);
+    if (!canEditAiImageCaption()) {
+      if (event.currentTarget) {
+        event.currentTarget.textContent = String(board.captionText || "");
+      }
+      return;
+    }
+
+    setAiImageBoardPromptText(board, getAiImageCaptionEditorText(event.currentTarget), {
+      emitSource: "space-board-caption-input",
+    });
     keepAiImageCaptionCaretVisible(event.currentTarget);
     if (isMobilePromptFocusViewport()) {
       focusAiImagePromptBoard(board.id, { target: "caption" });
     }
-    emitConnectionsChange("space-board-caption-input");
   }
 
   function handleAiImageCaptionBlur(event) {
@@ -3610,6 +4753,10 @@ window.CBO = window.CBO || {};
     return String(editor?.textContent || "")
       .replace(/\u00a0/g, " ")
       .replace(/\n{4,}/g, "\n\n\n");
+  }
+
+  function canEditAiImageCaption() {
+    return !isMobileLikeSpaceBoardViewport();
   }
 
   function parseCssPixelValue(value, fallback = 0) {
@@ -3695,8 +4842,8 @@ window.CBO = window.CBO || {};
     const hasCaption = text.trim().length > 0;
     const textNode = caption.querySelector("[data-ai-image-board-caption-text]");
     const editor = caption.querySelector("[data-ai-image-board-caption-editor]");
-    const canEditCaption = isSelected;
-    const shouldShow = isSelected || hasCaption;
+    const canEditCaption = isSelected && canEditAiImageCaption();
+    const shouldShow = canEditCaption || hasCaption;
 
     caption.hidden = !shouldShow;
     element.classList.toggle("has-caption", hasCaption);
@@ -4423,6 +5570,7 @@ window.CBO = window.CBO || {};
       element.classList.remove("is-control-lod-hidden", "is-control-lod-compact");
       element.classList.toggle("has-generated-media", Boolean(board.generatedMedia?.src));
       element.classList.toggle("is-preview-work-deferred", shouldDeferPreviewWork);
+      updateAiImageBoardActionToolbarState(element.querySelector("[data-ai-image-board-action-toolbar]"), board);
       updateAiImageCaptionControls(element, board, isSelected);
       if (generateButton) {
         generateButton.disabled = isGenerating;
@@ -4524,7 +5672,7 @@ window.CBO = window.CBO || {};
       }
 
       if (promptInput && document.activeElement !== promptInput) {
-        promptInput.value = String(board.promptText || "");
+        promptInput.value = getAiImageBoardPromptText(board);
       }
 
       resizeAiImagePromptInput(promptInput);
@@ -4545,6 +5693,7 @@ window.CBO = window.CBO || {};
     syncAiImageBoardMobileActionToolbar(
       !spaceBoardDrag && renderedIds.has(selectedSpaceBoardId) ? selectedSpaceBoardId : "",
     );
+    syncAiImageEditPreviewViewerFromBoard();
 
     const finalRuntimePreviewCacheStats = getAiImageRuntimePreviewCacheStats();
 
@@ -5303,6 +6452,8 @@ window.CBO = window.CBO || {};
     captionEditState = null;
     clearPromptFocusViewportTimers();
     clearAiImageGenerationPreview();
+    closeAiImageBoardEnlargeViewer();
+    closeAiImageBoardEditPreview();
     removeSpaceBoardDragListeners();
     syncAiImageBoardMobileActionToolbar("");
     dismissConnectionMenu({ render: false });
