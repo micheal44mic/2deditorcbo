@@ -486,6 +486,134 @@
   touch-action: none;
 }
 
+.editor-ai-image-board-action-toolbar {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--editor-artboard-label-top, -25px) - 42px);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 328px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid rgba(16, 16, 16, 0.05);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 2px 5px rgba(55, 73, 87, 0.1);
+  color: #101010;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -4px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  -webkit-backdrop-filter: blur(64px);
+  backdrop-filter: blur(64px);
+}
+
+.editor-ai-image-board-action-toolbar-items {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+
+.editor-ai-image-board-mobile-action-toolbar {
+  display: none;
+}
+
+.editor-ai-image-board-action-toolbar-button {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  appearance: none;
+  background: transparent;
+  color: #101010;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    opacity 200ms ease-out,
+    transform 200ms ease-out,
+    background-color 200ms ease-out,
+    color 200ms ease-out;
+}
+
+.editor-ai-image-board-action-toolbar-button:hover,
+.editor-ai-image-board-action-toolbar-button:focus-visible {
+  background: rgba(115, 115, 115, 0.1);
+  color: rgb(26, 26, 26);
+  outline: none;
+}
+
+.editor-ai-image-board-action-toolbar-button::after {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgb(245, 245, 245);
+  box-shadow:
+    0 0 2px rgba(18, 18, 18, 0.08),
+    0 8px 18px rgba(18, 18, 18, 0.12);
+  color: rgb(66, 66, 66);
+  content: attr(data-ai-image-board-toolbar-label);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity 200ms ease-out,
+    transform 200ms ease-out;
+  white-space: nowrap;
+  -webkit-backdrop-filter: blur(40px);
+  backdrop-filter: blur(40px);
+}
+
+.editor-ai-image-board-action-toolbar-button:hover::after,
+.editor-ai-image-board-action-toolbar-button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.editor-ai-image-board-action-toolbar-button svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.editor-ai-image-board.is-selected .editor-ai-image-board-action-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+.editor-stage.artboard-dragging .editor-ai-image-board-action-toolbar {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .editor-ai-image-board-dimensions {
   position: absolute;
   right: 0;
@@ -799,6 +927,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .editor-ai-image-board-action-toolbar,
+  .editor-ai-image-board-mobile-action-toolbar {
+    transition: none;
+  }
+
   .editor-ai-image-board-selection-shadow {
     transform: translateY(0);
     transition: none;
@@ -1183,6 +1316,64 @@
 }
 
 @media (hover: none), (pointer: coarse), (max-width: 900px) {
+  .editor-ai-image-board > .editor-ai-image-board-action-toolbar {
+    display: none;
+  }
+
+  .editor-ai-image-board-mobile-action-toolbar {
+    position: fixed;
+    right: auto;
+    bottom: calc(var(--cbo-mobile-floating-bottom) + 28px);
+    left: 50%;
+    z-index: 9010;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: min(360px, calc(100vw - var(--cbo-mobile-edge-left) - var(--cbo-mobile-edge-right)));
+    height: 44px;
+    padding: 4px;
+    border: 1px solid rgba(16, 16, 16, 0.05);
+    border-radius: 14px;
+    background: #ffffff;
+    box-shadow: 0 2px 5px rgba(55, 73, 87, 0.1);
+    color: #101010;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 8px);
+    transition:
+      opacity 120ms ease,
+      transform 120ms ease;
+    -webkit-backdrop-filter: blur(64px);
+    backdrop-filter: blur(64px);
+  }
+
+  .editor-ai-image-board-mobile-action-toolbar .editor-ai-image-board-action-toolbar-items {
+    gap: 6px;
+  }
+
+  .editor-ai-image-board-mobile-action-toolbar .editor-ai-image-board-action-toolbar-button {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .editor-ai-image-board-mobile-action-toolbar .editor-ai-image-board-action-toolbar-button svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .editor-ai-image-board-mobile-action-toolbar.is-active {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
+  }
+
+  .editor-ai-image-board-mobile-action-toolbar[aria-hidden="true"] {
+    opacity: 0;
+    pointer-events: none;
+  }
+
   .editor-ai-image-board::before {
     animation: none;
     background: none;

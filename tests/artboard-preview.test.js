@@ -619,6 +619,50 @@ test("artboard connections live in their own module", () => {
   assert.doesNotMatch(cssSource, /\.editor-ai-image-board-controls/);
 });
 
+test("selected AI image boards expose a floating toolbar shell", () => {
+  const connectionsSource = readRepoFile("js", "artboard-connections.js");
+  const cssSource = readRepoFile("css", "layout.css");
+
+  assert.match(connectionsSource, /function ensureAiImageBoardActionToolbar\(element\)/);
+  assert.match(connectionsSource, /function getAiImageBoardActionToolbarMarkup\(\)/);
+  assert.match(connectionsSource, /data-ai-image-board-toolbar-action="fullscreen"/);
+  assert.match(connectionsSource, /aria-label="Enlarge"/);
+  assert.match(connectionsSource, /data-ai-image-board-toolbar-label="Enlarge"/);
+  assert.match(connectionsSource, /lucide-fullscreen/);
+  assert.match(connectionsSource, /function ensureAiImageBoardMobileActionToolbar\(\)/);
+  assert.match(connectionsSource, /function syncAiImageBoardMobileActionToolbar\(boardId = ""\)/);
+  assert.match(connectionsSource, /data-ai-image-board-action-toolbar/);
+  assert.match(connectionsSource, /data-ai-image-board-mobile-action-toolbar/);
+  assert.match(connectionsSource, /data-ai-image-board-action-toolbar-items/);
+  assert.match(connectionsSource, /ensureAiImageBoardActionToolbar\(board\)/);
+  assert.match(connectionsSource, /syncAiImageBoardMobileActionToolbar\(/);
+  assert.match(connectionsSource, /\[data-ai-image-board-action-toolbar\]/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar \{/);
+  assert.match(cssSource, /width: 328px/);
+  assert.match(cssSource, /height: 32px/);
+  assert.match(cssSource, /padding: 2px/);
+  assert.match(cssSource, /border-radius: 12px/);
+  assert.match(cssSource, /background: #ffffff/);
+  assert.match(cssSource, /box-shadow: 0 2px 5px rgba\(55, 73, 87, 0\.1\)/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar-items[\s\S]*gap: 4px/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar-button[\s\S]*width: 24px/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar-button[\s\S]*height: 24px/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar-button:hover,[\s\S]*background: rgba\(115, 115, 115, 0\.1\)/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar-button::after[\s\S]*content: attr\(data-ai-image-board-toolbar-label\)/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar-button:hover::after[\s\S]*opacity: 1/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar-button svg[\s\S]*width: 14px/);
+  assert.match(cssSource, /\.editor-ai-image-board-action-toolbar-button svg[\s\S]*height: 14px/);
+  assert.match(cssSource, /\.editor-ai-image-board\.is-selected \.editor-ai-image-board-action-toolbar[\s\S]*opacity: 1/);
+  assert.match(cssSource, /@media \(hover: none\), \(pointer: coarse\), \(max-width: 900px\) \{[\s\S]*\.editor-ai-image-board > \.editor-ai-image-board-action-toolbar[\s\S]*display: none/);
+  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*bottom: calc\(var\(--cbo-mobile-floating-bottom\) \+ 28px\)/);
+  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*z-index: 9010/);
+  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*width: min\(360px/);
+  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*height: 44px/);
+  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar \.editor-ai-image-board-action-toolbar-button[\s\S]*width: 36px/);
+  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar \.editor-ai-image-board-action-toolbar-button svg[\s\S]*width: 20px/);
+  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar\.is-active[\s\S]*opacity: 1/);
+});
+
 test("layers panel mirrors artboards as collapsed artboard groups", () => {
   const layersSource = readRepoFile("js", "layers-panel.js");
   const layerModelSource = readRepoFile("js", "document", "document-layer-model.js");

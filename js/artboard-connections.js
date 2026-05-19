@@ -100,6 +100,7 @@ window.CBO = window.CBO || {};
   let ignoreNextMenuDocumentClick = false;
   let spaceBoardDrag = null;
   let selectedSpaceBoardId = "";
+  let mobileActionToolbar = null;
   let lastConnectionsGeometryKey = "";
   let spaceBoardPaneTransformIdleTimer = 0;
   let promptEditState = null;
@@ -1514,7 +1515,10 @@ window.CBO = window.CBO || {};
   }
 
   function handleDocumentSpaceBoardSelectionPointerDown(event) {
-    if (!selectedSpaceBoardId || event.target?.closest?.("[data-ai-image-board]")) {
+    if (
+      !selectedSpaceBoardId ||
+      event.target?.closest?.("[data-ai-image-board], [data-ai-image-board-action-toolbar]")
+    ) {
       return;
     }
 
@@ -1530,6 +1534,7 @@ window.CBO = window.CBO || {};
     }
 
     return !target.closest([
+      "[data-ai-image-board-action-toolbar]",
       "[data-ai-image-board-caption]",
       "[data-ai-image-board-footer]",
       "[data-ai-image-board-generate]",
@@ -1540,6 +1545,87 @@ window.CBO = window.CBO || {};
       "textarea",
       "select",
     ].join(","));
+  }
+
+  function ensureAiImageBoardActionToolbar(element) {
+    if (!element) {
+      return null;
+    }
+
+    let toolbar = element.querySelector("[data-ai-image-board-action-toolbar]");
+
+    if (!toolbar) {
+      toolbar = document.createElement("div");
+      toolbar.className = "editor-ai-image-board-action-toolbar";
+      toolbar.dataset.aiImageBoardActionToolbar = "";
+      toolbar.setAttribute("aria-hidden", "true");
+      toolbar.innerHTML = getAiImageBoardActionToolbarMarkup();
+      element.prepend(toolbar);
+    }
+
+    if (!toolbar.querySelector("[data-ai-image-board-toolbar-action]")) {
+      toolbar.innerHTML = getAiImageBoardActionToolbarMarkup();
+    }
+
+    bindAiImageBoardActionToolbar(toolbar);
+    return toolbar;
+  }
+
+  function getAiImageBoardActionToolbarMarkup() {
+    return `
+      <div class="editor-ai-image-board-action-toolbar-items" data-ai-image-board-action-toolbar-items>
+        <button class="editor-ai-image-board-action-toolbar-button" type="button" aria-label="Enlarge" data-ai-image-board-toolbar-action="fullscreen" data-ai-image-board-toolbar-label="Enlarge">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-fullscreen-icon lucide-fullscreen" aria-hidden="true">
+            <path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+            <path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+            <path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+            <path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+            <rect width="10" height="8" x="7" y="8" rx="1"></rect>
+          </svg>
+        </button>
+      </div>
+    `;
+  }
+
+  function bindAiImageBoardActionToolbar(toolbar) {
+    if (!toolbar || toolbar.dataset.actionToolbarBound === "true") {
+      return;
+    }
+
+    toolbar.dataset.actionToolbarBound = "true";
+    toolbar.addEventListener("pointerdown", stopSpaceBoardControlEvent, true);
+    toolbar.addEventListener("click", stopSpaceBoardControlEvent);
+  }
+
+  function ensureAiImageBoardMobileActionToolbar() {
+    if (mobileActionToolbar?.isConnected) {
+      return mobileActionToolbar;
+    }
+
+    mobileActionToolbar?.remove();
+    mobileActionToolbar = document.createElement("div");
+    mobileActionToolbar.className = "editor-ai-image-board-mobile-action-toolbar";
+    mobileActionToolbar.dataset.aiImageBoardActionToolbar = "";
+    mobileActionToolbar.setAttribute("data-ai-image-board-mobile-action-toolbar", "");
+    mobileActionToolbar.setAttribute("aria-hidden", "true");
+    mobileActionToolbar.innerHTML = getAiImageBoardActionToolbarMarkup();
+    bindAiImageBoardActionToolbar(mobileActionToolbar);
+    document.body.appendChild(mobileActionToolbar);
+
+    return mobileActionToolbar;
+  }
+
+  function syncAiImageBoardMobileActionToolbar(boardId = "") {
+    const toolbar = ensureAiImageBoardMobileActionToolbar();
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!toolbar) {
+      return;
+    }
+
+    toolbar.dataset.boardId = normalizedBoardId;
+    toolbar.classList.toggle("is-active", Boolean(normalizedBoardId));
+    toolbar.setAttribute("aria-hidden", normalizedBoardId ? "false" : "true");
   }
 
   function ensureAiImageBoardElement(boardId) {
@@ -1562,6 +1648,9 @@ window.CBO = window.CBO || {};
       board.dataset.boardId = normalizedBoardId;
       board.innerHTML = shouldUsePlainAiBoardArtboards()
         ? `
+          <div class="editor-ai-image-board-action-toolbar" data-ai-image-board-action-toolbar aria-hidden="true">
+            ${getAiImageBoardActionToolbarMarkup()}
+          </div>
           <span class="editor-artboard-frame-label" data-ai-image-board-drag-handle></span>
           <span class="editor-ai-image-board-dimensions" data-ai-image-board-dimensions></span>
           <span class="editor-ai-image-board-selection-shadow" data-ai-image-board-selection-shadow aria-hidden="true"></span>
@@ -1580,6 +1669,9 @@ window.CBO = window.CBO || {};
           </button>
         `
         : `
+          <div class="editor-ai-image-board-action-toolbar" data-ai-image-board-action-toolbar aria-hidden="true">
+            ${getAiImageBoardActionToolbarMarkup()}
+          </div>
           <div class="editor-ai-image-board-label" data-ai-image-board-drag-handle></div>
           <div class="editor-ai-image-board-surface"></div>
           <div class="editor-ai-image-board-input" aria-hidden="true">
@@ -1602,6 +1694,7 @@ window.CBO = window.CBO || {};
     }
 
     board.dataset.boardId = normalizedBoardId;
+    ensureAiImageBoardActionToolbar(board);
     board.classList.toggle("is-plain-artboard", shouldUsePlainAiBoardArtboards());
     if (shouldUsePlainAiBoardArtboards()) {
       const surface = board.querySelector(".editor-ai-image-board-surface");
@@ -4182,6 +4275,7 @@ window.CBO = window.CBO || {};
     });
 
     if (!layer || !pane) {
+      syncAiImageBoardMobileActionToolbar("");
       metrics.frameMs = roundMetricValue((performance.now?.() || Date.now()) - renderStartedAt, 2);
       publishAiBoardMetrics(metrics);
       return;
@@ -4447,6 +4541,10 @@ window.CBO = window.CBO || {};
         element.remove();
       }
     });
+
+    syncAiImageBoardMobileActionToolbar(
+      !spaceBoardDrag && renderedIds.has(selectedSpaceBoardId) ? selectedSpaceBoardId : "",
+    );
 
     const finalRuntimePreviewCacheStats = getAiImageRuntimePreviewCacheStats();
 
@@ -4771,6 +4869,7 @@ window.CBO = window.CBO || {};
 
     selectedSpaceBoardId = boardId;
     ensureAiImageBoardHeavyContent(boardElement);
+    syncAiImageBoardMobileActionToolbar("");
 
     spaceBoardDrag = {
       boardId,
@@ -5205,6 +5304,7 @@ window.CBO = window.CBO || {};
     clearPromptFocusViewportTimers();
     clearAiImageGenerationPreview();
     removeSpaceBoardDragListeners();
+    syncAiImageBoardMobileActionToolbar("");
     dismissConnectionMenu({ render: false });
     renderConnectionOverlay();
   };
