@@ -8,6 +8,13 @@ window.CBO = window.CBO || {};
   const CONNECTION_CLICK_DISTANCE_CSS_PX = 220;
   const CONNECTION_ARROW_LENGTH_STROKE_UNITS = 5;
   const CONNECTION_MENU_GAP_CSS_PX = 14;
+  const CANVAS_DOT_GRID_PATTERN_ID = "cbo-editor-dot-grid-pattern";
+  const CANVAS_DOT_GRID_BASE_WORLD_PX = 20;
+  const CANVAS_DOT_GRID_TARGET_MIN_SCREEN_PX = 16;
+  const CANVAS_DOT_GRID_TARGET_MAX_SCREEN_PX = 32;
+  const CANVAS_DOT_GRID_STEPS_PER_OCTAVE = 5;
+  const CANVAS_DOT_GRID_MIN_OPACITY = 0.8;
+  const CANVAS_DOT_GRID_MAX_OPACITY = 1;
   const AI_IMAGE_BOARD_SIZE_DOC_PX = 1024;
   const AI_IMAGE_BOARD_RADIUS_DOC_PX = 38;
   const AI_IMAGE_PROMPT_PLACEHOLDER = "Neon product shot";
@@ -20,7 +27,8 @@ window.CBO = window.CBO || {};
   const AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX = 96;
   const AI_IMAGE_PROMPT_FOCUS_MIN_TOP_CSS_PX = 42;
   const AI_IMAGE_PROMPT_FOCUS_BOTTOM_GAP_CSS_PX = 24;
-  const AI_IMAGE_GENERATION_PREVIEW_MS = 0;
+  const AI_IMAGE_GENERATION_PREVIEW_MIN_MS = 3000;
+  const AI_IMAGE_GENERATION_PREVIEW_MAX_MS = 5000;
   const AI_IMAGE_PREVIEW_VARIANT_SIZES = [128, 256, 512, 1024];
   const AI_IMAGE_PREVIEW_LOD_THRESHOLDS = [
     { lod: "128", max: 80 },
@@ -1365,6 +1373,17 @@ window.CBO = window.CBO || {};
     return true;
   }
 
+  function setSvgAttributeIfChanged(element, attribute, value) {
+    const nextValue = String(value);
+
+    if (!element || element.getAttribute(attribute) === nextValue) {
+      return false;
+    }
+
+    element.setAttribute(attribute, nextValue);
+    return true;
+  }
+
   function scheduleSpaceBoardPaneTransformIdle(pane) {
     const layer = pane?.closest?.("[data-artboard-space-board-layer]");
 
@@ -1386,7 +1405,146 @@ window.CBO = window.CBO || {};
     }, SPACE_BOARD_PANE_TRANSFORM_IDLE_MS);
   }
 
+  function ensureInfiniteCanvasDotGridOverlay() {
+    const stage = getStage();
+
+    if (!stage) {
+      return null;
+    }
+
+    let overlay = stage.querySelector("[data-editor-canvas-dot-grid]");
+
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "editor-canvas-grid-pattern-overlay grid-pattern-overlay vue-flow__background vue-flow__container board-radial-grid-background fade-in board-radial-grid-layer";
+      overlay.dataset.editorCanvasDotGrid = "";
+      overlay.setAttribute("aria-hidden", "true");
+
+      const svg = createSvgElement("svg", {
+        class: "editor-canvas-grid-pattern-surface grid-pattern-surface",
+        "shape-rendering": "crispEdges",
+      });
+      const defs = createSvgElement("defs");
+      const pattern = createSvgElement("pattern", {
+        id: CANVAS_DOT_GRID_PATTERN_ID,
+        patternUnits: "userSpaceOnUse",
+        x: 0,
+        y: 0,
+        width: CANVAS_DOT_GRID_BASE_WORLD_PX,
+        height: CANVAS_DOT_GRID_BASE_WORLD_PX,
+      });
+      const horizontalLine = createSvgElement("rect", {
+        "data-editor-canvas-dot-grid-horizontal": "",
+        fill: "rgba(100,100,100,1.0)",
+        height: 0.5,
+        opacity: 0,
+        width: CANVAS_DOT_GRID_BASE_WORLD_PX,
+        x: 0,
+        y: 0,
+      });
+      const verticalLine = createSvgElement("rect", {
+        "data-editor-canvas-dot-grid-vertical": "",
+        fill: "rgba(100,100,100,1.0)",
+        height: CANVAS_DOT_GRID_BASE_WORLD_PX,
+        opacity: 0,
+        width: 0.5,
+        x: 0,
+        y: 0,
+      });
+      const dot = createSvgElement("rect", {
+        "data-editor-canvas-dot-grid-dot": "",
+        fill: "rgba(100,100,100,1.0)",
+        height: 1,
+        opacity: 1,
+        width: 1,
+        x: 0,
+        y: 0,
+      });
+      const fill = createSvgElement("rect", {
+        "data-editor-canvas-dot-grid-fill": "",
+        fill: `url(#${CANVAS_DOT_GRID_PATTERN_ID})`,
+        height: "100%",
+        width: "100%",
+        x: 0,
+        y: 0,
+      });
+
+      pattern.append(horizontalLine, verticalLine, dot);
+      defs.append(pattern);
+      svg.append(defs, fill);
+      overlay.append(svg);
+      stage.prepend(overlay);
+    }
+
+    return {
+      dot: overlay.querySelector("[data-editor-canvas-dot-grid-dot]"),
+      fill: overlay.querySelector("[data-editor-canvas-dot-grid-fill]"),
+      horizontalLine: overlay.querySelector("[data-editor-canvas-dot-grid-horizontal]"),
+      overlay,
+      pattern: overlay.querySelector("pattern"),
+      svg: overlay.querySelector("svg"),
+      verticalLine: overlay.querySelector("[data-editor-canvas-dot-grid-vertical]"),
+    };
+  }
+
+  function computeInfiniteCanvasDotGrid(scale) {
+    const safeScale = Math.max(0.0001, Number(scale) || 1);
+    const targetScreenSpacing = (CANVAS_DOT_GRID_TARGET_MIN_SCREEN_PX + CANVAS_DOT_GRID_TARGET_MAX_SCREEN_PX) * 0.5;
+    const idealStep = Math.log2(targetScreenSpacing / (CANVAS_DOT_GRID_BASE_WORLD_PX * safeScale)) *
+      CANVAS_DOT_GRID_STEPS_PER_OCTAVE;
+    const step = Math.round(idealStep);
+    const worldSpacing = CANVAS_DOT_GRID_BASE_WORLD_PX *
+      Math.pow(2, step / CANVAS_DOT_GRID_STEPS_PER_OCTAVE);
+    const screenSpacing = Math.max(1, worldSpacing * safeScale);
+    const phase = ((step % CANVAS_DOT_GRID_STEPS_PER_OCTAVE) + CANVAS_DOT_GRID_STEPS_PER_OCTAVE) %
+      CANVAS_DOT_GRID_STEPS_PER_OCTAVE;
+    const phaseRatio = CANVAS_DOT_GRID_STEPS_PER_OCTAVE > 1
+      ? phase / (CANVAS_DOT_GRID_STEPS_PER_OCTAVE - 1)
+      : 1;
+    const opacity = CANVAS_DOT_GRID_MIN_OPACITY +
+      (CANVAS_DOT_GRID_MAX_OPACITY - CANVAS_DOT_GRID_MIN_OPACITY) * phaseRatio;
+
+    return {
+      opacity,
+      screenSpacing,
+      step,
+      worldSpacing,
+    };
+  }
+
+  function updateInfiniteCanvasDotGrid(viewState = getCameraState()) {
+    const grid = ensureInfiniteCanvasDotGridOverlay();
+
+    if (!grid?.pattern || !grid.svg) {
+      return;
+    }
+
+    const camera = viewState?.camera || {};
+    const dpr = Math.max(0.0001, Number(viewState?.dpr) || 1);
+    const scale = Math.max(0.0001, (Number(camera.zoom) || 1) / dpr);
+    const { opacity, screenSpacing, step, worldSpacing } = computeInfiniteCanvasDotGrid(scale);
+    const cameraX = (Number(camera.x) || 0) / dpr;
+    const cameraY = (Number(camera.y) || 0) / dpr;
+    const offsetX = cameraX % screenSpacing;
+    const offsetY = cameraY % screenSpacing;
+    const roundedSpacing = roundMetricValue(screenSpacing, 3);
+
+    setSvgAttributeIfChanged(grid.pattern, "x", roundMetricValue(offsetX, 3));
+    setSvgAttributeIfChanged(grid.pattern, "y", roundMetricValue(offsetY, 3));
+    setSvgAttributeIfChanged(grid.pattern, "width", roundedSpacing);
+    setSvgAttributeIfChanged(grid.pattern, "height", roundedSpacing);
+    setSvgAttributeIfChanged(grid.horizontalLine, "width", roundedSpacing);
+    setSvgAttributeIfChanged(grid.verticalLine, "height", roundedSpacing);
+    setStylePropertyIfChanged(grid.svg, "opacity", String(roundMetricValue(opacity, 3)));
+    grid.overlay.dataset.gridStep = String(step);
+    grid.overlay.dataset.gridWorldSpacing = String(roundMetricValue(worldSpacing, 3));
+    grid.overlay.dataset.gridScreenSpacing = String(roundedSpacing);
+  }
+
   function renderSpaceBoardPaneTransform() {
+    const viewState = getCameraState();
+    updateInfiniteCanvasDotGrid(viewState);
+
     const pane = ensureSpaceBoardPane();
 
     if (!pane) {
@@ -1401,7 +1559,7 @@ window.CBO = window.CBO || {};
       return pane;
     }
 
-    const { camera, dpr } = getCameraState();
+    const { camera, dpr } = viewState;
     const scale = getViewScale();
     const tx = (Number(camera.x) || 0) / dpr;
     const ty = (Number(camera.y) || 0) / dpr;
@@ -1571,7 +1729,12 @@ window.CBO = window.CBO || {};
       return null;
     }
 
-    let svg = pane.querySelector("[data-artboard-connection-layer]") || stage.querySelector("[data-artboard-connection-layer]");
+    const plainArtboardMode = shouldUsePlainAiBoardArtboards();
+    const desiredParent = plainArtboardMode ? stage : pane;
+    let svg = Array.from(desiredParent.children || [])
+      .find((child) => child.matches?.("[data-artboard-connection-layer]")) ||
+      pane.querySelector("[data-artboard-connection-layer]") ||
+      stage.querySelector("[data-artboard-connection-layer]");
 
     if (!svg) {
       svg = document.createElementNS(SVG_NS, "svg");
@@ -1579,11 +1742,19 @@ window.CBO = window.CBO || {};
       svg.dataset.artboardConnectionLayer = "";
     }
 
-    if (svg.parentElement !== pane || pane.firstElementChild !== svg) {
+    svg.classList.toggle("is-stage-underlay", plainArtboardMode);
+
+    if (plainArtboardMode) {
+      const paperLayer = stage.querySelector("[data-artboard-paper-layer]");
+
+      if (svg.parentElement !== stage || (paperLayer && svg.nextElementSibling !== paperLayer)) {
+        stage.insertBefore(svg, paperLayer || null);
+      }
+    } else if (svg.parentElement !== pane || pane.firstElementChild !== svg) {
       pane.insertBefore(svg, pane.firstElementChild || null);
     }
 
-    if (shouldUsePlainAiBoardArtboards()) {
+    if (plainArtboardMode) {
       const rect = stage.getBoundingClientRect?.() || { width: 1, height: 1 };
       const width = Math.max(1, Number(stage.clientWidth || rect.width) || 1);
       const height = Math.max(1, Number(stage.clientHeight || rect.height) || 1);
@@ -2247,15 +2418,30 @@ window.CBO = window.CBO || {};
 
     aiImageGenerationRuns.set(normalizedBoardId, runId);
     aiImageGeneratingBoardIds.add(normalizedBoardId);
-    setAiImageGenerationStatus(normalizedBoardId, "loading", { runId });
+    const delayMs = getAiImageGenerationPreviewDelayMs();
+
+    setAiImageGenerationStatus(normalizedBoardId, "loading", { delayMs, runId });
+    recordAiBoardPreviewDebugEvent("generation-shimmer-start", {
+      boardId: normalizedBoardId,
+      delayMs,
+      runId,
+    });
+    renderSpaceBoards();
 
     const timerId = window.setTimeout(() => {
       completeAiImageSampleGeneration(normalizedBoardId, runId);
-    }, AI_IMAGE_GENERATION_PREVIEW_MS);
+    }, delayMs);
 
     aiImageGenerationPreviewTimers.set(normalizedBoardId, timerId);
 
     return true;
+  }
+
+  function getAiImageGenerationPreviewDelayMs() {
+    const min = Math.max(0, Number(AI_IMAGE_GENERATION_PREVIEW_MIN_MS) || 0);
+    const max = Math.max(min, Number(AI_IMAGE_GENERATION_PREVIEW_MAX_MS) || min);
+
+    return Math.round(min + Math.random() * (max - min));
   }
 
   function clearAiImageGenerationPreview(boardId = "") {
@@ -3706,7 +3892,7 @@ window.CBO = window.CBO || {};
       setCssVarIfChanged(element, "--ai-image-generate-handle-top", `${AI_IMAGE_GENERATE_HANDLE_GAP_DOC_PX}px`);
       setCssVarIfChanged(element, "--ai-image-generate-border-width", `${handleMetrics.borderWidthDoc}px`);
       setCssVarIfChanged(element, "--ai-image-generate-icon-size", `${handleMetrics.iconSizeDoc}px`);
-      element.classList.toggle("is-generating", isGenerating && isHeavyMounted && !plainArtboardMode);
+      element.classList.toggle("is-generating", isGenerating && (plainArtboardMode || isHeavyMounted));
       element.classList.toggle("is-heavy-mounted", isHeavyMounted);
       element.classList.toggle("is-near-viewport", isNearViewport);
       element.classList.toggle("is-selected", selectedSpaceBoardId === board.id);
@@ -4539,4 +4725,14 @@ window.CBO = window.CBO || {};
   };
 
   document.addEventListener("pointerdown", handleDocumentSpaceBoardSelectionPointerDown, true);
+  window.addEventListener("cbo:camera-change", (event) => {
+    updateInfiniteCanvasDotGrid(event.detail || getCameraState());
+  });
+  window.addEventListener("cbo:editor-canvas-ready", (event) => {
+    updateInfiniteCanvasDotGrid(event.detail || getCameraState());
+  });
+  window.addEventListener("resize", () => {
+    updateInfiniteCanvasDotGrid();
+  });
+  updateInfiniteCanvasDotGrid();
 })(window.CBO);
