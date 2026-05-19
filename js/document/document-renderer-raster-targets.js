@@ -2815,7 +2815,7 @@
         };
 
         return clampToDocument
-          ? bounds?.getClampedRasterBox?.(documentContentRect, this.width, this.height) || null
+          ? this.getClampedDocumentRect(documentContentRect)
           : this.getUnclampedDocumentRect(documentContentRect);
       };
 

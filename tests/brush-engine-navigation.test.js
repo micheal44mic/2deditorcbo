@@ -121,14 +121,16 @@ test("touch navigation exposes an exclusive mobile gesture guard", () => {
   assert.match(appSource, /guardTimer: 0/);
   assert.match(appSource, /classList\.add\("cbo-touch-navigation-guard"\)/);
   assert.match(appSource, /classList\.remove\("cbo-touch-navigation-guard"\)/);
-  assert.match(appSource, /const isInteractiveTouchPointer = isTouchPointerEvent && isTouchNavigationInteractiveTarget\(event\.target\)/);
+  assert.match(appSource, /const isInteractiveTarget = isTouchNavigationInteractiveTarget\(event\.target\)/);
+  assert.match(appSource, /const isInteractiveTouchPointer = isTouchPointerEvent && isInteractiveTarget/);
   assert.match(appSource, /namespace\.isTouchNavigationExclusive = isTouchNavigationExclusive/);
   assert.match(appSource, /namespace\.isTouchNavigationGuardActive = isTouchNavigationGuardActive/);
   assert.match(appSource, /namespace\.setTouchNavigationExclusive = setTouchNavigationExclusive/);
   assert.match(appSource, /"cbo:touch-navigation-start"/);
   assert.match(appSource, /"cbo:touch-navigation-end"/);
   assert.match(appSource, /document\.body\?\.classList\.toggle\("cbo-touch-navigation-active", nextActive\)/);
-  assert.match(appSource, /!isGhostActivation && !isOffStageTouchPointer && !isInteractiveTouchPointer/);
+  assert.match(appSource, /if \(!state\.active && isInteractiveTarget\) \{\s*return;\s*\}/);
+  assert.match(appSource, /!isGhostActivation && !isOffStageTouchPointer && !\(state\.active && isInteractiveTouchPointer\)/);
   assert.match(appSource, /event\.pointerType === "touch"[\s\S]*!isStageEvent\(event\)/);
   assert.match(appSource, /event\.stopImmediatePropagation\(\)/);
   assert.match(baseCss, /body\.cbo-touch-navigation-guard \.brush-shape-outline-preview/);

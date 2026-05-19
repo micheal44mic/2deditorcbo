@@ -695,6 +695,72 @@ test("raster snapshots and transform bounds preserve off-artboard pixels", () =>
   assert.equal(unclampedTiles[0].tx, 2);
 });
 
+test("paint target compaction keeps secondary artboard strokes outside the primary canvas", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const secondaryTarget = {
+    cropped: true,
+    framebuffer: { id: "secondary-framebuffer" },
+    height: 4,
+    layerId: "paint-secondary",
+    texture: { id: "secondary-texture" },
+    width: 4,
+    x: 1304,
+    y: 10,
+  };
+
+  renderer.width = 1048;
+  renderer.height = 2048;
+  renderer.paintLayerId = "paint-primary";
+  renderer.rasterTargetsByLayerId = new Map([["paint-secondary", secondaryTarget]]);
+  renderer.layerModel = {
+    activeLayerId: "paint-primary",
+    findEntryById: (id) => ({ id, type: "paint" }),
+  };
+  renderer.getPuppetAlphaSamples = (target, cols, rows) => {
+    const samples = new Uint8Array(cols * rows);
+
+    samples.fill(255);
+    return samples;
+  };
+  window.CBO.getDocumentArtboardUnionRect = () => ({
+    height: 2048,
+    width: 2352,
+    x: 0,
+    y: 0,
+  });
+  window.CBO.documentBounds = {
+    getClampedRasterBox(rect, width, height) {
+      const x0 = Math.max(0, Math.floor(rect.x));
+      const y0 = Math.max(0, Math.floor(rect.y));
+      const x1 = Math.min(width, Math.ceil(rect.x + rect.width));
+      const y1 = Math.min(height, Math.ceil(rect.y + rect.height));
+
+      return x1 > x0 && y1 > y0
+        ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+        : null;
+    },
+  };
+
+  const result = renderer.compactPaintTargetToContent("paint-secondary", {
+    deleteEmptyTargets: true,
+    padCells: 0,
+    padding: 0,
+    sampleCols: 16,
+    sampleRows: 16,
+    source: "unit-secondary-artboard-compact",
+  });
+
+  assert.equal(renderer.rasterTargetsByLayerId.has("paint-secondary"), true);
+  assert.equal(result.action, "skipped");
+  assert.deepEqual(JSON.parse(JSON.stringify(result.contentRect)), {
+    height: 4,
+    width: 4,
+    x: 1304,
+    y: 10,
+  });
+});
+
 test("duplicateRasterTarget shares source pixels until copy-on-write detach", () => {
   const { DocumentRenderer } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);

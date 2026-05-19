@@ -1,4 +1,6 @@
 (function registerAiBoardMediaDebugConsole(namespace) {
+  const LAST_SNAPSHOT_STORAGE_KEY = "cbo-ai-board-debug-last-snapshot-v1";
+  const ISOLATION_MODES = ["full", "no-edges", "no-bubbles", "no-boards", "no-overlay"];
   const MAX_EVENTS = 180;
   const SLOW_FRAME_MS = 50;
   const SLOW_LONG_TASK_MS = 50;
@@ -8,6 +10,8 @@
     eventList: null,
     bareButton: null,
     bareMode: false,
+    isolationButton: null,
+    isolationMode: "full",
     longTaskCount: 0,
     metrics: {
       frameMs: 0,
@@ -98,8 +102,9 @@
 
       return total + Math.max(0, width) * Math.max(0, height);
     }, 0);
-    const mediaElements = getMediaElementSnapshot();
     const stage = getStage();
+    const pane = stage?.querySelector?.("[data-space-board-pane]") || null;
+    const mediaElements = getMediaElementSnapshot();
 
     return {
       actionBubbles: stage?.querySelectorAll?.("[data-artboard-action-bubble]")?.length || 0,
@@ -112,13 +117,21 @@
       connectionPaths: stage?.querySelectorAll?.("[data-artboard-connection-layer] path.editor-artboard-connection-path")?.length || 0,
       dpr: round(dpr, 2),
       generatedBoards: mediaBoards.length,
+      heavyBoards: stage?.querySelectorAll?.("[data-ai-image-board][data-ai-image-board-heavy-mounted='true']")?.length || 0,
       imageNodes: mediaElements.filter((entry) => entry.kind === "image").length,
+      isolationMode: state.isolationMode,
       loadingBoards: document.querySelectorAll(".editor-ai-image-board.is-generating").length,
       longTasks: state.longTaskCount,
       mediaDecodedMB: round((pixelCount * 4) / 1048576, 1),
       mediaElements,
       mediaPixels: Math.round(pixelCount),
+      paneCount: stage?.querySelectorAll?.("[data-space-board-pane]")?.length || 0,
+      paneIsTransforming: Boolean(pane?.classList?.contains("is-transforming")),
+      paneTransform: pane?.style?.transform || "",
       stageChildren: stage?.children?.length || 0,
+      touchGuardActive: Boolean(namespace.isTouchNavigationGuardActive?.()),
+      touchGuardClass: Boolean(document.body?.classList?.contains("cbo-touch-navigation-guard")),
+      touchNavigationActive: Boolean(namespace.isTouchNavigationExclusive?.()),
       ua: navigator.userAgent || "",
       videoNodes: mediaElements.filter((entry) => entry.kind === "video").length,
       viewport: {
@@ -167,6 +180,12 @@
       "generatedBoards",
       "boardDomNodes",
       "connectionPaths",
+      "heavyBoards",
+      "paneCount",
+      "paneIsTransforming",
+      "touchGuardActive",
+      "touchNavigationActive",
+      "isolationMode",
       "bareMode",
       "imageNodes",
       "videoNodes",
@@ -254,6 +273,11 @@
         background: rgba(27, 157, 210, 0.34);
       }
 
+      .cbo-ai-board-media-debug button.is-warning {
+        border-color: rgba(255, 213, 111, 0.88);
+        background: rgba(184, 121, 18, 0.34);
+      }
+
       .cbo-ai-board-media-debug-summary {
         padding: 10px 13px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
@@ -279,9 +303,12 @@
         font-weight: 700;
       }
 
+      body.cbo-ai-board-bare-debug .editor-space-board-pane {
+        will-change: transform !important;
+      }
+
       body.cbo-ai-board-bare-debug .editor-ai-image-board {
         contain: layout style !important;
-        will-change: transform !important;
       }
 
       body.cbo-ai-board-bare-debug .editor-ai-image-board::before,
@@ -300,6 +327,22 @@
         border-radius: 0 !important;
         background: rgba(255, 255, 255, 0.92) !important;
         box-shadow: none !important;
+      }
+
+      body.cbo-ai-board-isolate-no-edges .editor-artboard-connection-layer {
+        display: none !important;
+      }
+
+      body.cbo-ai-board-isolate-no-bubbles .editor-artboard-action-bubble {
+        display: none !important;
+      }
+
+      body.cbo-ai-board-isolate-no-boards .editor-ai-image-board {
+        display: none !important;
+      }
+
+      body.cbo-ai-board-isolate-no-overlay .editor-space-board-layer {
+        display: none !important;
       }
 
       @media (max-width: 700px) {
@@ -331,6 +374,7 @@
     const title = document.createElement("div");
     const minButton = document.createElement("button");
     const bareButton = document.createElement("button");
+    const isolationButton = document.createElement("button");
     const copyButton = document.createElement("button");
     const clearButton = document.createElement("button");
     const body = document.createElement("div");
@@ -349,6 +393,8 @@
     minButton.textContent = "min";
     bareButton.type = "button";
     bareButton.textContent = "bare";
+    isolationButton.type = "button";
+    isolationButton.textContent = "iso:full";
     copyButton.type = "button";
     copyButton.textContent = "copy";
     clearButton.type = "button";
@@ -360,20 +406,23 @@
       minButton.textContent = state.minimized ? "show" : "min";
     });
     bareButton.addEventListener("click", () => setBareMode(!state.bareMode));
+    isolationButton.addEventListener("click", cycleIsolationMode);
     copyButton.addEventListener("click", () => copyDebugText(copyButton));
     clearButton.addEventListener("click", clear);
 
-    header.append(title, minButton, bareButton, copyButton, clearButton);
+    header.append(title, minButton, bareButton, isolationButton, copyButton, clearButton);
     body.append(summary, list);
     container.append(header, body);
     document.body.appendChild(container);
 
     state.container = container;
     state.bareButton = bareButton;
+    state.isolationButton = isolationButton;
     state.summary = summary;
     state.eventList = list;
 
     setBareMode(state.bareMode, { silent: true });
+    setIsolationMode(state.isolationMode, { silent: true });
     updateSummary(captureSnapshot());
 
     return container;
@@ -397,6 +446,36 @@
     }
   }
 
+  function setIsolationMode(mode, options = {}) {
+    const nextMode = ISOLATION_MODES.includes(mode) ? mode : "full";
+
+    state.isolationMode = nextMode;
+
+    ISOLATION_MODES.forEach((candidate) => {
+      document.body?.classList.toggle(`cbo-ai-board-isolate-${candidate}`, candidate !== "full" && candidate === nextMode);
+    });
+
+    if (state.isolationButton) {
+      state.isolationButton.textContent = `iso:${nextMode}`;
+      state.isolationButton.classList.toggle("is-warning", nextMode !== "full");
+    }
+
+    updateSummary(captureSnapshot());
+
+    if (options.silent !== true) {
+      log("isolation-mode", {
+        mode: nextMode,
+      });
+    }
+  }
+
+  function cycleIsolationMode() {
+    const currentIndex = Math.max(0, ISOLATION_MODES.indexOf(state.isolationMode));
+    const nextMode = ISOLATION_MODES[(currentIndex + 1) % ISOLATION_MODES.length];
+
+    setIsolationMode(nextMode);
+  }
+
   function updateSummary(snapshot = captureSnapshot()) {
     ensurePanel();
 
@@ -410,6 +489,12 @@
       `boards=${snapshot.boards}`,
       `dom=${snapshot.boardDomNodes}`,
       `paths=${snapshot.connectionPaths}`,
+      `heavy=${snapshot.heavyBoards}`,
+      `pane=${snapshot.paneCount}`,
+      `moving=${snapshot.paneIsTransforming ? 1 : 0}`,
+      `touchGuard=${snapshot.touchGuardActive ? 1 : 0}`,
+      `touchNav=${snapshot.touchNavigationActive ? 1 : 0}`,
+      `iso=${snapshot.isolationMode}`,
       `bare=${snapshot.bareMode ? 1 : 0}`,
       `boardArea=${snapshot.boardAreaDocPx}`,
       `screenPx=${snapshot.boardScreenPixels}`,
@@ -436,6 +521,8 @@
     const detailText = formatDetail(detail);
     const message = `${prefix} ${time} #${id} ${eventName}${detailText ? `: ${detailText}` : ""}`;
     const row = document.createElement("div");
+
+    persistSnapshot(eventName, detail, snapshot);
 
     row.className = `cbo-ai-board-media-debug-row${warn ? " is-warn" : ""}`;
     row.textContent = message;
@@ -508,7 +595,15 @@
       `boards=${snapshot.boards}`,
       `boardDomNodes=${snapshot.boardDomNodes}`,
       `connectionPaths=${snapshot.connectionPaths}`,
+      `heavyBoards=${snapshot.heavyBoards}`,
+      `paneCount=${snapshot.paneCount}`,
+      `paneIsTransforming=${snapshot.paneIsTransforming ? 1 : 0}`,
+      `paneTransform=${snapshot.paneTransform}`,
+      `touchGuardActive=${snapshot.touchGuardActive ? 1 : 0}`,
+      `touchGuardClass=${snapshot.touchGuardClass ? 1 : 0}`,
+      `touchNavigationActive=${snapshot.touchNavigationActive ? 1 : 0}`,
       `actionBubbles=${snapshot.actionBubbles}`,
+      `isolationMode=${snapshot.isolationMode}`,
       `bareMode=${snapshot.bareMode ? 1 : 0}`,
       `boardAreaDocPx=${snapshot.boardAreaDocPx}`,
       `boardScreenPixels=${snapshot.boardScreenPixels}`,
@@ -585,6 +680,29 @@
     updateSummary(captureSnapshot());
   }
 
+  function persistSnapshot(eventName, detail = {}, snapshot = captureSnapshot()) {
+    try {
+      window.localStorage?.setItem?.(LAST_SNAPSHOT_STORAGE_KEY, JSON.stringify({
+        at: new Date().toISOString(),
+        detail,
+        eventName,
+        snapshot,
+      }));
+    } catch (error) {
+      // Storage can be unavailable in private browsing or low-storage states.
+    }
+  }
+
+  function readPersistedSnapshot() {
+    try {
+      const raw = window.localStorage?.getItem?.(LAST_SNAPSHOT_STORAGE_KEY);
+
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
   function startRafMonitor() {
     if (state.rafActive) {
       return;
@@ -610,9 +728,12 @@
             boardScreenPixels: snapshot.boardScreenPixels,
             connectionPaths: snapshot.connectionPaths,
             generatedBoards: snapshot.generatedBoards,
+            heavyBoards: snapshot.heavyBoards,
             imageNodes: snapshot.imageNodes,
             loadingBoards: snapshot.loadingBoards,
             mediaDecodedMB: snapshot.mediaDecodedMB,
+            paneCount: snapshot.paneCount,
+            paneIsTransforming: snapshot.paneIsTransforming,
             videoNodes: snapshot.videoNodes,
             frameMs: round(frameMs, 1),
           });
@@ -674,18 +795,39 @@
     log,
     recordTiming,
     setBareMode,
+    setIsolationMode,
     show: ensurePanel,
+    toggleIsolationMode: cycleIsolationMode,
     toggleBareMode: () => setBareMode(!state.bareMode),
     warn,
   };
 
+  function logPreviousSessionSnapshot() {
+    const previous = readPersistedSnapshot();
+
+    if (!previous?.snapshot) {
+      return;
+    }
+
+    log("previous-session", {
+      at: previous.at || "",
+      boards: previous.snapshot.boards,
+      eventName: previous.eventName || "",
+      heavyBoards: previous.snapshot.heavyBoards,
+      isolationMode: previous.snapshot.isolationMode,
+      paneCount: previous.snapshot.paneCount,
+    });
+  }
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
+      logPreviousSessionSnapshot();
       log("debug-console-ready", { message: "temporary ai media debug enabled" });
       startRafMonitor();
       startLongTaskMonitor();
     }, { once: true });
   } else {
+    logPreviousSessionSnapshot();
     log("debug-console-ready", { message: "temporary ai media debug enabled" });
     startRafMonitor();
     startLongTaskMonitor();

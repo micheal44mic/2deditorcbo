@@ -255,12 +255,17 @@ document.addEventListener(
       event.type === "contextmenu" ||
       event.type === "auxclick";
     const isTouchPointerEvent = event.type.startsWith("pointer") && event.pointerType === "touch";
-    const isInteractiveTouchPointer = isTouchPointerEvent && isTouchNavigationInteractiveTarget(event.target);
+    const isInteractiveTarget = isTouchNavigationInteractiveTarget(event.target);
+    const isInteractiveTouchPointer = isTouchPointerEvent && isInteractiveTarget;
     const isOffStageTouchPointer = event.type.startsWith("pointer") &&
       event.pointerType === "touch" &&
       !isStageEvent(event);
 
-    if (!isGhostActivation && !isOffStageTouchPointer && !isInteractiveTouchPointer) {
+    if (!state.active && isInteractiveTarget) {
+      return;
+    }
+
+    if (!isGhostActivation && !isOffStageTouchPointer && !(state.active && isInteractiveTouchPointer)) {
       return;
     }
 
