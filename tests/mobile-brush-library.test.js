@@ -20,19 +20,22 @@ test("mobile brush library opens from an already active brush tool", () => {
 
   assert.match(panelSource, /data-mobile-brush-library/);
   assert.match(panelSource, /window\.addEventListener\("cbo:brush-tool-reactivate"/);
-  assert.match(panelSource, /function openMobileBrushLibrary\(\)/);
+  assert.match(panelSource, /function openMobileBrushLibrary\(options = \{\}\)/);
   assert.match(panelSource, /function closeMobileBrushLibrary\(\)/);
 });
 
 test("mobile brush library keeps a two-column scrollable package and brush picker", () => {
+  const indexSource = readRepoFile("index.html");
   const panelSource = readRepoFile("js", "brushes-panel.js");
   const panelCss = readRepoFile("css", "brushes-panel.css");
+  const debugSource = readRepoFile("js", "debug", "mobile-brush-debug-console.js");
 
   assert.match(panelSource, /New set/);
   assert.match(panelSource, /New brush/);
   assert.match(panelSource, /Import/);
-  assert.doesNotMatch(panelSource, /data-mobile-brush-debug-copy/);
-  assert.doesNotMatch(panelCss, /\.mobile-brush-debug-copy/);
+  assert.match(indexSource, /js\/debug\/mobile-brush-debug-console\.js/);
+  assert.match(debugSource, /dataset\.mobileBrushDebugCopy = "true"/);
+  assert.match(panelCss, /\.mobile-brush-debug-copy/);
   assert.match(panelSource, /data-mobile-brush-packages/);
   assert.match(panelSource, /data-mobile-brush-items/);
   assert.match(panelSource, /brushPackages\.map\(\(brushPackage, packageIndex\)/);
@@ -49,6 +52,10 @@ test("mobile brush library keeps a two-column scrollable package and brush picke
   assert.match(panelSource, /const canSyncMobileSelection =[\s\S]*activePackageIndex === packageIndex[\s\S]*hasMobileBrushButton\(brushId\)/);
   assert.match(panelSource, /if \(canSyncMobileSelection\) \{[\s\S]*syncMobileBrushSelectionState\(\);[\s\S]*return;/);
   assert.match(panelSource, /selectBrush\(activePackageIndex, brushId\);[\s\S]*showMobileBrushSelectionFeedback\(brushId\);/);
+  assert.match(panelSource, /function openMobileBrushStudio\(brushId\)/);
+  assert.match(panelSource, /window\.CBO\.openBrushStudio\(\{[\s\S]*brushName: getBrushName\(brushId\)[\s\S]*source: "mobile-brush-library"/);
+  assert.match(panelSource, /if \(brushId === selectedBrushId && openMobileBrushStudio\(brushId\)\) \{[\s\S]*event\.stopPropagation\(\);[\s\S]*return;/);
+  assert.match(panelSource, /window\.CBO\.activeBrushName = getBrushName\(brushId\)/);
 
   assert.match(panelCss, /@media \(max-width: 900px\) \{[\s\S]*\.mobile-brush-library:not\(\[hidden\]\)/);
   assert.match(panelCss, /\.mobile-brush-library:not\(\[hidden\]\) \{[\s\S]*background: #181a1f/);
@@ -58,6 +65,48 @@ test("mobile brush library keeps a two-column scrollable package and brush picke
   assert.match(panelCss, /\.mobile-brush-library-brush\.active \{[\s\S]*background: #f05023/);
   assert.match(panelCss, /\.mobile-brush-library-brush\.just-selected/);
   assert.match(panelCss, /\.mobile-brush-library-brush\.has-preview \.mobile-brush-library-preview \{[\s\S]*opacity: 0\.72/);
+});
+
+test("mobile brush studio opens as a Procreate Pocket style sheet", () => {
+  const studioSource = readRepoFile("js", "brush-studio.js");
+  const studioCss = readRepoFile("css", "brush-studio.css");
+
+  assert.match(studioSource, /data-brush-studio-brush-name/);
+  assert.match(studioSource, /class="brush-studio-mobile-title-text">Brush Studio/);
+  assert.match(studioSource, /class="brush-studio-done-label">Done/);
+  assert.match(studioSource, /data-brush-studio-settings-handle/);
+  assert.match(studioSource, /function openBrushStudio\(options = \{\}\)/);
+  assert.match(studioSource, /syncBrushStudioOpenContext\(options\)/);
+  assert.match(studioSource, /brush-studio\.setting-change/);
+  assert.match(studioSource, /setValue\(slider\.value, "slider-input"\)/);
+  assert.match(studioSource, /brush-studio\.push-draft\.start/);
+  assert.match(studioSource, /brush-studio\.preview-engine\.replay\.end/);
+  assert.match(studioSource, /function openMobileSettingsSheet\(\{ expanded = false \} = \{\}\)/);
+  assert.match(studioSource, /function closeMobileSettingsSheet\(\)/);
+  assert.match(studioSource, /renderStudioContent\(\);[\s\S]*openMobileSettingsSheet\(\);/);
+  assert.match(studioSource, /function startMobileSettingsDrag\(event\)/);
+  assert.match(studioSource, /function moveMobileSettingsDrag\(event\)/);
+  assert.match(studioSource, /function finishMobileSettingsDrag\(event\)/);
+  assert.match(studioSource, /if \(deltaY > 90\) \{[\s\S]*closeMobileSettingsSheet\(\);/);
+
+  assert.match(studioCss, /@media \(max-width: 900px\) \{[\s\S]*\.brush-studio-panel:not\(\[hidden\]\) \{/);
+  assert.match(studioCss, /\.brush-studio-panel:not\(\[hidden\]\) \{[\s\S]*z-index: 10060/);
+  assert.match(studioCss, /\.brush-studio-drawing-column \{[\s\S]*order: 1/);
+  assert.match(studioCss, /\.brush-studio-drawing-pad \{[\s\S]*background: #f5f7fb/);
+  assert.match(studioCss, /\.brush-studio-categories-column \{[\s\S]*order: 2/);
+  assert.match(studioCss, /\.brush-studio-categories-column \{[\s\S]*border-radius: 28px 28px 0 0/);
+  assert.match(studioCss, /\.brush-studio-categories \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(studioCss, /\.brush-studio-category\.active \{[\s\S]*background: #f05023/);
+  assert.match(studioCss, /\.brush-studio-selection-column \{[\s\S]*transform: translateY\(calc\(100% \+ var\(--brush-studio-mobile-settings-offset, 0px\)\)\)/);
+  assert.match(studioCss, /\.brush-studio-panel\.brush-studio-mobile-settings-open \.brush-studio-selection-column \{[\s\S]*transform: translateY\(var\(--brush-studio-mobile-settings-offset, 0px\)\)/);
+  assert.match(studioCss, /\.brush-studio-mobile-settings-handle::before \{[\s\S]*background: #3a3f4b/);
+  assert.match(studioCss, /\.brush-studio-panel\.brush-studio-mobile-settings-expanded \.brush-studio-selection-column \{[\s\S]*height: min\(74vh, 650px\)/);
+  assert.match(studioCss, /\.brush-studio-check-button \.brush-studio-check-icon \{[\s\S]*display: none/);
+  assert.doesNotMatch(studioCss, /(^|\n)\s*\.brush-studio-check-icon\s*\{[^}]*display:\s*none/);
+  assert.match(studioCss, /\.brush-studio-shape-editor-header \{[\s\S]*display: grid/);
+  assert.match(studioCss, /\.brush-studio-shape-editor-actions \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\) 44px/);
+  assert.match(studioCss, /\.brush-studio-shape-accept-button \.brush-studio-check-icon \{[\s\S]*display: block/);
+  assert.doesNotMatch(studioCss, /brush-studio-mobile-sheet-handle/);
 });
 
 test("mobile brush library rows reveal attached swipe actions for share duplicate and delete", () => {

@@ -67,18 +67,26 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     `
       <section class="brush-studio-panel" aria-label="Brush studio" data-brush-studio hidden>
         <div class="brush-studio-column brush-studio-categories-column">
-          <h2 class="brush-studio-title">BRUSH STUDIO</h2>
+          <h2 class="brush-studio-title">
+            <span class="brush-studio-desktop-title-text">BRUSH STUDIO</span>
+            <span class="brush-studio-mobile-brush-name" data-brush-studio-brush-name>BRUSH</span>
+          </h2>
           <div class="brush-studio-categories" aria-label="Brush studio categories" data-brush-studio-categories></div>
         </div>
         <div class="brush-studio-column brush-studio-selection-column">
+          <button class="brush-studio-mobile-settings-handle" type="button" aria-label="Close brush setting" data-brush-studio-settings-handle></button>
           <div class="brush-studio-settings" data-brush-studio-settings></div>
         </div>
         <div class="brush-studio-column brush-studio-drawing-column">
           <div class="brush-studio-drawing-header">
-            <h2 class="brush-studio-drawing-title">DRAWING PAD</h2>
+            <h2 class="brush-studio-drawing-title">
+              <span class="brush-studio-desktop-title-text">DRAWING PAD</span>
+              <span class="brush-studio-mobile-title-text">Brush Studio</span>
+            </h2>
             <div class="brush-studio-drawing-actions">
-              <button class="brush-studio-cancel-button" type="button">CANCEL</button>
+              <button class="brush-studio-cancel-button" type="button">Cancel</button>
               <button class="brush-studio-check-button" type="button" aria-label="Confirm drawing pad">
+                <span class="brush-studio-done-label">Done</span>
                 <svg class="brush-studio-check-icon lucide lucide-check-icon lucide-check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M20 6 9 17l-5-5"></path>
                 </svg>
@@ -133,6 +141,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const categoryList = editorPage.querySelector("[data-brush-studio-categories]");
   const settingsPanel = editorPage.querySelector("[data-brush-studio-settings]");
   const previewPad = editorPage.querySelector("[data-brush-preview-pad]");
+  const mobileBrushName = editorPage.querySelector("[data-brush-studio-brush-name]");
   const cancelButton = editorPage.querySelector(".brush-studio-cancel-button");
   const confirmButton = editorPage.querySelector(".brush-studio-check-button");
   const shapeEditor = editorPage.querySelector("[data-brush-shape-editor]");
@@ -150,6 +159,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const grainAcceptButton = editorPage.querySelector("[data-brush-grain-accept]");
   const grainEditorImage = editorPage.querySelector("[data-brush-grain-editor-image]");
   const selectionColumn = editorPage.querySelector(".brush-studio-selection-column");
+  const mobileSettingsHandle = editorPage.querySelector("[data-brush-studio-settings-handle]");
   let selectedCategory = studioCategories[0];
   let draftBrushSettings = { ...window.CBO.brushSettings };
   let shapeEditorDraftSrc = draftBrushSettings.shapeAlphaSrc || defaultShapeAlphaSrc;
@@ -162,12 +172,74 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   let previewCanvas = null;
   let previewDocumentRenderer = null;
   let previewEngine = null;
+  let mobileSettingsDrag = null;
   let replayFrame = 0;
 
+  function getBrushDebug() {
+    return window.CBO?.MobileBrushDebug || null;
+  }
+
+  function traceBrushDebug(eventName, detail = {}) {
+    getBrushDebug()?.trace?.(eventName, detail);
+  }
+
+  function getDebugNow() {
+    return getBrushDebug()?.now?.() || performance?.now?.() || Date.now();
+  }
+
+  function getDebugDuration(startMs) {
+    return getBrushDebug()?.roundMs?.(getDebugNow() - startMs) || Math.round((getDebugNow() - startMs) * 10) / 10;
+  }
+
+  function getDebugSettingValue(value) {
+    if (typeof value === "number") {
+      return Math.round(value * 10000) / 10000;
+    }
+
+    if (value == null || typeof value === "boolean" || typeof value === "string") {
+      return value;
+    }
+
+    return String(value);
+  }
+
+  function traceBrushSettingChange({
+    controlType,
+    displayValue,
+    inputValue,
+    key,
+    label,
+    max,
+    min,
+    previousValue,
+    settingValue,
+    source,
+    step,
+  }) {
+    traceBrushDebug("brush-studio.setting-change", {
+      activeBrushId: window.CBO.activeBrushId || "",
+      category: selectedCategory,
+      controlType,
+      displayValue: getDebugSettingValue(displayValue),
+      inputValue: getDebugSettingValue(inputValue),
+      key,
+      label,
+      max,
+      min,
+      previousValue: getDebugSettingValue(previousValue),
+      savedValue: getDebugSettingValue(window.CBO.brushSettings?.[key]),
+      settingValue: getDebugSettingValue(settingValue),
+      source,
+      step,
+    });
+  }
+
   function isAndroidPerformanceMode() {
-    return window.CBO.androidPerformanceMode === true ||
+    return window.CBO.brushStudioAndroidLitePreview === true && (
+      window.CBO.androidPerformanceMode === true ||
       window.CBO.deviceIsAndroid === true ||
-      window.CBO.DocumentRenderer?.isAndroidLikeEnvironment?.() === true;
+      window.CBO.DocumentRenderer?.isAndroidLikeEnvironment?.() === true
+    );
   }
 
   function createAndroidLitePreviewNotice() {
@@ -179,7 +251,22 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     return notice;
   }
 
-  function pushDraftToEngine() {
+  function pushDraftToEngine(context = {}) {
+    const startMs = getDebugNow();
+    const hasPreviewEngine = Boolean(previewEngine);
+    const replayAlreadyPending = Boolean(replayFrame);
+
+    traceBrushDebug("brush-studio.push-draft.start", {
+      activeBrushId: window.CBO.activeBrushId || "",
+      category: selectedCategory,
+      controlType: context.controlType || "",
+      hasPreviewEngine,
+      key: context.key || "",
+      label: context.label || "",
+      replayAlreadyPending,
+      settingValue: getDebugSettingValue(context.settingValue),
+      source: context.source || "",
+    });
     window.dispatchEvent(
       new CustomEvent("cbo:brush-settings-preview-change", {
         detail: {
@@ -190,38 +277,97 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
 
     if (!previewEngine) {
+      traceBrushDebug("brush-studio.push-draft.end", {
+        durationMs: getDebugDuration(startMs),
+        mode: "no-preview-engine",
+        source: context.source || "",
+      });
       return;
     }
 
+    const brushStateStartMs = getDebugNow();
+
     previewEngine.setBrushState(draftBrushSettings);
+    traceBrushDebug("brush-studio.preview-engine.set-state.end", {
+      durationMs: getDebugDuration(brushStateStartMs),
+      source: context.source || "",
+    });
 
     // rAF throttle: durante il drag di uno slider arrivano decine di "input"; ne basta uno per frame.
     if (replayFrame) {
+      traceBrushDebug("brush-studio.push-draft.end", {
+        durationMs: getDebugDuration(startMs),
+        mode: "replay-already-pending",
+        source: context.source || "",
+      });
       return;
     }
 
     replayFrame = requestAnimationFrame(() => {
+      const replayStartMs = getDebugNow();
+
       replayFrame = 0;
 
       if (previewEngine && !previewEngine.isDrawing) {
         previewEngine.replayLastStroke();
+        traceBrushDebug("brush-studio.preview-engine.replay.end", {
+          durationMs: getDebugDuration(replayStartMs),
+          replayed: true,
+          source: context.source || "",
+        });
+        return;
       }
+
+      traceBrushDebug("brush-studio.preview-engine.replay.end", {
+        durationMs: getDebugDuration(replayStartMs),
+        isDrawing: previewEngine?.isDrawing === true,
+        replayed: false,
+        source: context.source || "",
+      });
+    });
+    traceBrushDebug("brush-studio.push-draft.end", {
+      durationMs: getDebugDuration(startMs),
+      mode: "replay-scheduled",
+      source: context.source || "",
     });
   }
 
   function ensurePreviewCanvas() {
+    const startMs = getDebugNow();
+
+    traceBrushDebug("brush-studio.ensure-preview.start", {
+      hasBrushEngine: Boolean(window.CBO.BrushEngine),
+      hasDocumentRenderer: Boolean(window.CBO.DocumentRenderer),
+      hasPreviewEngine: Boolean(previewEngine),
+      isAndroidPerformanceMode: isAndroidPerformanceMode(),
+    });
+
     if (!previewPad || !window.CBO.BrushEngine || !window.CBO.DocumentRenderer) {
+      traceBrushDebug("brush-studio.ensure-preview.skipped", {
+        durationMs: getDebugDuration(startMs),
+        hasPreviewPad: Boolean(previewPad),
+      });
       return;
     }
 
     if (isAndroidPerformanceMode()) {
       destroyPreviewCanvas();
       previewPad.replaceChildren(createAndroidLitePreviewNotice());
+      traceBrushDebug("brush-studio.ensure-preview.end", {
+        durationMs: getDebugDuration(startMs),
+        mode: "android-lite",
+      });
       return;
     }
 
     if (previewEngine) {
-      pushDraftToEngine();
+      pushDraftToEngine({
+        source: "ensure-preview-reuse",
+      });
+      traceBrushDebug("brush-studio.ensure-preview.end", {
+        durationMs: getDebugDuration(startMs),
+        mode: "reuse-engine",
+      });
       return;
     }
 
@@ -263,6 +409,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         documentSizeCap: previewDocumentSizeCap,
       });
     } catch (error) {
+      traceBrushDebug("brush-studio.ensure-preview.error", {
+        durationMs: getDebugDuration(startMs),
+        message: error?.message || String(error),
+      });
       previewDocumentRenderer?.dispose?.();
       previewDocumentRenderer = null;
       previewCanvas.remove();
@@ -273,6 +423,11 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     // Hook di test (read-only): permette di ispezionare lo stato dell'engine
     // dalla console o da test E2E senza richiedere setter pubblici dedicati.
     window.CBO.__brushStudioPreviewEngine = previewEngine;
+    traceBrushDebug("brush-studio.ensure-preview.end", {
+      durationMs: getDebugDuration(startMs),
+      mode: "create-engine",
+      previewDocumentSizeCap,
+    });
   }
 
   function destroyPreviewCanvas() {
@@ -370,10 +525,114 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     return header;
   }
 
+  function isMobileBrushStudioViewport() {
+    return window.matchMedia?.("(max-width: 900px)")?.matches === true;
+  }
+
+  function setMobileSettingsSheetOffset(offset) {
+    const nextOffset = Math.max(0, Math.round(Number(offset) || 0));
+
+    selectionColumn?.style.setProperty("--brush-studio-mobile-settings-offset", `${nextOffset}px`);
+
+    return nextOffset;
+  }
+
+  function openMobileSettingsSheet({ expanded = false } = {}) {
+    if (!brushStudio || !selectionColumn || !isMobileBrushStudioViewport()) {
+      return;
+    }
+
+    setMobileSettingsSheetOffset(0);
+    brushStudio.classList.add("brush-studio-mobile-settings-open");
+    brushStudio.classList.toggle("brush-studio-mobile-settings-expanded", expanded);
+    selectionColumn.setAttribute("aria-hidden", "false");
+  }
+
+  function closeMobileSettingsSheet() {
+    if (!brushStudio || !selectionColumn) {
+      return;
+    }
+
+    mobileSettingsDrag = null;
+    selectionColumn.classList.remove("is-dragging");
+    setMobileSettingsSheetOffset(0);
+    brushStudio.classList.remove(
+      "brush-studio-mobile-settings-open",
+      "brush-studio-mobile-settings-expanded",
+    );
+    selectionColumn.setAttribute("aria-hidden", "true");
+  }
+
+  function startMobileSettingsDrag(event) {
+    if (!selectionColumn || !brushStudio?.classList.contains("brush-studio-mobile-settings-open")) {
+      return;
+    }
+
+    event.preventDefault();
+    mobileSettingsDrag = {
+      expanded: brushStudio.classList.contains("brush-studio-mobile-settings-expanded"),
+      pointerId: event.pointerId,
+      startY: event.clientY,
+    };
+    selectionColumn.classList.add("is-dragging");
+    mobileSettingsHandle?.setPointerCapture?.(event.pointerId);
+  }
+
+  function moveMobileSettingsDrag(event) {
+    if (!mobileSettingsDrag || event.pointerId !== mobileSettingsDrag.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const deltaY = event.clientY - mobileSettingsDrag.startY;
+
+    if (deltaY < -42) {
+      brushStudio?.classList.add("brush-studio-mobile-settings-expanded");
+      setMobileSettingsSheetOffset(0);
+      return;
+    }
+
+    if (deltaY > 0) {
+      setMobileSettingsSheetOffset(deltaY);
+      return;
+    }
+
+    setMobileSettingsSheetOffset(0);
+  }
+
+  function finishMobileSettingsDrag(event) {
+    if (!mobileSettingsDrag || event.pointerId !== mobileSettingsDrag.pointerId) {
+      return;
+    }
+
+    const deltaY = event.clientY - mobileSettingsDrag.startY;
+    const didDrag = Math.abs(deltaY) > 8;
+
+    mobileSettingsHandle?.releasePointerCapture?.(event.pointerId);
+    selectionColumn?.classList.remove("is-dragging");
+    mobileSettingsDrag = null;
+    if (didDrag && mobileSettingsHandle) {
+      mobileSettingsHandle.dataset.suppressClick = "true";
+    }
+
+    if (deltaY > 90) {
+      closeMobileSettingsSheet();
+      return;
+    }
+
+    if (deltaY < -42) {
+      brushStudio?.classList.add("brush-studio-mobile-settings-expanded");
+    }
+
+    setMobileSettingsSheetOffset(0);
+  }
+
   function renderCategories() {
     if (!categoryList) {
       return;
     }
+
+    const startMs = getDebugNow();
 
     categoryList.replaceChildren(
       ...studioCategories.map((categoryName) => {
@@ -386,15 +645,25 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         categoryButton.setAttribute("aria-pressed", String(isActive));
         categoryButton.classList.toggle("active", isActive);
         categoryButton.addEventListener("click", () => {
+          traceBrushDebug("brush-studio.category-click", {
+            nextCategory: categoryName,
+            previousCategory: selectedCategory,
+          });
           selectedCategory = categoryName;
           closeShapeEditor();
           closeGrainEditor();
           renderStudioContent();
+          openMobileSettingsSheet();
         });
 
         return categoryButton;
       }),
     );
+    traceBrushDebug("brush-studio.render-categories.end", {
+      categoryCount: studioCategories.length,
+      durationMs: getDebugDuration(startMs),
+      selectedCategory,
+    });
   }
 
   function createRangeSetting({ key, label, min, max, step, value, unit, toSetting, toDisplay, disabled = false }) {
@@ -427,15 +696,36 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     slider.step = String(step);
     slider.setAttribute("aria-label", label);
 
-    function setValue(nextValue) {
+    function setValue(nextValue, source = "program") {
+      const previousValue = draftBrushSettings[key];
       const displayValue = clamp(nextValue, min, max);
       const progress = ((displayValue - min) / (max - min)) * 100;
+      const settingValue = toSetting(displayValue);
 
-      draftBrushSettings[key] = toSetting(displayValue);
+      draftBrushSettings[key] = settingValue;
       slider.value = String(displayValue);
       valueInput.value = String(toDisplay(displayValue));
       slider.style.setProperty("--brush-studio-range-progress", `${progress}%`);
-      pushDraftToEngine();
+      traceBrushSettingChange({
+        controlType: "range",
+        displayValue,
+        inputValue: nextValue,
+        key,
+        label,
+        max,
+        min,
+        previousValue,
+        settingValue,
+        source,
+        step,
+      });
+      pushDraftToEngine({
+        controlType: "range",
+        key,
+        label,
+        settingValue,
+        source,
+      });
     }
 
     function setDisabled(isDisabled) {
@@ -445,17 +735,17 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     }
 
     slider.addEventListener("input", () => {
-      setValue(slider.value);
+      setValue(slider.value, "slider-input");
     });
     valueInput.addEventListener("input", () => {
       if (valueInput.value.trim() === "") {
         return;
       }
 
-      setValue(valueInput.value);
+      setValue(valueInput.value, "number-input");
     });
     valueInput.addEventListener("blur", () => {
-      setValue(valueInput.value || value);
+      setValue(valueInput.value || value, "number-blur");
     });
     valueInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -466,7 +756,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     valueLabel.append(valueInput, valueUnit);
     header.append(name, valueLabel);
     setting.append(header, slider);
-    setValue(value);
+    setValue(value, "init");
     setDisabled(disabled);
     setting.setDisabled = setDisabled;
 
@@ -518,10 +808,40 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     });
 
     select.value = options.some((option) => option.key === currentValue) ? currentValue : fallbackValue;
+    const previousValue = draftBrushSettings[key];
+
     draftBrushSettings[key] = select.value;
+    traceBrushSettingChange({
+      controlType: "select",
+      displayValue: select.value,
+      inputValue: currentValue,
+      key,
+      label,
+      previousValue,
+      settingValue: select.value,
+      source: "init",
+    });
     select.addEventListener("change", () => {
+      const previousSelectValue = draftBrushSettings[key];
+
       draftBrushSettings[key] = select.value;
-      pushDraftToEngine();
+      traceBrushSettingChange({
+        controlType: "select",
+        displayValue: select.value,
+        inputValue: select.value,
+        key,
+        label,
+        previousValue: previousSelectValue,
+        settingValue: select.value,
+        source: "select-change",
+      });
+      pushDraftToEngine({
+        controlType: "select",
+        key,
+        label,
+        settingValue: select.value,
+        source: "select-change",
+      });
     });
 
     wrapper.append(name, select);
@@ -549,11 +869,13 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     slider.step = "1";
     slider.setAttribute("aria-label", label);
 
-    function setValue(nextValue) {
+    function setValue(nextValue, source = "program") {
+      const previousValue = draftBrushSettings[key];
       const displayValue = Math.round(clamp(Number(nextValue), 0, 100));
       const progress = displayValue;
+      const settingValue = displayValue / 100;
 
-      draftBrushSettings[key] = displayValue / 100;
+      draftBrushSettings[key] = settingValue;
       slider.value = String(displayValue);
       valuePill.textContent = typeof formatDisplay === "function"
         ? formatDisplay(displayValue)
@@ -561,14 +883,33 @@ window.CBO.initBrushStudio = function initBrushStudio() {
           ? "NONE"
           : `${displayValue}%`;
       slider.style.setProperty("--brush-studio-range-progress", `${progress}%`);
-      pushDraftToEngine();
+      traceBrushSettingChange({
+        controlType: "grain-percent-range",
+        displayValue,
+        inputValue: nextValue,
+        key,
+        label,
+        max: 100,
+        min: 0,
+        previousValue,
+        settingValue,
+        source,
+        step: 1,
+      });
+      pushDraftToEngine({
+        controlType: "grain-percent-range",
+        key,
+        label,
+        settingValue,
+        source,
+      });
     }
 
     slider.addEventListener("input", () => {
-      setValue(slider.value);
+      setValue(slider.value, "slider-input");
     });
 
-    setValue(Math.round(clamp01(value) * 100));
+    setValue(Math.round(clamp01(value) * 100), "init");
     header.append(name, valuePill);
     setting.append(header, slider);
 
@@ -595,28 +936,49 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     slider.step = "1";
     slider.setAttribute("aria-label", label);
 
-    function setValue(nextValue) {
+    function setValue(nextValue, source = "program") {
+      const previousValue = draftBrushSettings[key];
       const displayValue = Math.round(clamp(Number(nextValue), -100, 100));
       const progress = ((displayValue + 100) / 200) * 100;
       const start = Math.min(50, progress);
       const end = Math.max(50, progress);
       const prefix = displayValue > 0 ? "+" : "";
+      const settingValue = displayValue / 100;
 
-      draftBrushSettings[key] = displayValue / 100;
+      draftBrushSettings[key] = settingValue;
       slider.value = String(displayValue);
       valuePill.textContent = typeof formatDisplay === "function"
         ? formatDisplay(displayValue)
         : `${prefix}${displayValue}%`;
       slider.style.setProperty("--brush-studio-range-start", `${start}%`);
       slider.style.setProperty("--brush-studio-range-end", `${end}%`);
-      pushDraftToEngine();
+      traceBrushSettingChange({
+        controlType: "grain-signed-range",
+        displayValue,
+        inputValue: nextValue,
+        key,
+        label,
+        max: 100,
+        min: -100,
+        previousValue,
+        settingValue,
+        source,
+        step: 1,
+      });
+      pushDraftToEngine({
+        controlType: "grain-signed-range",
+        key,
+        label,
+        settingValue,
+        source,
+      });
     }
 
     slider.addEventListener("input", () => {
-      setValue(slider.value);
+      setValue(slider.value, "slider-input");
     });
 
-    setValue(Number.isFinite(Number(value)) ? value : 0);
+    setValue(Number.isFinite(Number(value)) ? value : 0, "init");
     header.append(name, valuePill);
     setting.append(header, slider);
 
@@ -678,9 +1040,27 @@ window.CBO.initBrushStudio = function initBrushStudio() {
           return;
         }
 
+        const previousValue = draftBrushSettings.grainBlendMode;
+
         grainBlendModeScrollIndex = index;
         draftBrushSettings.grainBlendMode = mode.key;
-        pushDraftToEngine();
+        traceBrushSettingChange({
+          controlType: "grain-blend-mode",
+          displayValue: mode.key,
+          inputValue: mode.key,
+          key: "grainBlendMode",
+          label: "BLEND MODE",
+          previousValue,
+          settingValue: mode.key,
+          source: "blend-click",
+        });
+        pushDraftToEngine({
+          controlType: "grain-blend-mode",
+          key: "grainBlendMode",
+          label: "BLEND MODE",
+          settingValue: mode.key,
+          source: "blend-click",
+        });
         syncBlendModeUi();
       });
 
@@ -769,8 +1149,27 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         }
 
         grainBlendModeScrollIndex = nextIndex;
-        draftBrushSettings.grainBlendMode = blendModes[nextIndex].key;
-        pushDraftToEngine();
+        const previousValue = draftBrushSettings.grainBlendMode;
+        const nextValue = blendModes[nextIndex].key;
+
+        draftBrushSettings.grainBlendMode = nextValue;
+        traceBrushSettingChange({
+          controlType: "grain-blend-mode",
+          displayValue: nextValue,
+          inputValue: direction,
+          key: "grainBlendMode",
+          label: "BLEND MODE",
+          previousValue,
+          settingValue: nextValue,
+          source: "blend-wheel",
+        });
+        pushDraftToEngine({
+          controlType: "grain-blend-mode",
+          key: "grainBlendMode",
+          label: "BLEND MODE",
+          settingValue: nextValue,
+          source: "blend-wheel",
+        });
         syncBlendModeUi();
       },
       { passive: false },
@@ -986,8 +1385,26 @@ window.CBO.initBrushStudio = function initBrushStudio() {
         optionButton.classList.toggle("active", isActive);
         optionButton.setAttribute("aria-pressed", String(isActive));
         optionButton.addEventListener("click", () => {
+          const previousValue = draftBrushSettings.grainMode;
+
           draftBrushSettings.grainMode = option.key;
-          pushDraftToEngine();
+          traceBrushSettingChange({
+            controlType: "grain-mode",
+            displayValue: option.key,
+            inputValue: option.key,
+            key: "grainMode",
+            label: "GRAIN MODE",
+            previousValue,
+            settingValue: option.key,
+            source: "grain-mode-click",
+          });
+          pushDraftToEngine({
+            controlType: "grain-mode",
+            key: "grainMode",
+            label: "GRAIN MODE",
+            settingValue: option.key,
+            source: "grain-mode-click",
+          });
           renderGrainSettings();
         });
 
@@ -1139,11 +1556,29 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   }
 
   function acceptShapeEditor() {
+    const previousName = draftBrushSettings.shapeAlphaName;
+
     draftBrushSettings.shapeAlphaSrc = shapeEditorDraftSrc || defaultShapeAlphaSrc;
     draftBrushSettings.shapeAlphaName = shapeEditorDraftName || defaultShapeAlphaName;
+    traceBrushSettingChange({
+      controlType: "asset",
+      displayValue: draftBrushSettings.shapeAlphaName,
+      inputValue: shapeEditorDraftName,
+      key: "shapeAlphaName",
+      label: "SHAPE ALPHA",
+      previousValue: previousName,
+      settingValue: draftBrushSettings.shapeAlphaName,
+      source: "shape-accept",
+    });
     closeShapeEditor();
     renderShapeSettings();
-    pushDraftToEngine();
+    pushDraftToEngine({
+      controlType: "asset",
+      key: "shapeAlphaName",
+      label: "SHAPE ALPHA",
+      settingValue: draftBrushSettings.shapeAlphaName,
+      source: "shape-accept",
+    });
   }
 
   function openGrainEditor() {
@@ -1169,13 +1604,31 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   }
 
   function acceptGrainEditor() {
+    const previousName = draftBrushSettings.grainTextureName;
+
     draftBrushSettings.grainEnabled = true;
     draftBrushSettings.grainTextureSrc = grainEditorDraftSrc || defaultGrainTextureSrc;
     draftBrushSettings.grainTextureName = grainEditorDraftName || defaultGrainTextureName;
     draftBrushSettings.grainInvert = false;
+    traceBrushSettingChange({
+      controlType: "asset",
+      displayValue: draftBrushSettings.grainTextureName,
+      inputValue: grainEditorDraftName,
+      key: "grainTextureName",
+      label: "GRAIN TEXTURE",
+      previousValue: previousName,
+      settingValue: draftBrushSettings.grainTextureName,
+      source: "grain-accept",
+    });
     closeGrainEditor();
     renderGrainSettings();
-    pushDraftToEngine();
+    pushDraftToEngine({
+      controlType: "asset",
+      key: "grainTextureName",
+      label: "GRAIN TEXTURE",
+      settingValue: draftBrushSettings.grainTextureName,
+      source: "grain-accept",
+    });
   }
 
   function loadImageFromObjectUrl(objectUrl, label = "image") {
@@ -1787,20 +2240,38 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     knob.appendChild(checkIcon);
     toggle.appendChild(knob);
 
-    function setActive(isActive) {
+    function setActive(isActive, source = "program") {
+      const previousValue = draftBrushSettings[key];
+
       draftBrushSettings[key] = isActive;
       toggle.classList.toggle("active", isActive);
       toggle.setAttribute("aria-pressed", String(isActive));
+      traceBrushSettingChange({
+        controlType: "toggle",
+        displayValue: isActive,
+        inputValue: isActive,
+        key,
+        label,
+        previousValue,
+        settingValue: isActive,
+        source,
+      });
     }
 
     toggle.addEventListener("click", () => {
       const next = !draftBrushSettings[key];
-      setActive(next);
+      setActive(next, "toggle-click");
       onChange?.(next);
-      pushDraftToEngine();
+      pushDraftToEngine({
+        controlType: "toggle",
+        key,
+        label,
+        settingValue: next,
+        source: "toggle-click",
+      });
     });
 
-    setActive(Boolean(draftBrushSettings[key]));
+    setActive(Boolean(draftBrushSettings[key]), "init");
     wrapper.append(name, toggle);
 
     return wrapper;
@@ -1890,6 +2361,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     }
 
     function setHandleValue(handle, fraction) {
+      const previousStart = draftBrushSettings.taperStart;
+      const previousEnd = draftBrushSettings.taperEnd;
       const next = clamp01(fraction);
 
       if (handle === "start") {
@@ -1923,7 +2396,41 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       }
 
       syncHandles();
-      pushDraftToEngine();
+      traceBrushSettingChange({
+        controlType: "taper-handle",
+        displayValue: handle === "start" ? draftBrushSettings.taperStart : draftBrushSettings.taperEnd,
+        inputValue: fraction,
+        key: handle === "start" ? "taperStart" : "taperEnd",
+        label: handle === "start" ? "TAPER START" : "TAPER END",
+        max: 1,
+        min: 0,
+        previousValue: handle === "start" ? previousStart : previousEnd,
+        settingValue: handle === "start" ? draftBrushSettings.taperStart : draftBrushSettings.taperEnd,
+        source: "taper-drag",
+        step: "pointer",
+      });
+      if (draftBrushSettings.taperLinkSizes) {
+        traceBrushSettingChange({
+          controlType: "taper-handle-linked",
+          displayValue: handle === "start" ? draftBrushSettings.taperEnd : draftBrushSettings.taperStart,
+          inputValue: fraction,
+          key: handle === "start" ? "taperEnd" : "taperStart",
+          label: handle === "start" ? "TAPER END" : "TAPER START",
+          max: 1,
+          min: 0,
+          previousValue: handle === "start" ? previousEnd : previousStart,
+          settingValue: handle === "start" ? draftBrushSettings.taperEnd : draftBrushSettings.taperStart,
+          source: "taper-drag-linked",
+          step: "pointer",
+        });
+      }
+      pushDraftToEngine({
+        controlType: "taper-handle",
+        key: handle === "start" ? "taperStart" : "taperEnd",
+        label: handle === "start" ? "TAPER START" : "TAPER END",
+        settingValue: handle === "start" ? draftBrushSettings.taperStart : draftBrushSettings.taperEnd,
+        source: "taper-drag",
+      });
     }
 
     function attachDrag(handle) {
@@ -2106,63 +2613,159 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   }
 
   function renderStudioContent() {
+    const startMs = getDebugNow();
+
+    traceBrushDebug("brush-studio.render-content.start", {
+      selectedCategory,
+    });
     renderCategories();
 
     if (selectedCategory === "BASIC") {
       renderBasicSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
       return;
     }
 
     if (selectedCategory === "SHAPE") {
       renderShapeSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
       return;
     }
 
     if (selectedCategory === "GRAIN") {
       renderGrainSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
       return;
     }
 
     if (selectedCategory === "RENDERING") {
       renderRenderingSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
       return;
     }
 
     if (selectedCategory === "COLOR DYNAMICS") {
       renderColorDynamicsSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
       return;
     }
 
     if (selectedCategory === "WET MIX") {
       renderWetMixSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
       return;
     }
 
     if (selectedCategory === "STABILIZATION") {
       renderStabilizationSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
       return;
     }
 
     if (selectedCategory === "TAPER") {
       renderTaperSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
       return;
     }
 
     renderStrokeSettings();
+    traceBrushDebug("brush-studio.render-content.end", {
+      durationMs: getDebugDuration(startMs),
+      selectedCategory,
+    });
   }
 
-  function openBrushStudio() {
+  function getBrushStudioBrushName(options = {}) {
+    const requestedName = String(options.brushName || "").trim();
+    const activeName = String(window.CBO.activeBrushName || "").trim();
+
+    return requestedName || activeName || "BRUSH";
+  }
+
+  function syncBrushStudioOpenContext(options = {}) {
+    if (mobileBrushName) {
+      mobileBrushName.textContent = getBrushStudioBrushName(options);
+    }
+  }
+
+  function openBrushStudio(options = {}) {
     if (brushStudio) {
+      const startMs = getDebugNow();
+      const debugSessionId = getBrushDebug()?.startSession?.("brush-studio-open", {
+        brushId: options.brushId || window.CBO.activeBrushId || "",
+        brushName: getBrushStudioBrushName(options),
+        source: options.source || "direct",
+      });
+
+      traceBrushDebug("brush-studio.open.start", {
+        brushId: options.brushId || window.CBO.activeBrushId || "",
+        debugSessionId,
+        hiddenBeforeOpen: brushStudio.hidden,
+        selectedCategory,
+        source: options.source || "",
+      });
+      syncBrushStudioOpenContext(options);
+      closeMobileSettingsSheet();
       resetDraftBrushSettings();
       renderStudioContent();
       brushStudio.hidden = false;
       ensurePreviewCanvas();
-      pushDraftToEngine();
+      pushDraftToEngine({
+        source: "open-brush-studio",
+      });
+      traceBrushDebug("brush-studio.open.end", {
+        debugSessionId,
+        durationMs: getDebugDuration(startMs),
+        hiddenAfterOpen: brushStudio.hidden,
+      });
+      requestAnimationFrame(() => {
+        traceBrushDebug("brush-studio.open.after-raf", {
+          debugSessionId,
+          elapsedMs: getDebugDuration(startMs),
+        });
+        requestAnimationFrame(() => {
+          traceBrushDebug("brush-studio.open.after-second-raf", {
+            debugSessionId,
+            elapsedMs: getDebugDuration(startMs),
+          });
+          getBrushDebug()?.endSession?.("brush-studio-open", debugSessionId, {
+            elapsedMs: getDebugDuration(startMs),
+          });
+        });
+      });
     }
   }
 
   function closeBrushStudio() {
     if (brushStudio) {
+      traceBrushDebug("brush-studio.close.start", {
+        hiddenBeforeClose: brushStudio.hidden,
+      });
+      closeMobileSettingsSheet();
       closeGrainBlendModeControl();
       closeShapeEditor();
       closeGrainEditor();
@@ -2176,6 +2779,9 @@ window.CBO.initBrushStudio = function initBrushStudio() {
           },
         }),
       );
+      traceBrushDebug("brush-studio.close.end", {
+        hiddenAfterClose: brushStudio.hidden,
+      });
     }
   }
 
@@ -2232,6 +2838,23 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   confirmButton?.addEventListener("click", () => {
     saveDraftBrushSettings();
     closeBrushStudio();
+  });
+  mobileSettingsHandle?.addEventListener("click", () => {
+    if (mobileSettingsHandle.dataset.suppressClick === "true") {
+      mobileSettingsHandle.dataset.suppressClick = "false";
+      return;
+    }
+
+    closeMobileSettingsSheet();
+  });
+  mobileSettingsHandle?.addEventListener("pointerdown", startMobileSettingsDrag);
+  window.addEventListener("pointermove", moveMobileSettingsDrag, { passive: false });
+  window.addEventListener("pointerup", finishMobileSettingsDrag);
+  window.addEventListener("pointercancel", finishMobileSettingsDrag);
+  window.addEventListener("resize", () => {
+    if (!isMobileBrushStudioViewport()) {
+      closeMobileSettingsSheet();
+    }
   });
   shapeImportButton?.addEventListener("click", () => {
     shapeInput?.click();

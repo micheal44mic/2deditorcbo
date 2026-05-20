@@ -28,6 +28,22 @@ window.CBO = window.CBO || {};
   let thumbnailRendererUnavailable = false;
   let thumbnailBrushSettings = {};
 
+  function getDebug() {
+    return namespace.MobileBrushDebug || null;
+  }
+
+  function traceDebug(eventName, detail = {}) {
+    getDebug()?.trace?.(eventName, detail);
+  }
+
+  function getDebugNow() {
+    return getDebug()?.now?.() || performance?.now?.() || Date.now();
+  }
+
+  function getDebugDuration(startMs) {
+    return getDebug()?.roundMs?.(getDebugNow() - startMs) || Math.round((getDebugNow() - startMs) * 10) / 10;
+  }
+
   const hashKeys = [
     "color",
     "secondaryColor",
@@ -241,6 +257,11 @@ window.CBO = window.CBO || {};
         try {
           await renderQueuedJob(job);
         } catch (error) {
+          traceDebug("brush-preview.queued-render.error", {
+            brushId: job.brushId || "",
+            message: error?.message || String(error),
+            variant: job.variant || "",
+          });
           const fallback = renderToCanvas(job.settings, job.size);
 
           cache.set(job.key, fallback);
@@ -260,7 +281,18 @@ window.CBO = window.CBO || {};
   }
 
   async function renderQueuedJob(job) {
+    const startMs = getDebugNow();
     let cached = cache.get(job.key);
+    const wasCached = Boolean(cached);
+
+    traceDebug("brush-preview.queued-render.start", {
+      brushId: job.brushId || "",
+      cached: wasCached,
+      dpr: job.size?.dpr,
+      height: job.size?.height,
+      variant: job.variant || "",
+      width: job.size?.width,
+    });
 
     if (!cached) {
       cached = await renderToCanvasWithBestRenderer(job.settings, job.size);
@@ -272,6 +304,13 @@ window.CBO = window.CBO || {};
     }
 
     drawCached(job.canvas, cached, job.size);
+    traceDebug("brush-preview.queued-render.end", {
+      brushId: job.brushId || "",
+      cached: wasCached,
+      durationMs: getDebugDuration(startMs),
+      rendered: true,
+      variant: job.variant || "",
+    });
   }
 
   function getThumbnailRenderer() {
@@ -724,15 +763,38 @@ window.CBO = window.CBO || {};
     pendingKeys.set(canvas, key);
 
     if (cached) {
+      const drawStartMs = getDebugNow();
+
+      traceDebug("brush-preview.cache-draw.start", {
+        brushId: brushId || "",
+        dpr: size.dpr,
+        height: size.height,
+        variant: options.variant || "",
+        width: size.width,
+      });
       drawCached(canvas, cached, size);
+      traceDebug("brush-preview.cache-draw.end", {
+        brushId: brushId || "",
+        durationMs: getDebugDuration(drawStartMs),
+        variant: options.variant || "",
+      });
       return;
     }
 
+    traceDebug("brush-preview.enqueue", {
+      brushId: brushId || "",
+      dpr: size.dpr,
+      height: size.height,
+      variant: options.variant || "",
+      width: size.width,
+    });
     enqueue({
+      brushId,
       canvas,
       key,
       settings: normalizedSettings,
       size,
+      variant: options.variant || "",
     });
   }
 

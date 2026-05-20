@@ -171,6 +171,22 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     width: 156,
   });
 
+  function getMobileBrushDebug() {
+    return window.CBO?.MobileBrushDebug || null;
+  }
+
+  function traceMobileBrushDebug(eventName, detail = {}) {
+    getMobileBrushDebug()?.trace?.(eventName, detail);
+  }
+
+  function getDebugNow() {
+    return getMobileBrushDebug()?.now?.() || performance?.now?.() || Date.now();
+  }
+
+  function getDebugDuration(startMs) {
+    return getMobileBrushDebug()?.roundMs?.(getDebugNow() - startMs) || Math.round((getDebugNow() - startMs) * 10) / 10;
+  }
+
   function requestMobileBrushFrame(callback) {
     const requestFrame = window.requestAnimationFrame || ((handler) => window.setTimeout(handler, 16));
 
@@ -185,6 +201,10 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       window.clearTimeout(mobileBrushPreviewTimer);
       mobileBrushPreviewTimer = 0;
     }
+
+    traceMobileBrushDebug("mobile-brush.preview-lazy-reset", {
+      generation: mobileBrushPreviewGeneration,
+    });
   }
 
   function scheduleMobileBrushPreviewPump(delayMs = MOBILE_BRUSH_PREVIEW_GAP_MS) {
@@ -221,6 +241,15 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       return;
     }
 
+    const startMs = getDebugNow();
+
+    traceMobileBrushDebug("mobile-brush.preview-lazy-pump.start", {
+      brushId: job.brushId,
+      generation: job.generation,
+      queueWaitMs: getDebugDuration(job.queuedAtMs),
+      remainingBefore: mobileBrushPreviewQueue.length,
+    });
+
     if (job.canvas?.isConnected) {
       renderBrushPreview(job.canvas, job.brushId, "mobile-gallery", {
         deferred: true,
@@ -230,6 +259,10 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       job.canvas.closest(".mobile-brush-library-brush")?.classList.add("has-preview");
     }
 
+    traceMobileBrushDebug("mobile-brush.preview-lazy-pump.end", {
+      durationMs: getDebugDuration(startMs),
+      remainingAfter: mobileBrushPreviewQueue.length,
+    });
     scheduleMobileBrushPreviewPump();
   }
 
@@ -242,24 +275,40 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       brushId,
       canvas,
       generation: mobileBrushPreviewGeneration,
+      queuedAtMs: getDebugNow(),
     };
 
     canvas.closest(".mobile-brush-library-brush")?.classList.remove("has-preview");
     mobileBrushPreviewQueue.push(job);
+    traceMobileBrushDebug("mobile-brush.preview-lazy-queue", {
+      brushId,
+      generation: mobileBrushPreviewGeneration,
+      queueLength: mobileBrushPreviewQueue.length,
+    });
     scheduleMobileBrushPreviewPump(MOBILE_BRUSH_PREVIEW_DELAY_MS);
   }
 
-  function deferMobileBrushScrollIntoView(container, selector) {
+  function deferMobileBrushScrollIntoView(container, selector, debugEventPrefix = "mobile-brush.scroll-active") {
     const element = container?.querySelector(selector);
 
     if (!element) {
       return;
     }
 
+    const queuedAtMs = getDebugNow();
+
     requestMobileBrushFrame(() => {
       requestMobileBrushFrame(() => {
+        const startMs = getDebugNow();
+
+        traceMobileBrushDebug(`${debugEventPrefix}.deferred.start`, {
+          queueWaitMs: getDebugDuration(queuedAtMs),
+        });
         element.scrollIntoView({
           block: "nearest",
+        });
+        traceMobileBrushDebug(`${debugEventPrefix}.deferred.end`, {
+          durationMs: getDebugDuration(startMs),
         });
       });
     });
@@ -350,8 +399,24 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       return;
     }
 
+    const startMs = getDebugNow();
+
+    traceMobileBrushDebug("mobile-brush.preview-render.start", {
+      brushId,
+      canvasHeight: canvas.height,
+      canvasWidth: canvas.width,
+      deferred: options.deferred === true,
+      variant,
+    });
     BrushPreview.render(canvas, brushId, settings, {
       ...options,
+      variant,
+    });
+    traceMobileBrushDebug("mobile-brush.preview-render.end", {
+      brushId,
+      canvasHeight: canvas.height,
+      canvasWidth: canvas.width,
+      durationMs: getDebugDuration(startMs),
       variant,
     });
   }
@@ -443,6 +508,37 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     mobileBrushFeedbackTimer = window.setTimeout(() => {
       mobileBrushLibrary.classList.remove("has-selection-feedback");
     }, 820);
+  }
+
+  function openMobileBrushStudio(brushId) {
+    const startMs = getDebugNow();
+    const brush = BrushLibrary.getBrush(brushId);
+
+    if (!brush || typeof window.CBO.openBrushStudio !== "function") {
+      traceMobileBrushDebug("mobile-brush.open-studio.unavailable", {
+        brushId,
+        hasBrush: Boolean(brush),
+        hasStudioOpen: typeof window.CBO.openBrushStudio === "function",
+      });
+      return false;
+    }
+
+    traceMobileBrushDebug("mobile-brush.open-studio.start", {
+      brushId,
+      brushName: getBrushName(brushId),
+    });
+    closeMobileBrushLibrary();
+    window.CBO.openBrushStudio({
+      brushId,
+      brushName: getBrushName(brushId),
+      source: "mobile-brush-library",
+    });
+    traceMobileBrushDebug("mobile-brush.open-studio.end", {
+      brushId,
+      durationMs: getDebugDuration(startMs),
+    });
+
+    return true;
   }
 
   const MOBILE_BRUSH_ACTION_HANDLE_WIDTH = 44;
@@ -638,6 +734,16 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       return;
     }
 
+    const startMs = getDebugNow();
+    const buildStartMs = getDebugNow();
+
+    traceMobileBrushDebug("mobile-brush.render-packages.start", {
+      activePackageIndex,
+      packageCount: brushPackages.length,
+    });
+    traceMobileBrushDebug("mobile-brush.render-packages.build.start", {
+      packageCount: brushPackages.length,
+    });
     const packageButtons = brushPackages.map((brushPackage, packageIndex) => {
         const packageButton = document.createElement("button");
         const nameLabel = document.createElement("span");
@@ -663,15 +769,35 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
         return packageButton;
       });
 
+    traceMobileBrushDebug("mobile-brush.render-packages.build.end", {
+      durationMs: getDebugDuration(buildStartMs),
+      rendered: packageButtons.length,
+    });
+    const replaceStartMs = getDebugNow();
+
+    traceMobileBrushDebug("mobile-brush.render-packages.replace-children.start", {
+      packageCount: packageButtons.length,
+    });
     mobileBrushPackages.replaceChildren(...packageButtons);
+    traceMobileBrushDebug("mobile-brush.render-packages.replace-children.end", {
+      childCount: mobileBrushPackages.children.length,
+      durationMs: getDebugDuration(replaceStartMs),
+    });
 
     deferMobileBrushScrollIntoView(
       mobileBrushPackages,
       ".mobile-brush-library-package.active",
+      "mobile-brush.render-packages.scroll-active",
     );
+    traceMobileBrushDebug("mobile-brush.render-packages.end", {
+      childCount: mobileBrushPackages.children.length,
+      durationMs: getDebugDuration(startMs),
+      scrollDeferred: true,
+    });
   }
 
   function renderMobileBrushes() {
+    const startMs = getDebugNow();
     const activePackage = brushPackages[activePackageIndex] || brushPackages[selectedPackageIndex] || brushPackages[0];
     const brushIds = activePackage?.brushIds || [];
 
@@ -679,9 +805,20 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       return;
     }
 
+    traceMobileBrushDebug("mobile-brush.render-brushes.start", {
+      activePackageId: activePackage?.id || "",
+      activePackageIndex,
+      brushCount: brushIds.length,
+      selectedBrushId,
+    });
     closeMobileBrushActions();
     resetMobileBrushPreviewQueue();
 
+    const buildStartMs = getDebugNow();
+
+    traceMobileBrushDebug("mobile-brush.render-brushes.build.start", {
+      brushCount: brushIds.length,
+    });
     const brushRows = brushIds.map((brushId) => {
         const brushRow = document.createElement("div");
         const actions = document.createElement("div");
@@ -730,7 +867,14 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
         brushButton.addEventListener("pointerdown", (event) => {
           handleMobileBrushSwipePointerDown(event, brushRow, brushButton);
         });
-        brushButton.addEventListener("click", () => {
+        brushButton.addEventListener("click", (event) => {
+          traceMobileBrushDebug("mobile-brush.row-click", {
+            brushId,
+            isActionsOpen: brushRow.classList.contains("is-actions-open"),
+            isSelected: brushId === selectedBrushId,
+            suppressClick: brushButton.dataset.mobileBrushSuppressClick === "true",
+          });
+
           if (brushButton.dataset.mobileBrushSuppressClick === "true") {
             brushButton.dataset.mobileBrushSuppressClick = "false";
             return;
@@ -738,6 +882,12 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
 
           if (brushRow.classList.contains("is-actions-open")) {
             closeMobileBrushActions(brushRow);
+            return;
+          }
+
+          if (brushId === selectedBrushId && openMobileBrushStudio(brushId)) {
+            event.preventDefault();
+            event.stopPropagation();
             return;
           }
 
@@ -762,12 +912,32 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
         return brushRow;
       });
 
+    traceMobileBrushDebug("mobile-brush.render-brushes.build.end", {
+      durationMs: getDebugDuration(buildStartMs),
+      rendered: brushRows.length,
+    });
+    const replaceStartMs = getDebugNow();
+
+    traceMobileBrushDebug("mobile-brush.render-brushes.replace-children.start", {
+      brushCount: brushRows.length,
+    });
     mobileBrushItems.replaceChildren(...brushRows);
+    traceMobileBrushDebug("mobile-brush.render-brushes.replace-children.end", {
+      childCount: mobileBrushItems.children.length,
+      durationMs: getDebugDuration(replaceStartMs),
+    });
 
     deferMobileBrushScrollIntoView(
       mobileBrushItems,
       ".mobile-brush-library-brush.active",
+      "mobile-brush.render-brushes.scroll-active",
     );
+    traceMobileBrushDebug("mobile-brush.render-brushes.end", {
+      childCount: mobileBrushItems.children.length,
+      durationMs: getDebugDuration(startMs),
+      previewQueueLength: mobileBrushPreviewQueue.length,
+      scrollDeferred: true,
+    });
   }
 
   function hasMobileBrushButton(brushId) {
@@ -776,6 +946,8 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   }
 
   function syncMobileBrushSelectionState() {
+    const startMs = getDebugNow();
+
     syncMobilePackageButtons();
     mobileBrushItems?.querySelectorAll("[data-mobile-brush-id]").forEach((button) => {
       const isActive = button.dataset.mobileBrushId === selectedBrushId;
@@ -783,12 +955,21 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       button.classList.toggle("active", isActive);
       button.setAttribute("aria-pressed", String(isActive));
     });
+    traceMobileBrushDebug("mobile-brush.sync-selection.end", {
+      durationMs: getDebugDuration(startMs),
+      selectedBrushId,
+    });
   }
 
   function selectBrush(packageIndex, brushId, { closePopout = false } = {}) {
+    const startMs = getDebugNow();
     const nextPackage = brushPackages[packageIndex];
 
     if (!nextPackage || !BrushLibrary.getBrush(brushId)) {
+      traceMobileBrushDebug("mobile-brush.select.invalid", {
+        brushId,
+        packageIndex,
+      });
       return;
     }
 
@@ -797,6 +978,13 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       activePackageIndex === packageIndex &&
       hasMobileBrushButton(brushId);
 
+    traceMobileBrushDebug("mobile-brush.select.start", {
+      brushId,
+      canSyncMobileSelection,
+      closePopout,
+      packageIndex,
+      previousBrushId: selectedBrushId,
+    });
     selectedPackageIndex = packageIndex;
     selectedBrushId = brushId;
     applyBrushPreset(brushId);
@@ -813,12 +1001,23 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     if (isMobileBrushLibraryOpen()) {
       if (canSyncMobileSelection) {
         syncMobileBrushSelectionState();
+        traceMobileBrushDebug("mobile-brush.select.end", {
+          brushId,
+          durationMs: getDebugDuration(startMs),
+          mode: "sync-selection",
+        });
         return;
       }
 
       renderMobilePackages();
       renderMobileBrushes();
     }
+
+    traceMobileBrushDebug("mobile-brush.select.end", {
+      brushId,
+      durationMs: getDebugDuration(startMs),
+      mode: "render",
+    });
   }
 
   function applyBrushPreset(brushId) {
@@ -828,6 +1027,8 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       return;
     }
 
+    window.CBO.activeBrushId = brushId;
+    window.CBO.activeBrushName = getBrushName(brushId);
     window.CBO.brushSettings = BrushDefaults.createSettings(settings);
 
     window.dispatchEvent(
@@ -1102,6 +1303,9 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       return;
     }
 
+    traceMobileBrushDebug("mobile-brush.close-library.start", {
+      hiddenBeforeClose: mobileBrushLibrary.hidden,
+    });
     window.clearTimeout(mobileBrushFeedbackTimer);
     resetMobileBrushPreviewQueue();
     finishMobileBrushSwipe();
@@ -1109,19 +1313,67 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     mobileBrushLibrary.classList.remove("has-selection-feedback");
     mobileBrushLibrary.hidden = true;
     document.body?.classList.remove("cbo-mobile-brush-library-open");
+    traceMobileBrushDebug("mobile-brush.close-library.end", {
+      hiddenAfterClose: mobileBrushLibrary.hidden,
+    });
   }
 
-  function openMobileBrushLibrary() {
+  function openMobileBrushLibrary(options = {}) {
     if (!mobileBrushLibrary || !isMobileBrushLibraryViewport()) {
+      traceMobileBrushDebug("mobile-brush.open-library.skipped", {
+        hasLibrary: Boolean(mobileBrushLibrary),
+        isViewportReady: isMobileBrushLibraryViewport(),
+      });
       return;
     }
 
+    const startMs = getDebugNow();
+    const activePackage = brushPackages[selectedPackageIndex] || brushPackages[0];
+    const debugSessionId = options.debugSessionId || getMobileBrushDebug()?.startSession?.("mobile-brush-library-open", {
+      source: options.source || "direct",
+      trigger: options.trigger || "api",
+    });
+
+    traceMobileBrushDebug("mobile-brush.open-library.start", {
+      activePackageIndex,
+      debugSessionId,
+      hiddenBeforeOpen: mobileBrushLibrary.hidden,
+      isViewportReady: isMobileBrushLibraryViewport(),
+      packageCount: brushPackages.length,
+      selectedBrushId,
+      selectedPackageId: activePackage?.id || "",
+      selectedPackageIndex,
+      selectedPackageBrushCount: activePackage?.brushIds?.length || 0,
+    });
     closeBrushPopout();
     activePackageIndex = selectedPackageIndex;
     mobileBrushLibrary.hidden = false;
     document.body?.classList.add("cbo-mobile-brush-library-open");
     renderMobilePackages();
     renderMobileBrushes();
+    traceMobileBrushDebug("mobile-brush.open-library.end", {
+      bodyClassApplied: document.body?.classList.contains("cbo-mobile-brush-library-open") === true,
+      brushRowCount: mobileBrushItems?.children.length || 0,
+      debugSessionId,
+      durationMs: getDebugDuration(startMs),
+      durationToDomMs: getDebugDuration(startMs),
+      packageRowCount: mobileBrushPackages?.children.length || 0,
+    });
+    requestMobileBrushFrame(() => {
+      traceMobileBrushDebug("mobile-brush.open-library.after-raf", {
+        debugSessionId,
+        elapsedMs: getDebugDuration(startMs),
+      });
+      requestMobileBrushFrame(() => {
+        traceMobileBrushDebug("mobile-brush.open-library.after-second-raf", {
+          debugSessionId,
+          elapsedMs: getDebugDuration(startMs),
+        });
+        getMobileBrushDebug()?.endSession?.("mobile-brush-library-open", debugSessionId, {
+          elapsedMs: getDebugDuration(startMs),
+        });
+      });
+    });
   }
 
   window.CBO.openMobileBrushLibrary = openMobileBrushLibrary;
@@ -1186,8 +1438,18 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     }
   });
 
-  window.addEventListener("cbo:brush-tool-reactivate", () => {
-    openMobileBrushLibrary();
+  window.addEventListener("cbo:brush-tool-reactivate", (event) => {
+    traceMobileBrushDebug("mobile-brush.reactivate-event", {
+      debugSessionId: event.detail?.debugSessionId,
+      label: event.detail?.label || "",
+      source: event.detail?.source || "",
+      toolMode: event.detail?.toolMode || "",
+    });
+    openMobileBrushLibrary({
+      debugSessionId: event.detail?.debugSessionId,
+      source: event.detail?.source || "event",
+      trigger: "active-brush-click",
+    });
   });
 
   window.addEventListener("cbo:tool-change", (event) => {

@@ -78,6 +78,7 @@ test("brush previews use lighter mobile caps", () => {
   assert.match(previewSource, /const dprCap = isMobilePerformanceMode\(\) \? 1 : maxDpr/);
   assert.match(previewSource, /if \(isMobilePerformanceMode\(\)\) \{[\s\S]*return renderToCanvas\(settings, size\)/);
   assert.match(studioSource, /function isAndroidPerformanceMode\(\) \{/);
+  assert.match(studioSource, /brushStudioAndroidLitePreview === true/);
   assert.match(studioSource, /previewPad\.replaceChildren\(createAndroidLitePreviewNotice\(\)\)/);
   assert.match(studioSource, /const previewDocumentSizeCap =[\s\S]*isMobileLikeEnvironment\?\.\(\) === true \? 512 : 2048/);
   assert.match(studioSource, /documentSizeCap: previewDocumentSizeCap/);

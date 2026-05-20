@@ -11,6 +11,22 @@ window.CBO.initToolbar = function initToolbar() {
   let historyBusyOverlay = null;
   const busyOverlaySources = new Map();
 
+  function getMobileBrushDebug() {
+    return window.CBO?.MobileBrushDebug || null;
+  }
+
+  function traceMobileBrushDebug(eventName, detail = {}) {
+    getMobileBrushDebug()?.trace?.(eventName, detail);
+  }
+
+  function getDebugNow() {
+    return getMobileBrushDebug()?.now?.() || performance?.now?.() || Date.now();
+  }
+
+  function getDebugDuration(startMs) {
+    return getMobileBrushDebug()?.roundMs?.(getDebugNow() - startMs) || Math.round((getDebugNow() - startMs) * 10) / 10;
+  }
+
   function isDocumentHistoryDisabled() {
     return Boolean(
       window.CBO?.isDocumentHistoryDisabled?.() === true ||
@@ -85,19 +101,54 @@ window.CBO.initToolbar = function initToolbar() {
   }
 
   function openMobileBrushLibraryFromActiveTool(button) {
-    if (!button.classList.contains("active") || !isBrushLibraryTriggerButton(button) || !isMobileBrushLibraryViewport()) {
+    const activeBeforeClick = button.classList.contains("active");
+    const label = button.getAttribute("aria-label") || "";
+    const toolMode = button.dataset.toolMode || "";
+    const toolSync = button.dataset.toolSync || "";
+    const isMobileViewport = isMobileBrushLibraryViewport();
+
+    if (isBrushLibraryTriggerButton(button)) {
+      traceMobileBrushDebug("toolbar.brush-click", {
+        activeBeforeClick,
+        label,
+        toolMode,
+        toolSync,
+      });
+      traceMobileBrushDebug("toolbar.brush-reactivate-check", {
+        isActive: activeBeforeClick,
+        isMobileViewport,
+        label,
+        toolMode,
+      });
+    }
+
+    if (!activeBeforeClick || !isBrushLibraryTriggerButton(button) || !isMobileViewport) {
       return false;
     }
 
+    const debugSessionId = getMobileBrushDebug()?.startSession?.("mobile-brush-library-open", {
+      source: "toolbar",
+      trigger: "active-brush-click",
+    });
+    const dispatchStartMs = getDebugNow();
+
+    traceMobileBrushDebug("toolbar.dispatch-brush-reactivate.start", {
+      debugSessionId,
+    });
     window.dispatchEvent(
       new CustomEvent("cbo:brush-tool-reactivate", {
         detail: {
-          label: button.getAttribute("aria-label") || "",
+          debugSessionId,
+          label,
           source: "toolbar",
-          toolMode: button.dataset.toolMode || "",
+          toolMode,
         },
       }),
     );
+    traceMobileBrushDebug("toolbar.dispatch-brush-reactivate.end", {
+      debugSessionId,
+      durationMs: getDebugDuration(dispatchStartMs),
+    });
 
     return true;
   }
