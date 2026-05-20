@@ -207,14 +207,6 @@ window.CBO = window.CBO || {};
     context.drawImage(cached, 0, 0, canvas.width, canvas.height);
   }
 
-  function logMobileBrushDebug(name, detail = {}) {
-    namespace.MobileBrushDebug?.log?.(name, detail);
-  }
-
-  function beginMobileBrushDebug(name, detail = {}) {
-    return namespace.MobileBrushDebug?.begin?.(name, detail) || null;
-  }
-
   function scheduleQueue() {
     if (frameId) {
       return;
@@ -269,42 +261,17 @@ window.CBO = window.CBO || {};
 
   async function renderQueuedJob(job) {
     let cached = cache.get(job.key);
-    const wasCached = Boolean(cached);
-    const trace = job.variant === "mobile-gallery"
-      ? beginMobileBrushDebug("brush-preview.queued-render", {
-        brushId: job.brushId,
-        cached: wasCached,
-        dpr: job.size?.dpr || 1,
-        height: job.size?.height || 0,
-        variant: job.variant,
-        width: job.size?.width || 0,
-      })
-      : null;
 
-    try {
-      if (!cached) {
-        cached = await renderToCanvasWithBestRenderer(job.settings, job.size);
-        cache.set(job.key, cached);
-      }
-
-      if (!job.canvas.isConnected || pendingKeys.get(job.canvas) !== job.key) {
-        trace?.end({
-          skippedDraw: true,
-        });
-        return;
-      }
-
-      drawCached(job.canvas, cached, job.size);
-      trace?.end({
-        cached: wasCached,
-        rendered: !wasCached,
-      });
-    } catch (error) {
-      trace?.end({
-        error: error?.message || String(error),
-      });
-      throw error;
+    if (!cached) {
+      cached = await renderToCanvasWithBestRenderer(job.settings, job.size);
+      cache.set(job.key, cached);
     }
+
+    if (!job.canvas.isConnected || pendingKeys.get(job.canvas) !== job.key) {
+      return;
+    }
+
+    drawCached(job.canvas, cached, job.size);
   }
 
   function getThumbnailRenderer() {
@@ -757,41 +724,15 @@ window.CBO = window.CBO || {};
     pendingKeys.set(canvas, key);
 
     if (cached) {
-      const trace = options.variant === "mobile-gallery"
-        ? beginMobileBrushDebug("brush-preview.cache-draw", {
-          brushId,
-          dpr: size.dpr,
-          height: size.height,
-          variant: options.variant,
-          width: size.width,
-        })
-        : null;
-
-      try {
-        drawCached(canvas, cached, size);
-      } finally {
-        trace?.end();
-      }
+      drawCached(canvas, cached, size);
       return;
     }
 
-    if (options.variant === "mobile-gallery") {
-      logMobileBrushDebug("brush-preview.enqueue", {
-        brushId,
-        dpr: size.dpr,
-        height: size.height,
-        variant: options.variant,
-        width: size.width,
-      });
-    }
-
     enqueue({
-      brushId,
       canvas,
       key,
       settings: normalizedSettings,
       size,
-      variant: options.variant || "",
     });
   }
 
