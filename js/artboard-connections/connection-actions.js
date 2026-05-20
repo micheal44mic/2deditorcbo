@@ -359,7 +359,7 @@ window.CBO = window.CBO || {};
     }
   };
 
-  Controller.prototype.createAiImageBoardForConnection = function createAiImageBoardForConnection(connection) {
+  Controller.prototype.createAiImageBoardForConnection = function createAiImageBoardForConnection(connection, options = {}) {
     with (this) {
 
     const anchor = getConnectionEndPoint(connection);
@@ -368,6 +368,11 @@ window.CBO = window.CBO || {};
       return null;
     }
 
+    const generationKind = options.generationKind === "video" ? "video" : "image";
+    const boardCount = spaceBoards.filter((entry) => (
+      entry.type === "ai-image" &&
+      getAiImageBoardGenerationKind(entry) === generationKind
+    )).length + 1;
     const handleMetrics = getActionBubbleMetrics();
     const preferredRect = createRect(
       anchor.x + handleMetrics.outsideOffsetDoc,
@@ -380,7 +385,8 @@ window.CBO = window.CBO || {};
       height: AI_IMAGE_BOARD_SIZE_DOC_PX,
       id: createBoardId(),
       captionText: "",
-      name: `AI Image board #${spaceBoards.filter((entry) => entry.type === "ai-image").length + 1}`,
+      generationKind,
+      name: generationKind === "video" ? `AI Video board #${boardCount}` : `AI Image board #${boardCount}`,
       promptParts: [],
       promptText: "",
       type: "ai-image",
@@ -679,6 +685,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.materializeAiImageBoardFromMenu = function materializeAiImageBoardFromMenu() {
     with (this) {
 
+    const options = arguments[0] || {};
     const connection = getConnectionById(menuState?.connectionId);
 
     if (!connection) {
@@ -690,7 +697,7 @@ window.CBO = window.CBO || {};
       excludeConnectionIds: [connection.id],
     });
 
-    const board = createAiImageBoardForConnection(connection);
+    const board = createAiImageBoardForConnection(connection, options);
     dismissConnectionMenu({
       removeConnection: false,
       render: false,
@@ -937,4 +944,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

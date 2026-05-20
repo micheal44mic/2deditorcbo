@@ -72,6 +72,16 @@ window.CBO = window.CBO || {};
       this.AI_IMAGE_RUNTIME_PREVIEW_CACHE_MAX_ENTRIES = 80;
       this.AI_IMAGE_RUNTIME_PREVIEW_QUALITY = 0.78;
       this.AI_IMAGE_UNSTABLE_RUNTIME_LODS = new Set([512]);
+      this.AI_VIDEO_CANVAS_PREVIEW_LOD = 360;
+      this.AI_VIDEO_PREVIEW_VARIANT_SIZES = [240, 360, 480, 720, 1080];
+      this.AI_VIDEO_PREVIEW_LOD_THRESHOLDS = [
+      { lod: "240", max: 220 },
+      { lod: "360", max: 360 },
+      { lod: "480", max: 700 },
+      { lod: "720", max: 1200 },
+      { lod: "1080", max: 1800 },
+    ];
+      this.AI_VIDEO_DECODED_FRAME_BUDGET = 3;
       this.AI_BOARD_PREVIEW_DEBUG_EVENT_LIMIT = 80;
       this.AI_IMAGE_SAMPLE_ASSETS = [
       { kind: "image", name: "Badge", src: "assets/ai-board-samples/sample-01-badge.png" },
@@ -79,9 +89,9 @@ window.CBO = window.CBO || {};
       { kind: "image", name: "Hats", src: "assets/ai-board-samples/sample-03-hats.jpg" },
       { kind: "image", name: "Dragon", src: "assets/ai-board-samples/sample-04-dragon.png" },
       { kind: "image", name: "Green screens", src: "assets/ai-board-samples/sample-05-green-screens.jpeg" },
-      { kind: "video", name: "Render 2026-05-18 2", src: "assets/ai-board-samples/sample-06-video-2026-05-18-2.mp4" },
-      { kind: "video", name: "Render 2026-05-18 1", src: "assets/ai-board-samples/sample-07-video-2026-05-18-1.mp4" },
-      { kind: "video", name: "Render 2026-05-07 1", src: "assets/ai-board-samples/sample-08-video-2026-05-07-1.mp4" },
+      { kind: "video", name: "Render 2026-05-18 2", src: "assets/ai-board-samples/sample-06-video-2026-05-18-2.mp4", width: 1080, height: 1920, codec: "avc1.640029" },
+      { kind: "video", name: "Render 2026-05-18 1", src: "assets/ai-board-samples/sample-07-video-2026-05-18-1.mp4", width: 1080, height: 1920, codec: "avc1.640029" },
+      { kind: "video", name: "Render 2026-05-07 1", src: "assets/ai-board-samples/sample-08-video-2026-05-07-1.mp4", width: 1080, height: 1920, codec: "avc1.640029" },
     ];
       this.SPACE_BOARD_GAP_DOC_PX = 220;
       this.SPACE_BOARD_DRAG_GAP_DOC_PX = 24;

@@ -80,7 +80,9 @@ window.CBO = window.CBO || {};
         const action = event.target?.closest?.("[data-artboard-connection-action]")?.dataset?.artboardConnectionAction;
 
         if (action === "ai-image") {
-          materializeAiImageBoardFromMenu();
+          materializeAiImageBoardFromMenu({ generationKind: "image" });
+        } else if (action === "ai-video") {
+          materializeAiImageBoardFromMenu({ generationKind: "video" });
         }
       });
       stage.appendChild(menu);
@@ -250,4 +252,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

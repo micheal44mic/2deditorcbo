@@ -101,6 +101,7 @@ window.CBO = window.CBO || {};
       const generateButton = element.querySelector("[data-ai-image-board-generate]");
       const mediaHost = element.querySelector("[data-ai-image-board-media]");
       const isSelected = selectedSpaceBoardId === board.id;
+      const generationKind = getAiImageBoardGenerationKind(board);
       const isFocusedOrSelected = isSelected || isSpaceBoardFocusedOrSelected(board, element);
       const shouldDeferPreviewWork = cameraMotionActive && !isGenerating && !isFocusedOrSelected;
       const shouldUnloadMedia = !shouldDeferPreviewWork && shouldUnloadAiBoardMedia(board, visibilityState, element);
@@ -130,7 +131,18 @@ window.CBO = window.CBO || {};
       const captionShadowY = AI_IMAGE_CAPTION_SHADOW_Y_DOC_PX * captionScale;
       const captionShadowBlur = AI_IMAGE_CAPTION_SHADOW_BLUR_DOC_PX * captionScale;
       const labelScale = plainArtboardMode ? viewScale : 1;
-      const labelMetrics = getArtboardLabelMetrics(docWidth, docHeight, labelScale);
+      const labelMetrics = getArtboardLabelMetrics(AI_IMAGE_BOARD_SIZE_DOC_PX, AI_IMAGE_BOARD_SIZE_DOC_PX, labelScale);
+      const videoMuteMetrics = plainArtboardMode ? plainControlMetrics : handleMetrics;
+      const dimensionsText = `${Math.round(docWidth)} \u00d7 ${Math.round(docHeight)}`;
+      const dimensionsReservedWidth = Math.max(
+        labelMetrics.height * 4.8,
+        labelMetrics.fontSize * dimensionsText.length * 0.62 + labelMetrics.paddingX * 2,
+      );
+      const labelGap = Math.max(6, labelMetrics.paddingX * 1.2);
+      const boardNameMaxWidth = Math.max(24, width - dimensionsReservedWidth - labelGap);
+      const videoMuteSize = videoMuteMetrics.size;
+      const videoMuteInset = videoMuteMetrics.gap;
+      const videoMuteIconSize = videoMuteMetrics.iconSize;
 
       setStylePropertyIfChanged(element, "left", `${point.x}px`);
       setStylePropertyIfChanged(element, "top", `${point.y}px`);
@@ -163,6 +175,7 @@ window.CBO = window.CBO || {};
       setCssVarIfChanged(element, "--editor-artboard-label-radius", `${labelMetrics.radius}px`);
       setCssVarIfChanged(element, "--editor-artboard-label-font-size", `${labelMetrics.fontSize}px`);
       setCssVarIfChanged(element, "--editor-artboard-label-top", `${labelMetrics.top}px`);
+      setCssVarIfChanged(element, "--ai-board-name-max-width", `${boardNameMaxWidth}px`);
       element.dataset.aiCaptionLod = "visible";
       element.dataset.aiControlLod = "visible";
       const boardTransform = plainArtboardMode
@@ -182,10 +195,14 @@ window.CBO = window.CBO || {};
       setCssVarIfChanged(element, "--ai-image-generate-handle-top", `${handleMetrics.gapDoc}px`);
       setCssVarIfChanged(element, "--ai-image-generate-border-width", `${handleMetrics.borderWidthDoc}px`);
       setCssVarIfChanged(element, "--ai-image-generate-icon-size", `${handleMetrics.iconSizeDoc}px`);
+      setCssVarIfChanged(element, "--ai-video-mute-handle-size", `${videoMuteSize}px`);
+      setCssVarIfChanged(element, "--ai-video-mute-inset", `${videoMuteInset}px`);
+      setCssVarIfChanged(element, "--ai-video-mute-icon-size", `${videoMuteIconSize}px`);
       element.classList.toggle("is-generating", isGenerating && (plainArtboardMode || isHeavyMounted));
       element.classList.toggle("is-heavy-mounted", isHeavyMounted);
       element.classList.toggle("is-near-viewport", isNearViewport);
       element.classList.toggle("is-selected", isSelected);
+      element.classList.toggle("is-video-generation", generationKind === "video");
       element.classList.toggle("is-mobile-lean", isMobileLean);
       element.classList.remove("is-control-lod-hidden", "is-control-lod-compact");
       element.classList.toggle("has-generated-media", Boolean(board.generatedMedia?.src));
@@ -196,6 +213,7 @@ window.CBO = window.CBO || {};
       if (generateButton) {
         generateButton.disabled = isGenerating;
         generateButton.classList.toggle("is-loading", isGenerating);
+        generateButton.setAttribute("aria-label", generationKind === "video" ? "Generate video" : "Generate image");
         if (isGenerating) {
           generateButton.setAttribute("aria-busy", "true");
         } else {
@@ -236,6 +254,7 @@ window.CBO = window.CBO || {};
       ) {
         renderAiImageBoardGeneratedMedia(element, board, { recommendedLod });
       }
+      syncAiImageBoardVideoSelectionPlayback(mediaHost, board);
 
       if (shouldUnloadMedia) {
         const evictedCount = evictAiImageRuntimePreviewVariantsForSrc(board.generatedMedia?.src || "");
@@ -289,7 +308,7 @@ window.CBO = window.CBO || {};
       }
 
       if (dimensions) {
-        dimensions.textContent = `${Math.round(docWidth)} \u00d7 ${Math.round(docHeight)}`;
+        dimensions.textContent = dimensionsText;
       }
 
       if (promptInput && document.activeElement !== promptInput) {
@@ -343,4 +362,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

@@ -48,7 +48,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.getAiBoardAssetLodFromSrc = function getAiBoardAssetLodFromSrc(src) {
     with (this) {
 
-    const match = String(src || "").match(/(?:^|[-_/@])(128|256|512|1024|2048)(?=[^0-9]|$)/);
+    const match = String(src || "").match(/(?:^|[-_/@])(128|240|256|360|480|512|720|1024|1080|2048)(?=[^0-9]|$)/);
 
     return match?.[1] || "";
     }
@@ -65,7 +65,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.getAiBoardNumericLod = function getAiBoardNumericLod(value) {
     with (this) {
 
-    const match = String(value || "").match(/(?:^|[^0-9])(128|256|512|1024|2048)(?:[^0-9]|$)/);
+    const match = String(value || "").match(/(?:^|[^0-9])(128|240|256|360|480|512|720|1024|1080|2048)(?:[^0-9]|$)/);
     const lod = Number(match?.[1] || 0);
 
     return Number.isFinite(lod) && lod > 0 ? lod : 0;
@@ -78,9 +78,20 @@ window.CBO = window.CBO || {};
     const from = Number(fromLod) || 0;
     const to = Number(toLod) || 0;
     const lower = Math.min(from, to);
-    const threshold = AI_IMAGE_PREVIEW_LOD_THRESHOLDS.find((entry) => Number(entry.lod) === lower)?.max;
+    const thresholds = [
+      ...AI_IMAGE_PREVIEW_LOD_THRESHOLDS,
+      ...AI_VIDEO_PREVIEW_LOD_THRESHOLDS,
+    ];
+    const threshold = thresholds.find((entry) => Number(entry.lod) === lower)?.max;
 
     return Number(threshold) || 0;
+    }
+  };
+
+  Controller.prototype.getAiVideoBoardRecommendedLod = function getAiVideoBoardRecommendedLod(board, screenWidth = 0, screenHeight = 0, dpr = 1) {
+    with (this) {
+
+    return `video-${AI_VIDEO_CANVAS_PREVIEW_LOD}`;
     }
   };
 
@@ -96,7 +107,7 @@ window.CBO = window.CBO || {};
     }
 
     if (kind === "video") {
-      return "video-poster";
+      return getAiVideoBoardRecommendedLod(board, screenWidth, screenHeight, dpr);
     }
 
     const neededPixels = getAiBoardNeededPreviewPixels(screenWidth, screenHeight, dpr);
@@ -186,7 +197,7 @@ window.CBO = window.CBO || {};
     }
 
     if (media?.kind === "video") {
-      return "video-poster";
+      return mediaHost?.dataset?.mediaLod || "video-full";
     }
 
     return mediaHost?.dataset?.mediaLod || getAiBoardAssetLodFromSrc(mediaHost?.dataset?.mediaPreviewSrc || src) || "full";
@@ -205,20 +216,26 @@ window.CBO = window.CBO || {};
 
     const media = board?.generatedMedia || null;
 
-    if (!isActivePreview || !media || media.kind === "video" || !media.src) {
+    if (!isActivePreview || !media || !media.src) {
       return 0;
     }
 
     const originalWidth = Math.max(0, Number(media.width) || 0);
     const originalHeight = Math.max(0, Number(media.height) || 0);
     const lodSize = Number(currentLod);
+    const numericLod = getAiBoardNumericLod(currentLod);
     const scale = Number.isFinite(lodSize) && lodSize > 0
       ? Math.min(1, lodSize / Math.max(1, originalWidth, originalHeight))
+      : numericLod
+        ? Math.min(1, numericLod / Math.max(1, originalWidth, originalHeight))
       : 1;
     const width = originalWidth * scale;
     const height = originalHeight * scale;
+    const frameBudget = media.kind === "video"
+      ? Math.max(1, Number(AI_VIDEO_DECODED_FRAME_BUDGET) || 1)
+      : 1;
 
-    return (width * height * 4) / (1024 * 1024);
+    return (width * height * 4 * frameBudget) / (1024 * 1024);
     }
   };
 
@@ -826,6 +843,20 @@ window.CBO = window.CBO || {};
 
     if (mediaHost.classList.contains("is-placeholder-preview")) {
       return `placeholder-${mediaHost.dataset.mediaPreviewSource || "unknown"}`;
+    }
+
+    if (mediaHost.classList.contains("is-video-preview")) {
+      const video = mediaHost.querySelector?.("[data-ai-image-board-video]");
+
+      if (!video) {
+        return "video-no-element";
+      }
+
+      if (!(video.currentSrc || video.src || video.getAttribute("src"))) {
+        return "video-no-src";
+      }
+
+      return video.paused ? "video-paused" : "video-playing";
     }
 
     if (!activeLayer) {

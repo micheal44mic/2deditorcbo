@@ -47,6 +47,21 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.getAiImageBoardGenerationKind = function getAiImageBoardGenerationKind(board) {
+    with (this) {
+
+    if (board?.generationKind === "video") {
+      return "video";
+    }
+
+    if (board?.generationKind === "image") {
+      return "image";
+    }
+
+    return board?.generatedMedia?.kind === "video" ? "video" : "image";
+    }
+  };
+
   Controller.prototype.shouldHandleAiImageGenerateActivation = function shouldHandleAiImageGenerateActivation(event, boardId) {
     with (this) {
 
@@ -99,6 +114,7 @@ window.CBO = window.CBO || {};
     window.dispatchEvent(new CustomEvent("cbo:ai-image-board-generate-click", {
       detail: {
         board: cloneSpaceBoard(board),
+        generationKind: getAiImageBoardGenerationKind(board),
         source: "artboard-connections",
         triggerSource,
       },
@@ -124,10 +140,10 @@ window.CBO = window.CBO || {};
     }
   };
 
-  Controller.prototype.pickRandomAiImageSample = function pickRandomAiImageSample(currentSrc = "") {
+  Controller.prototype.pickRandomAiImageSample = function pickRandomAiImageSample(currentSrc = "", preferredKind = "image") {
     with (this) {
 
-    const candidates = getAiImageSampleCandidates(currentSrc, "image");
+    const candidates = getAiImageSampleCandidates(currentSrc, preferredKind);
 
     return candidates[0] || null;
     }
@@ -194,15 +210,50 @@ window.CBO = window.CBO || {};
     if (kind === "video") {
       return new Promise((resolve, reject) => {
         const video = document.createElement("video");
+        let settled = false;
+        let fallbackTimer = 0;
         const cleanup = () => {
+          if (fallbackTimer) {
+            window.clearTimeout(fallbackTimer);
+            fallbackTimer = 0;
+          }
+
           video.removeAttribute("src");
           video.load?.();
+        };
+        const resolveWithFallback = (reason = "metadata-fallback") => {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          cleanup();
+          recordAiBoardPreviewDebugEvent("video-metadata-fallback", {
+            errorCode: Number(video.error?.code) || 0,
+            errorMessage: video.error?.message || "",
+            height: sample.height || AI_IMAGE_BOARD_SIZE_DOC_PX,
+            reason,
+            src: sample.src,
+            width: sample.width || AI_IMAGE_BOARD_SIZE_DOC_PX,
+          });
+          resolve({
+            ...sample,
+            height: Math.max(1, Math.round(Number(sample.height) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+            metadataFallback: true,
+            width: Math.max(1, Math.round(Number(sample.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+          });
         };
 
         video.preload = "metadata";
         video.muted = true;
         video.playsInline = true;
+        video.setAttribute("playsinline", "");
         video.addEventListener("loadedmetadata", () => {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
           const width = Math.round(Number(video.videoWidth) || AI_IMAGE_BOARD_SIZE_DOC_PX);
           const height = Math.round(Number(video.videoHeight) || AI_IMAGE_BOARD_SIZE_DOC_PX);
 
@@ -214,9 +265,11 @@ window.CBO = window.CBO || {};
           });
         }, { once: true });
         video.addEventListener("error", () => {
-          cleanup();
-          reject(new Error(`Unable to load AI board video sample: ${sample.src}`));
+          resolveWithFallback("metadata-error");
         }, { once: true });
+        fallbackTimer = window.setTimeout(() => {
+          resolveWithFallback("metadata-timeout");
+        }, 2200);
         video.src = sample.src;
         video.load?.();
       });
@@ -250,14 +303,36 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const boardGenerationKind = board.generationKind === "video"
+      ? "video"
+      : board.generationKind === "image"
+        ? "image"
+        : sample.kind === "video"
+          ? "video"
+          : "image";
+    const sampleKind = sample.kind === "video" ? "video" : "image";
+
+    if (board.generationKind && sampleKind !== boardGenerationKind) {
+      return false;
+    }
+
     board.generatedMedia = {
       height: Math.max(1, Math.round(Number(sample.height) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
-      kind: sample.kind === "video" ? "video" : "image",
+      kind: boardGenerationKind,
+      canvasPreviewSrc: sample.canvasPreviewSrc ? String(sample.canvasPreviewSrc) : undefined,
+      codec: sample.codec ? String(sample.codec) : undefined,
+      metadataFallback: sample.metadataFallback === true,
       name: String(sample.name || "Generated sample"),
+      posterSrc: sample.posterSrc || sample.poster ? String(sample.posterSrc || sample.poster) : undefined,
+      posters: sample.posters && typeof sample.posters === "object" ? { ...sample.posters } : undefined,
+      previewHeight: Math.max(1, Math.round(Number(sample.previewHeight) || Number(sample.preview?.height) || 0)) || undefined,
+      previewSrc: sample.previewSrc || sample.preview?.src ? String(sample.previewSrc || sample.preview?.src) : undefined,
+      previewWidth: Math.max(1, Math.round(Number(sample.previewWidth) || Number(sample.preview?.width) || 0)) || undefined,
       src: String(sample.src || ""),
       variants: sample.variants && typeof sample.variants === "object" ? { ...sample.variants } : undefined,
       width: Math.max(1, Math.round(Number(sample.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
     };
+    board.generationKind = boardGenerationKind;
     board.height = board.generatedMedia.height;
     board.width = board.generatedMedia.width;
     board.name = board.generatedMedia.name;
@@ -278,8 +353,9 @@ window.CBO = window.CBO || {};
 
     const board = getSpaceBoardById(normalizedBoardId);
     const beforeState = captureConnectionsHistoryState();
-    const samples = getAiImageSampleCandidates(board?.generatedMedia?.src || "", "image");
-    const sample = samples[0] || pickRandomAiImageSample(board?.generatedMedia?.src || "");
+    const generationKind = getAiImageBoardGenerationKind(board);
+    const samples = getAiImageSampleCandidates(board?.generatedMedia?.src || "", generationKind);
+    const sample = samples[0] || pickRandomAiImageSample(board?.generatedMedia?.src || "", generationKind);
 
     if (!board || !sample) {
       setAiImageGenerationStatus(normalizedBoardId, "error", {
@@ -442,4 +518,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

@@ -16,20 +16,54 @@ window.CBO = window.CBO || {};
 
 
 
+  Controller.prototype.isAiImageBoardAndroidVideoEnlargeDevice = function isAiImageBoardAndroidVideoEnlargeDevice() {
+    with (this) {
+
+    const nav = typeof navigator === "object" ? navigator : null;
+    const userAgent = String(nav?.userAgent || "");
+    const platform = String(nav?.userAgentData?.platform || "");
+
+    return /\bAndroid\b/i.test(`${userAgent} ${platform}`);
+    }
+  };
+
+  Controller.prototype.getAiImageBoardEnlargeVideoSrc = function getAiImageBoardEnlargeVideoSrc(media) {
+    with (this) {
+
+    const originalSrc = String(media?.src || "").trim();
+
+    if (!originalSrc || !isAiImageBoardAndroidVideoEnlargeDevice()) {
+      return originalSrc;
+    }
+
+    return getAiVideoBoardFixedCanvasPreviewSrc(media) ||
+      getAiVideoBoardVariantSrc(media, 480) ||
+      getAiVideoBoardVariantSrc(media, 720) ||
+      originalSrc;
+    }
+  };
+
   Controller.prototype.getAiImageBoardEnlargeMedia = function getAiImageBoardEnlargeMedia(board) {
     with (this) {
 
     const media = board?.generatedMedia || null;
-    const src = String(media?.src || "").trim();
+    const originalSrc = String(media?.src || "").trim();
     const kind = media?.kind === "video" ? "video" : "image";
+    const boardKind = getAiImageBoardGenerationKind(board);
+    const src = kind === "video"
+      ? getAiImageBoardEnlargeVideoSrc(media)
+      : originalSrc;
 
-    if (!src || kind !== "image") {
+    if (!originalSrc || !src || kind !== boardKind) {
       return null;
     }
 
     return {
       height: Math.max(1, Math.round(Number(media?.height || board?.height) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+      kind,
       name: String(media?.name || board?.name || "AI Image board"),
+      originalSrc,
+      posterSrc: String(media?.posterSrc || media?.poster || media?.thumbnailSrc || ""),
       src,
       width: Math.max(1, Math.round(Number(media?.width || board?.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
     };
@@ -43,13 +77,39 @@ window.CBO = window.CBO || {};
       return null;
     }
 
-    const media = getAiImageBoardEnlargeMedia(board);
+    const boardKind = getAiImageBoardGenerationKind(board);
+    const generatedMedia = board?.generatedMedia || null;
+    const generatedMediaKind = generatedMedia?.kind === "video" ? "video" : "image";
+    const hasMatchingGeneratedMedia = Boolean(generatedMedia?.src) && generatedMediaKind === boardKind;
+    const fallbackHeight = Math.max(1, Math.round(Number(board?.height) || AI_IMAGE_BOARD_SIZE_DOC_PX));
+    const fallbackWidth = Math.max(1, Math.round(Number(board?.width) || AI_IMAGE_BOARD_SIZE_DOC_PX));
+
+    if (boardKind === "video") {
+      const previewSrc = hasMatchingGeneratedMedia
+        ? getAiVideoBoardFixedCanvasPreviewSrc(generatedMedia) || String(generatedMedia?.src || "").trim()
+        : "";
+      const posterSrc = hasMatchingGeneratedMedia
+        ? getAiVideoBoardPosterSrc(generatedMedia, AI_VIDEO_CANVAS_PREVIEW_LOD)
+        : "";
+
+      return {
+        height: Math.max(1, Math.round(Number(generatedMedia?.height || board?.height) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+        kind: "video",
+        name: String(generatedMedia?.name || board?.name || "AI Video board"),
+        posterSrc,
+        src: previewSrc,
+        width: Math.max(1, Math.round(Number(generatedMedia?.width || board?.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+      };
+    }
+
+    const media = hasMatchingGeneratedMedia ? getAiImageBoardEnlargeMedia(board) : null;
 
     return {
-      height: media?.height || Math.max(1, Math.round(Number(board?.height) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+      height: media?.height || fallbackHeight,
+      kind: "image",
       name: media?.name || String(board?.name || "AI Image board"),
       src: media?.src || "",
-      width: media?.width || Math.max(1, Math.round(Number(board?.width) || AI_IMAGE_BOARD_SIZE_DOC_PX)),
+      width: media?.width || fallbackWidth,
     };
     }
   };
@@ -88,7 +148,7 @@ window.CBO = window.CBO || {};
               <path d="m6 6 12 12"></path>
             </svg>
           </button>
-          <div class="editor-ai-image-edit-preview-title">Create with AI</div>
+          <div class="editor-ai-image-edit-preview-title" data-ai-image-edit-preview-title>Create with AI</div>
         </div>
         <div class="editor-ai-image-edit-preview-prompt-menu" id="editor-ai-image-edit-preview-prompt-menu" data-ai-image-edit-preview-prompt-menu hidden>
           <div class="editor-ai-image-edit-preview-prompt-menu-grid">
@@ -121,6 +181,7 @@ window.CBO = window.CBO || {};
         <div class="editor-ai-image-edit-preview-body">
           <div class="editor-ai-image-edit-preview-media-frame" data-ai-image-edit-preview-media-frame>
             <img class="editor-ai-image-edit-preview-image" data-ai-image-edit-preview-image alt="" draggable="false">
+            <video class="editor-ai-image-edit-preview-image editor-ai-image-edit-preview-video" data-ai-image-edit-preview-video muted loop playsinline preload="metadata" hidden></video>
           </div>
           <div class="editor-ai-image-edit-preview-prompt">
             <div class="editor-ai-image-edit-preview-prompt-input" data-ai-image-edit-preview-prompt-input contenteditable="true" role="textbox" aria-multiline="true" aria-label="Create with AI prompt" data-placeholder="What do you want to create?" spellcheck="true"></div>
@@ -222,6 +283,7 @@ window.CBO = window.CBO || {};
 
     const viewer = aiImageEditPreviewViewer;
     const image = viewer?.querySelector?.("[data-ai-image-edit-preview-image]");
+    const video = viewer?.querySelector?.("[data-ai-image-edit-preview-video]");
     const promptEditor = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
 
     commitAiImageEditPreviewPromptInput(promptEditor);
@@ -245,6 +307,14 @@ window.CBO = window.CBO || {};
       image.hidden = false;
       image.removeAttribute("src");
     }
+
+    if (video) {
+      video.pause?.();
+      video.hidden = true;
+      video.removeAttribute("poster");
+      video.removeAttribute("src");
+      video.load?.();
+    }
     }
   };
 
@@ -256,34 +326,85 @@ window.CBO = window.CBO || {};
     const media = getAiImageBoardEditPreviewMedia(board);
     const frame = viewer?.querySelector?.("[data-ai-image-edit-preview-media-frame]");
     const image = viewer?.querySelector?.("[data-ai-image-edit-preview-image]");
+    const video = viewer?.querySelector?.("[data-ai-image-edit-preview-video]");
+    const title = viewer?.querySelector?.("[data-ai-image-edit-preview-title]");
     const dimensions = viewer?.querySelector?.("[data-ai-image-edit-preview-dimensions]");
     const promptEditor = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
     const sendButton = viewer?.querySelector?.("[data-ai-image-edit-preview-send]");
 
-    if (!viewer || viewer.hidden || !board || !media || !image) {
+    if (!viewer || viewer.hidden || !board || !media || !image || !video) {
       return false;
     }
 
-    const hasImage = Boolean(media.src);
+    const isVideo = media.kind === "video";
+    const hasMedia = isVideo ? Boolean(media.src || media.posterSrc) : Boolean(media.src);
     const isGenerating = aiImageGeneratingBoardIds.has(board.id);
 
-    viewer.classList.toggle("is-empty", !hasImage);
+    viewer.dataset.aiImageEditPreviewKind = isVideo ? "video" : "image";
+    viewer.classList.toggle("is-empty", !hasMedia);
     viewer.classList.toggle("is-generating", isGenerating);
-    frame?.classList.toggle("is-empty", !hasImage);
+    viewer.classList.toggle("is-video-preview", isVideo);
+    viewer.classList.toggle("is-image-preview", !isVideo);
+    frame?.classList.toggle("is-empty", !hasMedia);
     frame?.classList.toggle("is-generating", isGenerating);
     frame?.style.setProperty("--editor-ai-image-edit-preview-media-ratio", `${media.width} / ${media.height}`);
+    frame?.style.setProperty(
+      "--editor-ai-image-edit-preview-media-aspect",
+      String(Math.max(0.05, Math.min(20, media.width / Math.max(1, media.height)))),
+    );
 
-    image.hidden = !hasImage;
-    image.alt = hasImage ? media.name : "";
+    if (title) {
+      title.textContent = isVideo ? "Create video with AI" : "Create image with AI";
+    }
+
+    image.hidden = isVideo || !hasMedia;
+    image.alt = !isVideo && hasMedia ? media.name : "";
     image.decoding = "async";
     image.loading = "eager";
 
-    if (hasImage) {
+    if (!isVideo && hasMedia) {
       if (image.getAttribute("src") !== media.src) {
         image.src = media.src;
       }
     } else {
       image.removeAttribute("src");
+    }
+
+    video.hidden = !isVideo || !hasMedia;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.preload = "metadata";
+
+    if (isVideo && hasMedia) {
+      if (media.posterSrc) {
+        video.poster = media.posterSrc;
+      } else {
+        video.removeAttribute("poster");
+      }
+
+      if (media.src && video.getAttribute("src") !== media.src) {
+        video.src = media.src;
+        video.load?.();
+      } else if (!media.src) {
+        video.removeAttribute("src");
+        video.load?.();
+      }
+
+      if (media.src) {
+        const playResult = video.play?.();
+
+        if (playResult?.catch) {
+          playResult.catch(() => {});
+        }
+      }
+    } else {
+      video.pause?.();
+      video.removeAttribute("poster");
+      video.removeAttribute("src");
+      video.load?.();
     }
 
     if (dimensions) {
@@ -294,9 +415,20 @@ window.CBO = window.CBO || {};
       renderAiImageEditPreviewPromptEditor(promptEditor, board);
     }
 
+    if (promptEditor) {
+      promptEditor.dataset.placeholder = isVideo
+        ? "What video do you want to create?"
+        : "What image do you want to create?";
+      promptEditor.setAttribute(
+        "aria-label",
+        isVideo ? "Create video with AI prompt" : "Create image with AI prompt",
+      );
+    }
+
     if (sendButton) {
       sendButton.disabled = isGenerating;
       sendButton.classList.toggle("is-loading", isGenerating);
+      sendButton.setAttribute("aria-label", isVideo ? "Generate video" : "Generate image");
 
       if (isGenerating) {
         sendButton.setAttribute("aria-busy", "true");
@@ -1093,4 +1225,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

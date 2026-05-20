@@ -4,10 +4,16 @@
   --left-drawer-width: 265px;
   --left-panel-width: var(--left-rail-width);
   --right-panel-width: 245px;
+  --editor-stage-bg: #08090b;
+  --editor-stage-bg-light: #f7f7f4;
 
   position: relative;
   width: 100%;
   min-height: var(--cbo-visual-viewport-height);
+}
+
+.editor-page.light-stage-background {
+  --editor-stage-bg: var(--editor-stage-bg-light);
 }
 
 .editor-stage {
@@ -19,7 +25,7 @@
   place-items: stretch;
   padding: 0;
   overflow: hidden;
-  background-color: #f7f7f4;
+  background-color: var(--editor-stage-bg);
   transition: margin 180ms ease;
 }
 
@@ -443,6 +449,9 @@
 
 .editor-ai-image-board {
   --ai-image-board-footer-height: 210px;
+  --ai-board-meta-chip-bg: rgba(17, 17, 17, 0.68);
+  --ai-board-meta-chip-bg-hover: rgba(17, 17, 17, 0.82);
+  --ai-board-meta-chip-color: #ffffff;
 
   position: absolute;
   box-sizing: border-box;
@@ -482,8 +491,19 @@
 .editor-ai-image-board.is-plain-artboard .editor-artboard-frame-label {
   position: absolute;
   z-index: 4;
+  overflow: hidden;
+  max-width: var(--ai-board-name-max-width, calc(100% - 96px));
+  background: var(--ai-board-meta-chip-bg);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+  color: var(--ai-board-meta-chip-color);
+  cursor: grab;
   pointer-events: auto;
+  text-overflow: ellipsis;
   touch-action: none;
+}
+
+.editor-ai-image-board.is-plain-artboard .editor-artboard-frame-label:active {
+  cursor: grabbing;
 }
 
 .editor-ai-image-board-action-toolbar {
@@ -562,6 +582,10 @@
     transform 200ms ease-out,
     background-color 200ms ease-out,
     color 200ms ease-out;
+}
+
+.editor-ai-image-board-action-toolbar-button[hidden] {
+  display: none;
 }
 
 .editor-ai-image-board-action-toolbar-button:hover,
@@ -793,6 +817,179 @@ body.editor-ai-image-edit-preview-open {
   user-select: none;
   -webkit-user-drag: none;
   will-change: transform;
+}
+
+.editor-ai-image-enlarge-video-controls {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 20;
+  box-sizing: border-box;
+  width: clamp(270px, 30%, 370px);
+  max-width: calc(100% - 32px);
+  min-height: 72px;
+  overflow: hidden;
+  padding: 8px 12px;
+  border-radius: 12px;
+  color: #171717;
+  opacity: 1;
+  pointer-events: auto;
+  touch-action: none;
+  transform: translateX(-50%);
+  transition:
+    opacity 300ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.editor-ai-image-enlarge-video-controls[hidden] {
+  display: none;
+}
+
+.editor-ai-image-enlarge-video-controls.is-idle {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(16px);
+}
+
+.editor-ai-image-enlarge-video-controls-glass {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.25);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  pointer-events: none;
+}
+
+.editor-ai-image-enlarge-video-controls-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editor-ai-image-enlarge-video-controls-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+}
+
+.editor-ai-image-enlarge-video-controls-side {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transform: translateY(-50%);
+}
+
+.editor-ai-image-enlarge-video-controls-side.is-left {
+  left: 0;
+}
+
+.editor-ai-image-enlarge-video-controls-side.is-right {
+  right: 0;
+}
+
+.editor-ai-image-enlarge-video-control-button {
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.editor-ai-image-enlarge-video-control-button:hover,
+.editor-ai-image-enlarge-video-control-button:focus-visible {
+  background: rgba(255, 255, 255, 0.3);
+  outline: none;
+  transform: scale(1.05);
+}
+
+.editor-ai-image-enlarge-video-control-button.is-play {
+  width: 36px;
+  height: 36px;
+}
+
+.editor-ai-image-enlarge-video-control-button svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+}
+
+.editor-ai-image-enlarge-video-control-button.is-play svg {
+  width: 20px;
+  height: 20px;
+}
+
+.editor-ai-image-enlarge-video-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.editor-ai-image-enlarge-video-time {
+  flex: 0 0 auto;
+  min-width: 27px;
+  color: inherit;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.editor-ai-image-enlarge-video-progress {
+  position: relative;
+  flex: 1 1 auto;
+  height: 4px;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(23, 23, 23, 0.15);
+  cursor: pointer;
+  touch-action: none;
+  transition:
+    background-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.editor-ai-image-enlarge-video-progress:hover,
+.editor-ai-image-enlarge-video-progress:focus-visible,
+.editor-ai-image-enlarge-video-progress.is-seeking {
+  background: rgba(23, 23, 23, 0.2);
+  outline: none;
+}
+
+.editor-ai-image-enlarge-video-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: #171717;
+  transition: width 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.editor-ai-image-enlarge-video-progress.is-seeking .editor-ai-image-enlarge-video-progress-fill {
+  transition: none;
+}
+
+.editor-ai-image-enlarge-viewer.is-video-preview .editor-ai-image-enlarge-meta {
+  display: none;
 }
 
 .editor-ai-image-enlarge-meta {
@@ -1121,6 +1318,49 @@ body.editor-ai-image-edit-preview-open {
   -webkit-user-drag: none;
 }
 
+.editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-body {
+  padding-top: 24px;
+}
+
+.editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-media-frame {
+  align-self: center;
+  justify-self: center;
+  width: min(
+    calc((100vh - 260px) * var(--editor-ai-image-edit-preview-media-aspect, 1)),
+    calc(100vw - 240px),
+    720px
+  );
+  max-width: 100%;
+  max-height: min(100%, calc(100vh - 260px));
+  aspect-ratio: var(--editor-ai-image-edit-preview-media-ratio, 1 / 1);
+  overflow: hidden;
+  border-radius: 10px;
+  background: #111111;
+}
+
+.editor-ai-image-edit-preview-video {
+  border-radius: 10px;
+  background: #111111;
+}
+
+.editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-video {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+}
+
+.editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-media-frame.is-empty::before {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+.editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-prompt {
+  margin-top: 16px;
+}
+
 .editor-ai-image-edit-preview-image[hidden] {
   display: none;
 }
@@ -1350,8 +1590,9 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   height: var(--editor-artboard-label-height, 18px);
   padding: 0 var(--editor-artboard-label-padding-x, 7px);
   border-radius: var(--editor-artboard-label-radius, 5px);
-  background: rgba(17, 17, 17, 0.08);
-  color: rgba(17, 17, 17, 0.9);
+  background: var(--ai-board-meta-chip-bg);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+  color: var(--ai-board-meta-chip-color);
   font-size: var(--editor-artboard-label-font-size, 10px);
   font-weight: 800;
   letter-spacing: 0;
@@ -1796,34 +2037,7 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   background:
     radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.18), transparent 32%),
     linear-gradient(135deg, #191b20, #343944);
-}
-
-.editor-ai-image-board-media.is-video-preview::before {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  box-sizing: border-box;
-  width: 18%;
-  min-width: 28px;
-  max-width: 88px;
-  aspect-ratio: 1;
-  border: 2px solid rgba(255, 255, 255, 0.74);
-  border-radius: 999px;
-  content: "";
-  transform: translate(-50%, -50%);
-}
-
-.editor-ai-image-board-media.is-video-preview::after {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 0;
-  height: 0;
-  border-top: clamp(8px, 2.2vw, 18px) solid transparent;
-  border-bottom: clamp(8px, 2.2vw, 18px) solid transparent;
-  border-left: clamp(12px, 3.3vw, 28px) solid rgba(255, 255, 255, 0.86);
-  content: "";
-  transform: translate(-36%, -50%);
+  pointer-events: auto;
 }
 
 .editor-ai-image-board-media-item {
@@ -1831,6 +2045,67 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  pointer-events: none;
+}
+
+.editor-ai-image-board-video {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: #111318;
+  object-fit: contain;
+  pointer-events: auto;
+}
+
+.editor-ai-image-board-video-mute {
+  position: absolute;
+  right: var(--ai-video-mute-inset, 18px);
+  top: var(--ai-video-mute-inset, 18px);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: var(--ai-video-mute-handle-size, 68px);
+  height: var(--ai-video-mute-handle-size, 68px);
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  appearance: none;
+  background: rgba(17, 17, 17, 0.68);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+  color: #ffffff;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  touch-action: manipulation;
+  transition:
+    background-color 140ms ease,
+    opacity 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.editor-ai-image-board-video-mute[hidden] {
+  display: none;
+}
+
+.editor-ai-image-board-media.is-video-preview:hover > .editor-ai-image-board-video-mute,
+.editor-ai-image-board-media.is-video-preview:focus-within > .editor-ai-image-board-video-mute,
+.editor-ai-image-board.is-selected .editor-ai-image-board-media.is-video-preview > .editor-ai-image-board-video-mute,
+.editor-ai-image-board-video-mute:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.editor-ai-image-board-video-mute:hover,
+.editor-ai-image-board-video-mute:focus-visible {
+  background: rgba(17, 17, 17, 0.82);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+  outline: none;
+}
+
+.editor-ai-image-board-video-mute svg {
+  width: var(--ai-video-mute-icon-size, 30px);
+  height: var(--ai-video-mute-icon-size, 30px);
   pointer-events: none;
 }
 
@@ -2157,6 +2432,18 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
     max-height: 100%;
   }
 
+  .editor-ai-image-enlarge-video-controls {
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    width: min(360px, calc(100% - 28px));
+    max-width: calc(100% - 28px);
+  }
+
+  .editor-ai-image-enlarge-video-controls-glass {
+    background: rgba(255, 255, 255, 0.38);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
   .editor-ai-image-enlarge-meta {
     right: 14px;
     bottom: calc(14px + env(safe-area-inset-bottom, 0px));
@@ -2230,6 +2517,21 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
     overflow: hidden;
   }
 
+  .editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-body {
+    grid-template-rows: minmax(0, 1fr) auto;
+    row-gap: 10px;
+    padding-top: 10px;
+  }
+
+  .editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-media-frame {
+    width: min(
+      calc((100dvh - 420px) * var(--editor-ai-image-edit-preview-media-aspect, 1)),
+      calc(100vw - 44px)
+    );
+    max-height: calc(100dvh - 420px);
+    border-radius: 12px;
+  }
+
   .editor-ai-image-edit-preview-media-frame.is-empty::before {
     width: min(calc(100% - 4px), calc(100vw - 44px));
     max-height: calc(100% - 4px);
@@ -2243,6 +2545,17 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   .editor-ai-image-edit-preview-image {
     max-width: calc(100% - 4px);
     max-height: min(100%, 46vh, calc(100dvh - 280px));
+  }
+
+  .editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-video {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+  }
+
+  .editor-ai-image-edit-preview-viewer.is-video-preview .editor-ai-image-edit-preview-prompt {
+    margin-top: 0;
   }
 
   .editor-ai-image-edit-preview-prompt {

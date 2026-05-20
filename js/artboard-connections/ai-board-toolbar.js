@@ -89,7 +89,8 @@ window.CBO = window.CBO || {};
 
     if (
       !toolbar.querySelector("[data-ai-image-board-toolbar-action]") ||
-      !toolbar.querySelector('[data-ai-image-board-toolbar-action="edit-preview"]')
+      !toolbar.querySelector('[data-ai-image-board-toolbar-action="edit-preview"]') ||
+      !toolbar.querySelector('[data-ai-image-board-toolbar-action="video-mute"]')
     ) {
       toolbar.innerHTML = getAiImageBoardActionToolbarMarkup();
     }
@@ -116,6 +117,15 @@ window.CBO = window.CBO || {};
         <button class="editor-ai-image-board-action-toolbar-button" type="button" aria-label="Create with AI" data-ai-image-board-toolbar-action="edit-preview" data-ai-image-board-toolbar-label="Create with AI">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-astroid-icon lucide-astroid" aria-hidden="true">
             <path d="M12.983 21.186a1 1 0 0 1-1.966 0 10 10 0 0 0-8.203-8.203 1 1 0 0 1 0-1.966 10 10 0 0 0 8.203-8.203 1 1 0 0 1 1.966 0 10 10 0 0 0 8.203 8.203 1 1 0 0 1 0 1.966 10 10 0 0 0-8.203 8.203"></path>
+          </svg>
+        </button>
+        <button class="editor-ai-image-board-action-toolbar-button is-muted" type="button" aria-label="Unmute video" data-ai-image-board-toolbar-action="video-mute" data-ai-image-board-toolbar-label="Unmute" hidden>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-volume-off-icon lucide-volume-off" aria-hidden="true">
+            <path d="M16 9a5 5 0 0 1 .95 2.293"></path>
+            <path d="M19.364 5.636a9 9 0 0 1 1.889 9.96"></path>
+            <path d="m2 2 20 20"></path>
+            <path d="m7 7-.587.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298V11"></path>
+            <path d="M9.828 4.172A.686.686 0 0 1 11 4.657v.686"></path>
           </svg>
         </button>
         <span class="editor-ai-image-board-action-toolbar-separator" aria-hidden="true"></span>
@@ -156,6 +166,10 @@ window.CBO = window.CBO || {};
     with (this) {
 
     if (mobileActionToolbar?.isConnected) {
+      if (!mobileActionToolbar.querySelector('[data-ai-image-board-toolbar-action="video-mute"]')) {
+        mobileActionToolbar.innerHTML = getAiImageBoardActionToolbarMarkup();
+      }
+
       return mobileActionToolbar;
     }
 
@@ -195,14 +209,31 @@ window.CBO = window.CBO || {};
 
     const fullscreenButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="fullscreen"]');
     const editPreviewButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="edit-preview"]');
+    const videoMuteButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="video-mute"]');
     const duplicateButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="duplicate"]');
     const deleteButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="delete"]');
     const canEnlarge = Boolean(getAiImageBoardEnlargeMedia(board));
     const canEditPreview = Boolean(getAiImageBoardEditPreviewMedia(board));
+    const canMuteVideo = typeof isAiImageBoardVideoMuteAvailable === "function" &&
+      Boolean(isAiImageBoardVideoMuteAvailable(board));
     const hasBoard = Boolean(board);
 
     setAiImageBoardToolbarButtonEnabled(fullscreenButton, canEnlarge);
     setAiImageBoardToolbarButtonEnabled(editPreviewButton, canEditPreview);
+    if (videoMuteButton) {
+      const muted = board?.videoMuted !== false;
+
+      videoMuteButton.hidden = !canMuteVideo;
+      videoMuteButton.setAttribute("aria-hidden", canMuteVideo ? "false" : "true");
+      videoMuteButton.classList.toggle("is-muted", muted);
+      videoMuteButton.setAttribute("aria-label", muted ? "Unmute video" : "Mute video");
+      videoMuteButton.dataset.aiImageBoardToolbarLabel = muted ? "Unmute" : "Mute";
+      videoMuteButton.innerHTML = typeof getAiImageBoardVideoMuteIconMarkup === "function"
+        ? getAiImageBoardVideoMuteIconMarkup(muted)
+        : videoMuteButton.innerHTML;
+      setAiImageBoardToolbarButtonEnabled(videoMuteButton, canMuteVideo);
+    }
+
     setAiImageBoardToolbarButtonEnabled(duplicateButton, hasBoard);
     setAiImageBoardToolbarButtonEnabled(deleteButton, hasBoard);
     }
@@ -326,6 +357,10 @@ window.CBO = window.CBO || {};
       openAiImageBoardEnlargeViewer(boardId);
     } else if (action === "edit-preview") {
       openAiImageBoardEditPreview(boardId);
+    } else if (action === "video-mute") {
+      if (typeof toggleAiImageBoardVideoMuted === "function") {
+        toggleAiImageBoardVideoMuted(boardId);
+      }
     } else if (action === "duplicate") {
       duplicateAiImageBoard(boardId);
     } else if (action === "delete") {
@@ -344,4 +379,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

@@ -23,14 +23,182 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.normalizeAiImageBoardVariantSrc = function normalizeAiImageBoardVariantSrc(value) {
+    with (this) {
+
+    if (typeof value === "string") {
+      return value.trim();
+    }
+
+    if (!value || typeof value !== "object") {
+      return "";
+    }
+
+    return String(value.src || value.url || value.href || "").trim();
+    }
+  };
+
   Controller.prototype.getAiImageBoardMediaVariantSrc = function getAiImageBoardMediaVariantSrc(media, lod) {
     with (this) {
 
     const variants = media?.variants && typeof media.variants === "object" ? media.variants : null;
     const key = String(lod || "");
-    const explicitVariant = String(variants?.[key] || "").trim();
+    const explicitVariant = normalizeAiImageBoardVariantSrc(variants?.[key]);
 
     return explicitVariant;
+    }
+  };
+
+  Controller.prototype.getAiVideoBoardVariantKeys = function getAiVideoBoardVariantKeys(lod) {
+    with (this) {
+
+    const raw = String(lod || "").trim();
+    const numeric = getAiBoardNumericLod(raw);
+    const base = numeric ? String(numeric) : raw.replace(/^video[-_]/i, "").replace(/p$/i, "");
+    const keys = [
+      raw,
+      base,
+      `${base}p`,
+      `video-${base}`,
+      `video_${base}`,
+    ].filter(Boolean);
+
+    return Array.from(new Set(keys));
+    }
+  };
+
+  Controller.prototype.getAiVideoBoardVariantValue = function getAiVideoBoardVariantValue(media, lod) {
+    with (this) {
+
+    const variants = media?.variants && typeof media.variants === "object" ? media.variants : null;
+
+    if (!variants) {
+      return null;
+    }
+
+    for (const key of getAiVideoBoardVariantKeys(lod)) {
+      if (Object.prototype.hasOwnProperty.call(variants, key)) {
+        return variants[key];
+      }
+    }
+
+    return null;
+    }
+  };
+
+  Controller.prototype.getAiVideoBoardVariantSrc = function getAiVideoBoardVariantSrc(media, lod) {
+    with (this) {
+
+    return normalizeAiImageBoardVariantSrc(getAiVideoBoardVariantValue(media, lod));
+    }
+  };
+
+  Controller.prototype.getAiVideoBoardVariantPosterSrc = function getAiVideoBoardVariantPosterSrc(media, lod) {
+    with (this) {
+
+    const variant = getAiVideoBoardVariantValue(media, lod);
+
+    if (variant && typeof variant === "object") {
+      const poster = String(
+        variant.posterSrc ||
+        variant.poster ||
+        variant.startFrameSrc ||
+        variant.thumbnailSrc ||
+        "",
+      ).trim();
+
+      if (poster) {
+        return poster;
+      }
+    }
+
+    const posters = media?.posters && typeof media.posters === "object" ? media.posters : null;
+
+    if (!posters) {
+      return "";
+    }
+
+    for (const key of getAiVideoBoardVariantKeys(lod)) {
+      const poster = String(posters[key] || "").trim();
+
+      if (poster) {
+        return poster;
+      }
+    }
+
+    return "";
+    }
+  };
+
+  Controller.prototype.getAiVideoBoardPosterSrc = function getAiVideoBoardPosterSrc(media, lod) {
+    with (this) {
+
+    return getAiVideoBoardVariantPosterSrc(media, lod) ||
+      String(
+        media?.posterSrc ||
+        media?.poster ||
+        media?.startFrameSrc ||
+        media?.thumbnailSrc ||
+        "",
+      ).trim();
+    }
+  };
+
+  Controller.prototype.getAiVideoBoardAvailableVariantSizes = function getAiVideoBoardAvailableVariantSizes(media) {
+    with (this) {
+
+    return AI_VIDEO_PREVIEW_VARIANT_SIZES
+      .filter((size) => Boolean(getAiVideoBoardVariantSrc(media, size)));
+    }
+  };
+
+  Controller.prototype.getAiVideoBoardFixedCanvasPreviewSrc = function getAiVideoBoardFixedCanvasPreviewSrc(media) {
+    with (this) {
+
+    return String(
+      media?.previewSrc ||
+      media?.canvasPreviewSrc ||
+      media?.preview?.src ||
+      media?.preview?.url ||
+      "",
+    ).trim() || getAiVideoBoardVariantSrc(media, AI_VIDEO_CANVAS_PREVIEW_LOD);
+    }
+  };
+
+  Controller.prototype.selectAiVideoBoardVariantSize = function selectAiVideoBoardVariantSize(media, recommendedLod) {
+    with (this) {
+
+    const availableSizes = getAiVideoBoardAvailableVariantSizes(media);
+    const requestedSize = getAiBoardNumericLod(recommendedLod);
+
+    if (!availableSizes.length || !requestedSize) {
+      return 0;
+    }
+
+    return availableSizes.find((size) => Number(size) >= requestedSize) ||
+      availableSizes[availableSizes.length - 1] ||
+      0;
+    }
+  };
+
+  Controller.prototype.resolveAiVideoBoardPreview = function resolveAiVideoBoardPreview(media, recommendedLod) {
+    with (this) {
+
+    const originalSrc = String(media?.src || "").trim();
+    const previewSrc = getAiVideoBoardFixedCanvasPreviewSrc(media);
+    const videoSrc = previewSrc || originalSrc;
+    const lod = previewSrc ? `video-${AI_VIDEO_CANVAS_PREVIEW_LOD}` : "video-full";
+    const posterSrc = getAiVideoBoardPosterSrc(media, AI_VIDEO_CANVAS_PREVIEW_LOD);
+
+    return {
+      kind: "video",
+      lod,
+      posterSrc,
+      previewKey: `${videoSrc}::${posterSrc || "no-poster"}::${lod}`,
+      previewMode: "video",
+      previewSource: previewSrc ? "fixed-video-preview" : "original-video-fallback",
+      previewSrc: videoSrc,
+    };
     }
   };
 
@@ -158,12 +326,31 @@ window.CBO = window.CBO || {};
     delete mediaHost.dataset.mediaPendingPreviewKey;
     delete mediaHost.dataset.mediaPendingPreviewSource;
     delete mediaHost.dataset.mediaPendingSrc;
+    delete mediaHost.dataset.mediaPosterSrc;
     delete mediaHost.dataset.mediaPreview;
     delete mediaHost.dataset.mediaPreviewKey;
     delete mediaHost.dataset.mediaPreviewSource;
     delete mediaHost.dataset.mediaPreviewSrc;
     delete mediaHost.dataset.mediaPreviewSwapRequest;
     delete mediaHost.dataset.mediaSrc;
+    delete mediaHost.dataset.mediaVideoSrc;
+    }
+  };
+
+  Controller.prototype.releaseAiImageBoardVideoPreview = function releaseAiImageBoardVideoPreview(mediaHost) {
+    with (this) {
+
+    mediaHost?.querySelectorAll?.("[data-ai-image-board-video]").forEach((video) => {
+      try {
+        video.pause?.();
+      } catch (_error) {
+        // Best effort cleanup before the media node is detached.
+      }
+
+      video.removeAttribute("src");
+      video.removeAttribute("poster");
+      video.load?.();
+    });
     }
   };
 
@@ -174,6 +361,22 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    const boardElement = mediaHost.closest?.("[data-ai-image-board]");
+    const muteButton = getAiImageBoardVideoMuteButton(mediaHost);
+
+    boardElement?.classList.remove("has-video-preview");
+
+    if (muteButton) {
+      muteButton.hidden = true;
+      muteButton.innerHTML = "";
+      muteButton.classList.remove("is-muted");
+      muteButton.setAttribute("aria-label", "Unmute video");
+    }
+
+    mediaHost.removeEventListener("pointerenter", handleAiImageBoardVideoPointerEnter);
+    mediaHost.removeEventListener("pointerleave", handleAiImageBoardVideoPointerLeave);
+    mediaHost.removeEventListener("click", handleAiImageBoardVideoManualPlayClick);
+    releaseAiImageBoardVideoPreview(mediaHost);
     mediaHost.querySelectorAll("[data-ai-image-board-preview-layer]").forEach(clearAiImageBoardPreviewLayer);
     mediaHost.replaceChildren();
     mediaHost.classList.remove("is-crossfading", "is-image-preview", "is-placeholder-preview", "is-video-preview");
@@ -443,12 +646,350 @@ window.CBO = window.CBO || {};
     }
   };
 
-  Controller.prototype.renderAiImageBoardVideoPreview = function renderAiImageBoardVideoPreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset) {
+  Controller.prototype.createAiImageBoardVideoPreviewElement = function createAiImageBoardVideoPreviewElement() {
     with (this) {
+
+    const video = document.createElement("video");
+
+    video.className = "editor-ai-image-board-media-item editor-ai-image-board-video";
+    video.dataset.aiImageBoardVideo = "";
+    video.loop = true;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.preload = "auto";
+    video.disablePictureInPicture = true;
+    video.disableRemotePlayback = true;
+    video.controls = false;
+    video.draggable = false;
+    video.setAttribute("autoplay", "");
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    video.setAttribute("preload", "auto");
+    video.setAttribute("controlslist", "nodownload nofullscreen");
+    video.setAttribute("aria-hidden", "true");
+
+    return video;
+    }
+  };
+
+  Controller.prototype.getAiImageBoardVideoMuteIconMarkup = function getAiImageBoardVideoMuteIconMarkup(muted) {
+    with (this) {
+
+    return muted
+      ? `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-volume-off-icon lucide-volume-off" aria-hidden="true">
+          <path d="M16 9a5 5 0 0 1 .95 2.293"></path>
+          <path d="M19.364 5.636a9 9 0 0 1 1.889 9.96"></path>
+          <path d="m2 2 20 20"></path>
+          <path d="m7 7-.587.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298V11"></path>
+          <path d="M9.828 4.172A.686.686 0 0 1 11 4.657v.686"></path>
+        </svg>
+      `
+      : `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-volume2-icon lucide-volume-2" aria-hidden="true">
+          <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"></path>
+          <path d="M16 9a5 5 0 0 1 0 6"></path>
+          <path d="M19.364 18.364a9 9 0 0 0 0-12.728"></path>
+        </svg>
+      `;
+    }
+  };
+
+  Controller.prototype.getAiImageBoardVideoMuteButton = function getAiImageBoardVideoMuteButton(mediaHost) {
+    with (this) {
+
+    return mediaHost?.querySelector?.(":scope > [data-ai-image-board-video-mute]") ||
+      mediaHost?.querySelector?.("[data-ai-image-board-video-mute]") ||
+      null;
+    }
+  };
+
+  Controller.prototype.ensureAiImageBoardVideoMuteButton = function ensureAiImageBoardVideoMuteButton(mediaHost) {
+    with (this) {
+
+    let button = getAiImageBoardVideoMuteButton(mediaHost);
+
+    if (!mediaHost) {
+      return null;
+    }
+
+    if (!button) {
+      button = document.createElement("button");
+      button.className = "editor-ai-image-board-video-mute";
+      button.type = "button";
+      button.dataset.aiImageBoardVideoMute = "";
+      button.setAttribute("aria-label", "Unmute video");
+      button.addEventListener("pointerdown", stopSpaceBoardControlEvent);
+      button.addEventListener("click", handleAiImageBoardVideoMuteClick);
+      mediaHost.append(button);
+    }
+
+    button.hidden = false;
+    mediaHost.closest?.("[data-ai-image-board]")?.classList.add("has-video-preview");
+
+    return button;
+    }
+  };
+
+  Controller.prototype.syncAiImageBoardVideoPreviewState = function syncAiImageBoardVideoPreviewState(mediaHost, board) {
+    with (this) {
+
+    const video = mediaHost?.querySelector?.("[data-ai-image-board-video]");
+    const button = getAiImageBoardVideoMuteButton(mediaHost);
+    const muted = board?.videoMuted !== false;
+
+    if (video) {
+      video.muted = muted;
+      video.defaultMuted = muted;
+    }
+
+    if (button) {
+      button.innerHTML = getAiImageBoardVideoMuteIconMarkup(muted);
+      button.classList.toggle("is-muted", muted);
+      button.setAttribute("aria-label", muted ? "Unmute video" : "Mute video");
+    }
+
+    mediaHost?.classList.toggle("is-video-muted", muted);
+    }
+  };
+
+  Controller.prototype.isAiImageBoardVideoMuteAvailable = function isAiImageBoardVideoMuteAvailable(board) {
+    with (this) {
+
+    const media = board?.generatedMedia || null;
+    const src = String(media?.src || "").trim();
+
+    return Boolean(board && board.type === "ai-image" && media?.kind === "video" && src);
+    }
+  };
+
+  Controller.prototype.syncAiImageBoardVideoMuteUi = function syncAiImageBoardVideoMuteUi(board) {
+    with (this) {
+
+    const boardId = String(board?.id || "").trim();
+
+    if (!boardId) {
+      return;
+    }
+
+    Array.from(document.querySelectorAll("[data-ai-image-board]"))
+      .filter((element) => element.dataset?.boardId === boardId)
+      .forEach((element) => {
+        const mediaHost = element.querySelector("[data-ai-image-board-media]");
+        const video = mediaHost?.querySelector?.("[data-ai-image-board-video]");
+
+        syncAiImageBoardVideoPreviewState(mediaHost, board);
+        updateAiImageBoardActionToolbarState(
+          element.querySelector("[data-ai-image-board-action-toolbar]"),
+          board,
+        );
+
+        if (video && !video.paused) {
+          playAiImageBoardVideoPreview(video);
+        }
+      });
+
+    if (mobileActionToolbar?.isConnected && mobileActionToolbar.dataset?.boardId === boardId) {
+      updateAiImageBoardActionToolbarState(mobileActionToolbar, board);
+    }
+    }
+  };
+
+  Controller.prototype.toggleAiImageBoardVideoMuted = function toggleAiImageBoardVideoMuted(boardId) {
+    with (this) {
+
+    const board = getSpaceBoardById(boardId);
+
+    if (!isAiImageBoardVideoMuteAvailable(board)) {
+      return false;
+    }
+
+    board.videoMuted = board.videoMuted === false;
+    syncAiImageBoardVideoMuteUi(board);
+    return true;
+    }
+  };
+
+  Controller.prototype.isAiImageBoardVideoSelected = function isAiImageBoardVideoSelected(mediaHost, board = null) {
+    with (this) {
+
+    const boardElement = mediaHost?.closest?.("[data-ai-image-board]");
+    const boardId = String(board?.id || boardElement?.dataset?.boardId || "").trim();
+
+    return Boolean(
+      boardId &&
+      (selectedSpaceBoardId === boardId || boardElement?.classList.contains("is-selected"))
+    );
+    }
+  };
+
+  Controller.prototype.isAiImageBoardMediaHovering = function isAiImageBoardMediaHovering(mediaHost) {
+    with (this) {
+
+    try {
+      return Boolean(mediaHost?.matches?.(":hover"));
+    } catch (_error) {
+      return false;
+    }
+    }
+  };
+
+  Controller.prototype.pauseAiImageBoardVideoPreview = function pauseAiImageBoardVideoPreview(video) {
+    with (this) {
+
+    try {
+      video?.pause?.();
+    } catch (_error) {
+      // Pausing a detached media element is harmless to ignore.
+    }
+    }
+  };
+
+  Controller.prototype.playAiImageBoardVideoPreview = function playAiImageBoardVideoPreview(video) {
+    with (this) {
+
+    if (!video || !video.isConnected) {
+      return;
+    }
+
+    const playResult = video.play?.();
+
+    if (playResult?.catch) {
+      playResult.catch(() => {});
+    }
+    }
+  };
+
+  Controller.prototype.syncAiImageBoardVideoSelectionPlayback = function syncAiImageBoardVideoSelectionPlayback(mediaHost, board = null) {
+    with (this) {
+
+    const video = mediaHost?.querySelector?.("[data-ai-image-board-video]");
+
+    if (!video) {
+      return;
+    }
+
+    const boardId = String(board?.id || mediaHost?.closest?.("[data-ai-image-board]")?.dataset?.boardId || "").trim();
+
+    if (boardId && aiImageEnlargeState?.mediaKind === "video" && aiImageEnlargeState.boardId === boardId) {
+      pauseAiImageBoardVideoPreview(video);
+      return;
+    }
+
+    if (isAiImageBoardVideoSelected(mediaHost, board)) {
+      playAiImageBoardVideoPreview(video);
+    } else if (!isAiImageBoardMediaHovering(mediaHost)) {
+      pauseAiImageBoardVideoPreview(video);
+    }
+    }
+  };
+
+  Controller.prototype.handleAiImageBoardVideoPointerEnter = function handleAiImageBoardVideoPointerEnter(event) {
+    with (this) {
+
+    if (event.pointerType === "touch") {
+      return;
+    }
+
+    playAiImageBoardVideoPreview(event.currentTarget?.querySelector?.("[data-ai-image-board-video]"));
+    }
+  };
+
+  Controller.prototype.handleAiImageBoardVideoPointerLeave = function handleAiImageBoardVideoPointerLeave(event) {
+    with (this) {
+
+    const mediaHost = event.currentTarget;
+
+    if (isAiImageBoardVideoSelected(mediaHost)) {
+      return;
+    }
+
+    pauseAiImageBoardVideoPreview(mediaHost?.querySelector?.("[data-ai-image-board-video]"));
+    }
+  };
+
+  Controller.prototype.handleAiImageBoardVideoManualPlayClick = function handleAiImageBoardVideoManualPlayClick(event) {
+    with (this) {
+
+    const mediaHost = event.currentTarget;
+    const video = mediaHost?.querySelector?.("[data-ai-image-board-video]");
+
+    if (!video) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    playAiImageBoardVideoPreview(video);
+    }
+  };
+
+  Controller.prototype.handleAiImageBoardVideoMuteClick = function handleAiImageBoardVideoMuteClick(event) {
+    with (this) {
+
+    const mediaHost = event.currentTarget?.closest?.("[data-ai-image-board-media]");
+    const boardElement = mediaHost?.closest?.("[data-ai-image-board]");
+    const board = getSpaceBoardById(boardElement?.dataset?.boardId || "");
+    const video = mediaHost?.querySelector?.("[data-ai-image-board-video]");
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!board) {
+      return;
+    }
+
+    toggleAiImageBoardVideoMuted(board.id);
+
+    if (video && !video.paused) {
+      playAiImageBoardVideoPreview(video);
+    }
+    }
+  };
+
+  Controller.prototype.renderAiImageBoardVideoPreview = function renderAiImageBoardVideoPreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset, board = null) {
+    with (this) {
+
+    const videoSrc = String(preview?.previewSrc || src || "").trim();
+    const posterSrc = String(preview?.posterSrc || "").trim();
+    const posterSrcForDataset = summarizeAiBoardPreviewSrc(posterSrc);
 
     resetAiImageBoardMediaHost(mediaHost);
     mediaHost.classList.add("is-video-preview");
+    mediaHost.dataset.mediaVideoSrc = videoSrc;
+    mediaHost.dataset.mediaPosterSrc = posterSrcForDataset;
     setAiImageBoardMediaDataset(mediaHost, media, preview, previewKey, previewSrcForDataset, src, kind);
+
+    if (!videoSrc) {
+      return;
+    }
+
+    const video = createAiImageBoardVideoPreviewElement();
+
+    video.dataset.videoSrc = videoSrc;
+    if (posterSrc) {
+      video.poster = posterSrc;
+    }
+
+    mediaHost.addEventListener("pointerenter", handleAiImageBoardVideoPointerEnter);
+    mediaHost.addEventListener("pointerleave", handleAiImageBoardVideoPointerLeave);
+    mediaHost.addEventListener("click", handleAiImageBoardVideoManualPlayClick);
+    mediaHost.append(video);
+    video.src = videoSrc;
+    ensureAiImageBoardVideoMuteButton(mediaHost);
+    syncAiImageBoardVideoPreviewState(mediaHost, board);
+    syncAiImageBoardVideoSelectionPlayback(mediaHost, board);
+    recordAiBoardPreviewDebugEvent("video-preview-render", {
+      boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+      lod: preview.lod,
+      posterSrc,
+      previewSource: preview.previewSource || "",
+      src,
+      videoSrc,
+    });
     }
   };
 
@@ -742,17 +1283,6 @@ window.CBO = window.CBO || {};
       };
     }
 
-    if (kind === "video") {
-      return {
-        kind,
-        lod: "video-poster",
-        previewKey: `${src}::video-poster`,
-        previewMode: "video-poster",
-        previewSource: "poster",
-        previewSrc: "",
-      };
-    }
-
     if (safeRecommendedLod === "placeholder" || safeRecommendedLod === "unloaded") {
       return {
         kind,
@@ -762,6 +1292,10 @@ window.CBO = window.CBO || {};
         previewSource: safeRecommendedLod === "unloaded" ? "unloaded" : "none",
         previewSrc: "",
       };
+    }
+
+    if (kind === "video") {
+      return resolveAiVideoBoardPreview(media, safeRecommendedLod);
     }
 
     if (!AI_IMAGE_PREVIEW_VARIANT_SIZES.includes(Number(safeRecommendedLod))) {
@@ -877,6 +1411,7 @@ window.CBO = window.CBO || {};
     const previewMode = preview.previewMode;
     const previewSrc = String(preview.previewSrc || "").trim();
     const previewSrcForDataset = summarizeAiBoardPreviewSrc(previewSrc);
+    const previewPosterSrcForDataset = summarizeAiBoardPreviewSrc(preview.posterSrc || "");
     const previewKey = String(preview.previewKey || previewSrcForDataset || previewMode);
 
     if (shouldHoldAiImageBoardPreviewForPendingLod(mediaHost, src, kind, preview)) {
@@ -903,12 +1438,21 @@ window.CBO = window.CBO || {};
       mediaHost.dataset.mediaPreviewSrc === previewSrcForDataset &&
       (
         (previewMode === "placeholder" && mediaHost.classList.contains("is-placeholder-preview")) ||
-        (kind === "video" && mediaHost.classList.contains("is-video-preview")) ||
+        (
+          kind === "video" &&
+          mediaHost.classList.contains("is-video-preview") &&
+          mediaHost.dataset.mediaVideoSrc === previewSrc &&
+          mediaHost.dataset.mediaPosterSrc === previewPosterSrcForDataset
+        ) ||
         (kind === "image" && activeImageLayer?.dataset?.previewKey === previewKey)
       )
     );
 
     if (isStablePreviewCurrent) {
+      if (kind === "video") {
+        syncAiImageBoardVideoPreviewState(mediaHost, board);
+        syncAiImageBoardVideoSelectionPlayback(mediaHost, board);
+      }
       return;
     }
 
@@ -927,7 +1471,7 @@ window.CBO = window.CBO || {};
     } else if (kind === "image") {
       renderAiImageBoardImagePreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset);
     } else {
-      renderAiImageBoardVideoPreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset);
+      renderAiImageBoardVideoPreview(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset, board);
     }
     }
   };
@@ -958,4 +1502,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-
