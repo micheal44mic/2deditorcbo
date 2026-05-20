@@ -372,16 +372,26 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       </div>
     </section>
     <div class="brush-quick-controls" data-brush-quick-controls hidden>
-      <label class="bottom-toolbar brush-quick-toolbar">
+      <div class="bottom-toolbar brush-quick-toolbar" data-brush-quick-control="radius">
         <span class="brush-quick-label">SIZE</span>
         <input class="brush-quick-range" type="range" min="1" max="${brushSizeMax}" step="1" data-brush-quick-input="radius" aria-label="Brush size" />
+        <div class="brush-mobile-control" role="slider" tabindex="0" aria-label="Brush size" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="${brushSizeMax}" data-brush-mobile-control="radius">
+          <span class="brush-mobile-control-ring" aria-hidden="true">
+            <span class="brush-mobile-control-fill"></span>
+          </span>
+        </div>
         <span class="brush-quick-value" data-brush-quick-value="radius"></span>
-      </label>
-      <label class="bottom-toolbar brush-quick-toolbar">
+      </div>
+      <div class="bottom-toolbar brush-quick-toolbar" data-brush-quick-control="opacity">
         <span class="brush-quick-label">OPACITY</span>
         <input class="brush-quick-range" type="range" min="0" max="100" step="1" data-brush-quick-input="opacity" aria-label="Brush opacity" />
+        <div class="brush-mobile-control" role="slider" tabindex="0" aria-label="Brush opacity" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" data-brush-mobile-control="opacity">
+          <span class="brush-mobile-control-ring" aria-hidden="true">
+            <span class="brush-mobile-control-fill"></span>
+          </span>
+        </div>
         <span class="brush-quick-value" data-brush-quick-value="opacity"></span>
-      </label>
+      </div>
     </div>
     <nav class="bottom-toolbar top-history-toolbar" aria-label="History toolbar">
       <button class="tool-button" type="button" aria-label="UNDO" aria-pressed="false" data-tooltip="UNDO Ctrl+Z" data-history-action="undo">
@@ -569,6 +579,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const quickControls = dock.querySelector("[data-brush-quick-controls]");
   const quickInputs = dock.querySelectorAll("[data-brush-quick-input]");
   const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
+  const mobileQuickControls = quickControls?.querySelectorAll("[data-brush-mobile-control]") || [];
   let selectedTransformMode = "free";
   let selectedAreaSelectionOperation = "replace";
   let isResizeToolActive = false;
@@ -578,6 +589,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   let currentToolIsText = false;
   let isSyncingMobileTextControls = false;
   let textGeometryPatchRevision = 0;
+  let mobileBrushDragState = null;
   const allowedTransformModes = new Set(["free", "perspective", "warp"]);
   const allowedAreaSelectionOperations = new Set(["replace", "add", "subtract"]);
 
@@ -599,12 +611,49 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     return clamp(Math.round(Number(settings.radius ?? defaultBrushSettings.radius)), 1, brushSizeMax);
   }
 
+  function getControlRange(key) {
+    if (key === "opacity") {
+      return { min: 0, max: 100 };
+    }
+
+    return { min: 1, max: brushSizeMax };
+  }
+
+  function getControlProgress(key, displayValue) {
+    const { min, max } = getControlRange(key);
+
+    if (max <= min) {
+      return 0;
+    }
+
+    return clamp((Number(displayValue) - min) / (max - min), 0, 1);
+  }
+
   function updateRangeProgress(input) {
     const min = Number(input.min) || 0;
     const max = Number(input.max) || 100;
     const progress = ((Number(input.value) - min) / (max - min)) * 100;
 
     input.style.setProperty("--brush-quick-range-progress", `${progress}%`);
+  }
+
+  function syncMobileQuickControl(control, key, displayValue) {
+    const progress = getControlProgress(key, displayValue);
+    const fillScale = key === "opacity"
+      ? 0.34 + progress * 0.52
+      : 0.2 + Math.sqrt(progress) * 0.74;
+    const fillOpacity = key === "opacity" ? 0.18 + progress * 0.82 : 1;
+    const valueText = key === "opacity" ? `${Math.round(displayValue)}%` : `${Math.round(displayValue)}px`;
+
+    control.style.setProperty("--brush-mobile-control-level", `${progress * 100}%`);
+    control.style.setProperty("--brush-mobile-control-fill-scale", fillScale.toFixed(3));
+    control.style.setProperty("--brush-mobile-control-fill-opacity", fillOpacity.toFixed(3));
+    control.dataset.brushMobileValue = valueText;
+    control.setAttribute("aria-valuenow", String(Math.round(displayValue)));
+    control.setAttribute(
+      "aria-valuetext",
+      key === "opacity" ? `${Math.round(displayValue)}% opacity` : `${Math.round(displayValue)} pixels`,
+    );
   }
 
   function syncQuickControls() {
@@ -623,6 +672,13 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       const displayValue = getControlDisplayValue(key, settings);
 
       valueElement.textContent = key === "opacity" ? `${displayValue}%` : `${displayValue}px`;
+    });
+
+    mobileQuickControls.forEach((control) => {
+      const key = control.dataset.brushMobileControl;
+      const displayValue = getControlDisplayValue(key, settings);
+
+      syncMobileQuickControl(control, key, displayValue);
     });
   }
 
@@ -651,12 +707,129 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     dispatchBrushSettings();
   }
 
+  function getMobileBrushDragValue(event) {
+    if (!mobileBrushDragState) {
+      return null;
+    }
+
+    const { key, min, max, startValue, startX, startY } = mobileBrushDragState;
+    const range = Math.max(1, max - min);
+    const deltaY = startY - event.clientY;
+    const sideways = Math.abs(event.clientX - startX);
+    const precision = Math.max(0.18, 1 - Math.min(sideways, 180) / 220);
+    const nextValue = startValue + (deltaY / 220) * range * precision;
+
+    return clamp(Math.round(nextValue), min, max);
+  }
+
+  function finishMobileBrushControlDrag(pointerId = null) {
+    if (!mobileBrushDragState || (pointerId !== null && mobileBrushDragState.pointerId !== pointerId)) {
+      return;
+    }
+
+    mobileBrushDragState.control?.classList.remove("is-dragging");
+
+    if (mobileBrushDragState.control?.hasPointerCapture?.(mobileBrushDragState.pointerId)) {
+      mobileBrushDragState.control.releasePointerCapture(mobileBrushDragState.pointerId);
+    }
+
+    quickControls?.classList.remove("is-mobile-dragging");
+    document.body?.classList.remove("cbo-brush-quick-dragging");
+    mobileBrushDragState = null;
+  }
+
+  function handleMobileBrushControlPointerDown(event) {
+    const control = event.currentTarget;
+    const key = control?.dataset?.brushMobileControl;
+
+    if (!key || event.button > 0) {
+      return;
+    }
+
+    const { min, max } = getControlRange(key);
+    const startValue = getControlDisplayValue(key);
+
+    finishMobileBrushControlDrag();
+    mobileBrushDragState = {
+      control,
+      key,
+      max,
+      min,
+      pointerId: event.pointerId,
+      startValue,
+      startX: event.clientX,
+      startY: event.clientY,
+      value: startValue,
+    };
+
+    control.classList.add("is-dragging");
+    control.setPointerCapture?.(event.pointerId);
+    quickControls?.classList.add("is-mobile-dragging");
+    document.body?.classList.add("cbo-brush-quick-dragging");
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function handleMobileBrushControlPointerMove(event) {
+    if (!mobileBrushDragState || mobileBrushDragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const nextValue = getMobileBrushDragValue(event);
+
+    if (nextValue !== null && nextValue !== mobileBrushDragState.value) {
+      mobileBrushDragState.value = nextValue;
+      updateBrushSetting(mobileBrushDragState.key, nextValue);
+    }
+
+    event.preventDefault();
+  }
+
+  function handleMobileBrushControlKeydown(event) {
+    const key = event.currentTarget?.dataset?.brushMobileControl;
+
+    if (!key) {
+      return;
+    }
+
+    const { min, max } = getControlRange(key);
+    const currentValue = getControlDisplayValue(key);
+    const smallStep = key === "opacity" ? 1 : 1;
+    const largeStep = key === "opacity" ? 10 : Math.max(10, Math.round((max - min) * 0.05));
+    let nextValue = null;
+
+    if (event.key === "ArrowUp" || event.key === "ArrowRight") {
+      nextValue = currentValue + smallStep;
+    } else if (event.key === "ArrowDown" || event.key === "ArrowLeft") {
+      nextValue = currentValue - smallStep;
+    } else if (event.key === "PageUp") {
+      nextValue = currentValue + largeStep;
+    } else if (event.key === "PageDown") {
+      nextValue = currentValue - largeStep;
+    } else if (event.key === "Home") {
+      nextValue = min;
+    } else if (event.key === "End") {
+      nextValue = max;
+    }
+
+    if (nextValue === null) {
+      return;
+    }
+
+    updateBrushSetting(key, clamp(nextValue, min, max));
+    event.preventDefault();
+  }
+
   function showBrushQuickControls(isVisible) {
     if (!quickControls) {
       return;
     }
 
     quickControls.hidden = !isVisible;
+
+    if (!isVisible) {
+      finishMobileBrushControlDrag();
+    }
 
     if (isVisible) {
       syncQuickControls();
@@ -1833,6 +2006,14 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       updateBrushSetting(input.dataset.brushQuickInput, input.value);
     });
   });
+
+  mobileQuickControls.forEach((control) => {
+    control.addEventListener("pointerdown", handleMobileBrushControlPointerDown);
+    control.addEventListener("keydown", handleMobileBrushControlKeydown);
+  });
+  window.addEventListener("pointermove", handleMobileBrushControlPointerMove, { passive: false });
+  window.addEventListener("pointerup", (event) => finishMobileBrushControlDrag(event.pointerId));
+  window.addEventListener("pointercancel", (event) => finishMobileBrushControlDrag(event.pointerId));
 
   [
     [mobileTextContentInput, "content"],

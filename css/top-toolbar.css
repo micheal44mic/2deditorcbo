@@ -442,6 +442,10 @@
   display: none;
 }
 
+.brush-mobile-control {
+  display: none;
+}
+
 .area-selection-operation-toolbar,
 .transform-mode-toolbar {
   position: fixed;
@@ -891,15 +895,17 @@
 
   .brush-quick-controls:not([hidden]) {
     position: fixed;
-    top: calc(88px + var(--cbo-safe-top));
-    left: calc(var(--left-panel-width) + 12px);
-    right: var(--cbo-mobile-edge-right);
+    top: 50%;
+    right: calc(var(--cbo-safe-right) - 34px);
+    left: auto;
     z-index: 8990;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 6px;
-    min-width: 0;
-    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 44px;
+    width: 68px;
+    min-width: 68px;
+    pointer-events: none;
+    transform: translateY(-50%);
   }
 
   .brush-quick-controls[hidden] {
@@ -907,29 +913,156 @@
   }
 
   .brush-quick-controls .brush-quick-toolbar {
-    width: 100%;
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 68px;
+    min-width: 68px;
+    height: 68px;
+    padding: 0;
+    gap: 0;
+    border-radius: 999px;
+    background: transparent;
+    box-shadow: none;
+    pointer-events: none;
+  }
+
+  .brush-quick-controls .brush-quick-value,
+  .brush-quick-controls .brush-quick-range {
+    position: absolute;
+    width: 1px;
     min-width: 0;
-    height: 40px;
-    padding: 0 10px;
-    gap: 8px;
-    border-radius: 8px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    opacity: 0;
+    pointer-events: none;
   }
 
   .brush-quick-controls .brush-quick-label {
-    min-width: 52px;
+    position: absolute;
+    top: -22px;
+    right: 34px;
+    display: inline-grid;
+    place-items: center;
+    width: auto;
+    min-width: 42px;
+    height: 16px;
+    padding: 0 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    background: rgba(24, 26, 31, 0.66);
+    color: #c3c8d1;
+    font-size: 9px;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: 0;
+    pointer-events: none;
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
   }
 
-  .brush-quick-controls .brush-quick-range {
-    min-width: 0;
+  .brush-mobile-control {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 68px;
+    height: 68px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #ffffff;
+    outline: none;
+    pointer-events: auto;
+    touch-action: none;
+    transform: translateX(0);
+    transition:
+      opacity 120ms ease,
+      transform 120ms ease;
   }
 
-  .brush-quick-controls .brush-quick-value {
-    min-width: 44px;
+  .brush-mobile-control-ring {
+    display: grid;
+    place-items: center;
+    width: 62px;
+    height: 62px;
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    border-radius: 999px;
+    background: rgba(18, 20, 24, 0.14);
+    box-shadow:
+      inset 0 0 0 1px rgba(0, 0, 0, 0.2),
+      0 8px 18px rgba(0, 0, 0, 0.2);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+
+  .brush-mobile-control-fill {
+    display: block;
+    width: 48px;
+    height: 48px;
+    border-radius: 999px;
+    background: #ffffff;
+    opacity: var(--brush-mobile-control-fill-opacity, 1);
+    transform: scale(var(--brush-mobile-control-fill-scale, 0.3));
+    transform-origin: center;
+    transition:
+      opacity 70ms linear,
+      transform 70ms linear;
+  }
+
+  .brush-mobile-control::after {
+    content: attr(data-brush-mobile-value);
+    position: absolute;
+    top: 50%;
+    right: calc(100% + 8px);
+    display: inline-grid;
+    place-items: center;
+    min-width: 48px;
+    height: 28px;
+    padding: 0 9px;
+    border-radius: 8px;
+    background: rgba(24, 26, 31, 0.82);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(6px, -50%);
+    transition:
+      opacity 110ms ease,
+      transform 110ms ease;
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+  }
+
+  .brush-mobile-control.is-dragging,
+  .brush-mobile-control:focus-visible {
+    transform: translateX(-6px);
+  }
+
+  .brush-mobile-control.is-dragging .brush-mobile-control-ring,
+  .brush-mobile-control:focus-visible .brush-mobile-control-ring {
+    border-color: rgba(255, 255, 255, 0.72);
+    background: rgba(18, 20, 24, 0.22);
+  }
+
+  .brush-mobile-control.is-dragging::after,
+  .brush-mobile-control:focus-visible::after {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+
+  .brush-quick-controls.is-mobile-dragging .brush-mobile-control:not(.is-dragging) {
+    opacity: 0.52;
   }
 }
 
 @media (min-width: 560px) and (max-width: 900px) {
   .brush-quick-controls:not([hidden]) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex-direction: column;
   }
 }

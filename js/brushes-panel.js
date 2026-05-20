@@ -118,11 +118,32 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
           </div>
         </div>
       </aside>
+      <section class="mobile-brush-library" aria-label="Brushes" data-mobile-brush-library hidden>
+        <button class="mobile-brush-library-done" type="button" data-mobile-brush-library-done>Done</button>
+        <div class="mobile-brush-library-header">
+          <h2>Brushes</h2>
+          <div class="mobile-brush-library-actions" aria-label="Brush actions">
+            <button class="mobile-brush-library-action" type="button">New set</button>
+            <button class="mobile-brush-library-action" type="button">New brush</button>
+            <button class="mobile-brush-library-action" type="button">Import</button>
+          </div>
+        </div>
+        <div class="mobile-brush-library-layout">
+          <div class="mobile-brush-library-packages" aria-label="Brush sets" data-mobile-brush-packages></div>
+          <div class="mobile-brush-library-brushes" aria-label="Brushes in set" data-mobile-brush-items></div>
+        </div>
+        <div class="mobile-brush-library-selection-status" aria-live="polite" data-mobile-brush-status></div>
+      </section>
     `,
   );
 
   const brushGallery = panel.querySelector("[data-brush-gallery]");
   const brushPopout = editorPage.querySelector("[data-brush-popout]");
+  const mobileBrushLibrary = editorPage.querySelector("[data-mobile-brush-library]");
+  const mobileBrushPackages = mobileBrushLibrary?.querySelector("[data-mobile-brush-packages]");
+  const mobileBrushItems = mobileBrushLibrary?.querySelector("[data-mobile-brush-items]");
+  const mobileBrushDoneButton = mobileBrushLibrary?.querySelector("[data-mobile-brush-library-done]");
+  const mobileBrushStatus = mobileBrushLibrary?.querySelector("[data-mobile-brush-status]");
   const brushPopoutButtons = panel.querySelectorAll(
     ".brushes-panel-gallery-button, .brushes-panel-see-more",
   );
@@ -137,6 +158,9 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   const deleteCancelButton = brushPopout?.querySelector("[data-brush-delete-cancel]");
   const deleteConfirmButton = brushPopout?.querySelector("[data-brush-delete-confirm]");
   let pendingDeleteBrushId = "";
+  let mobileBrushFeedbackTimer = 0;
+  let mobileBrushSwipeState = null;
+  let openMobileBrushActionRow = null;
 
   function getBrushName(brushId) {
     return BrushLibrary.getBrush(brushId)?.name || "BRUSH";
@@ -239,7 +263,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
 
     BrushPreview.invalidate?.(brushId);
 
-    if (!brushPopout || brushPopout.hidden) {
+    if ((!brushPopout || brushPopout.hidden) && (!mobileBrushLibrary || mobileBrushLibrary.hidden)) {
       return;
     }
 
@@ -248,11 +272,384 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
         return;
       }
 
-      if (canvas.dataset.brushPreviewVariant !== "gallery") {
+      if (!["gallery", "mobile-gallery"].includes(canvas.dataset.brushPreviewVariant)) {
         return;
       }
 
       renderBrushPreview(canvas, brushId, canvas.dataset.brushPreviewVariant || "gallery");
+    });
+  }
+
+  function isMobileBrushLibraryViewport() {
+    return window.matchMedia?.("(max-width: 900px)")?.matches === true;
+  }
+
+  function isMobileBrushLibraryOpen() {
+    return Boolean(mobileBrushLibrary && !mobileBrushLibrary.hidden);
+  }
+
+  function syncMobilePackageButtons() {
+    mobileBrushPackages?.querySelectorAll("[data-mobile-brush-package-index]").forEach((button) => {
+      const packageIndex = Number(button.dataset.mobileBrushPackageIndex);
+      const isActive = packageIndex === activePackageIndex;
+
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+  }
+
+  function showMobileBrushSelectionFeedback(brushId) {
+    if (!mobileBrushLibrary || !mobileBrushStatus) {
+      return;
+    }
+
+    window.clearTimeout(mobileBrushFeedbackTimer);
+    mobileBrushStatus.textContent = `${getBrushName(brushId)} selected`;
+    mobileBrushLibrary.classList.add("has-selection-feedback");
+    mobileBrushItems?.querySelectorAll(".just-selected").forEach((button) => {
+      button.classList.remove("just-selected");
+    });
+    Array.from(mobileBrushItems?.querySelectorAll("[data-mobile-brush-id]") || [])
+      .find((button) => button.dataset.mobileBrushId === brushId)
+      ?.classList.add("just-selected");
+
+    mobileBrushFeedbackTimer = window.setTimeout(() => {
+      mobileBrushLibrary.classList.remove("has-selection-feedback");
+      mobileBrushItems?.querySelectorAll(".just-selected").forEach((button) => {
+        button.classList.remove("just-selected");
+      });
+    }, 820);
+  }
+
+  function showMobileBrushStatus(message) {
+    if (!mobileBrushLibrary || !mobileBrushStatus) {
+      return;
+    }
+
+    window.clearTimeout(mobileBrushFeedbackTimer);
+    mobileBrushStatus.textContent = message;
+    mobileBrushLibrary.classList.add("has-selection-feedback");
+    mobileBrushFeedbackTimer = window.setTimeout(() => {
+      mobileBrushLibrary.classList.remove("has-selection-feedback");
+    }, 820);
+  }
+
+  const MOBILE_BRUSH_ACTION_HANDLE_WIDTH = 44;
+
+  function getMobileBrushSwipeMaxOffset(row) {
+    if (!row) {
+      return 0;
+    }
+
+    const actions = row.querySelector(".mobile-brush-library-row-actions");
+    const rowWidth = Math.max(0, Math.round(row.getBoundingClientRect?.().width || 0));
+    const actionsWidth = Math.max(0, Math.round(actions?.getBoundingClientRect?.().width || 0));
+    const handleWidth = Math.min(MOBILE_BRUSH_ACTION_HANDLE_WIDTH, Math.max(0, rowWidth - 1));
+
+    return Math.max(0, Math.min(actionsWidth || rowWidth, rowWidth - handleWidth));
+  }
+
+  function clampMobileBrushSwipeOffset(value, row) {
+    const maxOffset = getMobileBrushSwipeMaxOffset(row);
+
+    return Math.min(maxOffset, Math.max(0, Number(value) || 0));
+  }
+
+  function setMobileBrushActionOffset(row, offset) {
+    if (!row) {
+      return 0;
+    }
+
+    const nextOffset = clampMobileBrushSwipeOffset(offset, row);
+
+    row.style.setProperty("--mobile-brush-action-offset", `${nextOffset}px`);
+
+    return nextOffset;
+  }
+
+  function closeMobileBrushActions(row = openMobileBrushActionRow) {
+    if (!row) {
+      return;
+    }
+
+    row.classList.remove("is-actions-open", "is-swiping");
+    setMobileBrushActionOffset(row, 0);
+
+    if (openMobileBrushActionRow === row) {
+      openMobileBrushActionRow = null;
+    }
+  }
+
+  function openMobileBrushActions(row) {
+    if (!row) {
+      return;
+    }
+
+    if (openMobileBrushActionRow && openMobileBrushActionRow !== row) {
+      closeMobileBrushActions(openMobileBrushActionRow);
+    }
+
+    row.classList.add("is-actions-open");
+    row.classList.remove("is-swiping");
+    setMobileBrushActionOffset(row, Number.POSITIVE_INFINITY);
+    openMobileBrushActionRow = row;
+  }
+
+  function finishMobileBrushSwipe(pointerId = null) {
+    if (!mobileBrushSwipeState || (pointerId !== null && mobileBrushSwipeState.pointerId !== pointerId)) {
+      return;
+    }
+
+    const { button, moved, offset, pointerId: activePointerId, row } = mobileBrushSwipeState;
+    const maxOffset = clampMobileBrushSwipeOffset(Number.POSITIVE_INFINITY, row);
+    const shouldOpen = moved && offset >= Math.max(44, maxOffset * 0.34);
+
+    row?.classList.remove("is-swiping");
+
+    if (button?.hasPointerCapture?.(activePointerId)) {
+      button.releasePointerCapture(activePointerId);
+    }
+
+    if (!moved) {
+      mobileBrushSwipeState = null;
+      return;
+    }
+
+    button.dataset.mobileBrushSuppressClick = "true";
+    window.setTimeout(() => {
+      if (button.dataset.mobileBrushSuppressClick === "true") {
+        button.dataset.mobileBrushSuppressClick = "false";
+      }
+    }, 240);
+
+    if (shouldOpen) {
+      openMobileBrushActions(row);
+    } else {
+      closeMobileBrushActions(row);
+    }
+
+    mobileBrushSwipeState = null;
+  }
+
+  function handleMobileBrushSwipePointerDown(event, row, button) {
+    if (!row || !button || event.button > 0) {
+      return;
+    }
+
+    if (openMobileBrushActionRow && openMobileBrushActionRow !== row) {
+      closeMobileBrushActions(openMobileBrushActionRow);
+    }
+
+    mobileBrushSwipeState = {
+      button,
+      moved: false,
+      offset: row.classList.contains("is-actions-open")
+        ? clampMobileBrushSwipeOffset(Number.POSITIVE_INFINITY, row)
+        : 0,
+      pointerId: event.pointerId,
+      row,
+      startOffset: row.classList.contains("is-actions-open")
+        ? clampMobileBrushSwipeOffset(Number.POSITIVE_INFINITY, row)
+        : 0,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    button.setPointerCapture?.(event.pointerId);
+  }
+
+  function handleMobileBrushSwipePointerMove(event) {
+    if (!mobileBrushSwipeState || mobileBrushSwipeState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const { row, startOffset, startX, startY } = mobileBrushSwipeState;
+    const deltaX = event.clientX - startX;
+    const deltaY = event.clientY - startY;
+    const horizontalIntent = Math.abs(deltaX) > 8 && Math.abs(deltaX) > Math.abs(deltaY) * 1.18;
+
+    if (!mobileBrushSwipeState.moved && !horizontalIntent) {
+      return;
+    }
+
+    mobileBrushSwipeState.moved = true;
+    row.classList.add("is-swiping");
+    mobileBrushSwipeState.offset = setMobileBrushActionOffset(row, startOffset - deltaX);
+    event.preventDefault();
+  }
+
+  function duplicateMobileBrush(brushId) {
+    const sourcePackage = BrushLibrary.findPackageByBrushId(brushId);
+    const packageIndex = getPackageIndexById(sourcePackage?.id);
+    const duplicatedBrush = BrushLibrary.duplicateBrush(brushId);
+
+    if (!duplicatedBrush || packageIndex < 0) {
+      return;
+    }
+
+    activePackageIndex = packageIndex;
+    selectBrush(packageIndex, duplicatedBrush.id);
+    showMobileBrushSelectionFeedback(duplicatedBrush.id);
+  }
+
+  function deleteMobileBrush(brushId) {
+    if (!canDeleteBrush(brushId)) {
+      showMobileBrushStatus("Last brush cannot be deleted");
+      closeMobileBrushActions();
+      return;
+    }
+
+    const brushName = getBrushName(brushId);
+    const deleteResult = BrushLibrary.deleteBrush(brushId);
+
+    BrushPreview?.invalidate?.(brushId);
+    closeMobileBrushActions();
+
+    if (!deleteResult?.deleted) {
+      renderMobileBrushes();
+      return;
+    }
+
+    const nextPackageIndex = getPackageIndexById(deleteResult.packageId);
+
+    if (selectedBrushId === brushId && nextPackageIndex >= 0 && deleteResult.nextBrushId) {
+      selectBrush(nextPackageIndex, deleteResult.nextBrushId);
+    } else {
+      renderSidebarPackages();
+      renderMobilePackages();
+      renderMobileBrushes();
+    }
+
+    showMobileBrushStatus(`${brushName} deleted`);
+  }
+
+  function renderMobilePackages() {
+    if (!mobileBrushPackages) {
+      return;
+    }
+
+    mobileBrushPackages.replaceChildren(
+      ...brushPackages.map((brushPackage, packageIndex) => {
+        const packageButton = document.createElement("button");
+        const nameLabel = document.createElement("span");
+        const countLabel = document.createElement("span");
+        const brushCount = brushPackage.brushIds.length;
+        const isActive = packageIndex === activePackageIndex;
+
+        packageButton.className = "mobile-brush-library-package";
+        packageButton.type = "button";
+        packageButton.dataset.mobileBrushPackageIndex = String(packageIndex);
+        packageButton.setAttribute("aria-label", `${brushPackage.name} brush set`);
+        packageButton.setAttribute("aria-pressed", String(isActive));
+        packageButton.classList.toggle("active", isActive);
+        nameLabel.className = "mobile-brush-library-package-name";
+        nameLabel.textContent = brushPackage.name;
+        countLabel.className = "mobile-brush-library-package-count";
+        countLabel.textContent = `${brushCount} ${brushCount === 1 ? "brush" : "brushes"}`;
+        packageButton.append(nameLabel, countLabel);
+        packageButton.addEventListener("click", () => {
+          setActivePackage(packageIndex);
+        });
+
+        return packageButton;
+      }),
+    );
+
+    mobileBrushPackages.querySelector(".mobile-brush-library-package.active")?.scrollIntoView({
+      block: "nearest",
+    });
+  }
+
+  function renderMobileBrushes() {
+    if (!mobileBrushItems) {
+      return;
+    }
+
+    closeMobileBrushActions();
+
+    const activePackage = brushPackages[activePackageIndex] || brushPackages[selectedPackageIndex] || brushPackages[0];
+
+    mobileBrushItems.replaceChildren(
+      ...(activePackage?.brushIds || []).map((brushId) => {
+        const brushRow = document.createElement("div");
+        const actions = document.createElement("div");
+        const shareButton = document.createElement("button");
+        const duplicateButton = document.createElement("button");
+        const deleteButton = document.createElement("button");
+        const brushButton = document.createElement("button");
+        const brushNameLabel = document.createElement("span");
+        const previewCanvas = document.createElement("canvas");
+        const isActive = brushId === selectedBrushId;
+        const isDeletable = canDeleteBrush(brushId);
+
+        brushRow.className = "mobile-brush-library-brush-row";
+        brushRow.dataset.mobileBrushRowId = brushId;
+        actions.className = "mobile-brush-library-row-actions";
+        shareButton.className = "mobile-brush-library-row-action mobile-brush-library-row-action-share";
+        shareButton.type = "button";
+        shareButton.textContent = "Share";
+        shareButton.setAttribute("aria-label", `Share ${getBrushName(brushId)} brush`);
+        duplicateButton.className = "mobile-brush-library-row-action mobile-brush-library-row-action-duplicate";
+        duplicateButton.type = "button";
+        duplicateButton.textContent = "Duplicate";
+        duplicateButton.setAttribute("aria-label", `Duplicate ${getBrushName(brushId)} brush`);
+        deleteButton.className = "mobile-brush-library-row-action mobile-brush-library-row-action-delete";
+        deleteButton.type = "button";
+        deleteButton.textContent = "Delete";
+        deleteButton.disabled = !isDeletable;
+        deleteButton.setAttribute("aria-label", `Delete ${getBrushName(brushId)} brush`);
+        brushButton.className = "mobile-brush-library-brush";
+        brushButton.type = "button";
+        brushButton.dataset.mobileBrushId = brushId;
+        brushButton.classList.toggle("active", isActive);
+        brushButton.setAttribute("aria-label", `${getBrushName(brushId)} brush`);
+        brushButton.setAttribute("aria-pressed", String(isActive));
+        brushNameLabel.className = "mobile-brush-library-brush-name";
+        brushNameLabel.textContent = getBrushName(brushId);
+        previewCanvas.className = "brush-preview-canvas mobile-brush-library-preview";
+        previewCanvas.dataset.brushPreviewId = brushId;
+        previewCanvas.dataset.brushPreviewVariant = "mobile-gallery";
+        actions.append(shareButton, duplicateButton, deleteButton);
+        brushButton.append(brushNameLabel, previewCanvas);
+        brushRow.append(actions, brushButton);
+        queueBrushPreview(previewCanvas, brushId, "mobile-gallery");
+        brushButton.addEventListener("pointerdown", (event) => {
+          handleMobileBrushSwipePointerDown(event, brushRow, brushButton);
+        });
+        brushButton.addEventListener("click", () => {
+          if (brushButton.dataset.mobileBrushSuppressClick === "true") {
+            brushButton.dataset.mobileBrushSuppressClick = "false";
+            return;
+          }
+
+          if (brushRow.classList.contains("is-actions-open")) {
+            closeMobileBrushActions(brushRow);
+            return;
+          }
+
+          selectBrush(activePackageIndex, brushId);
+          showMobileBrushSelectionFeedback(brushId);
+        });
+        shareButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        duplicateButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          duplicateMobileBrush(brushId);
+        });
+        deleteButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          deleteMobileBrush(brushId);
+        });
+
+        return brushRow;
+      }),
+    );
+
+    mobileBrushItems.querySelector(".mobile-brush-library-brush.active")?.scrollIntoView({
+      block: "nearest",
     });
   }
 
@@ -274,6 +671,11 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
 
     if (closePopout) {
       closeBrushPopout();
+    }
+
+    if (isMobileBrushLibraryOpen()) {
+      renderMobilePackages();
+      renderMobileBrushes();
     }
   }
 
@@ -456,6 +858,11 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     });
 
     renderPackageItems();
+
+    if (isMobileBrushLibraryOpen()) {
+      syncMobilePackageButtons();
+      renderMobileBrushes();
+    }
   }
 
   function openPackageBrushes(packageIndex) {
@@ -548,6 +955,35 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     openPackageBrushes(packageIndex);
   }
 
+  function closeMobileBrushLibrary() {
+    if (!mobileBrushLibrary) {
+      return;
+    }
+
+    window.clearTimeout(mobileBrushFeedbackTimer);
+    finishMobileBrushSwipe();
+    closeMobileBrushActions();
+    mobileBrushLibrary.classList.remove("has-selection-feedback");
+    mobileBrushLibrary.hidden = true;
+    document.body?.classList.remove("cbo-mobile-brush-library-open");
+  }
+
+  function openMobileBrushLibrary() {
+    if (!mobileBrushLibrary || !isMobileBrushLibraryViewport()) {
+      return;
+    }
+
+    closeBrushPopout();
+    activePackageIndex = selectedPackageIndex;
+    mobileBrushLibrary.hidden = false;
+    document.body?.classList.add("cbo-mobile-brush-library-open");
+    renderMobilePackages();
+    renderMobileBrushes();
+  }
+
+  window.CBO.openMobileBrushLibrary = openMobileBrushLibrary;
+  window.CBO.closeMobileBrushLibrary = closeMobileBrushLibrary;
+
   renderPackages();
   renderSidebarPackages();
   applyBrushPreset(selectedBrushId);
@@ -561,6 +997,10 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   exportBrushesButton?.addEventListener("click", downloadBrushPresetExport);
   createBrushButton?.addEventListener("click", createBrushFromGallery);
   closeButton?.addEventListener("click", closeBrushPopout);
+  mobileBrushDoneButton?.addEventListener("click", closeMobileBrushLibrary);
+  window.addEventListener("pointermove", handleMobileBrushSwipePointerMove, { passive: false });
+  window.addEventListener("pointerup", (event) => finishMobileBrushSwipe(event.pointerId));
+  window.addEventListener("pointercancel", (event) => finishMobileBrushSwipe(event.pointerId));
   deleteCancelButton?.addEventListener("click", closeDeleteDialog);
   deleteConfirmButton?.addEventListener("click", confirmDeleteBrush);
   deleteDialog?.addEventListener("click", (event) => {
@@ -590,6 +1030,21 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       event.stopPropagation();
       closeDeleteDialog();
     }
+
+    if (event.key === "Escape" && isMobileBrushLibraryOpen()) {
+      event.stopPropagation();
+      closeMobileBrushLibrary();
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (isMobileBrushLibraryOpen() && !isMobileBrushLibraryViewport()) {
+      closeMobileBrushLibrary();
+    }
+  });
+
+  window.addEventListener("cbo:brush-tool-reactivate", () => {
+    openMobileBrushLibrary();
   });
 
   window.addEventListener("cbo:tool-change", (event) => {
@@ -608,6 +1063,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
 
     if (!isBrushTool) {
       closeBrushPopout();
+      closeMobileBrushLibrary();
     }
   });
 };

@@ -73,6 +73,35 @@ window.CBO.initToolbar = function initToolbar() {
     return toolMode === "text" || label === "type";
   }
 
+  function isMobileBrushLibraryViewport() {
+    return window.matchMedia?.("(max-width: 900px)")?.matches === true;
+  }
+
+  function isBrushLibraryTriggerButton(button) {
+    const label = String(button.getAttribute("aria-label") || "").trim().toUpperCase();
+    const toolMode = String(button.dataset.toolMode || "").trim().toLowerCase();
+
+    return button.dataset.toolSync === "brush" && toolMode === "brush" && label === "BRUSH";
+  }
+
+  function openMobileBrushLibraryFromActiveTool(button) {
+    if (!button.classList.contains("active") || !isBrushLibraryTriggerButton(button) || !isMobileBrushLibraryViewport()) {
+      return false;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:brush-tool-reactivate", {
+        detail: {
+          label: button.getAttribute("aria-label") || "",
+          source: "toolbar",
+          toolMode: button.dataset.toolMode || "",
+        },
+      }),
+    );
+
+    return true;
+  }
+
   function activateTool(button) {
     syncTransformModeFromButton(button);
 
@@ -329,6 +358,13 @@ window.CBO.initToolbar = function initToolbar() {
         event.stopPropagation();
         closeMenus();
         window.CBO.openAiBoardConnectionMenu?.({ trigger: button });
+        return;
+      }
+
+      if (openMobileBrushLibraryFromActiveTool(button)) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMenus();
         return;
       }
 
