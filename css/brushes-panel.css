@@ -586,39 +586,6 @@
   display: none;
 }
 
-.mobile-brush-debug-copy {
-  position: fixed;
-  top: calc(12px + var(--cbo-safe-top, 0px));
-  left: max(10px, var(--cbo-mobile-edge-left, 10px));
-  z-index: 11020;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 54px;
-  height: 32px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 8px;
-  background: rgba(44, 48, 58, 0.92);
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 850;
-  letter-spacing: 0;
-  line-height: 1;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
-}
-
-.mobile-brush-debug-copy:active,
-.mobile-brush-debug-copy:focus-visible {
-  background: #f05023;
-}
-
-@media (min-width: 901px) {
-  .mobile-brush-debug-copy {
-    display: none;
-  }
-}
-
 @media (max-width: 900px) {
   .mobile-brush-library:not([hidden]) {
     position: fixed;

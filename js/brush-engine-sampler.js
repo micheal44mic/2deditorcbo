@@ -1830,7 +1830,27 @@
     }
 ,
 
-    pushShapeStamps(baseStamp, tangent) {
+    pushPreparedShapeStamp(stamp, tangent, options = {}) {
+      if (this.isStampCompletelyOutsideDocument(stamp)) {
+        return false;
+      }
+
+      this.applyMovingGrainToStamp(stamp, tangent);
+
+      if (options.assignColor !== false) {
+        stamp.colorRgb = this.getNextStampColorRgb();
+      }
+
+      if (options.includeBounds !== false) {
+        this.includeStrokeStampBounds(stamp);
+      }
+
+      this.stampsBuffer.push(stamp);
+      return true;
+    }
+,
+
+    pushShapeStamps(baseStamp, tangent, options = {}) {
       const isFirstStrokeShape = this.strokeStampCount === 0 && this.stampsBuffer.length === 0 && this.strokeDistance === 0;
       const effectiveCount = this.getEffectiveShapeCount(
         isFirstStrokeShape ? () => this.createStableStrokeUnit(0x51f15eed) : null,
@@ -1857,14 +1877,7 @@
           baseStamp.shapeScatterRotation = scatterRotation;
         }
 
-        if (this.isStampCompletelyOutsideDocument(baseStamp)) {
-          return;
-        }
-
-        this.applyMovingGrainToStamp(baseStamp, tangent);
-        baseStamp.colorRgb = this.getNextStampColorRgb();
-        this.includeStrokeStampBounds(baseStamp);
-        this.stampsBuffer.push(baseStamp);
+        this.pushPreparedShapeStamp(baseStamp, tangent, options);
         return;
       }
 
@@ -1880,14 +1893,7 @@
           stamp.shapeScatterRotation = scatterRotation;
         }
 
-        if (this.isStampCompletelyOutsideDocument(stamp)) {
-          continue;
-        }
-
-        this.applyMovingGrainToStamp(stamp, tangent);
-        stamp.colorRgb = this.getNextStampColorRgb();
-        this.includeStrokeStampBounds(stamp);
-        this.stampsBuffer.push(stamp);
+        this.pushPreparedShapeStamp(stamp, tangent, options);
       }
     }
 ,

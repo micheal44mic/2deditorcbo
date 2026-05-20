@@ -146,6 +146,7 @@ window.CBO = window.CBO || {};
       this.taperSpacingCap = null;
       this.recordedStroke = [];
       this.lastRecordedStroke = [];
+      this.replayStrokeCache = null;
       this.pendingPointerSamples = [];
       this.activeTouchPointers = new Map();
       this.touchNavigationGesture = null;

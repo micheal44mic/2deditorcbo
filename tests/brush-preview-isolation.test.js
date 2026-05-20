@@ -95,3 +95,37 @@ test("brush preview cache hashing avoids full data URL scans before lazy draw", 
   assert.match(previewSource, /value\.slice\(-hashStringEdgeLength\)/);
   assert.doesNotMatch(previewSource, /pendingKeys\.set\(canvas, key\);\s*ensureCanvasSize\(canvas, size\);/);
 });
+
+test("brush studio stroke replay caches path and base stamps separately from effects", () => {
+  const engineSource = readSource("js", "brush-engine.js");
+  const samplerSource = readSource("js", "brush-engine-sampler.js");
+  const strokeInputSource = readSource("js", "brush-engine-stroke-input.js");
+  const baseKeyMatch = strokeInputSource.match(
+    /getReplayStrokeBaseSettingsKey\(taperTotalLength = null\) \{([\s\S]*?)\n    \}\n,/,
+  );
+  const expandedKeyMatch = strokeInputSource.match(
+    /getReplayExpandedSettingsKey\(\) \{([\s\S]*?)\n    \}\n,/,
+  );
+
+  assert.match(engineSource, /this\.replayStrokeCache = null/);
+  assert.match(samplerSource, /pushShapeStamps\(baseStamp, tangent, options = \{\}\)/);
+  assert.match(samplerSource, /options\.assignColor !== false/);
+  assert.match(samplerSource, /options\.includeBounds !== false/);
+  assert.match(strokeInputSource, /getReplayStrokePathCache\(rawSamples\)/);
+  assert.match(strokeInputSource, /buildReplayBaseStamps\(pathCache, taperTotalLength = null\)/);
+  assert.match(strokeInputSource, /buildReplayExpandedStamps\(baseStamps\)/);
+  assert.match(strokeInputSource, /getReplayExpandedStamps\(replayPlan\)/);
+  assert.match(strokeInputSource, /renderReplayExpandedStamps\(expandedStamps\)/);
+  assert.match(strokeInputSource, /baseStampsByKey: new Map\(\)/);
+  assert.match(strokeInputSource, /expandedStampsByKey: new Map\(\)/);
+  assert.doesNotMatch(strokeInputSource, /brush-engine\.replay-cache/);
+  assert.match(strokeInputSource, /this\.renderReplayExpandedStamps\(this\.getReplayExpandedStamps\(replayPlan\)\)/);
+  assert.match(strokeInputSource, /this\.invalidateReplayStrokeCache\(\)/);
+  assert.ok(baseKeyMatch, "expected replay base stamp cache key helper");
+  assert.ok(expandedKeyMatch, "expected replay expanded stamp cache key helper");
+  assert.doesNotMatch(baseKeyMatch[1], /shape(?:Rotation|Scatter|Count|Randomized|Flip)/);
+  assert.doesNotMatch(baseKeyMatch[1], /(?:stamp|stroke)Color/);
+  assert.match(expandedKeyMatch[1], /shape(?:Rotation|Scatter|Count|Randomized)/);
+  assert.match(expandedKeyMatch[1], /grainMoving(?:Rotation|DepthJitter|OffsetJitter)/);
+  assert.doesNotMatch(expandedKeyMatch[1], /(?:stamp|stroke)Color/);
+});

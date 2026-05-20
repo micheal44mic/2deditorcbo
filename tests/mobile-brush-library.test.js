@@ -28,14 +28,12 @@ test("mobile brush library keeps a two-column scrollable package and brush picke
   const indexSource = readRepoFile("index.html");
   const panelSource = readRepoFile("js", "brushes-panel.js");
   const panelCss = readRepoFile("css", "brushes-panel.css");
-  const debugSource = readRepoFile("js", "debug", "mobile-brush-debug-console.js");
 
   assert.match(panelSource, /New set/);
   assert.match(panelSource, /New brush/);
   assert.match(panelSource, /Import/);
-  assert.match(indexSource, /js\/debug\/mobile-brush-debug-console\.js/);
-  assert.match(debugSource, /dataset\.mobileBrushDebugCopy = "true"/);
-  assert.match(panelCss, /\.mobile-brush-debug-copy/);
+  assert.doesNotMatch(indexSource, /js\/debug\/mobile-brush-debug-console\.js/);
+  assert.doesNotMatch(panelCss, /\.mobile-brush-debug-copy/);
   assert.match(panelSource, /data-mobile-brush-packages/);
   assert.match(panelSource, /data-mobile-brush-items/);
   assert.match(panelSource, /brushPackages\.map\(\(brushPackage, packageIndex\)/);

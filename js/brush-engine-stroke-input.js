@@ -1366,6 +1366,508 @@
     }
 ,
 
+    invalidateReplayStrokeCache() {
+      this.replayStrokeCache = null;
+    }
+,
+
+    roundReplayCacheNumber(value, precision = 10000) {
+      const number = Number(value);
+
+      if (!Number.isFinite(number)) {
+        return "";
+      }
+
+      return Math.round(number * precision) / precision;
+    }
+,
+
+    getReplayStrokeSamplingKey() {
+      if (this.isAndroidPerformanceMode()) {
+        return "android";
+      }
+
+      return this.isMobilePerformanceMode() ? "mobile" : "desktop";
+    }
+,
+
+    getReplayStrokeSampleSignature(rawSamples) {
+      if (!Array.isArray(rawSamples) || rawSamples.length === 0) {
+        return "";
+      }
+
+      const lastIndex = rawSamples.length - 1;
+      const middleIndex = Math.floor(lastIndex / 2);
+      const sampleSignature = (sample) => [
+        this.roundReplayCacheNumber(sample?.x, 1000),
+        this.roundReplayCacheNumber(sample?.y, 1000),
+        this.roundReplayCacheNumber(sample?.pressure, 1000),
+        this.roundReplayCacheNumber(sample?.time, 10),
+        this.roundReplayCacheNumber(sample?.tiltX, 1000),
+        this.roundReplayCacheNumber(sample?.tiltY, 1000),
+        sample?.strokeSeed ?? "",
+        sample?.pointerType || "",
+      ].join(",");
+
+      return [
+        rawSamples.length,
+        sampleSignature(rawSamples[0]),
+        sampleSignature(rawSamples[middleIndex]),
+        sampleSignature(rawSamples[lastIndex]),
+      ].join("|");
+    }
+,
+
+    getReplayStrokePathSettingsKey() {
+      const settings = this.brushState || {};
+
+      return [
+        this.currentStrokeTool || "brush",
+        this.getReplayStrokeSamplingKey(),
+        this.roundReplayCacheNumber(settings.streamLineAmount ?? settings.smoothing, 10000),
+        this.roundReplayCacheNumber(settings.streamLinePressure, 10000),
+        this.roundReplayCacheNumber(settings.stabilizationAmount, 10000),
+        settings.velocityPressureEnabled === true ? 1 : 0,
+      ].join("|");
+    }
+,
+
+    getReplayStrokeBaseSettingsKey(taperTotalLength = null) {
+      const settings = this.brushState || {};
+      const taperActive = taperTotalLength != null;
+      const baseKeys = [
+        this.roundReplayCacheNumber(settings.radius ?? settings.size, 10000),
+        this.roundReplayCacheNumber(settings.size ?? settings.radius, 10000),
+        this.roundReplayCacheNumber(settings.spacing, 10000),
+        this.roundReplayCacheNumber(settings.spacingJitter, 10000),
+        this.roundReplayCacheNumber(settings.jitterLateral, 10000),
+        this.roundReplayCacheNumber(settings.jitterLinear, 10000),
+        this.roundReplayCacheNumber(settings.fallOff, 10000),
+        this.roundReplayCacheNumber(settings.wetDilution, 10000),
+        this.roundReplayCacheNumber(settings.wetCharge, 10000),
+        this.roundReplayCacheNumber(settings.wetAttack, 10000),
+        this.roundReplayCacheNumber(settings.wetnessJitter, 10000),
+      ];
+
+      if (!taperActive) {
+        return ["base", ...baseKeys, "taper:off"].join("|");
+      }
+
+      return [
+        "base",
+        ...baseKeys,
+        "taper:on",
+        this.roundReplayCacheNumber(taperTotalLength, 1000),
+        this.roundReplayCacheNumber(settings.taperStart, 10000),
+        this.roundReplayCacheNumber(settings.taperEnd, 10000),
+        this.roundReplayCacheNumber(settings.taperSize, 10000),
+        this.roundReplayCacheNumber(settings.taperOpacity, 10000),
+        this.roundReplayCacheNumber(settings.taperPressure, 10000),
+        settings.taperMinDistanceEnabled === true ? 1 : 0,
+        this.roundReplayCacheNumber(settings.taperMinDistance, 10000),
+        this.roundReplayCacheNumber(settings.taperTip, 10000),
+      ].join("|");
+    }
+,
+
+    getReplayStrokePaintKey() {
+      const target = this.getDocumentDrawTarget?.(this.strokeTargetLayerId || "") || null;
+      const layerId = this.strokeTargetLayerId || target?.layerId || "";
+      const paintRect = this.getActiveDocumentPaintRect?.(layerId) ||
+        (target ? this.getFullDocumentRect(target) : null);
+      const rectKey = paintRect
+        ? [
+            this.roundReplayCacheNumber(paintRect.x, 1000),
+            this.roundReplayCacheNumber(paintRect.y, 1000),
+            this.roundReplayCacheNumber(paintRect.width, 1000),
+            this.roundReplayCacheNumber(paintRect.height, 1000),
+          ].join(",")
+        : "";
+
+      return [
+        layerId,
+        Math.max(0, Math.round(Number(target?.width) || 0)),
+        Math.max(0, Math.round(Number(target?.height) || 0)),
+        rectKey,
+      ].join("|");
+    }
+,
+
+    getReplayExpandedSettingsKey() {
+      const settings = this.brushState || {};
+
+      return [
+        "expanded",
+        this.getReplayStrokePaintKey(),
+        this.shapeTextureReady && this.shapeTexture ? 1 : 0,
+        this.roundReplayCacheNumber(settings.minSizeRatio, 10000),
+        settings.shapeRandomized === true ? 1 : 0,
+        this.roundReplayCacheNumber(settings.shapeRotation, 10000),
+        this.roundReplayCacheNumber(settings.shapeScatter, 10000),
+        this.roundReplayCacheNumber(settings.shapeCount, 10000),
+        this.roundReplayCacheNumber(settings.shapeCountJitter, 10000),
+        this.getGrainMode(),
+        settings.grainMovingOffsetJitter !== false ? 1 : 0,
+        this.roundReplayCacheNumber(settings.grainMovingRotation, 10000),
+        this.roundReplayCacheNumber(settings.grainMovingDepthJitter, 10000),
+        Math.max(0, Math.round(Number(this.grainImageWidth) || 0)),
+        Math.max(0, Math.round(Number(this.grainImageHeight) || 0)),
+      ].join("|");
+    }
+,
+
+    createProcessedReplaySamples(rawSamples) {
+      if (!Array.isArray(rawSamples) || rawSamples.length === 0) {
+        return [];
+      }
+
+      const startPoint = this.beginStrokeDynamics(rawSamples[0]);
+      const processedSamples = [{ ...startPoint }];
+
+      for (let index = 1; index < rawSamples.length; index += 1) {
+        processedSamples.push({ ...this.applyStabilization(rawSamples[index]) });
+      }
+
+      return processedSamples;
+    }
+,
+
+    forEachReplayStrokeSegment(processedSamples, onSegment) {
+      if (!Array.isArray(processedSamples) || processedSamples.length === 0) {
+        return;
+      }
+
+      const currentStroke = [
+        processedSamples[0],
+        processedSamples[0],
+        processedSamples[0],
+      ];
+
+      const emitSegment = () => {
+        if (currentStroke.length !== 4) {
+          return;
+        }
+
+        onSegment(currentStroke[0], currentStroke[1], currentStroke[2], currentStroke[3]);
+        currentStroke.shift();
+      };
+
+      for (let index = 1; index < processedSamples.length - 1; index += 1) {
+        currentStroke.push(processedSamples[index]);
+        emitSegment();
+      }
+
+      const lastPoint = processedSamples[processedSamples.length - 1];
+
+      currentStroke.push(lastPoint);
+      emitSegment();
+      currentStroke.push(lastPoint);
+      emitSegment();
+    }
+,
+
+    measureReplayStrokePathLength(processedSamples) {
+      let pathLength = 0;
+
+      this.forEachReplayStrokeSegment(processedSamples, (p0, p1, p2, p3) => {
+        const segmentDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+        if (segmentDistance <= 0) {
+          return;
+        }
+
+        const sampleCount = this.getStrokeSegmentSampleCount(segmentDistance);
+        let previousPoint = this.catmullRom(p0, p1, p2, p3, 0);
+
+        for (let index = 1; index <= sampleCount; index += 1) {
+          const point = this.catmullRom(p0, p1, p2, p3, index / sampleCount);
+          const stepDistance = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y);
+
+          pathLength += stepDistance;
+          previousPoint = point;
+        }
+      });
+
+      return pathLength;
+    }
+,
+
+    getReplayStrokePathCache(rawSamples) {
+      const signature = this.getReplayStrokeSampleSignature(rawSamples);
+      const pathSettingsKey = this.getReplayStrokePathSettingsKey();
+      const existingCache = this.replayStrokeCache;
+
+      if (
+        existingCache &&
+        existingCache.rawSamples === rawSamples &&
+        existingCache.signature === signature &&
+        existingCache.pathSettingsKey === pathSettingsKey
+      ) {
+        return existingCache;
+      }
+
+      const processedSamples = this.createProcessedReplaySamples(rawSamples);
+      const nextSignature = this.getReplayStrokeSampleSignature(rawSamples);
+      const pathLength = this.measureReplayStrokePathLength(processedSamples);
+      const nextCache = {
+        rawSamples,
+        signature: nextSignature,
+        pathSettingsKey,
+        processedSamples,
+        pathLength,
+        baseStampsByKey: new Map(),
+      };
+
+      this.replayStrokeCache = nextCache;
+      return nextCache;
+    }
+,
+
+    captureReplayBaseStamp(baseStamps, stamp, tangent) {
+      const seed = this.strokeRandomState?.seed ?? this.strokeInitialSeed ?? 1;
+
+      baseStamps.push({
+        distance: this.roundReplayCacheNumber(this.strokeDistance, 1000),
+        randomSeedBeforeShape: seed >>> 0,
+        stamp: {
+          x: stamp.x,
+          y: stamp.y,
+          pressure: stamp.pressure,
+          alphaScale: stamp.alphaScale ?? 1,
+          sizeScale: stamp.sizeScale ?? 1,
+          rotation: stamp.rotation ?? 0,
+          tiltX: stamp.tiltX,
+          tiltY: stamp.tiltY,
+        },
+        tangent: tangent ? { x: tangent.x, y: tangent.y } : null,
+      });
+    }
+,
+
+    buildReplayBaseStamps(pathCache, taperTotalLength = null) {
+      const processedSamples = pathCache?.processedSamples || [];
+      const rawSamples = pathCache?.rawSamples || [];
+
+      if (processedSamples.length === 0 || rawSamples.length === 0) {
+        return [];
+      }
+
+      const baseStamps = [];
+      const hasTaper = taperTotalLength != null && taperTotalLength > 0;
+
+      try {
+        this.beginStrokeDynamics(rawSamples[0]);
+        this.resetStrokeProgress();
+        this.strokeTotalLength = hasTaper ? taperTotalLength : null;
+        this.taperSpacingCap = hasTaper ? this.getTaperSpacingCap(taperTotalLength) : null;
+        this.lastStrokeTangent = null;
+
+        const startStamp = this.createStamp(processedSamples[0]);
+
+        startStamp.alphaScale = this.getStampAlphaScale();
+        startStamp.sizeScale = 1;
+        this.applyTaperToStamp(startStamp);
+        this.captureReplayBaseStamp(baseStamps, startStamp, null);
+        this.nextStampDistance = this.getStampSpacing(startStamp.sizeScale);
+
+        this.forEachReplayStrokeSegment(processedSamples, (p0, p1, p2, p3) => {
+          const segmentDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+          if (segmentDistance <= 0) {
+            return;
+          }
+
+          const sampleCount = this.getStrokeSegmentSampleCount(segmentDistance);
+          let previousPoint = this.catmullRom(p0, p1, p2, p3, 0);
+
+          for (let index = 1; index <= sampleCount; index += 1) {
+            const t = index / sampleCount;
+            const point = this.catmullRom(p0, p1, p2, p3, t);
+            const stepDistance = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y);
+
+            if (stepDistance > 0) {
+              const tangent = {
+                x: (point.x - previousPoint.x) / stepDistance,
+                y: (point.y - previousPoint.y) / stepDistance,
+              };
+
+              this.lastStrokeTangent = tangent;
+              this.leftoverDistance += stepDistance;
+
+              while (this.leftoverDistance >= this.nextStampDistance) {
+                const stampDistance = this.nextStampDistance;
+                const overshoot = this.leftoverDistance - stampDistance;
+                const distanceFromPrevious = stepDistance - overshoot;
+                const stampT = Math.max(0, Math.min(1, distanceFromPrevious / stepDistance));
+                const stamp = this.applyStampJitter(this.lerpStamp(previousPoint, point, stampT), tangent);
+
+                this.strokeDistance += stampDistance;
+                stamp.alphaScale = this.getStampAlphaScale();
+                stamp.sizeScale = 1;
+                this.applyTaperToStamp(stamp);
+                this.captureReplayBaseStamp(baseStamps, stamp, tangent);
+                this.leftoverDistance -= stampDistance;
+                this.nextStampDistance = this.getStampSpacing(stamp.sizeScale);
+              }
+            }
+
+            previousPoint = point;
+          }
+        });
+
+        if (hasTaper && processedSamples.length > 1) {
+          const lastPoint = processedSamples[processedSamples.length - 1];
+          const finalStamp = this.createStamp(lastPoint);
+
+          this.strokeDistance = this.clamp(taperTotalLength, 0, taperTotalLength);
+          finalStamp.alphaScale = this.getStampAlphaScale();
+          finalStamp.sizeScale = 1;
+          this.applyTaperToStamp(finalStamp);
+          this.captureReplayBaseStamp(baseStamps, finalStamp, this.lastStrokeTangent);
+        }
+      } finally {
+        this.strokeTotalLength = null;
+        this.taperSpacingCap = null;
+      }
+
+      return baseStamps;
+    }
+,
+
+    getReplayStrokeRenderPlan(rawSamples) {
+      const pathCache = this.getReplayStrokePathCache(rawSamples);
+      const taperTotalLength =
+        this.isTaperActive() && rawSamples.length > 1 && pathCache.pathLength > 0
+          ? pathCache.pathLength
+          : null;
+      const baseSettingsKey = this.getReplayStrokeBaseSettingsKey(taperTotalLength);
+      const baseStampsByKey = pathCache.baseStampsByKey || new Map();
+      const cachedBase = baseStampsByKey.get(baseSettingsKey);
+
+      pathCache.baseStampsByKey = baseStampsByKey;
+
+      if (cachedBase) {
+        return cachedBase;
+      }
+
+      const baseStamps = this.buildReplayBaseStamps(pathCache, taperTotalLength);
+      const plan = {
+        baseStamps,
+        taperTotalLength,
+        expandedStampsByKey: new Map(),
+      };
+
+      baseStampsByKey.set(baseSettingsKey, plan);
+      while (baseStampsByKey.size > 16) {
+        baseStampsByKey.delete(baseStampsByKey.keys().next().value);
+      }
+
+      return plan;
+    }
+,
+
+    buildReplayExpandedStamps(baseStamps) {
+      if (!Array.isArray(baseStamps) || baseStamps.length === 0) {
+        return [];
+      }
+
+      const previousStampsBuffer = this.stampsBuffer;
+      const previousStrokeStampCount = this.strokeStampCount;
+      const previousStrokeDistance = this.strokeDistance;
+      const previousLastStrokeTangent = this.lastStrokeTangent;
+
+      this.stampsBuffer = [];
+      this.strokeStampCount = 0;
+      this.strokeDistance = 0;
+      this.lastStrokeTangent = null;
+
+      try {
+        baseStamps.forEach((baseStamp) => {
+          const tangent = baseStamp.tangent ? { ...baseStamp.tangent } : null;
+
+          if (tangent) {
+            this.applyPendingShapeRotation(tangent);
+            this.lastStrokeTangent = tangent;
+          }
+
+          this.strokeDistance = Number(baseStamp.distance) || 0;
+          this.strokeRandomState = {
+            seed: (baseStamp.randomSeedBeforeShape || this.strokeInitialSeed || 1) >>> 0,
+          };
+
+          this.pushShapeStamps({ ...baseStamp.stamp }, tangent, {
+            assignColor: false,
+            includeBounds: false,
+          });
+        });
+
+        return this.stampsBuffer.map((stamp) => ({ ...stamp }));
+      } finally {
+        this.stampsBuffer = previousStampsBuffer;
+        this.strokeStampCount = previousStrokeStampCount;
+        this.strokeDistance = previousStrokeDistance;
+        this.lastStrokeTangent = previousLastStrokeTangent;
+      }
+    }
+,
+
+    getReplayExpandedStamps(replayPlan) {
+      const baseStamps = replayPlan?.baseStamps || [];
+
+      if (!Array.isArray(baseStamps) || baseStamps.length === 0) {
+        return [];
+      }
+
+      const expandedSettingsKey = this.getReplayExpandedSettingsKey();
+      const expandedStampsByKey = replayPlan.expandedStampsByKey || new Map();
+      const cachedExpanded = expandedStampsByKey.get(expandedSettingsKey);
+
+      replayPlan.expandedStampsByKey = expandedStampsByKey;
+
+      if (cachedExpanded) {
+        return cachedExpanded.expandedStamps;
+      }
+
+      const expandedStamps = this.buildReplayExpandedStamps(baseStamps);
+      const cacheEntry = { expandedStamps };
+
+      expandedStampsByKey.set(expandedSettingsKey, cacheEntry);
+      while (expandedStampsByKey.size > 8) {
+        expandedStampsByKey.delete(expandedStampsByKey.keys().next().value);
+      }
+
+      return expandedStamps;
+    }
+,
+
+    renderReplayExpandedStamps(expandedStamps) {
+      if (!Array.isArray(expandedStamps) || expandedStamps.length === 0) {
+        return;
+      }
+
+      this.resetStrokeProgress();
+
+      expandedStamps.forEach((expandedStamp) => {
+        const stamp = { ...expandedStamp };
+
+        stamp.colorRgb = this.getNextStampColorRgb();
+        this.includeStrokeStampBounds(stamp);
+        this.stampsBuffer.push(stamp);
+
+        if (this.stampsBuffer.length >= this.getMaxStampsPerFlush()) {
+          this.flushStamps({ requestDraw: false });
+        }
+      });
+
+      this.flushStamps({ requestDraw: false });
+    }
+,
+
+    renderReplayBaseStamps(baseStamps) {
+      this.renderReplayExpandedStamps(this.buildReplayExpandedStamps(baseStamps));
+    }
+,
+
     replayLastStroke() {
       if (!this.lastRecordedStroke || this.lastRecordedStroke.length === 0) {
         return;
@@ -1476,44 +1978,16 @@
       this.lastStrokePreviewDirtyRects = null;
 
       const firstSample = rawSamples[0];
-      const startPoint = this.beginStrokeDynamics(firstSample);
 
       this.isDrawing = true;
 
       try {
-        this.resetStrokeProgress();
-        const startStamp = this.createStamp(startPoint);
+        const replayPlan = this.getReplayStrokeRenderPlan(rawSamples);
 
-        startStamp.alphaScale = this.getStampAlphaScale();
-        startStamp.sizeScale = 1;
-        this.pushShapeStamps(startStamp, null);
-        this.nextStampDistance = this.getStampSpacing();
-        this.currentStroke = [startPoint, startPoint, startPoint];
-
-        // Replay degli intermedi (escluso ultimo: lo trattiamo come pointer-up).
-        for (let index = 1; index < rawSamples.length - 1; index += 1) {
-          const stableSample = this.applyStabilization(rawSamples[index]);
-
-          this.currentStroke.push(stableSample);
-          this.processStamps();
-        }
-
-        const lastRaw = rawSamples[rawSamples.length - 1];
-        const lastPoint = rawSamples.length > 1 ? this.applyStabilization(lastRaw) : startPoint;
-
-        this.currentStroke.push(lastPoint);
-        this.processStamps();
-        this.currentStroke.push(lastPoint);
-        this.processStamps();
-        this.flushStamps();
-
-        if (this.isTaperActive() && rawSamples.length > 1) {
-          this.regenerateStrokeWithTaper(rawSamples, this.getCurrentStrokePathLength());
-        }
-
+        this.beginStrokeDynamics(firstSample);
+        this.renderReplayExpandedStamps(this.getReplayExpandedStamps(replayPlan));
         this.bakeStroke();
-      } catch (error) {
-        console.error?.("[CBO brush] Replay tratto interrotto: cleanup stroke scratch eseguito.", error);
+      } catch {
       } finally {
         this.releaseStrokeLayerTarget();
         this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
@@ -1535,6 +2009,7 @@
       }
 
       this.lastRecordedStroke = rawSamples.map((sample) => ({ ...sample }));
+      this.invalidateReplayStrokeCache();
       this.replayStroke(this.lastRecordedStroke);
     }
 ,
@@ -2005,7 +2480,6 @@
           layerId: this.strokeTargetLayerId || "",
           message: error?.message || String(error),
         });
-        console.error?.("[CBO brush] Fine tratto interrotta: cleanup stroke scratch eseguito.", error);
       } finally {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
@@ -2013,6 +2487,7 @@
 
         if (this.recordedStroke.length > 0) {
           this.lastRecordedStroke = this.recordedStroke.slice();
+          this.invalidateReplayStrokeCache();
         }
 
         this.releaseStrokeLayerTarget();
