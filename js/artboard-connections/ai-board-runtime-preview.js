@@ -62,6 +62,48 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.isAiImageBoardMobileLowQualityPreview = function isAiImageBoardMobileLowQualityPreview() {
+    with (this) {
+
+    if (typeof isMobileLikeSpaceBoardViewport === "function") {
+      return isMobileLikeSpaceBoardViewport();
+    }
+
+    return Boolean(
+      window.matchMedia?.("(pointer: coarse)")?.matches ||
+      (window.innerWidth || 0) <= 900
+    );
+    }
+  };
+
+  Controller.prototype.getAiImageBoardMobilePreviewLod = function getAiImageBoardMobilePreviewLod() {
+    with (this) {
+
+    const configuredLod = getAiBoardNumericLod(AI_IMAGE_MOBILE_CANVAS_PREVIEW_LOD);
+
+    if (AI_IMAGE_PREVIEW_VARIANT_SIZES.includes(configuredLod)) {
+      return String(configuredLod);
+    }
+
+    return String(AI_IMAGE_PREVIEW_VARIANT_SIZES[0] || 128);
+    }
+  };
+
+  Controller.prototype.isAiImageBoardMobilePreviewLodAboveCap = function isAiImageBoardMobilePreviewLodAboveCap(lod) {
+    with (this) {
+
+    if (!isAiImageBoardMobileLowQualityPreview()) {
+      return false;
+    }
+
+    const value = String(lod || "").trim();
+    const numericLod = getAiBoardNumericLod(value);
+    const mobileLod = getAiBoardNumericLod(getAiImageBoardMobilePreviewLod());
+
+    return value === "full" || (numericLod > 0 && numericLod > mobileLod);
+    }
+  };
+
   Controller.prototype.getAiBoardNumericLod = function getAiBoardNumericLod(value) {
     with (this) {
 
@@ -110,6 +152,10 @@ window.CBO = window.CBO || {};
       return getAiVideoBoardRecommendedLod(board, screenWidth, screenHeight, dpr);
     }
 
+    if (isAiImageBoardMobileLowQualityPreview()) {
+      return getAiBoardRuntimeSafeLod(media, getAiImageBoardMobilePreviewLod());
+    }
+
     const neededPixels = getAiBoardNeededPreviewPixels(screenWidth, screenHeight, dpr);
 
     let recommendedLod = "2048";
@@ -134,6 +180,10 @@ window.CBO = window.CBO || {};
     const rawLod = getAiBoardRecommendedLod(board, screenWidth, screenHeight, dpr);
     const rawNumericLod = getAiBoardNumericLod(rawLod);
     const currentNumericLod = getAiBoardNumericLod(mediaHost?.dataset?.mediaLod || "");
+
+    if (board?.generatedMedia?.kind !== "video" && isAiImageBoardMobileLowQualityPreview()) {
+      return rawLod;
+    }
 
     if (!rawNumericLod || !currentNumericLod || rawNumericLod === currentNumericLod) {
       return rawLod;
@@ -294,12 +344,28 @@ window.CBO = window.CBO || {};
   Controller.prototype.shouldUseDataUrlRuntimePreview = function shouldUseDataUrlRuntimePreview() {
     with (this) {
 
+    return isAiImageBoardIosSafariPreviewDevice();
+    }
+  };
+
+  Controller.prototype.isAiImageBoardIosSafariPreviewDevice = function isAiImageBoardIosSafariPreviewDevice() {
+    with (this) {
+
     const ua = String(navigator.userAgent || "");
     const isIos = /iPad|iPhone|iPod/.test(ua) ||
       (navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints) > 1);
     const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS/i.test(ua);
 
     return isIos && isSafari;
+    }
+  };
+
+  Controller.prototype.getAiImageRuntimePreviewQuality = function getAiImageRuntimePreviewQuality() {
+    with (this) {
+
+    return isAiImageBoardMobileLowQualityPreview()
+      ? AI_IMAGE_MOBILE_RUNTIME_PREVIEW_QUALITY
+      : AI_IMAGE_RUNTIME_PREVIEW_QUALITY;
     }
   };
 
@@ -325,36 +391,201 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.normalizeAiImageBoardMobileCanvasPreviewLod = function normalizeAiImageBoardMobileCanvasPreviewLod(media, lod) {
+    with (this) {
+
+    const requestedLod = String(lod || "").trim();
+
+    if (media?.kind === "video" || !isAiImageBoardMobileLowQualityPreview()) {
+      return getAiBoardRuntimeSafeLod(media, requestedLod);
+    }
+
+    if (requestedLod === "empty" || requestedLod === "placeholder" || requestedLod === "unloaded") {
+      return requestedLod;
+    }
+
+    const mobileLod = getAiImageBoardMobilePreviewLod();
+    const mobileNumericLod = getAiBoardNumericLod(mobileLod);
+    const requestedNumericLod = getAiBoardNumericLod(requestedLod);
+
+    if (requestedLod.startsWith("loading-") || requestedLod.startsWith("error-")) {
+      if (!requestedNumericLod || requestedNumericLod > mobileNumericLod) {
+        return `${requestedLod.startsWith("loading-") ? "loading" : "error"}-${mobileLod}`;
+      }
+
+      return requestedLod;
+    }
+
+    if (
+      requestedLod === "full" ||
+      !AI_IMAGE_PREVIEW_VARIANT_SIZES.includes(Number(requestedLod)) ||
+      (requestedNumericLod > 0 && requestedNumericLod > mobileNumericLod)
+    ) {
+      recordAiBoardPreviewDebugEvent("mobile-full-preview-blocked", {
+        lod: requestedLod || "missing",
+        mobileLod,
+        src: media?.src || "",
+      });
+      return getAiBoardRuntimeSafeLod(media, mobileLod);
+    }
+
+    return getAiBoardRuntimeSafeLod(media, requestedLod);
+    }
+  };
+
   Controller.prototype.loadImageElementForRuntimePreview = function loadImageElementForRuntimePreview(src) {
     with (this) {
 
     return new Promise((resolve, reject) => {
       const image = new Image();
+      let settled = false;
       const cleanup = () => {
         image.onload = null;
         image.onerror = null;
       };
+      const finish = () => {
+        if (settled) {
+          return;
+        }
 
-      image.decoding = "async";
-      image.onload = () => {
+        if (!image.complete || Number(image.naturalWidth) <= 0 || Number(image.naturalHeight) <= 0) {
+          return;
+        }
+
+        settled = true;
         cleanup();
         resolve(image);
       };
-      image.onerror = () => {
+      const fail = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
         cleanup();
         reject(new Error(`Unable to load AI preview source: ${src}`));
       };
+
+      image.decoding = "async";
+      image.onload = finish;
+      image.onerror = fail;
       image.src = src;
 
       if (image.decode) {
         image.decode().then(() => {
-          cleanup();
-          resolve(image);
+          finish();
         }).catch(() => {
           // Keep the load/error handlers as the compatibility fallback.
         });
       }
+
+      if (image.complete && Number(image.naturalWidth) > 0 && Number(image.naturalHeight) > 0) {
+        finish();
+      }
     });
+    }
+  };
+
+  Controller.prototype.waitAiImageRuntimePreviewFrame = function waitAiImageRuntimePreviewFrame(frameCount = 1) {
+    with (this) {
+
+    const frames = Math.max(1, Number(frameCount) || 1);
+
+    return new Promise((resolve) => {
+      if (typeof window.requestAnimationFrame !== "function") {
+        window.setTimeout(resolve, 0);
+        return;
+      }
+
+      let remaining = frames;
+      const tick = () => {
+        remaining -= 1;
+
+        if (remaining <= 0) {
+          resolve();
+          return;
+        }
+
+        window.requestAnimationFrame(tick);
+      };
+
+      window.requestAnimationFrame(tick);
+    });
+    }
+  };
+
+  Controller.prototype.stageAiImageRuntimePreviewSourceForIos = async function stageAiImageRuntimePreviewSourceForIos(image) {
+    with (this) {
+
+    if (!image || !isAiImageBoardIosSafariPreviewDevice() || image.isConnected || !document.body) {
+      return false;
+    }
+
+    image.dataset.aiRuntimePreviewStaging = "";
+    image.setAttribute("aria-hidden", "true");
+    image.style.position = "fixed";
+    image.style.left = "-10000px";
+    image.style.top = "0";
+    image.style.width = "1px";
+    image.style.height = "1px";
+    image.style.opacity = "0";
+    image.style.pointerEvents = "none";
+    image.style.contain = "strict";
+    document.body.appendChild(image);
+    await waitAiImageRuntimePreviewFrame(2);
+
+    return true;
+    }
+  };
+
+  Controller.prototype.drawAiImageRuntimePreviewCanvas = async function drawAiImageRuntimePreviewCanvas(context, canvas, image, width, height, lod, src) {
+    with (this) {
+
+    const maxAttempts = isAiImageBoardIosSafariPreviewDevice() ? 4 : 2;
+    let lastProbe = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      context.save();
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, width, height);
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = isAiImageBoardMobileLowQualityPreview() ? "low" : "medium";
+      context.drawImage(image, 0, 0, width, height);
+      context.restore();
+
+      const probe = probeAiImageRuntimePreviewCanvas(canvas);
+
+      lastProbe = probe;
+
+      if (!probe.blank) {
+        if (attempt > 1) {
+          recordAiBoardPreviewDebugEvent("runtime-preview-draw-retry-success", {
+            attempt,
+            lod,
+            probe,
+            src,
+          });
+        }
+
+        return probe;
+      }
+
+      if (attempt < maxAttempts) {
+        recordAiBoardPreviewDebugEvent("runtime-preview-draw-blank-retry", {
+          attempt,
+          lod,
+          probe,
+          sourceComplete: image.complete ? 1 : 0,
+          sourceNatural: `${image.naturalWidth || 0}x${image.naturalHeight || 0}`,
+          src,
+        });
+        await waitAiImageRuntimePreviewFrame(isAiImageBoardIosSafariPreviewDevice() ? 2 : 1);
+      }
+    }
+
+    return lastProbe || probeAiImageRuntimePreviewCanvas(canvas);
     }
   };
 
@@ -386,14 +617,16 @@ window.CBO = window.CBO || {};
   Controller.prototype.canvasToRuntimePreviewUrl = async function canvasToRuntimePreviewUrl(canvas) {
     with (this) {
 
+    const quality = getAiImageRuntimePreviewQuality();
+
     if (shouldUseDataUrlRuntimePreview()) {
       return {
         sourceType: "data-url",
-        url: canvas.toDataURL("image/png"),
+        url: canvas.toDataURL("image/webp", quality),
       };
     }
 
-    const blobOrDataUrl = await canvasToBlob(canvas, "image/webp", AI_IMAGE_RUNTIME_PREVIEW_QUALITY);
+    const blobOrDataUrl = await canvasToBlob(canvas, "image/webp", quality);
 
     return {
       sourceType: typeof blobOrDataUrl === "string" ? "data-url" : "blob",
@@ -413,13 +646,19 @@ window.CBO = window.CBO || {};
     const width = Math.max(1, Math.round(sourceWidth * scale));
     const height = Math.max(1, Math.round(sourceHeight * scale));
     const canvas = document.createElement("canvas");
+    const stagedForIos = await stageAiImageRuntimePreviewSourceForIos(image);
 
     canvas.width = width;
     canvas.height = height;
-    canvas.getContext("2d")?.drawImage(image, 0, 0, width, height);
 
     try {
-      const probe = probeAiImageRuntimePreviewCanvas(canvas);
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+
+      if (!context) {
+        throw new Error("Unable to create AI runtime preview canvas context.");
+      }
+
+      const probe = await drawAiImageRuntimePreviewCanvas(context, canvas, image, width, height, lod, src);
 
       if (probe.blank) {
         const error = new Error(`Blank AI runtime preview canvas for LOD ${lod}.`);
@@ -440,6 +679,9 @@ window.CBO = window.CBO || {};
     } finally {
       canvas.width = 1;
       canvas.height = 1;
+      if (stagedForIos) {
+        image.remove();
+      }
       image.removeAttribute("src");
     }
     }
@@ -799,6 +1041,101 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.getAiBoardPreviewTraceSignature = function getAiBoardPreviewTraceSignature(boardMetric) {
+    with (this) {
+
+    const debug = boardMetric?.previewDebug || {};
+    const host = debug.host || {};
+    const activeLayer = debug.activeLayer || {};
+    const probe = activeLayer.probe || {};
+
+    return [
+      boardMetric?.visibility || "",
+      boardMetric?.activePreview ? "1" : "0",
+      debug.diagnosis || "",
+      boardMetric?.currentLod || "",
+      boardMetric?.recommendedLod || "",
+      boardMetric?.previewSource || "",
+      host.preview || "",
+      host.pendingLod || "",
+      activeLayer.complete ? "1" : "0",
+      activeLayer.naturalWidth || 0,
+      activeLayer.naturalHeight || 0,
+      activeLayer.opacity || "",
+      probe.blank || "",
+    ].join("|");
+    }
+  };
+
+  Controller.prototype.shouldRecordAiBoardPreviewDisappearanceTrace = function shouldRecordAiBoardPreviewDisappearanceTrace(boardMetric) {
+    with (this) {
+
+    if (!boardMetric?.generated || boardMetric.mediaKind === "video" || boardMetric.visibility === "offscreen") {
+      return false;
+    }
+
+    const diagnosis = String(boardMetric.previewDebug?.diagnosis || "");
+    const source = String(boardMetric.previewSource || "");
+    const currentLod = String(boardMetric.currentLod || "");
+
+    return !boardMetric.activePreview ||
+      diagnosis === "no-active-layer" ||
+      diagnosis === "active-layer-no-src" ||
+      diagnosis === "active-layer-hidden" ||
+      diagnosis === "active-layer-not-decoded" ||
+      diagnosis === "zero-rect" ||
+      source === "unloaded" ||
+      currentLod === "unloaded";
+    }
+  };
+
+  Controller.prototype.traceAiBoardPreviewVisibility = function traceAiBoardPreviewVisibility(metrics) {
+    with (this) {
+
+    if (!isAiImageBoardMobileLowQualityPreview() || !metrics?.boards?.length) {
+      return;
+    }
+
+    metrics.boards.forEach((boardMetric) => {
+      const boardId = String(boardMetric?.id || "").trim();
+
+      if (!boardId || !boardMetric.generated) {
+        return;
+      }
+
+      const signature = getAiBoardPreviewTraceSignature(boardMetric);
+      const previous = aiBoardPreviewTraceByBoardId.get(boardId);
+
+      if (previous === signature) {
+        return;
+      }
+
+      aiBoardPreviewTraceByBoardId.set(boardId, signature);
+
+      const eventName = shouldRecordAiBoardPreviewDisappearanceTrace(boardMetric)
+        ? "preview-disappearance-trace"
+        : "preview-visibility-trace";
+      const debug = boardMetric.previewDebug || {};
+      const activeLayer = debug.activeLayer || {};
+      const host = debug.host || {};
+
+      recordAiBoardPreviewDebugEvent(eventName, {
+        activePreview: boardMetric.activePreview ? 1 : 0,
+        boardId,
+        currentLod: boardMetric.currentLod || "",
+        diagnosis: debug.diagnosis || "",
+        hostPreview: host.preview || "",
+        layerComplete: activeLayer.complete ? 1 : 0,
+        layerNatural: `${activeLayer.naturalWidth || 0}x${activeLayer.naturalHeight || 0}`,
+        mediaKind: boardMetric.mediaKind || "",
+        previewSource: boardMetric.previewSource || "",
+        recommendedLod: boardMetric.recommendedLod || "",
+        visibility: boardMetric.visibility || "",
+      });
+    });
+    }
+  };
+
   Controller.prototype.getAiBoardLayerDebug = function getAiBoardLayerDebug(layer) {
     with (this) {
 
@@ -936,6 +1273,8 @@ window.CBO = window.CBO || {};
   Controller.prototype.publishAiBoardMetrics = function publishAiBoardMetrics(metrics) {
     with (this) {
 
+    traceAiBoardPreviewVisibility(metrics);
+    metrics.previewDebugEvents = aiBoardPreviewDebugEvents.map((event) => ({ ...event }));
     aiBoardMetrics = {
       ...metrics,
       boards: Array.isArray(metrics.boards) ? metrics.boards.map((board) => ({ ...board })) : [],

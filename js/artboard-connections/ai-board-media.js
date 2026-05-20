@@ -1129,15 +1129,20 @@ window.CBO = window.CBO || {};
         clearAiImageBoardPreviewLayer(incomingLayer);
 
         const isRuntimePreview = String(preview.previewSource || "").startsWith("runtime");
+        const forceLowQualityCanvasPreview = kind === "image" && isAiImageBoardMobileLowQualityPreview();
         const shouldFallbackToOriginal = Boolean(
           isRuntimePreview &&
           error?.runtimePreviewBlank &&
           src &&
-          previewSrc !== src
+          previewSrc !== src &&
+          !forceLowQualityCanvasPreview
         );
 
-        if (shouldFallbackToOriginal) {
+        if (isRuntimePreview && error?.runtimePreviewBlank) {
           markAiImageRuntimePreviewVariantError(src, preview.lod, error?.message || "Blank AI preview layer.", error?.previewProbe || null);
+        }
+
+        if (shouldFallbackToOriginal) {
           recordAiBoardPreviewDebugEvent("runtime-preview-layer-blank", {
             boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
             layer: String(incomingLayer.dataset.aiImageBoardPreviewLayer || ""),
@@ -1160,7 +1165,10 @@ window.CBO = window.CBO || {};
           return;
         }
 
-        if (!hasAiImageBoardPaintedImagePreview(mediaHost)) {
+        const shouldReplaceActivePreview = forceLowQualityCanvasPreview &&
+          isAiImageBoardMobilePreviewLodAboveCap(mediaHost?.dataset?.mediaLod || "");
+
+        if (!hasAiImageBoardPaintedImagePreview(mediaHost) || shouldReplaceActivePreview) {
           renderAiImageBoardPlaceholderPreview(mediaHost, media, {
             ...preview,
             lod: `error-${preview.lod}`,
@@ -1235,6 +1243,7 @@ window.CBO = window.CBO || {};
     with (this) {
 
     const currentLod = String(mediaHost?.dataset?.mediaLod || "");
+    const currentNumericLod = getAiBoardNumericLod(currentLod);
 
     if (
       !isAiBoardCameraMotionActive() ||
@@ -1246,7 +1255,11 @@ window.CBO = window.CBO || {};
       return "";
     }
 
-    return getAiBoardNumericLod(currentLod) ? currentLod : "";
+    if (isAiImageBoardMobilePreviewLodAboveCap(currentLod)) {
+      return "";
+    }
+
+    return currentNumericLod ? currentLod : "";
     }
   };
 
@@ -1256,12 +1269,15 @@ window.CBO = window.CBO || {};
     const previewMode = String(preview?.previewMode || "");
     const previewSource = String(preview?.previewSource || "");
     const previewLod = String(preview?.lod || "");
+    const isPendingPlaceholder = previewMode === "placeholder" &&
+      (previewSource === "loading" || previewSource === "runtime" || previewSource === "error" || previewLod.startsWith("loading-") || previewLod.startsWith("error-"));
+    const hasPaintedPreview = hasAiImageBoardPaintedImagePreview(mediaHost, src, kind);
 
-    return Boolean(
-      previewMode === "placeholder" &&
-      (previewSource === "loading" || previewSource === "runtime" || previewSource === "error" || previewLod.startsWith("loading-") || previewLod.startsWith("error-")) &&
-      hasAiImageBoardPaintedImagePreview(mediaHost, src, kind)
-    );
+    if (isAiImageBoardMobilePreviewLodAboveCap(mediaHost?.dataset?.mediaLod || "")) {
+      return false;
+    }
+
+    return Boolean(isPendingPlaceholder && hasPaintedPreview);
     }
   };
 
@@ -1270,7 +1286,10 @@ window.CBO = window.CBO || {};
 
     const src = String(media?.src || "").trim();
     const kind = media?.kind === "video" ? "video" : "image";
-    const safeRecommendedLod = getAiBoardRuntimeSafeLod(media, recommendedLod);
+    const forceLowQualityCanvasPreview = kind === "image" && isAiImageBoardMobileLowQualityPreview();
+    const safeRecommendedLod = forceLowQualityCanvasPreview
+      ? normalizeAiImageBoardMobileCanvasPreviewLod(media, recommendedLod)
+      : getAiBoardRuntimeSafeLod(media, recommendedLod);
 
     if (!src) {
       return {
@@ -1296,6 +1315,21 @@ window.CBO = window.CBO || {};
 
     if (kind === "video") {
       return resolveAiVideoBoardPreview(media, safeRecommendedLod);
+    }
+
+    if (String(safeRecommendedLod || "").startsWith("loading-") || String(safeRecommendedLod || "").startsWith("error-")) {
+      return {
+        kind,
+        lod: safeRecommendedLod,
+        previewKey: `${src}::${safeRecommendedLod}`,
+        previewMode: "placeholder",
+        previewSource: String(safeRecommendedLod).startsWith("loading-")
+          ? "loading"
+          : forceLowQualityCanvasPreview
+            ? "runtime-error-mobile-placeholder"
+            : "error",
+        previewSrc: "",
+      };
     }
 
     if (!AI_IMAGE_PREVIEW_VARIANT_SIZES.includes(Number(safeRecommendedLod))) {
@@ -1342,6 +1376,25 @@ window.CBO = window.CBO || {};
     }
 
     if (runtimeVariant?.status === "error") {
+      if (forceLowQualityCanvasPreview) {
+        recordAiBoardPreviewDebugEvent("runtime-preview-mobile-placeholder", {
+          lod: safeRecommendedLod,
+          message: runtimeVariant.error || "",
+          probe: runtimeVariant.probe || null,
+          src,
+          status: runtimeVariant.status,
+        });
+
+        return {
+          kind,
+          lod: `error-${safeRecommendedLod}`,
+          previewKey: `${getAiImageRuntimePreviewCacheKey(src, safeRecommendedLod)}::runtime-error-mobile-placeholder`,
+          previewMode: "placeholder",
+          previewSource: "runtime-error-mobile-placeholder",
+          previewSrc: "",
+        };
+      }
+
       recordAiBoardPreviewDebugEvent("runtime-preview-original-fallback", {
         lod: safeRecommendedLod,
         message: runtimeVariant.error || "",
@@ -1379,6 +1432,7 @@ window.CBO = window.CBO || {};
     const src = String(media?.src || "").trim();
     let preview = resolveAiImageBoardPreview(media, options.recommendedLod);
     const kind = preview.kind;
+    const forceLowQualityCanvasPreview = kind === "image" && isAiImageBoardMobileLowQualityPreview();
 
     if (!mediaHost) {
       return;
@@ -1392,10 +1446,28 @@ window.CBO = window.CBO || {};
     }
 
     if (
+      forceLowQualityCanvasPreview &&
+      (
+        preview.lod === "full" ||
+        preview.previewSrc === src ||
+        String(preview.previewSource || "").includes("original")
+      )
+    ) {
+      recordAiBoardPreviewDebugEvent("mobile-full-preview-render-blocked", {
+        boardId: board?.id || getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+        lod: preview.lod || "",
+        previewSource: preview.previewSource || "",
+        src,
+      });
+      preview = resolveAiImageBoardPreview(media, getAiImageBoardMobilePreviewLod());
+    }
+
+    if (
       kind === "image" &&
       preview.previewMode === "placeholder" &&
       preview.lod !== "unloaded" &&
       preview.previewSource !== "unloaded" &&
+      !forceLowQualityCanvasPreview &&
       !hasAiImageBoardPaintedImagePreview(mediaHost, src, kind)
     ) {
       preview = {

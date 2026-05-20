@@ -204,6 +204,8 @@ window.CBO = window.CBO || {};
       element.classList.toggle("is-selected", isSelected);
       element.classList.toggle("is-video-generation", generationKind === "video");
       element.classList.toggle("is-mobile-lean", isMobileLean);
+      element.classList.toggle("is-connection-drop-target", connectionDropTargetBoardId === board.id);
+      element.classList.toggle("is-connection-drop-blocked", connectionBlockedTargetBoardId === board.id);
       element.classList.remove("is-control-lod-hidden", "is-control-lod-compact");
       element.classList.toggle("has-generated-media", Boolean(board.generatedMedia?.src));
       element.classList.toggle("is-preview-work-deferred", shouldDeferPreviewWork);

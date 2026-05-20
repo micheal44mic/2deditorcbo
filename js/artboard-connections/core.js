@@ -57,6 +57,7 @@ window.CBO = window.CBO || {};
       this.AI_IMAGE_GENERATION_PREVIEW_MIN_MS = 3000;
       this.AI_IMAGE_GENERATION_PREVIEW_MAX_MS = 5000;
       this.AI_IMAGE_PREVIEW_VARIANT_SIZES = [128, 256, 512, 1024];
+      this.AI_IMAGE_MOBILE_CANVAS_PREVIEW_LOD = 256;
       this.AI_IMAGE_PREVIEW_LOD_THRESHOLDS = [
       { lod: "128", max: 80 },
       { lod: "256", max: 250 },
@@ -71,6 +72,7 @@ window.CBO = window.CBO || {};
       this.AI_IMAGE_PREVIEW_LOD_CAMERA_IDLE_MS = 240;
       this.AI_IMAGE_RUNTIME_PREVIEW_CACHE_MAX_ENTRIES = 80;
       this.AI_IMAGE_RUNTIME_PREVIEW_QUALITY = 0.78;
+      this.AI_IMAGE_MOBILE_RUNTIME_PREVIEW_QUALITY = 0.58;
       this.AI_IMAGE_UNSTABLE_RUNTIME_LODS = new Set([512]);
       this.AI_VIDEO_CANVAS_PREVIEW_LOD = 360;
       this.AI_VIDEO_PREVIEW_VARIANT_SIZES = [240, 360, 480, 720, 1080];
@@ -82,7 +84,7 @@ window.CBO = window.CBO || {};
       { lod: "1080", max: 1800 },
     ];
       this.AI_VIDEO_DECODED_FRAME_BUDGET = 3;
-      this.AI_BOARD_PREVIEW_DEBUG_EVENT_LIMIT = 80;
+      this.AI_BOARD_PREVIEW_DEBUG_EVENT_LIMIT = 180;
       this.AI_IMAGE_SAMPLE_ASSETS = [
       { kind: "image", name: "Badge", src: "assets/ai-board-samples/sample-01-badge.png" },
       { kind: "image", name: "Balenciaga", src: "assets/ai-board-samples/sample-02-balenciaga.png" },
@@ -121,6 +123,8 @@ window.CBO = window.CBO || {};
       this.connections = [];
       this.spaceBoards = [];
       this.anchorOverrides = new Map();
+      this.connectionDropTargetBoardId = "";
+      this.connectionBlockedTargetBoardId = "";
       this.menuState = null;
       this.menuDismissBound = false;
       this.ignoreNextMenuDocumentClick = false;
@@ -149,6 +153,7 @@ window.CBO = window.CBO || {};
       this.aiBoardCameraMotionUntil = 0;
       this.aiBoardCameraMotionTimer = 0;
       this.aiBoardLastCameraMotionKey = "";
+      this.aiBoardPreviewTraceByBoardId = new Map();
       this.connectionIdSeed = 1;
       this.boardIdSeed = 1;
       this.aiBoardMetrics = this.createEmptyAiBoardMetrics();

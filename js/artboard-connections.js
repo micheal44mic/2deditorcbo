@@ -125,6 +125,9 @@ window.CBO = window.CBO || {};
   namespace.getAiBoardMetrics = function getAiBoardMetrics() {
     return controller.getAiBoardMetrics();
   };
+  namespace.openAiBoardConnectionMenu = function openAiBoardConnectionMenu(options = {}) {
+    return controller.openAiBoardConnectionMenu(options);
+  };
   namespace.clearArtboardConnections = function clearArtboardConnections() {
     return controller.clearArtboardConnections();
   };

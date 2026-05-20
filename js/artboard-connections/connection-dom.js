@@ -136,6 +136,35 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.getSpaceBoardAtDocumentPoint = function getSpaceBoardAtDocumentPoint(point, options = {}) {
+    with (this) {
+
+    const x = Number.isFinite(Number(point?.docX)) ? Number(point.docX) : Number(point?.x);
+    const y = Number.isFinite(Number(point?.docY)) ? Number(point.docY) : Number(point?.y);
+    const type = String(options.type || "").trim();
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+
+    return [...spaceBoards].reverse().find((board) => {
+      if (type && board?.type !== type) {
+        return false;
+      }
+
+      const rect = getSpaceBoardRect(board);
+
+      return Boolean(
+        rect &&
+        x >= rect.x &&
+        x <= rect.x + rect.width &&
+        y >= rect.y &&
+        y <= rect.y + rect.height
+      );
+    }) || null;
+    }
+  };
+
   Controller.prototype.getSpaceBoardVisibleDocumentRect = function getSpaceBoardVisibleDocumentRect(marginDocPx = 0) {
     with (this) {
 
@@ -227,7 +256,15 @@ window.CBO = window.CBO || {};
   Controller.prototype.shouldUnloadAiBoardMedia = function shouldUnloadAiBoardMedia(board, visibilityState, element) {
     with (this) {
 
-    return visibilityState !== "visible" && !isSpaceBoardFocusedOrSelected(board, element);
+    if (isSpaceBoardFocusedOrSelected(board, element)) {
+      return false;
+    }
+
+    if (isAiImageBoardMobileLowQualityPreview() && visibilityState === "near") {
+      return false;
+    }
+
+    return visibilityState !== "visible";
     }
   };
 

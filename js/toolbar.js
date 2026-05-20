@@ -323,7 +323,15 @@ window.CBO.initToolbar = function initToolbar() {
   }
 
   toolButtons.forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (event) => {
+      if (button.matches("[data-ai-board-menu-trigger]")) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMenus();
+        window.CBO.openAiBoardConnectionMenu?.({ trigger: button });
+        return;
+      }
+
       activateTool(button);
     });
   });

@@ -61,6 +61,62 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.getDetachedConnectionMenuAnchorViewportPoint = function getDetachedConnectionMenuAnchorViewportPoint(trigger = null) {
+    with (this) {
+
+    const visualViewport = window.visualViewport || null;
+    const viewportWidth = Math.max(1, Number(visualViewport?.width || window.innerWidth) || 1);
+    const viewportHeight = Math.max(1, Number(visualViewport?.height || window.innerHeight) || 1);
+    const triggerRect = trigger?.getBoundingClientRect?.();
+
+    if (!triggerRect) {
+      return {
+        x: viewportWidth * 0.5,
+        y: viewportHeight * 0.5,
+      };
+    }
+
+    return {
+      x: Math.min(Math.max(8, triggerRect.left + triggerRect.width * 0.5), Math.max(8, viewportWidth - 8)),
+      y: Math.min(Math.max(8, triggerRect.top), Math.max(8, viewportHeight - 8)),
+    };
+    }
+  };
+
+  Controller.prototype.openAiBoardConnectionMenu = function openAiBoardConnectionMenu(options = {}) {
+    with (this) {
+
+    if (menuState?.detached === true) {
+      dismissConnectionMenu({
+        removeConnection: false,
+      });
+      return true;
+    }
+
+    if (menuState) {
+      dismissConnectionMenu();
+    }
+
+    const anchorViewportPoint = getDetachedConnectionMenuAnchorViewportPoint(options.trigger || null);
+
+    if (!anchorViewportPoint) {
+      return false;
+    }
+
+    menuState = {
+      anchorViewportPoint,
+      detached: true,
+    };
+    ignoreNextMenuDocumentClick = true;
+    window.setTimeout(() => {
+      ignoreNextMenuDocumentClick = false;
+    }, 0);
+    bindMenuDismiss();
+    renderConnectionMenu();
+    return true;
+    }
+  };
+
   Controller.prototype.renderConnectionOverlay = function renderConnectionOverlay() {
     with (this) {
 
@@ -82,6 +138,7 @@ window.CBO = window.CBO || {};
     const menu = getStage()?.querySelector("[data-artboard-connection-menu]");
 
     menu?.classList.remove("is-visible");
+    menu?.classList.remove("is-detached-toolbar-menu");
     menu?.setAttribute("aria-hidden", "true");
 
     if (options.removeConnection !== false && connectionId) {
@@ -136,40 +193,70 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    const isDetachedMenu = menuState?.detached === true;
     const connection = getConnectionById(menuState?.connectionId);
+    const detachedEnd = isDetachedMenu
+      ? menuState.anchorViewportPoint || getDetachedConnectionMenuAnchorViewportPoint()
+      : null;
+    let end = null;
 
-    if (!connection) {
+    if (connection) {
+      const target = getConnectionEndPoint(connection);
+
+      if (!target) {
+        menu.classList.remove("is-visible");
+        menu.setAttribute("aria-hidden", "true");
+        return;
+      }
+
+      end = documentPointToStagePoint(target);
+    } else if (detachedEnd) {
+      end = detachedEnd;
+    } else {
       menu.classList.remove("is-visible");
       menu.setAttribute("aria-hidden", "true");
       return;
     }
-
-    const target = getConnectionEndPoint(connection);
-
-    if (!target) {
-      menu.classList.remove("is-visible");
-      menu.setAttribute("aria-hidden", "true");
-      return;
-    }
-
-    const end = documentPointToStagePoint(target);
     const stage = getStage();
     const stageRect = stage?.getBoundingClientRect?.();
-    const stageWidth = Math.max(1, Number(stageRect?.width || stage?.clientWidth) || 1);
-    const stageHeight = Math.max(1, Number(stageRect?.height || stage?.clientHeight) || 1);
+    const visualViewport = window.visualViewport || null;
+    const viewportWidth = Math.max(1, Number(visualViewport?.width || window.innerWidth) || 1);
+    const viewportHeight = Math.max(1, Number(visualViewport?.height || window.innerHeight) || 1);
+    const stageWidth = isDetachedMenu
+      ? viewportWidth
+      : Math.max(1, Number(stageRect?.width || stage?.clientWidth) || 1);
+    const stageHeight = isDetachedMenu
+      ? viewportHeight
+      : Math.max(1, Number(stageRect?.height || stage?.clientHeight) || 1);
+    const toolbarRect = isDetachedMenu
+      ? document.querySelector(".toolbar-dock")?.getBoundingClientRect?.()
+      : null;
+    const toolbarTop = toolbarRect
+      ? isDetachedMenu
+        ? Number(toolbarRect.top) || stageHeight
+        : (Number(toolbarRect.top) || 0) - (Number(stageRect?.top) || 0)
+      : stageHeight;
 
+    menu.classList.toggle("is-detached-toolbar-menu", isDetachedMenu);
     menu.classList.add("is-visible");
     menu.setAttribute("aria-hidden", "false");
 
     const height = menu.offsetHeight || 154;
     const width = menu.offsetWidth || 140;
     const preferredLeft = end.x + CONNECTION_MENU_GAP_CSS_PX;
-    const left = preferredLeft + width > stageWidth - 8
-      ? Math.max(8, end.x - width - CONNECTION_MENU_GAP_CSS_PX)
-      : Math.max(8, preferredLeft);
+    const left = isDetachedMenu
+      ? Math.min(
+          Math.max(8, end.x - width * 0.5),
+          Math.max(8, stageWidth - width - 8),
+        )
+      : preferredLeft + width > stageWidth - 8
+        ? Math.max(8, end.x - width - CONNECTION_MENU_GAP_CSS_PX)
+        : Math.max(8, preferredLeft);
+    const stageTopLimit = stageHeight - height - 8;
+    const detachedTopLimit = toolbarTop - CONNECTION_MENU_GAP_CSS_PX - height;
     const top = Math.min(
       Math.max(8, end.y - height * 0.5),
-      Math.max(8, stageHeight - height - 8),
+      Math.max(8, isDetachedMenu ? detachedTopLimit : stageTopLimit),
     );
 
     menu.style.left = `${left}px`;
@@ -198,7 +285,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.getIncomingConnectionsForSpaceBoard = function getIncomingConnectionsForSpaceBoard(boardId) {
     with (this) {
 
-    const normalizedBoardId = String(boardId || "").trim();
+    const normalizedBoardId = String(board?.id || "").trim();
 
     if (!normalizedBoardId) {
       return [];
@@ -302,7 +389,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.closeAiImageBoardViewsForBoard = function closeAiImageBoardViewsForBoard(boardId) {
     with (this) {
 
-    const normalizedBoardId = String(boardId || "").trim();
+    const normalizedBoardId = String(board?.id || "").trim();
 
     if (!normalizedBoardId) {
       return false;
@@ -403,6 +490,154 @@ window.CBO = window.CBO || {};
     connection.endDocY = targetAnchor.y;
     connection.targetBoardId = board.id;
     connection.targetHandle = "image-input";
+
+    return board;
+    }
+  };
+
+  Controller.prototype.connectToExistingAiImageBoard = function connectToExistingAiImageBoard(connection, board) {
+    with (this) {
+
+    const targetAnchor = getAiImageBoardInputAnchor(board);
+
+    if (!connection || !board || board.type !== "ai-image" || !targetAnchor) {
+      return false;
+    }
+
+    connection.endDocX = targetAnchor.x;
+    connection.endDocY = targetAnchor.y;
+    connection.targetBoardId = board.id;
+    connection.targetHandle = "image-input";
+    selectedSpaceBoardId = board.id;
+
+    return true;
+    }
+  };
+
+  Controller.prototype.isConnectionTargetBoardOccupied = function isConnectionTargetBoardOccupied(board, options = {}) {
+    with (this) {
+
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!normalizedBoardId) {
+      return false;
+    }
+
+    const excludeConnectionId = String(options.excludeConnectionId || "").trim();
+
+    return connections.some((connection) => (
+      connection?.targetBoardId === normalizedBoardId &&
+      (!excludeConnectionId || connection.id !== excludeConnectionId)
+    ));
+    }
+  };
+
+  Controller.prototype.setConnectionDropTargetBoard = function setConnectionDropTargetBoard(boardId = "", options = {}) {
+    with (this) {
+
+    const normalizedBoardId = String(boardId || "").trim();
+    const normalizedBlockedBoardId = String(options.blockedBoardId || "").trim();
+
+    if (connectionDropTargetBoardId === normalizedBoardId) {
+      if (connectionBlockedTargetBoardId === normalizedBlockedBoardId) {
+        return;
+      }
+    }
+
+    connectionDropTargetBoardId = normalizedBoardId;
+    connectionBlockedTargetBoardId = normalizedBlockedBoardId;
+    getStage()?.querySelectorAll("[data-ai-image-board]").forEach((element) => {
+      const boardId = element.dataset.boardId || "";
+
+      element.classList.toggle(
+        "is-connection-drop-target",
+        Boolean(normalizedBoardId) && boardId === normalizedBoardId,
+      );
+      element.classList.toggle(
+        "is-connection-drop-blocked",
+        Boolean(normalizedBlockedBoardId) && boardId === normalizedBlockedBoardId,
+      );
+    });
+    }
+  };
+
+  Controller.prototype.getConnectionDropTargetAtDocumentPoint = function getConnectionDropTargetAtDocumentPoint(point, options = {}) {
+    with (this) {
+
+    const x = Number.isFinite(Number(point?.docX)) ? Number(point.docX) : Number(point?.x);
+    const y = Number.isFinite(Number(point?.docY)) ? Number(point.docY) : Number(point?.y);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+
+    const includeOccupied = options.includeOccupied === true;
+    const canUseBoard = (board) => (
+      board?.type === "ai-image" &&
+      (includeOccupied || !isConnectionTargetBoardOccupied(board, options))
+    );
+
+    const magnetMatches = [...spaceBoards]
+      .reverse()
+      .filter(canUseBoard)
+      .map((board) => {
+        const anchor = getAiImageBoardInputAnchor(board);
+        const metrics = getActionBubbleMetrics(1, board.width, board.height);
+        const magnetRadius = Math.max(
+          metrics.sizeDoc * 0.5 + metrics.gapDoc * 1.5,
+          metrics.sizeDoc * 0.75,
+        );
+        const distance = anchor ? Math.hypot(x - anchor.x, y - anchor.y) : Infinity;
+
+        return {
+          board,
+          distance,
+          magnetRadius,
+        };
+      })
+      .filter((entry) => entry.distance <= entry.magnetRadius)
+      .sort((first, second) => first.distance - second.distance);
+
+    if (magnetMatches[0]?.board) {
+      return magnetMatches[0].board;
+    }
+
+    const fallbackBoard = getSpaceBoardAtDocumentPoint(point, { type: "ai-image" });
+
+    return canUseBoard(fallbackBoard) ? fallbackBoard : null;
+    }
+  };
+
+  Controller.prototype.createDetachedAiImageBoardFromMenu = function createDetachedAiImageBoardFromMenu(options = {}) {
+    with (this) {
+
+    const generationKind = options.generationKind === "video" ? "video" : "image";
+    const boardCount = spaceBoards.filter((entry) => (
+      entry.type === "ai-image" &&
+      getAiImageBoardGenerationKind(entry) === generationKind
+    )).length + 1;
+    const placement = getCurrentViewportAiImageBoardPlacement() || createRect(
+      0,
+      0,
+      AI_IMAGE_BOARD_SIZE_DOC_PX,
+      AI_IMAGE_BOARD_SIZE_DOC_PX,
+    );
+    const board = {
+      height: AI_IMAGE_BOARD_SIZE_DOC_PX,
+      id: createBoardId(),
+      captionText: "",
+      generationKind,
+      name: generationKind === "video" ? `AI Video board #${boardCount}` : `AI Image board #${boardCount}`,
+      promptParts: [],
+      promptText: "",
+      type: "ai-image",
+      width: AI_IMAGE_BOARD_SIZE_DOC_PX,
+      x: placement.x,
+      y: placement.y,
+    };
+
+    spaceBoards.push(board);
+    selectedSpaceBoardId = board.id;
 
     return board;
     }
@@ -688,8 +923,33 @@ window.CBO = window.CBO || {};
     const options = arguments[0] || {};
     const connection = getConnectionById(menuState?.connectionId);
 
+    if (!connection && menuState?.detached === true) {
+      const beforeState = captureConnectionsHistoryState();
+      const board = createDetachedAiImageBoardFromMenu(options);
+
+      dismissConnectionMenu({
+        removeConnection: false,
+        render: false,
+      });
+
+      if (!board) {
+        renderConnectionOverlay();
+        return;
+      }
+
+      pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+        historyGroup: `space-board-create-${board.id}`,
+        source: "space-board-create-detached-ai-image",
+        type: "space-board-create",
+      });
+      renderConnectionOverlay();
+      return;
+    }
+
     if (!connection) {
-      dismissConnectionMenu();
+      dismissConnectionMenu({
+        removeConnection: false,
+      });
       return;
     }
 
@@ -746,11 +1006,31 @@ window.CBO = window.CBO || {};
 
     const dx = event.clientX - connectionDrag.startClientX;
     const dy = event.clientY - connectionDrag.startClientY;
-
-    connectionDrag.endDocX = point.docX;
-    connectionDrag.endDocY = point.docY;
-    connectionDrag.didMove = connectionDrag.didMove ||
+    const didMove = connectionDrag.didMove ||
       Math.hypot(dx, dy) >= CONNECTION_MIN_DRAG_CSS_PX;
+    const hitBoard = didMove
+      ? getConnectionDropTargetAtDocumentPoint(point, { includeOccupied: true })
+      : null;
+    const isBlockedTarget = Boolean(hitBoard && isConnectionTargetBoardOccupied(hitBoard));
+    const targetBoard = isBlockedTarget ? null : hitBoard;
+    const blockedBoard = isBlockedTarget ? hitBoard : null;
+    const targetAnchor = targetBoard
+      ? getAiImageBoardInputAnchor(targetBoard)
+      : null;
+    const blockedAnchor = blockedBoard
+      ? getAiImageBoardInputAnchor(blockedBoard)
+      : null;
+    const snapAnchor = targetAnchor || blockedAnchor;
+
+    connectionDrag.didMove = didMove;
+    connectionDrag.endDocX = snapAnchor?.x ?? point.docX;
+    connectionDrag.endDocY = snapAnchor?.y ?? point.docY;
+    connectionDrag.targetBoardId = targetBoard?.id || "";
+    connectionDrag.targetHandle = targetBoard ? "image-input" : "";
+    connectionDrag.blockedTargetBoardId = blockedBoard?.id || "";
+    setConnectionDropTargetBoard(targetBoard?.id || "", {
+      blockedBoardId: blockedBoard?.id || "",
+    });
     renderConnections();
     event.preventDefault();
     }
@@ -769,6 +1049,8 @@ window.CBO = window.CBO || {};
     const sourceElement = connection.sourceElement;
 
     connectionDrag = null;
+    getStage()?.classList.remove("connection-dragging");
+    setConnectionDropTargetBoard("");
     document.removeEventListener("pointermove", updateConnectionDrag, true);
     document.removeEventListener("pointerup", finishConnectionDrag, true);
     document.removeEventListener("pointercancel", cancelConnectionDrag, true);
@@ -788,6 +1070,37 @@ window.CBO = window.CBO || {};
       id: connection.id,
       sourceArtboardId: connection.sourceArtboardId,
     };
+    const targetBoard = connection.targetBoardId
+      ? getSpaceBoardById(connection.targetBoardId)
+      : connection.didMove
+      ? getConnectionDropTargetAtDocumentPoint({
+          x: finalizedConnection.endDocX,
+          y: finalizedConnection.endDocY,
+        })
+      : null;
+
+    if (connection.blockedTargetBoardId) {
+      renderConnectionOverlay();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    if (targetBoard && connectToExistingAiImageBoard(finalizedConnection, targetBoard)) {
+      const beforeState = captureConnectionsHistoryState();
+
+      connections.push(finalizedConnection);
+      pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+        historyGroup: `space-board-connect-${finalizedConnection.id}`,
+        source: "space-board-connect-existing-ai-image",
+        type: "space-board-connect",
+      });
+      renderConnectionOverlay();
+      emitConnectionsChange("space-board-connect-existing-ai-image");
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
 
     connections.push(finalizedConnection);
     showConnectionMenu(finalizedConnection);
@@ -809,6 +1122,8 @@ window.CBO = window.CBO || {};
     const sourceElement = connectionDrag.sourceElement;
 
     connectionDrag = null;
+    getStage()?.classList.remove("connection-dragging");
+    setConnectionDropTargetBoard("");
     document.removeEventListener("pointermove", updateConnectionDrag, true);
     document.removeEventListener("pointerup", finishConnectionDrag, true);
     document.removeEventListener("pointercancel", cancelConnectionDrag, true);
@@ -855,6 +1170,8 @@ window.CBO = window.CBO || {};
       startClientX: event.clientX,
       startClientY: event.clientY,
     };
+
+    getStage()?.classList.add("connection-dragging");
 
     try {
       bubble?.setPointerCapture?.(event.pointerId);

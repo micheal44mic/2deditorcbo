@@ -1636,6 +1636,7 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   box-shadow: none;
   overflow: hidden;
   pointer-events: none;
+  transition: box-shadow 160ms ease;
 }
 
 .editor-ai-image-board.is-plain-artboard .editor-ai-image-board-surface::after {
@@ -1788,7 +1789,12 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   color: #111111;
   opacity: 0;
   transform: translate(-50%, -50%);
-  transition: opacity 160ms ease;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease,
+    transform 160ms ease;
 }
 
 .editor-ai-image-board.is-plain-artboard:hover .editor-ai-image-board-input,
@@ -1801,6 +1807,52 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
 .editor-ai-image-board.is-plain-artboard.is-selected .editor-ai-image-board-play,
 .editor-ai-image-board.is-plain-artboard.is-selected .editor-ai-image-board-dimensions {
   opacity: 1;
+}
+
+.editor-stage.connection-dragging .editor-ai-image-board.is-plain-artboard .editor-ai-image-board-input {
+  box-shadow: 0 0 0 4px rgba(240, 80, 35, 0.14);
+  opacity: 1;
+}
+
+.editor-stage.connection-dragging .editor-ai-image-board.is-plain-artboard.is-connection-drop-target {
+  outline-color: #f05023;
+}
+
+.editor-stage.connection-dragging .editor-ai-image-board.is-plain-artboard.is-connection-drop-target .editor-ai-image-board-surface {
+  box-shadow:
+    inset 0 0 0 2px rgba(240, 80, 35, 0.34),
+    0 0 0 7px rgba(240, 80, 35, 0.12),
+    0 16px 34px rgba(240, 80, 35, 0.18);
+}
+
+.editor-stage.connection-dragging .editor-ai-image-board.is-plain-artboard.is-connection-drop-target .editor-ai-image-board-input {
+  border-color: #f05023;
+  background: #f05023;
+  box-shadow:
+    0 0 0 7px rgba(240, 80, 35, 0.18),
+    0 0 24px rgba(240, 80, 35, 0.42);
+  color: #ffffff;
+  transform: translate(-50%, -50%) scale(1.16);
+}
+
+.editor-stage.connection-dragging .editor-ai-image-board.is-plain-artboard.is-connection-drop-blocked {
+  outline-color: #a8a8a8;
+}
+
+.editor-stage.connection-dragging .editor-ai-image-board.is-plain-artboard.is-connection-drop-blocked .editor-ai-image-board-surface {
+  box-shadow:
+    inset 0 0 0 2px rgba(17, 17, 17, 0.18),
+    0 0 0 7px rgba(17, 17, 17, 0.06);
+}
+
+.editor-stage.connection-dragging .editor-ai-image-board.is-plain-artboard.is-connection-drop-blocked .editor-ai-image-board-input {
+  border-color: #111111;
+  background: #111111;
+  box-shadow:
+    0 0 0 7px rgba(17, 17, 17, 0.12),
+    0 0 18px rgba(17, 17, 17, 0.22);
+  color: #ffffff;
+  transform: translate(-50%, -50%) scale(0.96);
 }
 
 .editor-ai-image-board.is-plain-artboard .editor-ai-image-board-input {
@@ -2014,17 +2066,21 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
 .editor-ai-image-board-preview-layer {
   position: absolute;
   inset: 0;
-  contain: strict;
+  contain: layout paint style;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
+  opacity: 0;
   pointer-events: none;
-  visibility: hidden;
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  visibility: visible;
 }
 
 .editor-ai-image-board-preview-layer.is-active {
-  visibility: visible;
+  opacity: 1;
 }
 
 .editor-ai-image-board-media.is-placeholder-preview {
@@ -2737,6 +2793,12 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   transition:
     opacity 150ms ease,
     transform 150ms ease;
+}
+
+.editor-artboard-connection-menu.is-detached-toolbar-menu {
+  position: fixed;
+  z-index: 9020;
+  transform-origin: 50% 100%;
 }
 
 .editor-artboard-connection-menu.is-visible {
