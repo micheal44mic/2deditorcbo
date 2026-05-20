@@ -25,6 +25,31 @@ function readDocumentRendererSources() {
   return documentRendererModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
 }
 
+const artboardConnectionModulePaths = [
+  ["js", "artboard-connections", "core.js"],
+  ["js", "artboard-connections", "core-helpers.js"],
+  ["js", "artboard-connections", "ai-board-runtime-preview.js"],
+  ["js", "artboard-connections", "layers-and-grid.js"],
+  ["js", "artboard-connections", "ai-board-toolbar.js"],
+  ["js", "artboard-connections", "ai-board-edit-preview.js"],
+  ["js", "artboard-connections", "ai-board-enlarge-viewer.js"],
+  ["js", "artboard-connections", "ai-board-dom.js"],
+  ["js", "artboard-connections", "connection-dom.js"],
+  ["js", "artboard-connections", "state-history.js"],
+  ["js", "artboard-connections", "ai-board-generation.js"],
+  ["js", "artboard-connections", "ai-board-media.js"],
+  ["js", "artboard-connections", "ai-board-text.js"],
+  ["js", "artboard-connections", "placement.js"],
+  ["js", "artboard-connections", "connection-render.js"],
+  ["js", "artboard-connections", "space-board-render.js"],
+  ["js", "artboard-connections", "connection-actions.js"],
+  ["js", "artboard-connections.js"],
+];
+
+function readArtboardConnectionSources() {
+  return artboardConnectionModulePaths.map((parts) => readRepoFile(...parts)).join("\n");
+}
+
 function loadDocumentArtboardNamespace() {
   const source = readRepoFile("js", "document", "document-artboard-model.js");
   const window = {
@@ -157,7 +182,7 @@ test("artboard preview creates non-editable 1048 x 2048 stage frames", () => {
 
 test("artboard connections live in their own module", () => {
   const previewSource = readRepoFile("js", "artboard-preview.js");
-  const connectionsSource = readRepoFile("js", "artboard-connections.js");
+  const connectionsSource = readArtboardConnectionSources();
   const cssSource = readRepoFile("css", "layout.css");
   const indexSource = readRepoFile("index.html");
 
@@ -169,7 +194,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /CANVAS_DOT_GRID_STEPS_PER_OCTAVE = 5/);
   assert.match(connectionsSource, /function ensureInfiniteCanvasDotGridOverlay\(\)/);
   assert.match(connectionsSource, /function computeInfiniteCanvasDotGrid\(scale\)/);
-  assert.match(connectionsSource, /function updateInfiniteCanvasDotGrid\(viewState = getCameraState\(\)\)/);
+  assert.match(connectionsSource, /function updateInfiniteCanvasDotGrid\(viewState = (?:this\.)?getCameraState\(\)\)/);
   assert.match(connectionsSource, /patternUnits: "userSpaceOnUse"/);
   assert.match(connectionsSource, /"shape-rendering": "crispEdges"/);
   assert.match(connectionsSource, /Math\.pow\(2, step \/ CANVAS_DOT_GRID_STEPS_PER_OCTAVE\)/);
@@ -178,7 +203,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /`matrix\(\$\{scale\}, 0, 0, \$\{scale\}, \$\{tx\}, \$\{ty\}\)`/);
   assert.match(connectionsSource, /const desiredParent = plainArtboardMode \? stage : pane/);
   assert.match(connectionsSource, /stage\.insertBefore\(svg, paperLayer \|\| null\)/);
-  assert.match(connectionsSource, /function isSpaceBoardNearViewport\(board, marginDocPx = getSpaceBoardLazyMarginDocPx\(\)\)/);
+  assert.match(connectionsSource, /function isSpaceBoardNearViewport\(board, marginDocPx = (?:this\.)?getSpaceBoardLazyMarginDocPx\(\)\)/);
   assert.match(connectionsSource, /function shouldMountAiImageBoardHeavyContent\(board, element\)/);
   assert.match(connectionsSource, /function getConnectionGeometryKey\(\)/);
   assert.match(connectionsSource, /svg\.dataset\.connectionGeometryKey === geometryKey/);
@@ -197,7 +222,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /function getAllowedSpaceBoardMove\(startFootprint, dx, dy, blockers = \[\]\)/);
   assert.match(connectionsSource, /function getBoardLabelReferenceSideDoc\(width, height/);
   assert.match(connectionsSource, /return Math\.max\(1, Math\.max\(resolvedWidth, resolvedHeight\)\)/);
-  assert.match(connectionsSource, /function getActionBubbleMetrics\([\s\S]*scale = getViewScale\(\),[\s\S]*width = AI_IMAGE_BOARD_SIZE_DOC_PX/);
+  assert.match(connectionsSource, /function getActionBubbleMetrics\([\s\S]*scale = (?:this\.)?getViewScale\(\),[\s\S]*width = (?:this\.)?AI_IMAGE_BOARD_SIZE_DOC_PX/);
   assert.match(connectionsSource, /const sizeDoc = ACTION_BUBBLE_SIZE_DOC_PX/);
   assert.match(connectionsSource, /const gapDoc = ACTION_BUBBLE_GAP_DOC_PX/);
   assert.match(connectionsSource, /const borderWidthDoc = ACTION_BUBBLE_BORDER_DOC_PX/);
@@ -238,7 +263,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_FOCUS_TOP_GAP_CSS_PX = 16/);
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_FOCUS_BOTTOM_GAP_CSS_PX = 18/);
   assert.match(connectionsSource, /AI_IMAGE_CAPTION_FOCUS_VERTICAL_RATIO = 0\.56/);
-  assert.match(connectionsSource, /function getAiImagePlainControlMetrics\(scale = 1, width = AI_IMAGE_BOARD_SIZE_DOC_PX/);
+  assert.match(connectionsSource, /function getAiImagePlainControlMetrics\(scale = 1, width = (?:this\.)?AI_IMAGE_BOARD_SIZE_DOC_PX/);
   assert.match(connectionsSource, /AI_IMAGE_PROMPT_INPUT_MIN_HEIGHT_CSS_PX = 84/);
   assert.match(connectionsSource, /AI_IMAGE_BOARD_FOOTER_MIN_HEIGHT_CSS_PX = 210/);
   assert.match(connectionsSource, /AI_IMAGE_PROMPT_FOCUS_TOP_CSS_PX = 96/);
@@ -285,7 +310,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /AI_IMAGE_UNSTABLE_RUNTIME_LODS = new Set\(\[512\]\)/);
   assert.match(connectionsSource, /AI_BOARD_PREVIEW_DEBUG_EVENT_LIMIT = 80/);
   assert.match(connectionsSource, /AI_IMAGE_RUNTIME_PREVIEW_CACHE_MAX_ENTRIES = 80/);
-  assert.match(connectionsSource, /const AI_IMAGE_SAMPLE_ASSETS = \[/);
+  assert.match(connectionsSource, /AI_IMAGE_SAMPLE_ASSETS = \[/);
   assert.doesNotMatch(connectionsSource, /variants: createAiImageSampleVariants/);
   assert.match(connectionsSource, /assets\/ai-board-samples\/sample-01-badge\.png/);
   assert.match(connectionsSource, /assets\/ai-board-samples\/sample-08-video-2026-05-07-1\.mp4/);
@@ -329,7 +354,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /function hasAiImageBoardPaintedImagePreview\(mediaHost, src = "", kind = "image"\)/);
   assert.match(connectionsSource, /function ensureAiImageBoardImagePreviewLayers\(mediaHost\)/);
   assert.match(connectionsSource, /function decodeAiImageBoardPreviewLayer\(image, src\)/);
-  assert.match(connectionsSource, /function waitAiImageBoardPreviewPaintFrames\(frameCount = AI_IMAGE_PREVIEW_PAINT_FRAMES\)/);
+  assert.match(connectionsSource, /function waitAiImageBoardPreviewPaintFrames\(frameCount = (?:this\.)?AI_IMAGE_PREVIEW_PAINT_FRAMES\)/);
   assert.match(connectionsSource, /function commitAiImageBoardPreviewLayer\(mediaHost, incomingLayer, media, preview, previewKey, previewSrcForDataset, src, kind\)/);
   assert.match(connectionsSource, /function renderAiImageBoardImagePreview\(mediaHost, media, preview, src, kind, previewKey, previewSrcForDataset\)/);
   assert.match(connectionsSource, /function noteAiBoardCameraMotion\(camera, dpr\)/);
@@ -623,7 +648,7 @@ test("artboard connections live in their own module", () => {
 });
 
 test("selected AI image boards expose a floating toolbar shell", () => {
-  const connectionsSource = readRepoFile("js", "artboard-connections.js");
+  const connectionsSource = readArtboardConnectionSources();
   const cssSource = readRepoFile("css", "layout.css");
 
   assert.match(connectionsSource, /function ensureAiImageBoardActionToolbar\(element\)/);
@@ -709,14 +734,14 @@ test("selected AI image boards expose a floating toolbar shell", () => {
 });
 
 test("AI image boards can open a responsive enlarge viewer", () => {
-  const connectionsSource = readRepoFile("js", "artboard-connections.js");
+  const connectionsSource = readArtboardConnectionSources();
   const cssSource = readRepoFile("css", "layout.css");
 
-  assert.match(connectionsSource, /const AI_IMAGE_ENLARGE_MIN_VIEWPORT_PX = 280/);
-  assert.match(connectionsSource, /const AI_IMAGE_ENLARGE_MAX_SCALE = 6/);
-  assert.match(connectionsSource, /const AI_IMAGE_ENLARGE_EDGE_SLACK_RATIO = 0\.35/);
-  assert.match(connectionsSource, /const AI_IMAGE_ENLARGE_EDGE_SLACK_MAX_PX = 360/);
-  assert.match(connectionsSource, /const AI_IMAGE_ENLARGE_PINCH_MIN_DISTANCE_PX = 24/);
+  assert.match(connectionsSource, /AI_IMAGE_ENLARGE_MIN_VIEWPORT_PX = 280/);
+  assert.match(connectionsSource, /AI_IMAGE_ENLARGE_MAX_SCALE = 6/);
+  assert.match(connectionsSource, /AI_IMAGE_ENLARGE_EDGE_SLACK_RATIO = 0\.35/);
+  assert.match(connectionsSource, /AI_IMAGE_ENLARGE_EDGE_SLACK_MAX_PX = 360/);
+  assert.match(connectionsSource, /AI_IMAGE_ENLARGE_PINCH_MIN_DISTANCE_PX = 24/);
   assert.match(connectionsSource, /function ensureAiImageBoardEnlargeViewer\(\)/);
   assert.match(connectionsSource, /function openAiImageBoardEnlargeViewer\(boardId\)/);
   assert.match(connectionsSource, /function closeAiImageBoardEnlargeViewer\(\)/);
@@ -791,7 +816,7 @@ test("AI image boards can open a responsive enlarge viewer", () => {
 });
 
 test("AI image boards expose a responsive create with AI preview shell", () => {
-  const connectionsSource = readRepoFile("js", "artboard-connections.js");
+  const connectionsSource = readArtboardConnectionSources();
   const cssSource = readRepoFile("css", "layout.css");
 
   assert.match(connectionsSource, /function getAiImageBoardEditPreviewMedia\(board\)/);
@@ -970,7 +995,7 @@ test("selection tool highlights the clicked artboard and its layer group only", 
 
 test("preview artboards can be dragged from their title labels", () => {
   const previewSource = readRepoFile("js", "artboard-preview.js");
-  const connectionsSource = readRepoFile("js", "artboard-connections.js");
+  const connectionsSource = readArtboardConnectionSources();
   const layoutSource = readRepoFile("css", "layout.css");
 
   assert.match(previewSource, /let artboardDragState = null/);
