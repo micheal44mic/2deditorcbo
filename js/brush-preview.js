@@ -12,6 +12,8 @@ window.CBO = window.CBO || {};
   const previewFixedRadius = 30;
   const thumbnailInternalSize = { width: 188, height: 52 };
   const previewsPerFrame = 1;
+  const largeHashStringThreshold = 512;
+  const hashStringEdgeLength = 96;
   const renderingModeFlowScale = Object.freeze({
     "light-glaze": 1,
     "uniform-glaze": 1,
@@ -146,8 +148,7 @@ window.CBO = window.CBO || {};
     let hash = 2166136261;
 
     hashKeys.forEach((key) => {
-      const rawValue = settings?.[key];
-      const value = rawValue == null ? "" : String(rawValue);
+      const value = getHashValueSignature(key, settings?.[key]);
       const pair = `${key}:${value};`;
 
       for (let index = 0; index < pair.length; index += 1) {
@@ -157,6 +158,23 @@ window.CBO = window.CBO || {};
     });
 
     return (hash >>> 0).toString(36);
+  }
+
+  function getHashValueSignature(key, rawValue) {
+    if (rawValue == null) {
+      return "";
+    }
+
+    const value = String(rawValue);
+
+    if (value.length <= largeHashStringThreshold) {
+      return value;
+    }
+
+    const head = value.slice(0, hashStringEdgeLength);
+    const tail = value.slice(-hashStringEdgeLength);
+
+    return `${key}:large:${value.length}:${head}:${tail}`;
   }
 
   function createCacheKey(brushId, settings, size) {
@@ -187,6 +205,14 @@ window.CBO = window.CBO || {};
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(cached, 0, 0, canvas.width, canvas.height);
+  }
+
+  function logMobileBrushDebug(name, detail = {}) {
+    namespace.MobileBrushDebug?.log?.(name, detail);
+  }
+
+  function beginMobileBrushDebug(name, detail = {}) {
+    return namespace.MobileBrushDebug?.begin?.(name, detail) || null;
   }
 
   function scheduleQueue() {
@@ -243,17 +269,42 @@ window.CBO = window.CBO || {};
 
   async function renderQueuedJob(job) {
     let cached = cache.get(job.key);
+    const wasCached = Boolean(cached);
+    const trace = job.variant === "mobile-gallery"
+      ? beginMobileBrushDebug("brush-preview.queued-render", {
+        brushId: job.brushId,
+        cached: wasCached,
+        dpr: job.size?.dpr || 1,
+        height: job.size?.height || 0,
+        variant: job.variant,
+        width: job.size?.width || 0,
+      })
+      : null;
 
-    if (!cached) {
-      cached = await renderToCanvasWithBestRenderer(job.settings, job.size);
-      cache.set(job.key, cached);
+    try {
+      if (!cached) {
+        cached = await renderToCanvasWithBestRenderer(job.settings, job.size);
+        cache.set(job.key, cached);
+      }
+
+      if (!job.canvas.isConnected || pendingKeys.get(job.canvas) !== job.key) {
+        trace?.end({
+          skippedDraw: true,
+        });
+        return;
+      }
+
+      drawCached(job.canvas, cached, job.size);
+      trace?.end({
+        cached: wasCached,
+        rendered: !wasCached,
+      });
+    } catch (error) {
+      trace?.end({
+        error: error?.message || String(error),
+      });
+      throw error;
     }
-
-    if (!job.canvas.isConnected || pendingKeys.get(job.canvas) !== job.key) {
-      return;
-    }
-
-    drawCached(job.canvas, cached, job.size);
   }
 
   function getThumbnailRenderer() {
@@ -704,18 +755,43 @@ window.CBO = window.CBO || {};
     const cached = cache.get(key);
 
     pendingKeys.set(canvas, key);
-    ensureCanvasSize(canvas, size);
 
     if (cached) {
-      drawCached(canvas, cached, size);
+      const trace = options.variant === "mobile-gallery"
+        ? beginMobileBrushDebug("brush-preview.cache-draw", {
+          brushId,
+          dpr: size.dpr,
+          height: size.height,
+          variant: options.variant,
+          width: size.width,
+        })
+        : null;
+
+      try {
+        drawCached(canvas, cached, size);
+      } finally {
+        trace?.end();
+      }
       return;
     }
 
+    if (options.variant === "mobile-gallery") {
+      logMobileBrushDebug("brush-preview.enqueue", {
+        brushId,
+        dpr: size.dpr,
+        height: size.height,
+        variant: options.variant,
+        width: size.width,
+      });
+    }
+
     enqueue({
+      brushId,
       canvas,
       key,
       settings: normalizedSettings,
       size,
+      variant: options.variant || "",
     });
   }
 

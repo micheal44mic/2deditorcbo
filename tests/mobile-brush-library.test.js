@@ -36,6 +36,16 @@ test("mobile brush library keeps a two-column scrollable package and brush picke
   assert.match(panelSource, /brushPackages\.map\(\(brushPackage, packageIndex\)/);
   assert.match(panelSource, /activePackage\?\.brushIds/);
   assert.match(panelSource, /previewCanvas\.dataset\.brushPreviewVariant = "mobile-gallery"/);
+  assert.match(panelSource, /function queueMobileBrushPreview\(canvas, brushId\)/);
+  assert.match(panelSource, /queueMobileBrushPreview\(previewCanvas, brushId\)/);
+  assert.match(panelSource, /MOBILE_BRUSH_PREVIEW_SIZE = Object\.freeze/);
+  assert.match(panelSource, /previewCanvas\.width = MOBILE_BRUSH_PREVIEW_SIZE\.width/);
+  assert.match(panelSource, /previewCanvas\.height = MOBILE_BRUSH_PREVIEW_SIZE\.height/);
+  assert.match(panelSource, /deferMobileBrushScrollIntoView/);
+  assert.match(panelSource, /function syncMobileBrushSelectionState\(\)/);
+  assert.match(panelSource, /button\.dataset\.mobileBrushId === selectedBrushId/);
+  assert.match(panelSource, /const canSyncMobileSelection =[\s\S]*activePackageIndex === packageIndex[\s\S]*hasMobileBrushButton\(brushId\)/);
+  assert.match(panelSource, /if \(canSyncMobileSelection\) \{[\s\S]*syncMobileBrushSelectionState\(\);[\s\S]*return;/);
   assert.match(panelSource, /selectBrush\(activePackageIndex, brushId\);[\s\S]*showMobileBrushSelectionFeedback\(brushId\);/);
 
   assert.match(panelCss, /@media \(max-width: 900px\) \{[\s\S]*\.mobile-brush-library:not\(\[hidden\]\)/);
@@ -45,6 +55,7 @@ test("mobile brush library keeps a two-column scrollable package and brush picke
   assert.match(panelCss, /\.mobile-brush-library-packages,[\s\S]*\.mobile-brush-library-brushes \{[\s\S]*overflow-y: auto/);
   assert.match(panelCss, /\.mobile-brush-library-brush\.active \{[\s\S]*background: #f05023/);
   assert.match(panelCss, /\.mobile-brush-library-brush\.just-selected/);
+  assert.match(panelCss, /\.mobile-brush-library-brush\.has-preview \.mobile-brush-library-preview \{[\s\S]*opacity: 0\.72/);
 });
 
 test("mobile brush library rows reveal attached swipe actions for share duplicate and delete", () => {

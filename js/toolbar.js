@@ -77,6 +77,10 @@ window.CBO.initToolbar = function initToolbar() {
     return window.matchMedia?.("(max-width: 900px)")?.matches === true;
   }
 
+  function logMobileBrushDebug(name, detail = {}) {
+    window.CBO.MobileBrushDebug?.log?.(name, detail);
+  }
+
   function isBrushLibraryTriggerButton(button) {
     const label = String(button.getAttribute("aria-label") || "").trim().toUpperCase();
     const toolMode = String(button.dataset.toolMode || "").trim().toLowerCase();
@@ -85,19 +89,42 @@ window.CBO.initToolbar = function initToolbar() {
   }
 
   function openMobileBrushLibraryFromActiveTool(button) {
-    if (!button.classList.contains("active") || !isBrushLibraryTriggerButton(button) || !isMobileBrushLibraryViewport()) {
+    const isActive = button.classList.contains("active");
+    const isBrushTrigger = isBrushLibraryTriggerButton(button);
+    const isMobileViewport = isMobileBrushLibraryViewport();
+
+    if (isBrushTrigger) {
+      logMobileBrushDebug("toolbar.brush-reactivate-check", {
+        isActive,
+        isMobileViewport,
+        label: button.getAttribute("aria-label") || "",
+        toolMode: button.dataset.toolMode || "",
+      });
+    }
+
+    if (!isActive || !isBrushTrigger || !isMobileViewport) {
       return false;
     }
+
+    const debugSessionId = window.CBO.MobileBrushDebug?.startCapture?.("mobile-brush-library-open", {
+      source: "toolbar",
+      trigger: "active-brush-click",
+    });
+    const trace = window.CBO.MobileBrushDebug?.begin?.("toolbar.dispatch-brush-reactivate", {
+      debugSessionId,
+    });
 
     window.dispatchEvent(
       new CustomEvent("cbo:brush-tool-reactivate", {
         detail: {
+          debugSessionId,
           label: button.getAttribute("aria-label") || "",
           source: "toolbar",
           toolMode: button.dataset.toolMode || "",
         },
       }),
     );
+    trace?.end();
 
     return true;
   }
@@ -359,6 +386,15 @@ window.CBO.initToolbar = function initToolbar() {
         closeMenus();
         window.CBO.openAiBoardConnectionMenu?.({ trigger: button });
         return;
+      }
+
+      if (button.dataset.toolSync === "brush" || String(button.getAttribute("aria-label") || "").toUpperCase() === "BRUSH") {
+        logMobileBrushDebug("toolbar.brush-click", {
+          activeBeforeClick: button.classList.contains("active"),
+          label: button.getAttribute("aria-label") || "",
+          toolMode: button.dataset.toolMode || "",
+          toolSync: button.dataset.toolSync || "",
+        });
       }
 
       if (openMobileBrushLibraryFromActiveTool(button)) {

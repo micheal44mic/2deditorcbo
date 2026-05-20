@@ -582,6 +582,10 @@
   display: none;
 }
 
+.mobile-brush-debug-copy {
+  display: none;
+}
+
 .mobile-brush-library[hidden] {
   display: none;
 }
@@ -627,6 +631,33 @@
   .mobile-brush-library-done:active,
   .mobile-brush-library-done:focus-visible {
     background: rgba(240, 80, 35, 0.16);
+  }
+
+  .mobile-brush-debug-copy {
+    position: fixed;
+    top: calc(18px + var(--cbo-safe-top));
+    left: max(18px, var(--cbo-mobile-edge-left));
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 54px;
+    height: 36px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 8px;
+    background: #2c303a;
+    color: #dfe3ea;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .mobile-brush-debug-copy:active,
+  .mobile-brush-debug-copy:focus-visible {
+    background: #3a3f4b;
+    color: #ffffff;
   }
 
   .mobile-brush-library-header {
@@ -919,6 +950,11 @@
     bottom: 7px;
     width: calc(100% - 24px);
     height: 54px;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .mobile-brush-library-brush.has-preview .mobile-brush-library-preview {
     opacity: 0.72;
   }
 
