@@ -489,17 +489,18 @@
 .editor-ai-image-board-action-toolbar {
   position: absolute;
   left: 50%;
-  top: calc(var(--editor-artboard-label-top, -25px) - 42px);
+  top: calc(var(--editor-artboard-label-top, -25px) - 50px);
   z-index: 12;
   display: flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  width: 328px;
-  height: 32px;
-  padding: 2px;
+  width: max-content;
+  min-width: 0;
+  height: 40px;
+  padding: 4px;
   border: 1px solid rgba(16, 16, 16, 0.05);
-  border-radius: 12px;
+  border-radius: 14px;
   background: #ffffff;
   box-shadow: 0 2px 5px rgba(55, 73, 87, 0.1);
   color: #101010;
@@ -513,12 +514,17 @@
   backdrop-filter: blur(64px);
 }
 
+.editor-ai-image-board.is-action-toolbar-below .editor-ai-image-board-action-toolbar {
+  top: calc(100% + 14px);
+  transform: translate(-50%, 4px);
+}
+
 .editor-ai-image-board-action-toolbar-items {
   display: flex;
   align-items: center;
   gap: 4px;
   box-sizing: border-box;
-  width: 100%;
+  width: auto;
   height: 100%;
   min-width: 0;
 }
@@ -527,17 +533,25 @@
   display: none;
 }
 
+.editor-ai-image-board-action-toolbar-separator {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: rgba(16, 16, 16, 0.05);
+}
+
 .editor-ai-image-board-action-toolbar-button {
   position: relative;
   display: grid;
   flex: 0 0 auto;
   place-items: center;
   box-sizing: border-box;
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   appearance: none;
   background: transparent;
   color: #101010;
@@ -596,10 +610,21 @@
   transform: translate(-50%, 0);
 }
 
+.editor-ai-image-board.is-action-toolbar-below .editor-ai-image-board-action-toolbar-button::after {
+  top: calc(100% + 9px);
+  bottom: auto;
+  transform: translate(-50%, -4px);
+}
+
+.editor-ai-image-board.is-action-toolbar-below .editor-ai-image-board-action-toolbar-button:hover::after,
+.editor-ai-image-board.is-action-toolbar-below .editor-ai-image-board-action-toolbar-button:focus-visible::after {
+  transform: translate(-50%, 0);
+}
+
 .editor-ai-image-board-action-toolbar-button svg {
   display: block;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   pointer-events: none;
 }
 
@@ -826,6 +851,7 @@ body.editor-ai-image-edit-preview-open {
 }
 
 .editor-ai-image-edit-preview-shell {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: min(1232px, calc(100vw - 80px));
@@ -883,6 +909,131 @@ body.editor-ai-image-edit-preview-open {
   font-weight: 700;
   letter-spacing: 0;
   line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-ai-image-edit-preview-prompt-menu {
+  position: absolute;
+  left: 6px;
+  top: 46px;
+  z-index: 30;
+  box-sizing: border-box;
+  width: min(320px, calc(100% - 12px));
+  height: min(558px, calc(100% - 58px));
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid rgba(17, 17, 17, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow:
+    0 1px 2px rgba(17, 17, 17, 0.04),
+    0 12px 32px rgba(17, 17, 17, 0.10);
+  color: #111111;
+  pointer-events: auto;
+}
+
+.editor-ai-image-edit-preview-prompt-menu[hidden] {
+  display: none;
+}
+
+.editor-ai-image-edit-preview-prompt-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 14px 12px;
+  width: 100%;
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item {
+  --editor-ai-preset-bg:
+    linear-gradient(135deg, rgba(17, 17, 17, 0.06), rgba(17, 17, 17, 0.02)),
+    #f3f3f3;
+  --editor-ai-preset-shadow: rgba(17, 17, 17, 0.10);
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item:focus-visible {
+  outline: 2px solid rgba(255, 143, 44, 0.45);
+  outline-offset: 4px;
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item:hover .editor-ai-image-edit-preview-prompt-menu-swatch {
+  border-color: rgba(255, 143, 44, 0.35);
+  box-shadow: 0 8px 18px rgba(255, 143, 44, 0.16);
+}
+
+.editor-ai-image-edit-preview-prompt-menu-swatch {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 8px;
+  background: var(--editor-ai-preset-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item[data-ai-image-edit-preview-prompt-preset-tone="solar"],
+.editor-ai-image-edit-preview-prompt-token[data-preset-tone="solar"] {
+  --editor-ai-preset-bg: linear-gradient(135deg, rgba(255, 213, 79, 0.94), rgba(255, 245, 181, 0.72));
+  --editor-ai-preset-color: #332200;
+  --editor-ai-preset-shadow: rgba(255, 194, 28, 0.22);
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item[data-ai-image-edit-preview-prompt-preset-tone="chrome"],
+.editor-ai-image-edit-preview-prompt-token[data-preset-tone="chrome"] {
+  --editor-ai-preset-bg: linear-gradient(135deg, rgba(255, 126, 35, 0.92), rgba(255, 205, 135, 0.68));
+  --editor-ai-preset-color: #2b1202;
+  --editor-ai-preset-shadow: rgba(255, 126, 35, 0.24);
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item[data-ai-image-edit-preview-prompt-preset-tone="velvet"],
+.editor-ai-image-edit-preview-prompt-token[data-preset-tone="velvet"] {
+  --editor-ai-preset-bg: linear-gradient(135deg, rgba(181, 88, 255, 0.88), rgba(255, 155, 205, 0.66));
+  --editor-ai-preset-color: #260637;
+  --editor-ai-preset-shadow: rgba(181, 88, 255, 0.22);
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item[data-ai-image-edit-preview-prompt-preset-tone="pixel"],
+.editor-ai-image-edit-preview-prompt-token[data-preset-tone="pixel"] {
+  --editor-ai-preset-bg: linear-gradient(135deg, rgba(69, 130, 255, 0.90), rgba(127, 227, 255, 0.64));
+  --editor-ai-preset-color: #061737;
+  --editor-ai-preset-shadow: rgba(69, 130, 255, 0.22);
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item[data-ai-image-edit-preview-prompt-preset-tone="frost"],
+.editor-ai-image-edit-preview-prompt-token[data-preset-tone="frost"] {
+  --editor-ai-preset-bg: linear-gradient(135deg, rgba(97, 223, 210, 0.88), rgba(225, 252, 255, 0.74));
+  --editor-ai-preset-color: #062827;
+  --editor-ai-preset-shadow: rgba(97, 223, 210, 0.22);
+}
+
+.editor-ai-image-edit-preview-prompt-menu-item[data-ai-image-edit-preview-prompt-preset-tone="nova"],
+.editor-ai-image-edit-preview-prompt-token[data-preset-tone="nova"] {
+  --editor-ai-preset-bg: linear-gradient(135deg, rgba(91, 84, 255, 0.88), rgba(189, 166, 255, 0.68));
+  --editor-ai-preset-color: #12083a;
+  --editor-ai-preset-shadow: rgba(91, 84, 255, 0.22);
+}
+
+.editor-ai-image-edit-preview-prompt-menu-label {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(17, 17, 17, 0.72);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 14px;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -977,7 +1128,7 @@ body.editor-ai-image-edit-preview-open {
 .editor-ai-image-edit-preview-prompt {
   display: grid;
   align-content: stretch;
-  grid-template-rows: minmax(40px, auto) auto;
+  grid-auto-rows: auto;
   gap: 10px;
   box-sizing: border-box;
   width: min(640px, calc(100vw - 240px));
@@ -990,16 +1141,78 @@ body.editor-ai-image-edit-preview-open {
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.06);
 }
 
+.editor-ai-image-edit-preview-prompt-token {
+  --editor-ai-preset-bg: linear-gradient(135deg, rgba(255, 126, 35, 0.90), rgba(255, 205, 135, 0.68));
+  --editor-ai-preset-color: #2b1202;
+  --editor-ai-preset-shadow: rgba(255, 126, 35, 0.22);
+  display: inline-flex;
+  align-items: center;
+  vertical-align: baseline;
+  box-sizing: border-box;
+  max-width: 100%;
+  height: 30px;
+  margin: 0 4px 4px 0;
+  padding: 0 5px 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 10px;
+  background: var(--editor-ai-preset-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.48),
+    0 6px 16px var(--editor-ai-preset-shadow);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  color: var(--editor-ai-preset-color);
+  white-space: nowrap;
+}
+
+.editor-ai-image-edit-preview-prompt-token-label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-ai-image-edit-preview-prompt-token-remove {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-left: 7px;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
+  color: currentColor;
+  cursor: pointer;
+  opacity: 0.82;
+}
+
+.editor-ai-image-edit-preview-prompt-token-remove:hover {
+  background: rgba(255, 255, 255, 0.36);
+  opacity: 1;
+}
+
+.editor-ai-image-edit-preview-prompt-token-remove svg {
+  width: 13px;
+  height: 13px;
+  pointer-events: none;
+}
+
 .editor-ai-image-edit-preview-prompt-input {
   display: block;
   box-sizing: border-box;
   width: 100%;
   min-height: 40px;
   max-height: 92px;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0;
   border: 0;
   outline: none;
-  resize: none;
   background: transparent;
   color: #111111;
   font: inherit;
@@ -1007,10 +1220,14 @@ body.editor-ai-image-edit-preview-open {
   font-weight: 500;
   letter-spacing: 0;
   line-height: 20px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.editor-ai-image-edit-preview-prompt-input::placeholder {
+.editor-ai-image-edit-preview-prompt-input:empty::before {
+  content: attr(data-placeholder);
   color: rgba(17, 17, 17, 0.42);
+  pointer-events: none;
 }
 
 .editor-ai-image-edit-preview-prompt-row {
@@ -1023,14 +1240,30 @@ body.editor-ai-image-edit-preview-open {
 .editor-ai-image-edit-preview-chip {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   height: 22px;
   padding: 0 10px;
+  border: 0;
   border-radius: 999px;
+  appearance: none;
   background: #f2f2f2;
   color: rgba(17, 17, 17, 0.62);
+  cursor: default;
+  font: inherit;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
+}
+
+button.editor-ai-image-edit-preview-chip {
+  cursor: pointer;
+}
+
+button.editor-ai-image-edit-preview-chip:hover,
+button.editor-ai-image-edit-preview-chip:focus-visible {
+  background: #e9e9e9;
+  outline: none;
 }
 
 .editor-ai-image-edit-preview-chip.is-active {
@@ -1950,6 +2183,24 @@ body.editor-ai-image-edit-preview-open {
     padding: env(safe-area-inset-top, 0px) 12px 0;
   }
 
+  .editor-ai-image-edit-preview-prompt-menu {
+    left: 12px;
+    top: calc(54px + env(safe-area-inset-top, 0px));
+    width: min(320px, calc(100% - 24px));
+    height: min(520px, calc(100% - 78px - env(safe-area-inset-top, 0px)));
+    padding: 14px;
+    border-radius: 10px;
+  }
+
+  .editor-ai-image-edit-preview-prompt-menu-grid {
+    gap: 12px 10px;
+  }
+
+  .editor-ai-image-edit-preview-prompt-menu-label {
+    font-size: 11px;
+    line-height: 14px;
+  }
+
   .editor-ai-image-edit-preview-close {
     width: 38px;
     height: 38px;
@@ -2000,6 +2251,26 @@ body.editor-ai-image-edit-preview-open {
     margin-top: 0;
     padding: 12px;
     border-radius: 14px;
+  }
+
+  .editor-ai-image-edit-preview-prompt-token {
+    height: 34px;
+    padding-left: 12px;
+  }
+
+  .editor-ai-image-edit-preview-prompt-token-label {
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  .editor-ai-image-edit-preview-prompt-token-remove {
+    width: 24px;
+    height: 24px;
+  }
+
+  .editor-ai-image-edit-preview-prompt-token-remove svg {
+    width: 15px;
+    height: 15px;
   }
 
   .editor-ai-image-edit-preview-prompt-input {

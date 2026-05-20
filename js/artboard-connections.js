@@ -96,6 +96,14 @@ window.CBO = window.CBO || {};
   const AI_IMAGE_ENLARGE_EDGE_SLACK_RATIO = 0.35;
   const AI_IMAGE_ENLARGE_EDGE_SLACK_MAX_PX = 360;
   const AI_IMAGE_ENLARGE_PINCH_MIN_DISTANCE_PX = 24;
+  const AI_IMAGE_EDIT_PREVIEW_PROMPT_PRESETS = [
+    { name: "Solar Mist", tone: "solar" },
+    { name: "Chrome Pop", tone: "chrome" },
+    { name: "Velvet Glow", tone: "velvet" },
+    { name: "Pixel Bloom", tone: "pixel" },
+    { name: "Frost Line", tone: "frost" },
+    { name: "Nova Dust", tone: "nova" },
+  ];
   const SVG_NS = "http://www.w3.org/2000/svg";
 
   let connectionDrag = null;
@@ -115,6 +123,7 @@ window.CBO = window.CBO || {};
   let spaceBoardPaneTransformIdleTimer = 0;
   let promptEditState = null;
   let captionEditState = null;
+  let aiImageEditPreviewPromptSelectionRange = null;
   let promptFocusViewportTimers = [];
   let aiImageGeneratingBoardIds = new Set();
   let aiImageGenerationPreviewTimers = new Map();
@@ -1601,6 +1610,22 @@ window.CBO = window.CBO || {};
             <path d="M12.983 21.186a1 1 0 0 1-1.966 0 10 10 0 0 0-8.203-8.203 1 1 0 0 1 0-1.966 10 10 0 0 0 8.203-8.203 1 1 0 0 1 1.966 0 10 10 0 0 0 8.203 8.203 1 1 0 0 1 0 1.966 10 10 0 0 0-8.203 8.203"></path>
           </svg>
         </button>
+        <span class="editor-ai-image-board-action-toolbar-separator" aria-hidden="true"></span>
+        <button class="editor-ai-image-board-action-toolbar-button" type="button" aria-label="Duplicate" data-ai-image-board-toolbar-action="duplicate" data-ai-image-board-toolbar-label="Duplicate">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy-icon lucide-copy" aria-hidden="true">
+            <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+          </svg>
+        </button>
+        <button class="editor-ai-image-board-action-toolbar-button" type="button" aria-label="Delete" data-ai-image-board-toolbar-action="delete" data-ai-image-board-toolbar-label="Delete">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash2-icon lucide-trash-2" aria-hidden="true">
+            <path d="M10 11v6"></path>
+            <path d="M14 11v6"></path>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+            <path d="M3 6h18"></path>
+            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </button>
       </div>
     `;
   }
@@ -1650,11 +1675,86 @@ window.CBO = window.CBO || {};
   function updateAiImageBoardActionToolbarState(toolbar, board) {
     const fullscreenButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="fullscreen"]');
     const editPreviewButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="edit-preview"]');
+    const duplicateButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="duplicate"]');
+    const deleteButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="delete"]');
     const canEnlarge = Boolean(getAiImageBoardEnlargeMedia(board));
     const canEditPreview = Boolean(getAiImageBoardEditPreviewMedia(board));
+    const hasBoard = Boolean(board);
 
     setAiImageBoardToolbarButtonEnabled(fullscreenButton, canEnlarge);
     setAiImageBoardToolbarButtonEnabled(editPreviewButton, canEditPreview);
+    setAiImageBoardToolbarButtonEnabled(duplicateButton, hasBoard);
+    setAiImageBoardToolbarButtonEnabled(deleteButton, hasBoard);
+  }
+
+  function updateAiImageBoardActionToolbarPlacement(element, isSelected = false) {
+    if (!element) {
+      return false;
+    }
+
+    if (!isSelected || isMobileLikeSpaceBoardViewport()) {
+      element.classList.remove("is-action-toolbar-below");
+      return false;
+    }
+
+    const toolbar = element.querySelector("[data-ai-image-board-action-toolbar]");
+    const boardRect = element.getBoundingClientRect?.();
+
+    if (!toolbar || !boardRect) {
+      element.classList.remove("is-action-toolbar-below");
+      return false;
+    }
+
+    const elementStyle = window.getComputedStyle?.(element);
+    const labelTop = parseCssPixelValue(
+      elementStyle?.getPropertyValue("--editor-artboard-label-top"),
+      -25,
+    );
+    const toolbarHeight = Math.max(1, toolbar.getBoundingClientRect?.().height || 32);
+    const aboveTop = boardRect.top + labelTop - 50;
+    const belowTop = boardRect.bottom + 14;
+    const bounds = getAiImageBoardActionToolbarViewportBounds();
+    const shouldFlipBelow = aboveTop < bounds.top && belowTop + toolbarHeight <= bounds.bottom;
+
+    element.classList.toggle("is-action-toolbar-below", shouldFlipBelow);
+    return shouldFlipBelow;
+  }
+
+  function getAiImageBoardActionToolbarViewportBounds() {
+    const visualViewport = window.visualViewport;
+    const viewportTop = Number(visualViewport?.offsetTop) || 0;
+    const viewportHeight = Math.max(1, Number(visualViewport?.height || window.innerHeight || 1));
+    let top = viewportTop + 8;
+    let bottom = viewportTop + viewportHeight - 8;
+
+    [
+      ".top-toolbar-dock",
+      ".brush-quick-controls:not([hidden])",
+    ].forEach((selector) => {
+      const rect = getVisibleFixedElementRect(selector);
+
+      if (rect) {
+        top = Math.max(top, rect.bottom + 8);
+      }
+    });
+
+    [
+      ".toolbar-dock",
+      ".area-selection-operation-toolbar",
+      ".transform-mode-toolbar",
+      ".text-add-toolbar:not([hidden])",
+    ].forEach((selector) => {
+      const rect = getVisibleFixedElementRect(selector);
+
+      if (rect) {
+        bottom = Math.min(bottom, rect.top - 8);
+      }
+    });
+
+    return {
+      bottom: Math.max(top + 1, bottom),
+      top,
+    };
   }
 
   function setAiImageBoardToolbarButtonEnabled(button, enabled) {
@@ -1683,10 +1783,6 @@ window.CBO = window.CBO || {};
 
     const action = actionButton.dataset.aiImageBoardToolbarAction;
 
-    if (action !== "fullscreen" && action !== "edit-preview") {
-      return;
-    }
-
     const toolbar = actionButton.closest("[data-ai-image-board-action-toolbar]");
     const boardId = String(
       actionButton.closest("[data-ai-image-board]")?.dataset?.boardId ||
@@ -1696,8 +1792,12 @@ window.CBO = window.CBO || {};
 
     if (action === "fullscreen") {
       openAiImageBoardEnlargeViewer(boardId);
-    } else {
+    } else if (action === "edit-preview") {
       openAiImageBoardEditPreview(boardId);
+    } else if (action === "duplicate") {
+      duplicateAiImageBoard(boardId);
+    } else if (action === "delete") {
+      deleteAiImageBoard(boardId);
     }
   }
 
@@ -1770,14 +1870,42 @@ window.CBO = window.CBO || {};
           </button>
           <div class="editor-ai-image-edit-preview-title">Create with AI</div>
         </div>
+        <div class="editor-ai-image-edit-preview-prompt-menu" id="editor-ai-image-edit-preview-prompt-menu" data-ai-image-edit-preview-prompt-menu hidden>
+          <div class="editor-ai-image-edit-preview-prompt-menu-grid">
+            <button class="editor-ai-image-edit-preview-prompt-menu-item" type="button" data-ai-image-edit-preview-prompt-preset="Solar Mist" data-ai-image-edit-preview-prompt-preset-tone="solar" aria-label="Use Solar Mist preset">
+              <div class="editor-ai-image-edit-preview-prompt-menu-swatch"></div>
+              <div class="editor-ai-image-edit-preview-prompt-menu-label">Solar Mist</div>
+            </button>
+            <button class="editor-ai-image-edit-preview-prompt-menu-item" type="button" data-ai-image-edit-preview-prompt-preset="Chrome Pop" data-ai-image-edit-preview-prompt-preset-tone="chrome" aria-label="Use Chrome Pop preset">
+              <div class="editor-ai-image-edit-preview-prompt-menu-swatch"></div>
+              <div class="editor-ai-image-edit-preview-prompt-menu-label">Chrome Pop</div>
+            </button>
+            <button class="editor-ai-image-edit-preview-prompt-menu-item" type="button" data-ai-image-edit-preview-prompt-preset="Velvet Glow" data-ai-image-edit-preview-prompt-preset-tone="velvet" aria-label="Use Velvet Glow preset">
+              <div class="editor-ai-image-edit-preview-prompt-menu-swatch"></div>
+              <div class="editor-ai-image-edit-preview-prompt-menu-label">Velvet Glow</div>
+            </button>
+            <button class="editor-ai-image-edit-preview-prompt-menu-item" type="button" data-ai-image-edit-preview-prompt-preset="Pixel Bloom" data-ai-image-edit-preview-prompt-preset-tone="pixel" aria-label="Use Pixel Bloom preset">
+              <div class="editor-ai-image-edit-preview-prompt-menu-swatch"></div>
+              <div class="editor-ai-image-edit-preview-prompt-menu-label">Pixel Bloom</div>
+            </button>
+            <button class="editor-ai-image-edit-preview-prompt-menu-item" type="button" data-ai-image-edit-preview-prompt-preset="Frost Line" data-ai-image-edit-preview-prompt-preset-tone="frost" aria-label="Use Frost Line preset">
+              <div class="editor-ai-image-edit-preview-prompt-menu-swatch"></div>
+              <div class="editor-ai-image-edit-preview-prompt-menu-label">Frost Line</div>
+            </button>
+            <button class="editor-ai-image-edit-preview-prompt-menu-item" type="button" data-ai-image-edit-preview-prompt-preset="Nova Dust" data-ai-image-edit-preview-prompt-preset-tone="nova" aria-label="Use Nova Dust preset">
+              <div class="editor-ai-image-edit-preview-prompt-menu-swatch"></div>
+              <div class="editor-ai-image-edit-preview-prompt-menu-label">Nova Dust</div>
+            </button>
+          </div>
+        </div>
         <div class="editor-ai-image-edit-preview-body">
           <div class="editor-ai-image-edit-preview-media-frame" data-ai-image-edit-preview-media-frame>
             <img class="editor-ai-image-edit-preview-image" data-ai-image-edit-preview-image alt="" draggable="false">
           </div>
           <div class="editor-ai-image-edit-preview-prompt">
-            <textarea class="editor-ai-image-edit-preview-prompt-input" data-ai-image-edit-preview-prompt-input aria-label="Create with AI prompt" placeholder="What do you want to create?" spellcheck="true"></textarea>
+            <div class="editor-ai-image-edit-preview-prompt-input" data-ai-image-edit-preview-prompt-input contenteditable="true" role="textbox" aria-multiline="true" aria-label="Create with AI prompt" data-placeholder="What do you want to create?" spellcheck="true"></div>
             <div class="editor-ai-image-edit-preview-prompt-row">
-              <span class="editor-ai-image-edit-preview-chip is-active">Prompt</span>
+              <button class="editor-ai-image-edit-preview-chip is-active" type="button" aria-expanded="false" aria-controls="editor-ai-image-edit-preview-prompt-menu" data-ai-image-edit-preview-prompt-menu-toggle>Prompt</button>
               <span class="editor-ai-image-edit-preview-chip">Visual</span>
               <span class="editor-ai-image-edit-preview-attach">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1812,9 +1940,25 @@ window.CBO = window.CBO || {};
     aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
       ?.addEventListener("input", handleAiImageEditPreviewPromptInput);
     aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      ?.addEventListener("click", handleAiImageEditPreviewPromptClick);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      ?.addEventListener("keyup", handleAiImageEditPreviewPromptSelectionChange);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      ?.addEventListener("mouseup", handleAiImageEditPreviewPromptSelectionChange);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
+      ?.addEventListener("paste", handleAiImageEditPreviewPromptPaste);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
       ?.addEventListener("blur", handleAiImageEditPreviewPromptBlur);
     aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
       ?.addEventListener("keydown", handleAiImageEditPreviewPromptKeyDown);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-menu-toggle]")
+      ?.addEventListener("pointerdown", handleAiImageEditPreviewPromptMenuTogglePointerDown);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-menu-toggle]")
+      ?.addEventListener("click", handleAiImageEditPreviewPromptMenuToggleClick);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-menu]")
+      ?.addEventListener("pointerdown", stopSpaceBoardControlEvent);
+    aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-menu]")
+      ?.addEventListener("click", handleAiImageEditPreviewPromptMenuClick);
     aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-send]")
       ?.addEventListener("click", handleAiImageEditPreviewSendClick);
     aiImageEditPreviewViewer.addEventListener("pointerdown", stopSpaceBoardControlEvent, true);
@@ -1840,6 +1984,7 @@ window.CBO = window.CBO || {};
     viewer.setAttribute("aria-hidden", "false");
     document.body.classList.add("editor-ai-image-edit-preview-open");
 
+    setAiImageEditPreviewPromptMenuOpen(viewer, false);
     syncAiImageEditPreviewViewerFromBoard({ forcePrompt: true });
 
     window.addEventListener("keydown", handleAiImageBoardEditPreviewKeyDown, true);
@@ -1851,9 +1996,9 @@ window.CBO = window.CBO || {};
   function closeAiImageBoardEditPreview() {
     const viewer = aiImageEditPreviewViewer;
     const image = viewer?.querySelector?.("[data-ai-image-edit-preview-image]");
-    const promptInput = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
+    const promptEditor = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
 
-    commitAiImageEditPreviewPromptInput(promptInput);
+    commitAiImageEditPreviewPromptInput(promptEditor);
 
     window.removeEventListener("keydown", handleAiImageBoardEditPreviewKeyDown, true);
     window.removeEventListener("resize", handleAiImageBoardEditPreviewResize);
@@ -1863,6 +2008,7 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    setAiImageEditPreviewPromptMenuOpen(viewer, false);
     viewer.hidden = true;
     viewer.classList.remove("is-empty", "is-generating");
     viewer.setAttribute("aria-hidden", "true");
@@ -1882,7 +2028,7 @@ window.CBO = window.CBO || {};
     const frame = viewer?.querySelector?.("[data-ai-image-edit-preview-media-frame]");
     const image = viewer?.querySelector?.("[data-ai-image-edit-preview-image]");
     const dimensions = viewer?.querySelector?.("[data-ai-image-edit-preview-dimensions]");
-    const promptInput = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
+    const promptEditor = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
     const sendButton = viewer?.querySelector?.("[data-ai-image-edit-preview-send]");
 
     if (!viewer || viewer.hidden || !board || !media || !image) {
@@ -1915,8 +2061,8 @@ window.CBO = window.CBO || {};
       dimensions.textContent = `${media.width}x${media.height} px`;
     }
 
-    if (promptInput && (options.forcePrompt || document.activeElement !== promptInput)) {
-      promptInput.value = getAiImageBoardPromptText(board);
+    if (promptEditor && (options.forcePrompt || document.activeElement !== promptEditor)) {
+      renderAiImageEditPreviewPromptEditor(promptEditor, board);
     }
 
     if (sendButton) {
@@ -1939,16 +2085,223 @@ window.CBO = window.CBO || {};
     return promptText || String(board?.captionText || "");
   }
 
+  function getAiImagePromptPresetConfig(presetName) {
+    const name = String(presetName || "").trim();
+    const normalizedName = name.toLowerCase();
+
+    return AI_IMAGE_EDIT_PREVIEW_PROMPT_PRESETS.find((preset) => preset.name.toLowerCase() === normalizedName) || {
+      name,
+      tone: "default",
+    };
+  }
+
+  function normalizeAiImagePromptParts(parts) {
+    const normalized = [];
+
+    if (!Array.isArray(parts)) {
+      return normalized;
+    }
+
+    parts.forEach((part) => {
+      if (!part || typeof part !== "object") {
+        return;
+      }
+
+      if (part.type === "preset") {
+        const preset = getAiImagePromptPresetConfig(part.name);
+
+        if (preset.name) {
+          normalized.push({
+            name: preset.name,
+            tone: preset.tone,
+            type: "preset",
+          });
+        }
+        return;
+      }
+
+      const text = String(part.text || "").replace(/\u00a0/g, " ");
+
+      if (!text) {
+        return;
+      }
+
+      const previous = normalized[normalized.length - 1];
+
+      if (previous?.type === "text") {
+        previous.text += text;
+      } else {
+        normalized.push({
+          text,
+          type: "text",
+        });
+      }
+    });
+
+    return normalized;
+  }
+
+  function getAiImagePromptPlainTextFromParts(parts) {
+    return normalizeAiImagePromptParts(parts).map((part) => (
+      part.type === "preset" ? part.name : part.text
+    )).join("");
+  }
+
+  function getAiImageBoardPromptParts(board) {
+    const parts = normalizeAiImagePromptParts(board?.promptParts);
+
+    if (parts.length) {
+      return parts;
+    }
+
+    const text = getAiImageBoardPromptText(board);
+
+    return text ? [{ text, type: "text" }] : [];
+  }
+
+  function createAiImageEditPreviewPromptTokenElement(presetName) {
+    const preset = getAiImagePromptPresetConfig(presetName);
+    const token = document.createElement("span");
+    const label = document.createElement("span");
+    const remove = document.createElement("span");
+
+    token.className = "editor-ai-image-edit-preview-prompt-token";
+    token.contentEditable = "false";
+    token.dataset.aiImageEditPreviewPromptToken = "";
+    token.dataset.presetName = preset.name;
+    token.dataset.presetTone = preset.tone;
+
+    label.className = "editor-ai-image-edit-preview-prompt-token-label";
+    label.textContent = preset.name;
+
+    remove.className = "editor-ai-image-edit-preview-prompt-token-remove";
+    remove.dataset.aiImageEditPreviewPromptTokenRemove = "";
+    remove.setAttribute("aria-label", `Remove ${preset.name}`);
+    remove.setAttribute("role", "button");
+    remove.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="m15 9-6 6"></path>
+        <path d="m9 9 6 6"></path>
+      </svg>
+    `;
+
+    token.append(label, remove);
+    return token;
+  }
+
+  function renderAiImageEditPreviewPromptEditor(editor, board) {
+    if (!editor) {
+      return false;
+    }
+
+    editor.replaceChildren();
+    getAiImageBoardPromptParts(board).forEach((part) => {
+      if (part.type === "preset") {
+        editor.appendChild(createAiImageEditPreviewPromptTokenElement(part.name));
+      } else {
+        editor.appendChild(document.createTextNode(part.text));
+      }
+    });
+
+    return true;
+  }
+
+  function cleanEmptyAiImageEditPreviewPromptEditor(editor) {
+    const hasToken = Boolean(editor?.querySelector?.("[data-ai-image-edit-preview-prompt-token]"));
+    const text = String(editor?.textContent || "").replace(/\u00a0/g, " ").trim();
+
+    if (!editor || hasToken || text) {
+      return false;
+    }
+
+    editor.replaceChildren();
+    return true;
+  }
+
+  function serializeAiImageEditPreviewPromptEditor(editor) {
+    const parts = [];
+    const appendTextPart = (text) => {
+      const value = String(text || "").replace(/\u00a0/g, " ");
+
+      if (!value) {
+        return;
+      }
+
+      const previous = parts[parts.length - 1];
+
+      if (previous?.type === "text") {
+        previous.text += value;
+      } else {
+        parts.push({
+          text: value,
+          type: "text",
+        });
+      }
+    };
+    const walk = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        appendTextPart(node.nodeValue || "");
+        return;
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return;
+      }
+
+      const element = node;
+
+      if (element.matches?.("[data-ai-image-edit-preview-prompt-token]")) {
+        const preset = getAiImagePromptPresetConfig(element.dataset.presetName);
+
+        if (preset.name) {
+          parts.push({
+            name: preset.name,
+            tone: preset.tone,
+            type: "preset",
+          });
+        }
+        return;
+      }
+
+      if (element.tagName === "BR") {
+        appendTextPart("\n");
+        return;
+      }
+
+      Array.from(element.childNodes).forEach(walk);
+    };
+
+    Array.from(editor?.childNodes || []).forEach(walk);
+
+    const normalizedParts = normalizeAiImagePromptParts(parts);
+
+    return {
+      parts: normalizedParts,
+      text: getAiImagePromptPlainTextFromParts(normalizedParts),
+    };
+  }
+
   function setAiImageBoardPromptText(board, value, options = {}) {
     if (!board) {
       return false;
     }
 
     const nextValue = String(value || "");
-    const changed = String(board.promptText || "") !== nextValue || String(board.captionText || "") !== nextValue;
+    const shouldPreserveParts = options.preservePromptParts === true ||
+      (options.force === true && !Array.isArray(options.promptParts));
+    const nextParts = shouldPreserveParts
+      ? normalizeAiImagePromptParts(board.promptParts)
+      : normalizeAiImagePromptParts(Array.isArray(options.promptParts)
+        ? options.promptParts
+        : (nextValue ? [{ text: nextValue, type: "text" }] : []));
+    const changed = String(board.promptText || "") !== nextValue ||
+      String(board.captionText || "") !== nextValue ||
+      JSON.stringify(normalizeAiImagePromptParts(board.promptParts)) !== JSON.stringify(nextParts);
 
     board.promptText = nextValue;
     board.captionText = nextValue;
+    board.promptParts = nextParts;
     syncAiImageBoardPromptTextControls(board, options);
 
     if (options.emitSource) {
@@ -1974,12 +2327,12 @@ window.CBO = window.CBO || {};
 
     updateAiImageCaptionControls(boardElement, board, selectedSpaceBoardId === board.id);
 
-    const previewInput = aiImageEditPreviewViewer?.dataset?.boardId === board.id
+    const previewEditor = aiImageEditPreviewViewer?.dataset?.boardId === board.id
       ? aiImageEditPreviewViewer.querySelector("[data-ai-image-edit-preview-prompt-input]")
       : null;
 
-    if (previewInput && (options.force || document.activeElement !== previewInput)) {
-      previewInput.value = value;
+    if (previewEditor && (options.force || document.activeElement !== previewEditor)) {
+      renderAiImageEditPreviewPromptEditor(previewEditor, board);
     }
 
     return true;
@@ -1991,17 +2344,18 @@ window.CBO = window.CBO || {};
     return getSpaceBoardById(viewer?.dataset?.boardId || "");
   }
 
-  function syncAiImageEditPreviewPromptToBoard(input) {
-    const viewer = input?.closest?.("[data-ai-image-edit-preview-viewer]");
+  function syncAiImageEditPreviewPromptToBoard(editor) {
+    const viewer = editor?.closest?.("[data-ai-image-edit-preview-viewer]");
     const board = getSpaceBoardById(viewer?.dataset?.boardId || "");
-    const value = String(input?.value || "");
+    const serialized = serializeAiImageEditPreviewPromptEditor(editor);
 
     if (!board) {
       return false;
     }
 
-    setAiImageBoardPromptText(board, value, {
+    setAiImageBoardPromptText(board, serialized.text, {
       emitSource: "ai-image-edit-preview-prompt-input",
+      promptParts: serialized.parts,
     });
     return true;
   }
@@ -2018,10 +2372,298 @@ window.CBO = window.CBO || {};
       boardId: board.id,
       value: getAiImageBoardPromptText(board),
     };
+    saveAiImageEditPreviewPromptSelection(event.currentTarget);
   }
 
   function handleAiImageEditPreviewPromptInput(event) {
+    cleanEmptyAiImageEditPreviewPromptEditor(event.currentTarget);
     syncAiImageEditPreviewPromptToBoard(event.currentTarget);
+    saveAiImageEditPreviewPromptSelection(event.currentTarget);
+  }
+
+  function handleAiImageEditPreviewPromptSelectionChange(event) {
+    saveAiImageEditPreviewPromptSelection(event.currentTarget);
+  }
+
+  function handleAiImageEditPreviewPromptClick(event) {
+    const removeButton = event.target?.closest?.("[data-ai-image-edit-preview-prompt-token-remove]");
+
+    if (removeButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      removeAiImageEditPreviewPromptToken(removeButton);
+      return;
+    }
+
+    saveAiImageEditPreviewPromptSelection(event.currentTarget);
+    stopSpaceBoardControlEvent(event);
+  }
+
+  function handleAiImageEditPreviewPromptPaste(event) {
+    const text = event.clipboardData?.getData?.("text/plain") || "";
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    insertAiImageEditPreviewPromptText(event.currentTarget, text);
+  }
+
+  function setAiImageEditPreviewPromptMenuOpen(viewer, open) {
+    const menu = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-menu]");
+    const button = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-menu-toggle]");
+    const shouldOpen = Boolean(open);
+
+    if (!viewer || !menu || !button) {
+      return false;
+    }
+
+    menu.hidden = !shouldOpen;
+    button.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+    viewer.classList.toggle("is-prompt-menu-open", shouldOpen);
+    return shouldOpen;
+  }
+
+  function handleAiImageEditPreviewPromptMenuTogglePointerDown(event) {
+    const viewer = event.currentTarget?.closest?.("[data-ai-image-edit-preview-viewer]");
+    const editor = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
+
+    saveAiImageEditPreviewPromptSelection(editor);
+    event.stopPropagation();
+  }
+
+  function handleAiImageEditPreviewPromptMenuToggleClick(event) {
+    const viewer = event.currentTarget?.closest?.("[data-ai-image-edit-preview-viewer]");
+    const menu = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-menu]");
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    setAiImageEditPreviewPromptMenuOpen(viewer, Boolean(menu?.hidden));
+  }
+
+  function getAiImageEditPreviewPromptSelectionRange(editor) {
+    const selection = window.getSelection?.();
+
+    if (!editor || !selection || !selection.rangeCount) {
+      return null;
+    }
+
+    const range = selection.getRangeAt(0);
+
+    if (!editor.contains(range.commonAncestorContainer)) {
+      return null;
+    }
+
+    return range;
+  }
+
+  function saveAiImageEditPreviewPromptSelection(editor) {
+    const range = getAiImageEditPreviewPromptSelectionRange(editor);
+
+    if (!range) {
+      return false;
+    }
+
+    aiImageEditPreviewPromptSelectionRange = range.cloneRange();
+    return true;
+  }
+
+  function restoreAiImageEditPreviewPromptSelection(editor) {
+    const selection = window.getSelection?.();
+    const range = aiImageEditPreviewPromptSelectionRange;
+    const rangeIsUsable = range &&
+      range.startContainer?.isConnected &&
+      range.endContainer?.isConnected &&
+      editor?.contains?.(range.commonAncestorContainer);
+
+    if (!editor || !selection) {
+      return null;
+    }
+
+    if (!rangeIsUsable) {
+      return placeAiImageEditPreviewPromptCaretAtEnd(editor);
+    }
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return range;
+  }
+
+  function placeAiImageEditPreviewPromptCaretAtEnd(editor) {
+    const selection = window.getSelection?.();
+    const range = document.createRange();
+
+    if (!editor || !selection) {
+      return null;
+    }
+
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    aiImageEditPreviewPromptSelectionRange = range.cloneRange();
+    return range;
+  }
+
+  function setAiImageEditPreviewPromptCaretAfterNode(editor, node) {
+    const selection = window.getSelection?.();
+    const range = document.createRange();
+
+    if (!editor || !node || !selection) {
+      return false;
+    }
+
+    range.setStartAfter(node);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    aiImageEditPreviewPromptSelectionRange = range.cloneRange();
+    return true;
+  }
+
+  function insertAiImageEditPreviewPromptText(editor, text) {
+    const value = String(text || "");
+    const range = restoreAiImageEditPreviewPromptSelection(editor);
+    const textNode = document.createTextNode(value);
+
+    if (!editor || !range || !value) {
+      return false;
+    }
+
+    range.deleteContents();
+    range.insertNode(textNode);
+    setAiImageEditPreviewPromptCaretAfterNode(editor, textNode);
+    syncAiImageEditPreviewPromptToBoard(editor);
+    return true;
+  }
+
+  function insertAiImageEditPreviewPromptPreset(editor, presetName) {
+    const preset = getAiImagePromptPresetConfig(presetName);
+    const range = restoreAiImageEditPreviewPromptSelection(editor);
+    const fragment = document.createDocumentFragment();
+    let caretAnchor = null;
+
+    if (!editor || !range || !preset.name) {
+      return false;
+    }
+
+    editor.focus({ preventScroll: true });
+    range.deleteContents();
+
+    if (shouldInsertAiImagePromptTextSpacerBefore(range)) {
+      fragment.appendChild(document.createTextNode(" "));
+    }
+
+    fragment.appendChild(createAiImageEditPreviewPromptTokenElement(preset.name));
+    caretAnchor = document.createTextNode(" ");
+    fragment.appendChild(caretAnchor);
+    range.insertNode(fragment);
+    setAiImageEditPreviewPromptCaretAfterNode(editor, caretAnchor);
+    syncAiImageEditPreviewPromptToBoard(editor);
+    return true;
+  }
+
+  function shouldInsertAiImagePromptTextSpacerBefore(range) {
+    const previousText = getAiImagePromptRangePreviousText(range);
+
+    return Boolean(previousText && !/\s$/.test(previousText));
+  }
+
+  function getAiImagePromptRangePreviousText(range) {
+    if (!range) {
+      return "";
+    }
+
+    if (range.startContainer?.nodeType === Node.TEXT_NODE) {
+      return String(range.startContainer.nodeValue || "").slice(0, range.startOffset);
+    }
+
+    const previousNode = range.startOffset > 0
+      ? range.startContainer?.childNodes?.[range.startOffset - 1]
+      : range.startContainer?.previousSibling;
+
+    if (previousNode?.nodeType === Node.TEXT_NODE) {
+      return String(previousNode.nodeValue || "");
+    }
+
+    if (previousNode?.nodeType === Node.ELEMENT_NODE && previousNode.matches?.("[data-ai-image-edit-preview-prompt-token]")) {
+      return " ";
+    }
+
+    return "";
+  }
+
+  function handleAiImageEditPreviewPromptMenuClick(event) {
+    const presetButton = event.target?.closest?.("[data-ai-image-edit-preview-prompt-preset]");
+    const viewer = event.currentTarget?.closest?.("[data-ai-image-edit-preview-viewer]");
+    const editor = viewer?.querySelector?.("[data-ai-image-edit-preview-prompt-input]");
+    const board = getSpaceBoardById(viewer?.dataset?.boardId || "");
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!presetButton || !event.currentTarget?.contains?.(presetButton)) {
+      return;
+    }
+
+    if (!board || !editor) {
+      return;
+    }
+
+    const beforeState = captureConnectionsHistoryState();
+    insertAiImageEditPreviewPromptPreset(editor, presetButton.dataset.aiImageEditPreviewPromptPreset);
+    const changed = !statesAreEqual(beforeState, captureConnectionsHistoryState());
+
+    setAiImageEditPreviewPromptMenuOpen(viewer, false);
+
+    if (changed) {
+      pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+        historyGroup: `space-board-prompt-preset-${board.id}`,
+        source: "ai-image-edit-preview-prompt-preset",
+        type: "space-board-prompt-preset",
+      });
+    }
+  }
+
+  function removeAiImageEditPreviewPromptToken(removeButton) {
+    const token = removeButton?.closest?.("[data-ai-image-edit-preview-prompt-token]");
+    const editor = token?.closest?.("[data-ai-image-edit-preview-prompt-input]");
+    const viewer = editor?.closest?.("[data-ai-image-edit-preview-viewer]");
+    const board = getSpaceBoardById(viewer?.dataset?.boardId || "");
+
+    if (!token || !editor || !board) {
+      return false;
+    }
+
+    const beforeState = captureConnectionsHistoryState();
+    const range = document.createRange();
+
+    range.setStartBefore(token);
+    range.collapse(true);
+    token.remove();
+    cleanEmptyAiImageEditPreviewPromptEditor(editor);
+
+    const selection = window.getSelection?.();
+
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+      aiImageEditPreviewPromptSelectionRange = range.cloneRange();
+    }
+
+    editor.focus({ preventScroll: true });
+    syncAiImageEditPreviewPromptToBoard(editor);
+    const changed = !statesAreEqual(beforeState, captureConnectionsHistoryState());
+
+    if (changed) {
+      pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+        historyGroup: `space-board-prompt-preset-${board.id}`,
+        source: "ai-image-edit-preview-prompt-preset-clear",
+        type: "space-board-prompt-preset",
+      });
+    }
+
+    return changed;
   }
 
   function commitAiImageEditPreviewPromptInput(input) {
@@ -2035,7 +2677,7 @@ window.CBO = window.CBO || {};
 
     promptEditState = null;
 
-    const nextValue = String(input?.value || "");
+    const nextValue = serializeAiImageEditPreviewPromptEditor(input).text;
 
     if (nextValue === editState.value) {
       return;
@@ -3188,10 +3830,22 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function clonePlainData(value) {
+    if (Array.isArray(value)) {
+      return value.map(clonePlainData);
+    }
+
+    if (!value || typeof value !== "object") {
+      return value;
+    }
+
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => [key, clonePlainData(entryValue)]),
+    );
+  }
+
   function cloneSpaceBoard(board) {
-    return {
-      ...board,
-    };
+    return clonePlainData(board) || {};
   }
 
   function captureConnectionsHistoryState(options = {}) {
@@ -5571,6 +6225,7 @@ window.CBO = window.CBO || {};
       element.classList.toggle("has-generated-media", Boolean(board.generatedMedia?.src));
       element.classList.toggle("is-preview-work-deferred", shouldDeferPreviewWork);
       updateAiImageBoardActionToolbarState(element.querySelector("[data-ai-image-board-action-toolbar]"), board);
+      updateAiImageBoardActionToolbarPlacement(element, isSelected);
       updateAiImageCaptionControls(element, board, isSelected);
       if (generateButton) {
         generateButton.disabled = isGenerating;
@@ -5866,6 +6521,152 @@ window.CBO = window.CBO || {};
     return id;
   }
 
+  function getIncomingConnectionsForSpaceBoard(boardId) {
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!normalizedBoardId) {
+      return [];
+    }
+
+    return connections.filter((connection) => connection.targetBoardId === normalizedBoardId);
+  }
+
+  function getDuplicatedAiImageBoardName(board) {
+    const baseName = String(board?.name || "AI Image board").trim() || "AI Image board";
+    const copyBase = `${baseName} copy`;
+    const existingNames = new Set(spaceBoards.map((entry) => String(entry?.name || "").trim()));
+
+    if (!existingNames.has(copyBase)) {
+      return copyBase;
+    }
+
+    let index = 2;
+
+    while (existingNames.has(`${copyBase} ${index}`)) {
+      index += 1;
+    }
+
+    return `${copyBase} ${index}`;
+  }
+
+  function createDuplicateAiImageBoardPlacement(board) {
+    const width = Number(board?.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const height = Number(board?.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const metrics = getActionBubbleMetrics(1, width, height);
+    const nearbyGap = metrics.gapDoc + metrics.sizeDoc + SPACE_BOARD_DRAG_GAP_DOC_PX;
+    const preferredRect = createRect(
+      (Number(board?.x) || 0) + width + nearbyGap,
+      Number(board?.y) || 0,
+      width,
+      height,
+    );
+
+    return resolveFreeSpaceBoardPlacement(preferredRect, {
+      gap: SPACE_BOARD_DRAG_GAP_DOC_PX,
+    });
+  }
+
+  function duplicateAiImageBoard(boardId) {
+    const board = getSpaceBoardById(boardId);
+
+    if (!board || board.type !== "ai-image") {
+      return false;
+    }
+
+    const beforeState = captureConnectionsHistoryState();
+    const placement = createDuplicateAiImageBoardPlacement(board);
+    const duplicate = {
+      ...cloneSpaceBoard(board),
+      height: placement.height,
+      id: createBoardId(),
+      name: getDuplicatedAiImageBoardName(board),
+      promptParts: normalizeAiImagePromptParts(board.promptParts),
+      type: "ai-image",
+      width: placement.width,
+      x: placement.x,
+      y: placement.y,
+    };
+
+    spaceBoards.push(duplicate);
+
+    const duplicateAnchor = getAiImageBoardInputAnchor(duplicate);
+
+    getIncomingConnectionsForSpaceBoard(board.id).forEach((connection) => {
+      connections.push({
+        ...cloneConnection(connection),
+        endDocX: duplicateAnchor?.x ?? connection.endDocX,
+        endDocY: duplicateAnchor?.y ?? connection.endDocY,
+        id: createConnectionId(),
+        targetBoardId: duplicate.id,
+        targetHandle: connection.targetHandle || "image-input",
+      });
+    });
+
+    selectedSpaceBoardId = duplicate.id;
+    pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+      historyGroup: `space-board-duplicate-${board.id}`,
+      source: "space-board-duplicate-ai-image",
+      type: "space-board-duplicate",
+    });
+    renderConnectionOverlay();
+    emitConnectionsChange("space-board-duplicate-ai-image");
+    return duplicate;
+  }
+
+  function closeAiImageBoardViewsForBoard(boardId) {
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!normalizedBoardId) {
+      return false;
+    }
+
+    if (aiImageEditPreviewViewer?.dataset?.boardId === normalizedBoardId) {
+      closeAiImageBoardEditPreview();
+    }
+
+    if (aiImageEnlargeViewer?.dataset?.boardId === normalizedBoardId) {
+      closeAiImageBoardEnlargeViewer();
+    }
+
+    return true;
+  }
+
+  function deleteAiImageBoard(boardId) {
+    const normalizedBoardId = String(boardId || "").trim();
+    const board = getSpaceBoardById(normalizedBoardId);
+
+    if (!board || board.type !== "ai-image") {
+      return false;
+    }
+
+    const beforeState = captureConnectionsHistoryState();
+
+    closeAiImageBoardViewsForBoard(normalizedBoardId);
+    clearAiImageGenerationPreview(normalizedBoardId);
+    spaceBoards = spaceBoards.filter((entry) => entry.id !== normalizedBoardId);
+    connections = connections.filter((connection) => connection.targetBoardId !== normalizedBoardId);
+
+    if (selectedSpaceBoardId === normalizedBoardId) {
+      selectedSpaceBoardId = "";
+    }
+
+    if (menuState?.connectionId && !getConnectionById(menuState.connectionId)) {
+      dismissConnectionMenu({
+        removeConnection: false,
+        render: false,
+      });
+    }
+
+    pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+      historyGroup: `space-board-delete-${normalizedBoardId}`,
+      source: "space-board-delete-ai-image",
+      type: "space-board-delete",
+    });
+    renderConnectionOverlay();
+    emitConnectionsChange("space-board-delete-ai-image");
+    return true;
+  }
+
   function createAiImageBoardForConnection(connection) {
     const anchor = getConnectionEndPoint(connection);
 
@@ -5886,6 +6687,7 @@ window.CBO = window.CBO || {};
       id: createBoardId(),
       captionText: "",
       name: `AI Image board #${spaceBoards.filter((entry) => entry.type === "ai-image").length + 1}`,
+      promptParts: [],
       promptText: "",
       type: "ai-image",
       width: AI_IMAGE_BOARD_SIZE_DOC_PX,
