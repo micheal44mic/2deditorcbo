@@ -300,7 +300,55 @@ test("selected live text layer stays editable outside the text toolbar tool", ()
   assert.doesNotMatch(source, /this\.isTextToolActive\(\) && !this\.getActiveTextLayer\(\)/);
   assert.match(
     css,
+    /\.editor-vector-overlay\.text-tool-active,\s*\.editor-vector-overlay\.envelope-edit-active\s*\{[\s\S]*?pointer-events:\s*auto;/,
+  );
+  assert.match(
+    css,
+    /\.editor-vector-overlay\.text-tool-active \.editor-vector-text-layer\s*\{[\s\S]*?pointer-events:\s*visiblePainted;/,
+  );
+  assert.doesNotMatch(
+    css,
+    /\.editor-vector-overlay\.active-text-layer-selected \.editor-vector-text-layer\s*\{[\s\S]*?pointer-events:\s*visiblePainted;/,
+  );
+});
+
+test("selection clicks on empty vector overlay space pass through to layer picking", () => {
+  const css = fs.readFileSync(path.join(repoRoot, "css", "layout.css"), "utf8");
+
+  assert.match(
+    css,
+    /\.editor-vector-overlay\s*\{[\s\S]*?pointer-events:\s*none;/,
+  );
+  assert.doesNotMatch(
+    css,
     /\.editor-vector-overlay\.text-tool-active,\s*\.editor-vector-overlay\.active-text-layer-selected\s*\{[\s\S]*?pointer-events:\s*auto;/,
+  );
+  assert.match(
+    css,
+    /\.editor-vector-text-layer\s*\{[\s\S]*?pointer-events:\s*none;/,
+  );
+  assert.doesNotMatch(
+    css,
+    /\.editor-vector-overlay\.active-text-layer-selected \.editor-vector-text-layer\s*\{[\s\S]*?pointer-events:\s*visiblePainted;/,
+  );
+});
+
+test("live vector text only starts layer drag from the selection tool", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /const SELECTION_TOOL_MODE = "selection"/);
+  assert.match(source, /syncActiveToolFromToolbar\(\);/);
+  assert.match(source, /isSelectionToolActive\(\) \{/);
+  assert.match(
+    source,
+    /if \(!this\.isSelectionToolActive\(\) && !this\.isTextToolActive\(\)\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(!this\.isSelectionToolActive\(\) \|\| layer\.locked === true \|\| event\.button !== 0\) \{\s*return;\s*\}/,
   );
 });
 
@@ -385,7 +433,8 @@ test("mobile text layer switches the bottom dock to icon settings panels", () =>
   assert.match(topToolbarSource, /data-mobile-text-transform-modify>Modify<\/button>/);
   assert.match(topToolbarSource, /mobileTextTransformRangeField\.hidden = isDistort/);
   assert.match(topToolbarSource, /if \(layer\.envelopeGrid\) \{[\s\S]*return layer;/);
-  assert.match(topToolbarSource, /if \(mode === "distort"\) \{[\s\S]*editMobileTextDistort\(layer\);/);
+  assert.match(topToolbarSource, /if \(mode === "distort"\) \{[\s\S]*initMobileEnvelopeForActiveTextLayer\(\);/);
+  assert.match(topToolbarSource, /mobileTextTransformModify\?\.addEventListener\("click"[\s\S]*editMobileTextDistort\(layer\)/);
   assert.match(topToolbarSource, /mobileTextTransformModify\?\.addEventListener\("click"/);
   assert.match(topToolbarSource, /enableMobileTextShadowEffect\(\)/);
   assert.match(topToolbarSource, /editorPage\.appendChild\(mobileTextPanel\)/);
@@ -443,13 +492,35 @@ test("mobile text distort handles use touch-sized viewport controls", () => {
   assert.match(source, /MOBILE_ENVELOPE_HANDLE_SIZES = Object\.freeze\(\{[\s\S]*anchor: 24,[\s\S]*control: 22,[\s\S]*corner: 24,/);
   assert.match(source, /MOBILE_ENVELOPE_HIT_STROKE_WIDTH = 36/);
   assert.match(source, /MOBILE_ENVELOPE_HIT_RADIUS = 30/);
+  assert.match(source, /MOBILE_ENVELOPE_VIEWPORT_SCALE_MAX = 2\.25/);
   assert.match(source, /window\.matchMedia\?\.\("\(pointer: coarse\), \(max-width: 900px\)"\)/);
   assert.match(source, /function getEnvelopeHandleViewportScale\(layer\)/);
-  assert.match(source, /return 1 \/ \(zoom \* layerScale\)/);
+  assert.match(source, /const layerScaleX = Math\.max\(0\.0001, Math\.abs\(toFiniteNumber\(layer\?\.scaleX, 1\)\)\)/);
+  assert.match(source, /const layerScaleY = Math\.max\(0\.0001, Math\.abs\(toFiniteNumber\(layer\?\.scaleY, 1\)\)\)/);
+  assert.match(source, /const viewportScale = isMobileEnvelopeControlViewport\(\)[\s\S]*clampNumber\(1 \/ zoom, MOBILE_ENVELOPE_VIEWPORT_SCALE_MIN, MOBILE_ENVELOPE_VIEWPORT_SCALE_MAX\)[\s\S]*: 1/);
+  assert.match(source, /x: viewportScale \/ layerScaleX/);
+  assert.match(source, /y: viewportScale \/ layerScaleY/);
   assert.match(source, /const size = getEnvelopeHandleSize\(roleClass, desktopSize\)/);
   assert.match(source, /const viewportScale = getEnvelopeHandleViewportScale\(layer\)/);
+  assert.match(source, /const viewportScaleX = Number\.isFinite\(viewportScale\?\.x\) \? viewportScale\.x : 1/);
+  assert.match(source, /const viewportScaleY = Number\.isFinite\(viewportScale\?\.y\) \? viewportScale\.y : 1/);
+  assert.match(source, /scale\(\$\{viewportScaleX\} \$\{viewportScaleY\}\)/);
   assert.match(source, /"stroke-width": getEnvelopeHitStrokeWidth\(\)/);
   assert.match(source, /const hitRadius = getEnvelopePointerHitRadius\(pointerType\)/);
+});
+
+test("text distort envelope handles only appear after Modify enters edit mode", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /this\.envelopeEditLayerId = ""/);
+  assert.match(source, /window\.addEventListener\("cbo:text-transform-edit-request", this\.handleTextTransformEditRequest\)/);
+  assert.match(source, /isEnvelopeEditLayer\(layerId\) \{/);
+  assert.match(source, /this\.svg\.classList\.toggle\("envelope-edit-active", Boolean\(this\.envelopeEditLayerId\)\)/);
+  assert.match(source, /options\.includeControls !== false && options\.active && layer\.envelopeGrid && this\.isEnvelopeEditLayer\(layer\.id\)/);
+  assert.match(source, /!layer\?\.envelopeGrid \|\| layer\.locked === true \|\| !this\.isEnvelopeEditLayer\(layer\.id\)/);
 });
 
 test("vector text drag and envelope edits use document history groups", () => {

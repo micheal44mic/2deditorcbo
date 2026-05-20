@@ -517,7 +517,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.isConnectionTargetBoardOccupied = function isConnectionTargetBoardOccupied(board, options = {}) {
     with (this) {
 
-    const normalizedBoardId = String(boardId || "").trim();
+    const normalizedBoardId = String(board?.id || board || "").trim();
 
     if (!normalizedBoardId) {
       return false;
@@ -529,6 +529,26 @@ window.CBO = window.CBO || {};
       connection?.targetBoardId === normalizedBoardId &&
       (!excludeConnectionId || connection.id !== excludeConnectionId)
     ));
+    }
+  };
+
+  Controller.prototype.getConnectionDropTargetMagnetRadius = function getConnectionDropTargetMagnetRadius(board, options = {}) {
+    with (this) {
+
+    const metrics = getActionBubbleMetrics(1, board?.width, board?.height);
+    const baseRadiusDoc = Math.max(
+      metrics.sizeDoc * 0.5 + metrics.gapDoc * 1.5,
+      metrics.sizeDoc * 0.75,
+    );
+    const viewScale = Math.max(0.0001, getViewScale());
+    const isTouchTarget = options.pointerType === "touch" ||
+      options.pointerType === "pen" ||
+      isMobileLikeSpaceBoardViewport();
+    const screenRadiusCss = isTouchTarget
+      ? CONNECTION_DROP_TARGET_TOUCH_RADIUS_CSS_PX
+      : CONNECTION_DROP_TARGET_MAGNET_RADIUS_CSS_PX;
+
+    return Math.max(baseRadiusDoc, screenRadiusCss / viewScale);
     }
   };
 
@@ -582,11 +602,7 @@ window.CBO = window.CBO || {};
       .filter(canUseBoard)
       .map((board) => {
         const anchor = getAiImageBoardInputAnchor(board);
-        const metrics = getActionBubbleMetrics(1, board.width, board.height);
-        const magnetRadius = Math.max(
-          metrics.sizeDoc * 0.5 + metrics.gapDoc * 1.5,
-          metrics.sizeDoc * 0.75,
-        );
+        const magnetRadius = getConnectionDropTargetMagnetRadius(board, options);
         const distance = anchor ? Math.hypot(x - anchor.x, y - anchor.y) : Infinity;
 
         return {
@@ -1009,7 +1025,10 @@ window.CBO = window.CBO || {};
     const didMove = connectionDrag.didMove ||
       Math.hypot(dx, dy) >= CONNECTION_MIN_DRAG_CSS_PX;
     const hitBoard = didMove
-      ? getConnectionDropTargetAtDocumentPoint(point, { includeOccupied: true })
+      ? getConnectionDropTargetAtDocumentPoint(point, {
+          includeOccupied: true,
+          pointerType: event.pointerType || "",
+        })
       : null;
     const isBlockedTarget = Boolean(hitBoard && isConnectionTargetBoardOccupied(hitBoard));
     const targetBoard = isBlockedTarget ? null : hitBoard;

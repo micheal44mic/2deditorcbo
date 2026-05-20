@@ -83,7 +83,7 @@ window.CBO.initTooltips = function initTooltips() {
   }
 
   function showTooltip(button) {
-    if (!button.dataset.tooltip || button.classList.contains("open")) {
+    if (!button.dataset.tooltip || button.classList.contains("open") || isMobileToolbarTooltipDisabled(button)) {
       return;
     }
 
@@ -111,6 +111,10 @@ window.CBO.initTooltips = function initTooltips() {
   function queueTooltip(button) {
     hideTooltips();
 
+    if (isMobileToolbarTooltipDisabled(button)) {
+      return;
+    }
+
     if (tooltipWarm) {
       showTooltip(button);
       return;
@@ -129,6 +133,13 @@ window.CBO.initTooltips = function initTooltips() {
     return Date.now() - lastTouchInteractionAt < touchReleaseHideDelay;
   }
 
+  function isMobileToolbarTooltipDisabled(button) {
+    return Boolean(
+      window.matchMedia?.("(max-width: 900px)")?.matches &&
+      button.closest(".toolbar-dock, .top-toolbar-dock, .right-vertical-toolbar-dock")
+    );
+  }
+
   function queueTouchTooltip(button) {
     window.clearTimeout(tooltipTimer);
     window.clearTimeout(touchHoldTimer);
@@ -138,6 +149,11 @@ window.CBO.initTooltips = function initTooltips() {
     touchHideTimer = null;
     suppressNextFocus = true;
     lastTouchInteractionAt = Date.now();
+
+    if (isMobileToolbarTooltipDisabled(button)) {
+      hideTooltips();
+      return;
+    }
 
     touchHoldTimer = window.setTimeout(() => {
       showTooltip(button);

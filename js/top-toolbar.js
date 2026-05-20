@@ -1992,7 +1992,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       setMobileTextTransformMode(mode);
 
       if (mode === "distort") {
-        void editMobileTextDistort(layer);
+        void initMobileEnvelopeForActiveTextLayer();
       } else {
         void patchActiveTextLayerPreservingVisualCenter({
           envelopeGrid: null,

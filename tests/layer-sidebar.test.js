@@ -54,7 +54,8 @@ test("right sidebar shows layer controls for the selection tool", () => {
   assert.match(source, /data-text-transform-modify>Modify<\/button>/);
   assert.match(source, /textTransformRangeField\.hidden = isDistort/);
   assert.match(source, /if \(layer\.envelopeGrid\) \{[\s\S]*return layer;/);
-  assert.match(source, /if \(mode === "distort"\) \{[\s\S]*editTextDistort\(layer\);/);
+  assert.match(source, /if \(mode === "distort"\) \{[\s\S]*initEnvelopeForActiveTextLayer\(\);/);
+  assert.match(source, /textTransformModify\?\.addEventListener\("click"[\s\S]*editTextDistort\(layer\)/);
   assert.match(source, /textTransformModify\?\.addEventListener\("click"/);
   assert.match(source, /normalized === "rect select"/);
   assert.match(source, /normalized === "lasso select"/);

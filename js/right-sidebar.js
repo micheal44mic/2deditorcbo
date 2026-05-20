@@ -2588,7 +2588,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       setTextTransformMode(mode);
 
       if (mode === "distort") {
-        void editTextDistort(layer);
+        void initEnvelopeForActiveTextLayer();
       } else {
         void patchActiveTextLayerPreservingVisualCenter({
           envelopeGrid: null,

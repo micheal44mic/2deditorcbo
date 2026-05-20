@@ -1,6 +1,7 @@
 (function registerVectorTextRenderer(namespace) {
   const SVG_NS = "http://www.w3.org/2000/svg";
   const TEXT_LAYER_TYPE = "vector-text";
+  const SELECTION_TOOL_MODE = "selection";
   const CORNER_ENVELOPE_NODES = ["TL", "TR", "BL", "BR"];
   const CENTER_ENVELOPE_NODES = ["TC", "BC"];
   const HANDLE_ENVELOPE_NODES = ["TC_HandleL", "TC_HandleR", "BC_HandleL", "BC_HandleR"];
@@ -9,6 +10,8 @@
     control: 22,
     corner: 24,
   });
+  const MOBILE_ENVELOPE_VIEWPORT_SCALE_MIN = 0.75;
+  const MOBILE_ENVELOPE_VIEWPORT_SCALE_MAX = 2.25;
   const DESKTOP_ENVELOPE_HIT_STROKE_WIDTH = 24;
   const MOBILE_ENVELOPE_HIT_STROKE_WIDTH = 36;
   const DESKTOP_ENVELOPE_HIT_RADIUS = 18;
@@ -199,6 +202,10 @@
     return Number.isFinite(value) ? value : fallback;
   }
 
+  function clampNumber(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
   function getFinitePoint(value) {
     const x = value?.x;
     const y = value?.y;
@@ -215,18 +222,18 @@
   }
 
   function getEnvelopeHandleViewportScale(layer) {
-    if (!isMobileEnvelopeControlViewport()) {
-      return 1;
-    }
-
     const { camera, dpr } = resolveCameraState();
     const zoom = Math.max(0.0001, (camera.zoom || 1) / dpr);
-    const layerScale = Math.max(
-      0.0001,
-      (Math.abs(toFiniteNumber(layer?.scaleX, 1)) + Math.abs(toFiniteNumber(layer?.scaleY, 1))) / 2,
-    );
+    const layerScaleX = Math.max(0.0001, Math.abs(toFiniteNumber(layer?.scaleX, 1)));
+    const layerScaleY = Math.max(0.0001, Math.abs(toFiniteNumber(layer?.scaleY, 1)));
+    const viewportScale = isMobileEnvelopeControlViewport()
+      ? clampNumber(1 / zoom, MOBILE_ENVELOPE_VIEWPORT_SCALE_MIN, MOBILE_ENVELOPE_VIEWPORT_SCALE_MAX)
+      : 1;
 
-    return 1 / (zoom * layerScale);
+    return {
+      x: viewportScale / layerScaleX,
+      y: viewportScale / layerScaleY,
+    };
   }
 
   function getEnvelopeHandleSize(roleClass, desktopSize) {
@@ -1023,11 +1030,13 @@
       this.activeTool = "";
       this.dragState = null;
       this.envelopeDragState = null;
+      this.envelopeEditLayerId = "";
       this.artboardDragPreview = null;
 
       this.handleCameraChange = this.handleCameraChange.bind(this);
       this.handleDocumentChange = this.handleDocumentChange.bind(this);
       this.handleToolChange = this.handleToolChange.bind(this);
+      this.handleTextTransformEditRequest = this.handleTextTransformEditRequest.bind(this);
       this.handlePointerDown = this.handlePointerDown.bind(this);
       this.handleWheel = this.handleWheel.bind(this);
       this.handleDragMove = this.handleDragMove.bind(this);
@@ -1039,6 +1048,7 @@
 
       this.mount();
       this.bindEvents();
+      this.syncActiveToolFromToolbar();
       this.syncOverlayInteractivity();
       this.scheduleContentRender();
     }
@@ -1081,6 +1091,7 @@
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
       window.addEventListener("cbo:document-content-change", this.handleDocumentChange);
       window.addEventListener("cbo:tool-change", this.handleToolChange);
+      window.addEventListener("cbo:text-transform-edit-request", this.handleTextTransformEditRequest);
       window.addEventListener("cbo:touch-navigation-start", this.handleTouchNavigationStart);
       window.addEventListener("keydown", this.handleKeyDown);
       window.addEventListener("resize", () => {
@@ -1100,13 +1111,27 @@
       return this.activeTool === "text" || this.activeTool === "type";
     }
 
+    isSelectionToolActive() {
+      return this.activeTool === SELECTION_TOOL_MODE;
+    }
+
+    isEnvelopeEditLayer(layerId) {
+      const normalizedLayerId = String(layerId || "").trim();
+
+      return Boolean(normalizedLayerId && this.envelopeEditLayerId === normalizedLayerId);
+    }
+
     syncOverlayInteractivity() {
       if (!this.svg) {
         return;
       }
 
       this.svg.classList.toggle("text-tool-active", this.isTextToolActive());
-      this.svg.classList.toggle("active-text-layer-selected", Boolean(this.getActiveTextLayer()));
+      this.svg.classList.toggle("envelope-edit-active", Boolean(this.envelopeEditLayerId));
+      this.svg.classList.toggle(
+        "active-text-layer-selected",
+        Boolean(this.getActiveTextLayer()) && (this.isTextToolActive() || this.isSelectionToolActive()),
+      );
     }
 
     handleToolChange(event) {
@@ -1115,10 +1140,66 @@
       const toolMode = String(detail.toolMode || "").toLowerCase();
 
       this.activeTool = toolMode || label;
+      if (!this.isTextToolActive()) {
+        this.clearEnvelopeEdit();
+      }
       this.syncOverlayInteractivity();
     }
 
+    handleTextTransformEditRequest(event) {
+      const layerId = String(event.detail?.layerId || this.layerModel?.activeLayerId || "").trim();
+      const layer = layerId ? this.layerModel?.findEntryById?.(layerId) : null;
+
+      if (!layer?.envelopeGrid || layer.locked === true) {
+        this.clearEnvelopeEdit();
+        return;
+      }
+
+      this.envelopeEditLayerId = layer.id;
+      this.syncOverlayInteractivity();
+      this.scheduleContentRender();
+    }
+
+    clearEnvelopeEdit() {
+      if (!this.envelopeEditLayerId) {
+        return;
+      }
+
+      this.envelopeEditLayerId = "";
+      this.syncOverlayInteractivity();
+      this.scheduleContentRender();
+    }
+
+    validateEnvelopeEditState() {
+      if (!this.envelopeEditLayerId) {
+        return;
+      }
+
+      const activeLayerId = String(this.layerModel?.activeLayerId || "").trim();
+      const layer = this.layerModel?.findEntryById?.(this.envelopeEditLayerId);
+
+      if (activeLayerId !== this.envelopeEditLayerId || !layer?.envelopeGrid || layer.locked === true) {
+        this.clearEnvelopeEdit();
+      }
+    }
+
+    syncActiveToolFromToolbar() {
+      const activeTool = document.querySelector("[data-tool].active");
+
+      if (!activeTool) {
+        return;
+      }
+
+      this.handleToolChange({
+        detail: {
+          label: activeTool.getAttribute("aria-label") || "",
+          toolMode: activeTool.dataset.toolMode || "",
+        },
+      });
+    }
+
     handleDocumentChange() {
+      this.validateEnvelopeEditState();
       this.syncOverlayInteractivity();
       this.scheduleContentRender();
     }
@@ -2070,7 +2151,7 @@
     getEnvelopeHandleHitAtClient(clientX, clientY, pointerType = "mouse") {
       const layer = this.getActiveTextLayer();
 
-      if (!layer?.envelopeGrid || layer.locked === true) {
+      if (!layer?.envelopeGrid || layer.locked === true || !this.isEnvelopeEditLayer(layer.id)) {
         return null;
       }
 
@@ -2241,7 +2322,7 @@
 
       group.append(paintGroup);
 
-      if (options.includeControls !== false && options.active && layer.envelopeGrid) {
+      if (options.includeControls !== false && options.active && layer.envelopeGrid && this.isEnvelopeEditLayer(layer.id)) {
         group.append(this.createEnvelopeControls(layer));
       }
 
@@ -2431,12 +2512,14 @@
       const desktopSize = Number.isFinite(options.size) ? options.size : 12;
       const size = getEnvelopeHandleSize(roleClass, desktopSize);
       const viewportScale = getEnvelopeHandleViewportScale(layer);
+      const viewportScaleX = Number.isFinite(viewportScale?.x) ? viewportScale.x : 1;
+      const viewportScaleY = Number.isFinite(viewportScale?.y) ? viewportScale.y : 1;
       const group = createSvgElement("g", {
         class: `editor-vector-envelope-handle-group ${roleClass}`,
         "data-envelope-node": nodeId,
-        transform: viewportScale === 1
+        transform: viewportScaleX === 1 && viewportScaleY === 1
           ? `translate(${point.x} ${point.y})`
-          : `translate(${point.x} ${point.y}) scale(${viewportScale})`,
+          : `translate(${point.x} ${point.y}) scale(${viewportScaleX} ${viewportScaleY})`,
       });
       const hitTarget = createSvgElement("circle", {
         class: "editor-vector-envelope-hit",
@@ -2574,6 +2657,10 @@
         return;
       }
 
+      if (!this.isSelectionToolActive() && !this.isTextToolActive()) {
+        return;
+      }
+
       const layer = this.layerModel?.findEntryById?.(layerId);
 
       if (!layer) {
@@ -2584,7 +2671,7 @@
       event.stopPropagation();
       this.layerModel.setActiveLayer(layerId, { source: "vector-text-select" });
 
-      if (layer.locked === true || event.button !== 0) {
+      if (!this.isSelectionToolActive() || layer.locked === true || event.button !== 0) {
         return;
       }
 
@@ -2617,7 +2704,7 @@
 
       const layer = this.layerModel?.findEntryById?.(layerId);
 
-      if (!layer?.envelopeGrid || layer.locked === true) {
+      if (!layer?.envelopeGrid || layer.locked === true || !this.isEnvelopeEditLayer(layerId)) {
         return;
       }
 

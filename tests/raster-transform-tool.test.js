@@ -387,3 +387,14 @@ test("raster transform tool uses SVG overlay, resize/rotate activation, and hist
   assert.match(cssSource, /\.editor-raster-transform-handle \{[\s\S]*touch-action: none;/);
   assert.match(cssSource, /@media \(pointer: coarse\) \{[\s\S]*\.editor-raster-transform-box,[\s\S]*\.editor-raster-transform-handle/);
 });
+
+test("selection layer picking follows render stack order above vector text", () => {
+  const source = readRepoFile("js", "raster-transform-tool.js");
+  const pickBody = source.match(/pickLayerAtClient\(clientX, clientY, options = \{\}\) \{([\s\S]*?)\n    getHandleTarget/)?.[1] || "";
+
+  assert.match(pickBody, /const layers = this\.documentRenderer\?\.getRenderableLayers\?\.\(\) \|\| this\.layerModel\?\.getRenderableLayers\?\.\(\) \|\| \[\];/);
+  assert.match(pickBody, /for \(let index = layers\.length - 1; index >= 0; index -= 1\)/);
+  assert.match(pickBody, /const layer = layers\[index\];/);
+  assert.match(pickBody, /selectionOnly[\s\S]*\? this\.isSelectableLayer\(layer\)[\s\S]*: this\.isTransformableLayer\(layer\)/);
+  assert.match(pickBody, /return layer;/);
+});

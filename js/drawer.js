@@ -28,6 +28,13 @@ window.CBO.initDrawer = function initDrawer() {
   let uploadUsageValue = null;
   let uploadUsageFill = null;
   let uploadStatus = null;
+  let uploadPointerActivation = null;
+  let lastUploadPlaceActivation = {
+    at: 0,
+    id: "",
+  };
+  const uploadTouchActivationMoveTolerance = 10;
+  const uploadActivationDedupeMs = 650;
 
   const existingScrollbar = drawerPanel.querySelector(".drawer-custom-scrollbar");
 
@@ -535,6 +542,48 @@ window.CBO.initDrawer = function initDrawer() {
     );
   }
 
+  function getUploadPlaceCardFromEvent(event) {
+    return event.target?.closest?.("[data-upload-place]") || null;
+  }
+
+  function isUploadRemoveEventTarget(event) {
+    return Boolean(event.target?.closest?.("[data-upload-remove]"));
+  }
+
+  function didPointerEndInsideUploadCard(event, uploadCard) {
+    if (!uploadCard || typeof document.elementFromPoint !== "function") {
+      return false;
+    }
+
+    const endTarget = document.elementFromPoint(event.clientX, event.clientY);
+
+    return endTarget instanceof Element && uploadCard.contains(endTarget);
+  }
+
+  function activateUploadedImageCard(uploadCard) {
+    const uploadId = String(uploadCard?.dataset?.uploadPlace || "").trim();
+
+    if (!uploadId) {
+      return false;
+    }
+
+    const now = Date.now();
+
+    if (
+      lastUploadPlaceActivation.id === uploadId &&
+      now - lastUploadPlaceActivation.at < uploadActivationDedupeMs
+    ) {
+      return true;
+    }
+
+    lastUploadPlaceActivation = {
+      at: now,
+      id: uploadId,
+    };
+    placeUploadedImage(uploadId);
+    return true;
+  }
+
   function renderUploadedImages() {
     if (!uploadGrid) {
       return;
@@ -649,6 +698,59 @@ window.CBO.initDrawer = function initDrawer() {
 
     uploadInput?.addEventListener("change", handleUploadFiles);
 
+    uploadGrid?.addEventListener("pointerdown", (event) => {
+      if (
+        event.pointerType !== "touch" ||
+        event.button !== 0 ||
+        isUploadRemoveEventTarget(event)
+      ) {
+        return;
+      }
+
+      const uploadCard = getUploadPlaceCardFromEvent(event);
+
+      if (!uploadCard) {
+        return;
+      }
+
+      uploadPointerActivation = {
+        card: uploadCard,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+      };
+    });
+
+    uploadGrid?.addEventListener("pointerup", (event) => {
+      if (
+        event.pointerType !== "touch" ||
+        !uploadPointerActivation ||
+        uploadPointerActivation.pointerId !== event.pointerId
+      ) {
+        return;
+      }
+
+      const state = uploadPointerActivation;
+      uploadPointerActivation = null;
+
+      const distance = Math.hypot(event.clientX - state.startX, event.clientY - state.startY);
+
+      if (
+        distance > uploadTouchActivationMoveTolerance ||
+        !didPointerEndInsideUploadCard(event, state.card)
+      ) {
+        return;
+      }
+
+      activateUploadedImageCard(state.card);
+    });
+
+    uploadGrid?.addEventListener("pointercancel", (event) => {
+      if (uploadPointerActivation?.pointerId === event.pointerId) {
+        uploadPointerActivation = null;
+      }
+    });
+
     uploadGrid?.addEventListener("click", (event) => {
       const removeButton = event.target.closest("[data-upload-remove]");
 
@@ -657,10 +759,10 @@ window.CBO.initDrawer = function initDrawer() {
         return;
       }
 
-      const uploadCard = event.target.closest("[data-upload-place]");
+      const uploadCard = getUploadPlaceCardFromEvent(event);
 
       if (uploadCard) {
-        placeUploadedImage(uploadCard.dataset.uploadPlace);
+        activateUploadedImageCard(uploadCard);
       }
     });
 

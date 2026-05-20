@@ -3642,7 +3642,7 @@ body.cbo-document-restore-active .editor-stage {
 }
 
 .editor-vector-overlay.text-tool-active,
-.editor-vector-overlay.active-text-layer-selected {
+.editor-vector-overlay.envelope-edit-active {
   pointer-events: auto;
 }
 
@@ -3655,6 +3655,10 @@ body.cbo-document-restore-active .editor-stage {
 }
 
 .editor-vector-text-layer {
+  pointer-events: none;
+}
+
+.editor-vector-overlay.text-tool-active .editor-vector-text-layer {
   pointer-events: visiblePainted;
 }
 

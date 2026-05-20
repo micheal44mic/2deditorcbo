@@ -209,6 +209,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /svg\.dataset\.connectionGeometryKey === geometryKey/);
   assert.match(connectionsSource, /namespace\.renderArtboardConnectionOverlay = function renderArtboardConnectionOverlay/);
   assert.match(connectionsSource, /CONNECTION_CLICK_DISTANCE_CSS_PX = 220/);
+  assert.match(connectionsSource, /CONNECTION_DROP_TARGET_TOUCH_RADIUS_CSS_PX = 104/);
   assert.match(connectionsSource, /data-artboard-connection-dismiss/);
   assert.doesNotMatch(connectionsSource, /addEventListener\("pointerdown", handleMenuDocumentPointerDown/);
   assert.match(connectionsSource, /addEventListener\("click", handleMenuDocumentClick, true\)/);
@@ -242,13 +243,15 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /function isConnectionTargetBoardOccupied\(board, options = \{\}\)/);
   assert.match(connectionsSource, /function setConnectionDropTargetBoard\(boardId = "", options = \{\}\)/);
   assert.match(connectionsSource, /function getConnectionDropTargetAtDocumentPoint\(point, options = \{\}\)/);
-  assert.match(connectionsSource, /const magnetRadius = Math\.max/);
+  assert.match(connectionsSource, /function getConnectionDropTargetMagnetRadius\(board, options = \{\}\)/);
+  assert.match(connectionsSource, /screenRadiusCss \/ viewScale/);
+  assert.match(connectionsSource, /String\(board\?\.id \|\| board \|\| ""\)\.trim\(\)/);
   assert.match(connectionsSource, /connectionDropTargetBoardId = ""/);
   assert.match(connectionsSource, /connectionBlockedTargetBoardId = ""/);
   assert.match(connectionsSource, /is-connection-drop-target/);
   assert.match(connectionsSource, /is-connection-drop-blocked/);
   assert.match(connectionsSource, /const includeOccupied = options\.includeOccupied === true/);
-  assert.match(connectionsSource, /getConnectionDropTargetAtDocumentPoint\(point, \{ includeOccupied: true \}\)/);
+  assert.match(connectionsSource, /getConnectionDropTargetAtDocumentPoint\(point, \{[\s\S]*includeOccupied: true,[\s\S]*pointerType: event\.pointerType \|\| ""/);
   assert.match(connectionsSource, /connectionDrag\.blockedTargetBoardId = blockedBoard\?\.id \|\| ""/);
   assert.match(connectionsSource, /connectionDrag\.targetBoardId = targetBoard\?\.id \|\| ""/);
   assert.match(connectionsSource, /connectionDrag\.targetHandle = targetBoard \? "image-input" : ""/);
