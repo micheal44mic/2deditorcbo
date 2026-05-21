@@ -29,9 +29,9 @@ window.CBO = window.CBO || {};
   const SELECTION_TOOL_MODE = "selection";
   const MOCKUP_BODY_ASSET_ID = "hoodie-body-1";
   const MOCKUP_SLOT_CENTER_OFFSET_Y = 500;
-  const MOCKUP_SLOT_SIZE_DOC = 184;
-  const MOCKUP_SLOT_MIN_SCREEN_SIZE = 44;
-  const MOCKUP_SLOT_MAX_SCREEN_SIZE = 132;
+  const MOCKUP_SLOT_FALLBACK_SIZE_DOC = 120;
+  const MOCKUP_SLOT_FALLBACK_ICON_DOC = 76;
+  const MOCKUP_SLOT_FALLBACK_BORDER_DOC = 3;
 
   let lastCameraState = null;
   let isReady = false;
@@ -519,22 +519,50 @@ window.CBO = window.CBO || {};
     return hasBodyLayer && !hasAddonLayer;
   }
 
+  function getMockupSlotMetrics(scale, artboardWidth, artboardHeight) {
+    const metrics = namespace.artboardConnectionsController?.getActionBubbleMetrics?.(
+      scale,
+      artboardWidth,
+      artboardHeight,
+    );
+
+    if (
+      metrics &&
+      Number.isFinite(Number(metrics.size)) &&
+      Number.isFinite(Number(metrics.iconSize)) &&
+      Number.isFinite(Number(metrics.borderWidth))
+    ) {
+      return {
+        borderWidth: Math.max(0.5, Number(metrics.borderWidth)),
+        iconSize: Math.max(1, Number(metrics.iconSize)),
+        size: Math.max(1, Number(metrics.size)),
+      };
+    }
+
+    const safeScale = Math.max(0.0001, Number(scale) || 1);
+
+    return {
+      borderWidth: Math.max(0.5, MOCKUP_SLOT_FALLBACK_BORDER_DOC * safeScale),
+      iconSize: Math.max(1, MOCKUP_SLOT_FALLBACK_ICON_DOC * safeScale),
+      size: Math.max(1, MOCKUP_SLOT_FALLBACK_SIZE_DOC * safeScale),
+    };
+  }
+
   function getMockupSlotGeometry(artboard, frameWidth, frameHeight) {
     const artboardWidth = Math.max(1, Number(artboard?.width) || 1);
     const artboardHeight = Math.max(1, Number(artboard?.height) || 1);
     const scaleX = Math.max(0.0001, Number(frameWidth) || 1) / artboardWidth;
     const scaleY = Math.max(0.0001, Number(frameHeight) || 1) / artboardHeight;
+    const metrics = getMockupSlotMetrics(Math.min(scaleX, scaleY), artboardWidth, artboardHeight);
     const docX = artboardWidth * 0.5;
     const docY = artboardHeight * 0.5 - MOCKUP_SLOT_CENTER_OFFSET_Y;
-    const rawSize = MOCKUP_SLOT_SIZE_DOC * Math.min(scaleX, scaleY);
-    const size = Math.round(Math.max(
-      MOCKUP_SLOT_MIN_SCREEN_SIZE,
-      Math.min(MOCKUP_SLOT_MAX_SCREEN_SIZE, rawSize),
-    ));
+    const size = metrics.size;
 
     return {
+      borderWidth: metrics.borderWidth,
       docX: Math.round(docX),
       docY: Math.round(docY),
+      iconSize: metrics.iconSize,
       left: (docX * scaleX) - size * 0.5,
       size,
       top: (docY * scaleY) - size * 0.5,
@@ -562,6 +590,8 @@ window.CBO = window.CBO || {};
     button.style.left = `${geometry.left}px`;
     button.style.top = `${geometry.top}px`;
     button.style.setProperty("--mockup-slot-size", `${geometry.size}px`);
+    button.style.setProperty("--mockup-slot-border-width", `${geometry.borderWidth}px`);
+    button.style.setProperty("--mockup-slot-icon-size", `${geometry.iconSize}px`);
     button.addEventListener("pointerdown", handleMockupSlotPointerDown, true);
     button.addEventListener("click", handleMockupSlotClick);
 

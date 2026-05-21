@@ -98,6 +98,12 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const orderedLayers = this\.getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const hasClippingMasks = orderedLayers\.some\(\(layer\) => layer\?\.clippingMask === true\)/);
+  assert.match(source, /canUsePreviewCache[\s\S]*!hasClippingMasks/);
+  assert.match(source, /hasClippingMasksInLayerStack\(layers = null\)/);
+  assert.match(source, /disablePreviewCacheForClippingMasks\(reason = "clipping-mask-stack"\)/);
+  assert.match(source, /createPreviewCache\(options = \{\}\)[\s\S]*hasClippingMasksInLayerStack\(\)/);
+  assert.match(source, /updatePreviewCacheIfNeeded\(options = \{\}\)[\s\S]*hasClippingMasksInLayerStack\(\)/);
+  assert.match(source, /drawPreviewCacheToCanvas\(options = \{\}\)[\s\S]*hasClippingMasksInLayerStack\(\)/);
   assert.match(source, /const activeStrokeUsesClippingMask = Boolean/);
   assert.match(source, /const needsClipBaseTexture = \(layer\) => Boolean/);
   assert.match(source, /pendingClipBaseLayer\?\.id && needsClipBaseTexture\(pendingClipBaseLayer\)/);
@@ -107,6 +113,10 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /isValidClipBaseLayer\(layer\)/);
   assert.match(source, /createClipBaseForLayer\(layer, target, visible = true, options = \{\}\)/);
   assert.match(source, /getClipBaseOrigin\(clipBase\)/);
+  assert.match(source, /forceSingleTexture: Boolean\(eraserMaskTexture \|\| isClippingLayer\)/);
+  assert.match(source, /source: isClippingLayer \? "canvas-clipping-layer" : "canvas-sparse-layer"/);
+  assert.match(source, /shouldRebindArtboardAfterTargetResolve/);
+  assert.match(source, /bindArtboardProgram\(\);/);
   assert.match(source, /for \(const renderResult of this\.getLayerRenderResults\(layer, renderTarget, viewportLayerRenderOptions\)\)/);
   assert.match(source, /const layerRect = this\.getArtboardDragVisualRect\(layer, renderResult\?\.rect \|\| null, renderTarget\)/);
   assert.match(source, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);

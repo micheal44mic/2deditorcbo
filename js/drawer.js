@@ -143,6 +143,7 @@ window.CBO.initDrawer = function initDrawer() {
     if (mockupItem) {
       const itemName = getItemName(categoryItem, categoryTitle);
 
+      item.classList.add("drawer-mockup-placeholder");
       item.type = "button";
       item.dataset.mockupId = categoryItem.id || "";
       item.setAttribute("aria-label", `Open ${itemName}`);

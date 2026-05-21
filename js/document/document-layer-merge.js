@@ -609,11 +609,14 @@
       const rawLayerTarget = renderer.rasterTargetsByLayerId.get(layer.id);
       const isClippingLayer = layer.clippingMask === true;
       let layerTarget = renderer.getRenderableLayerTarget?.(layer, rawLayerTarget, {
+        forceSingleTexture: isClippingLayer,
         source: "layers-merge-render",
       }) || rawLayerTarget;
+      let shouldRebindMergeAfterTargetResolve = layerTarget !== rawLayerTarget;
 
       if (!isClippingLayer) {
         const shouldMaterializeClipBase = clipBaseLayerIds.has(layer.id);
+        const previousLayerTarget = layerTarget;
         const baseTarget = shouldMaterializeClipBase
           ? renderer.getRenderableLayerTarget?.(layer, layerTarget, {
               forceSingleTexture: true,
@@ -623,11 +626,18 @@
 
         if (shouldMaterializeClipBase) {
           layerTarget = baseTarget;
+          if (baseTarget !== previousLayerTarget || baseTarget !== rawLayerTarget) {
+            shouldRebindMergeAfterTargetResolve = true;
+          }
         }
 
         currentClipBase = isMergeableContentLayer(layer)
           ? renderer.createClipBaseForLayer?.(layer, baseTarget, layer.visible !== false) || null
           : null;
+      }
+
+      if (shouldRebindMergeAfterTargetResolve) {
+        bindMergeProgram(renderer, state);
       }
 
       if (layer.visible === false) {

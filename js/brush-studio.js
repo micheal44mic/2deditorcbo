@@ -13,6 +13,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const shapeAlphaExportSize = BrushDefaults.shapeAlphaExportSize;
   const grainTextureExportSize = BrushDefaults.grainTextureExportSize;
   const brushSizeMax = BrushDefaults.brushSizeMax || 500;
+  const minimumSpacingPercent = Math.max(1, Math.round((BrushDefaults.minimumSpacing || 0.01) * 100));
   const studioCategories = ["STROKE", "SHAPE", "GRAIN", "RENDERING", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = BrushDefaults.defaultTaperMinDistance;
   const taperTipRealMin = BrushDefaults.taperTipRealMin;
@@ -1988,12 +1989,12 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     const spacingSetting = createRangeSetting({
       key: "spacing",
       label: "SPACING",
-      min: 0,
+      min: minimumSpacingPercent,
       max: 100,
       step: 1,
-      value: Math.round(draftBrushSettings.spacing * 100),
+      value: Math.max(minimumSpacingPercent, Math.round(draftBrushSettings.spacing * 100)),
       unit: "%",
-      toSetting: (displayValue) => displayValue / 100,
+      toSetting: (displayValue) => Math.max(minimumSpacingPercent, displayValue) / 100,
       toDisplay: (displayValue) => Math.round(displayValue),
     });
     const spacingJitterSetting = createRangeSetting({

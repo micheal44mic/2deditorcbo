@@ -395,6 +395,44 @@ test("brush keeps clipping mask base paint targets dense", () => {
   assert.equal(strategy.tilePatchRects, null);
 });
 
+test("brush keeps clipping mask layer paint targets dense", () => {
+  const { BrushEngine } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  engine.strokeTargetLayerId = "paint-clip";
+  engine.documentRenderer = {
+    getOrderedLayersBottomToTop: () => [
+      { id: "paint-base", type: "paint" },
+      { clippingMask: true, id: "paint-clip", type: "paint" },
+    ],
+    isMobileLikeDevice: () => false,
+  };
+  engine.getRasterRectCoverage = () => 0.01;
+
+  const strategy = engine.getBrushBakePaintTargetStrategy({
+    documentTarget: {
+      height: 4000,
+      layerId: "paint-clip",
+      width: 4000,
+      x: 0,
+      y: 0,
+    },
+    effectiveStrokeRect: {
+      height: 80,
+      width: 80,
+      x: 100,
+      y: 100,
+    },
+    tilePatchRects: [{ rect: { height: 80, width: 80, x: 100, y: 100 } }],
+  });
+
+  assert.equal(engine.isLayerClippingMask("paint-clip"), true);
+  assert.equal(engine.isLayerClippingMaskBase("paint-clip"), false);
+  assert.equal(strategy.mode, "dense-clipping-mask-layer");
+  assert.equal(strategy.sparse, false);
+  assert.equal(strategy.tilePatchRects, null);
+});
+
 test("brush preview dirty regions split long strokes into preview tiles", () => {
   const { BrushEngine } = loadBrushEngine();
   const engine = Object.create(BrushEngine.prototype);

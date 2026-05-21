@@ -7,6 +7,7 @@ window.CBO = window.CBO || {};
   const defaultGrainTextureName = namespace.defaultGrainTexture?.name || "PASTEL PENCIL GRAIN";
   const defaultTaperMinDistance = 247;
   const brushSizeMax = 500;
+  const minimumSpacing = 0.01;
   const taperTipRealMin = 0.15;
   const grainModeValues = new Set(["moving", "texturized"]);
   const grainBlendModeValues = Object.freeze([
@@ -198,6 +199,11 @@ window.CBO = window.CBO || {};
     nextSettings.renderingMode = normalizeRenderingMode(nextSettings.renderingMode);
     nextSettings.flow = normalize01(nextSettings.flow, settings.flow);
     nextSettings.radius = normalizeRange(nextSettings.radius, settings.radius, 1, brushSizeMax);
+    nextSettings.spacing = normalizeRange(nextSettings.spacing, settings.spacing, minimumSpacing, 1);
+    nextSettings.spacingJitter = normalize01(nextSettings.spacingJitter, settings.spacingJitter);
+    nextSettings.jitterLateral = normalizeRange(nextSettings.jitterLateral, settings.jitterLateral, 0, 2);
+    nextSettings.jitterLinear = normalizeRange(nextSettings.jitterLinear, settings.jitterLinear, 0, 2);
+    nextSettings.fallOff = normalize01(nextSettings.fallOff, settings.fallOff);
     nextSettings.wetEdges = normalize01(nextSettings.wetEdges, settings.wetEdges);
     nextSettings.burntEdges = normalize01(nextSettings.burntEdges, settings.burntEdges);
     nextSettings.burntEdgesMode = normalizeBurntEdgesMode(nextSettings.burntEdgesMode);
@@ -205,6 +211,9 @@ window.CBO = window.CBO || {};
     nextSettings.alphaThreshold = normalize01(nextSettings.alphaThreshold, settings.alphaThreshold);
     nextSettings.velocityPressureEnabled = nextSettings.velocityPressureEnabled === true;
     nextSettings.shapeRotation = normalizeSigned(nextSettings.shapeRotation, settings.shapeRotation);
+    nextSettings.shapeScatter = normalizeRange(nextSettings.shapeScatter, settings.shapeScatter, 0, 2);
+    nextSettings.shapeCount = normalizeRange(Math.round(Number(nextSettings.shapeCount) || settings.shapeCount), settings.shapeCount, 1, 16);
+    nextSettings.shapeCountJitter = normalize01(nextSettings.shapeCountJitter, settings.shapeCountJitter);
     nextSettings.grainBrightness = normalizeSigned(nextSettings.grainBrightness, settings.grainBrightness);
     nextSettings.grainContrast = normalizeSigned(nextSettings.grainContrast, settings.grainContrast);
     nextSettings.grainTexturizedScale = hasOwn(nextOverrides, "grainTexturizedScale")
@@ -244,6 +253,7 @@ window.CBO = window.CBO || {};
     grainTextureExportSize: 2048,
     shapeAlphaExportSize: 512,
     brushSizeMax,
+    minimumSpacing,
     settings,
     taperTipRealMin,
     createSettings,

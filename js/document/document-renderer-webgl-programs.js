@@ -1503,7 +1503,6 @@
         : 2;
       const fallbackWidth = Math.max(1, Math.round(options.fallbackWidth || this.width || 1));
       const fallbackHeight = Math.max(1, Math.round(options.fallbackHeight || this.height || 1));
-
       if (!clipBase?.visible) {
         return this.setDisabledClipBaseUniforms(uniforms, {
           fallbackHeight,

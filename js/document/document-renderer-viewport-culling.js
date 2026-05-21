@@ -1962,7 +1962,37 @@
     }
 ,
 
+    hasClippingMasksInLayerStack(layers = null) {
+      const stack = Array.isArray(layers)
+        ? layers
+        : (this.getOrderedLayersBottomToTop?.() || []);
+
+      return stack.some((layer) => layer?.clippingMask === true);
+    }
+,
+
+    disablePreviewCacheForClippingMasks(reason = "clipping-mask-stack") {
+      if (this.previewTexture || this.previewFramebuffer) {
+        this.deletePreviewCache();
+      }
+
+      this.previewCacheDirty = true;
+      this.previewCacheReady = false;
+      this.previewCacheReason = reason;
+      this.previewDirtyRects = null;
+      this.previewDirtyCompactOptions = null;
+      this.previewLastDirtyMode = "clipping-mask-full-render";
+      this.previewLastDirtyRect = null;
+
+      return false;
+    }
+,
+
     createPreviewCache(options = {}) {
+      if (this.hasClippingMasksInLayerStack()) {
+        return this.disablePreviewCacheForClippingMasks("clipping-mask-stack");
+      }
+
       if (isAndroidPreviewCacheDisabled(options)) {
         if (this.previewTexture || this.previewFramebuffer) {
           this.deletePreviewCache();
@@ -3338,6 +3368,10 @@
 ,
 
     updatePreviewCacheIfNeeded(options = {}) {
+      if (this.hasClippingMasksInLayerStack()) {
+        return this.disablePreviewCacheForClippingMasks("clipping-mask-stack");
+      }
+
       const didCreate = this.createPreviewCache(options);
 
       if (!didCreate) {
@@ -3353,6 +3387,10 @@
 ,
 
     updatePreviewCache(options = {}) {
+      if (this.hasClippingMasksInLayerStack()) {
+        return this.disablePreviewCacheForClippingMasks("clipping-mask-stack");
+      }
+
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("preview-cache.update", {
         dirty: this.previewCacheDirty,
         reason: this.previewCacheReason || "unknown",
@@ -3647,12 +3685,14 @@
           const opacity = Number.isFinite(layer.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
           const clipBase = isClippingLayer ? currentClipBase : null;
           let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
-            forceSingleTexture: false,
-            source: "preview-cache-sparse-layer",
+            forceSingleTexture: isClippingLayer,
+            source: isClippingLayer ? "preview-cache-clipping-layer" : "preview-cache-sparse-layer",
           });
+          let shouldRebindPreviewAfterTargetResolve = layerTarget !== rawLayerTarget;
 
           if (!isClippingLayer) {
             const shouldMaterializeClipBase = clipBaseLayerIds.has(layer.id);
+            const previousLayerTarget = layerTarget;
             const baseTarget = shouldMaterializeClipBase
               ? this.getRenderableLayerTarget(layer, layerTarget, {
                   forceSingleTexture: true,
@@ -3662,11 +3702,18 @@
 
             if (shouldMaterializeClipBase) {
               layerTarget = baseTarget;
+              if (baseTarget !== previousLayerTarget || baseTarget !== rawLayerTarget) {
+                shouldRebindPreviewAfterTargetResolve = true;
+              }
             }
 
             currentClipBase = isValidClipBaseLayer(layer)
               ? this.createClipBaseForLayer(layer, baseTarget, layer.visible !== false)
               : null;
+          }
+
+          if (shouldRebindPreviewAfterTargetResolve) {
+            bindArtboardProgram();
           }
 
           if (layer.visible === false) {
@@ -3782,6 +3829,10 @@
 ,
 
     drawPreviewCacheToCanvas(options = {}) {
+      if (this.hasClippingMasksInLayerStack()) {
+        return this.disablePreviewCacheForClippingMasks("clipping-mask-stack");
+      }
+
       if (!this.previewTexture || !this.previewCacheReady || !this.programInfo || !this.quad) {
         return false;
       }

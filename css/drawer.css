@@ -565,6 +565,10 @@
   text-align: left;
 }
 
+.drawer-mockup-placeholder {
+  background: #ffffff;
+}
+
 button.drawer-image-placeholder {
   cursor: pointer;
 }
@@ -588,6 +592,10 @@ button.drawer-image-placeholder:focus-visible {
   padding: 7px;
   background: #050506;
   object-fit: contain;
+}
+
+.drawer-mockup-placeholder .drawer-image-contain {
+  background: #ffffff;
 }
 
 .drawer-image-label {

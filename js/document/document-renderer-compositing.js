@@ -1291,12 +1291,14 @@
         allowPreviewCache &&
         canUsePreviewCacheAtCurrentZoom &&
         !hasArtboardDragPreview &&
+        !hasClippingMasks &&
         !rasterTransformPreview &&
         !vectorTextTransformPreviewLayerId &&
         !hasActiveEraserStroke &&
         !activeStrokeNeedsFullStack &&
         activeStrokeCanOverlayPreview
       );
+
       const deferPreviewCacheUpdate = Boolean(
         options.deferPreviewCacheUpdate === true ||
         options.activeStrokeTexture
@@ -1832,10 +1834,11 @@
             )
           );
           let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
-            forceSingleTexture: Boolean(eraserMaskTexture),
+            forceSingleTexture: Boolean(eraserMaskTexture || isClippingLayer),
             skipLayerEffects: skipLayerEffectsForInteractiveStroke,
-            source: "canvas-sparse-layer",
+            source: isClippingLayer ? "canvas-clipping-layer" : "canvas-sparse-layer",
           });
+          let shouldRebindArtboardAfterTargetResolve = layerTarget !== rawLayerTarget;
           const canCullSparseTilesForViewport = Boolean(
             staticViewportRenderRect &&
             !isClippingLayer &&
@@ -1867,6 +1870,7 @@
 
           if (!isClippingLayer) {
             const shouldMaterializeClipBase = hasClippingMasks && isClipBaseLayer;
+            const previousLayerTarget = layerTarget;
             const baseTarget = shouldMaterializeClipBase
               ? this.getRenderableLayerTarget(layer, layerTarget, {
                   forceSingleTexture: true,
@@ -1876,6 +1880,9 @@
 
             if (shouldMaterializeClipBase) {
               layerTarget = baseTarget;
+              if (baseTarget !== previousLayerTarget || baseTarget !== rawLayerTarget) {
+                shouldRebindArtboardAfterTargetResolve = true;
+              }
             }
 
             currentClipBase = isValidClipBaseLayer(layer)
@@ -1883,6 +1890,10 @@
                   transformPreview: transformPreviewForClipBase,
                 })
               : null;
+          }
+
+          if (shouldRebindArtboardAfterTargetResolve) {
+            bindArtboardProgram();
           }
 
           if (layer.visible === false) {

@@ -66,6 +66,20 @@
       STROKE_RENDER_MODE_MIXED,
       COLOR_GOLDEN_RATIO,
     } = internals;
+    const ADAPTIVE_SPACING_MIN_FRACTION = 0.01;
+    const ADAPTIVE_SPACING_MIN_ZOOM = 0.1;
+    const ADAPTIVE_SPACING_DESKTOP = Object.freeze({
+      full: 2800,
+      maxMultiplier: 4,
+      smoothing: 0.35,
+      start: 650,
+    });
+    const ADAPTIVE_SPACING_MOBILE = Object.freeze({
+      full: 1700,
+      maxMultiplier: 7,
+      smoothing: 0.45,
+      start: 380,
+    });
 
     defineBrushEngineMethods(BrushEngine, {
     createSeededUnit(seed) {
@@ -124,6 +138,7 @@
           })
         : null;
       this.initializeVelocityPressureState(sample);
+      this.resetAdaptiveSpacingState(sample);
 
       return {
         ...sample,
@@ -230,6 +245,103 @@
       return this.isMobilePerformanceMode()
         ? MOBILE_MAX_STAMPS_PER_FLUSH
         : MAX_STAMPS_PER_FLUSH;
+    }
+,
+
+    isAdaptiveBrushSpacingEnabled() {
+      return (
+        namespace.adaptiveBrushSpacingEnabled !== false &&
+        namespace.brushAdaptiveSpacingEnabled !== false &&
+        this.brushState?.adaptiveSpacingEnabled !== false &&
+        this.currentStrokeTool === "brush" &&
+        this.isDrawing === true &&
+        this.largeBlendFinalQualityReplay !== true &&
+        this.strokeTotalLength == null
+      );
+    }
+,
+
+    getAdaptiveSpacingConfig(pointerType = "") {
+      const normalizedPointerType = String(pointerType || "").toLowerCase();
+
+      return this.isMobilePerformanceMode() || this.isAndroidPerformanceMode() || normalizedPointerType === "touch"
+        ? ADAPTIVE_SPACING_MOBILE
+        : ADAPTIVE_SPACING_DESKTOP;
+    }
+,
+
+    resetAdaptiveSpacingState(sample = null) {
+      const sampleTime = Number(sample?.time);
+
+      this.adaptiveSpacingState = sample
+        ? {
+            lastTime: Number.isFinite(sampleTime) ? sampleTime : this.getNow(),
+            pointerType: sample.pointerType || "",
+            speed: 0,
+          }
+        : null;
+      this.activeStrokeSpacingMultiplier = 1;
+    }
+,
+
+    updateAdaptiveSpacingForSegment(from, to) {
+      if (!this.isAdaptiveBrushSpacingEnabled() || !from || !to) {
+        this.activeStrokeSpacingMultiplier = 1;
+        return 1;
+      }
+
+      if (!this.adaptiveSpacingState) {
+        this.resetAdaptiveSpacingState(from);
+      }
+
+      const state = this.adaptiveSpacingState;
+      const pointerType = to.pointerType || from.pointerType || state?.pointerType || "";
+      const config = this.getAdaptiveSpacingConfig(pointerType);
+      const currentTime = Number(to.time);
+      const previousTime = Number(from.time);
+      const safeCurrentTime = Number.isFinite(currentTime)
+        ? currentTime
+        : (Number.isFinite(previousTime) ? previousTime + 16 : this.getNow());
+      const safePreviousTime = Number.isFinite(previousTime)
+        ? previousTime
+        : (Number.isFinite(state?.lastTime) ? state.lastTime : safeCurrentTime - 16);
+      const deltaTime = Math.max(1, Math.min(64, safeCurrentTime - safePreviousTime));
+      const distance = Math.hypot(to.x - from.x, to.y - from.y);
+      const zoom = this.clamp(Number(this.camera?.zoom) || 1, ADAPTIVE_SPACING_MIN_ZOOM, MAX_ZOOM);
+      const screenSpeedPerSecond = distance * zoom / (deltaTime * 0.001);
+      const previousSpeed = Number.isFinite(state?.speed) ? state.speed : 0;
+
+      state.speed = previousSpeed + (screenSpeedPerSecond - previousSpeed) * config.smoothing;
+      state.lastTime = safeCurrentTime;
+      state.pointerType = pointerType;
+
+      const ramp = this.clamp((state.speed - config.start) / Math.max(1, config.full - config.start), 0, 1);
+      const eased = ramp * ramp * (3 - 2 * ramp);
+      const speedMultiplier = 1 + eased * (config.maxMultiplier - 1);
+      const zoomOutMultiplier = zoom < 1 ? 1 / zoom : 1;
+      const multiplier = Math.max(1, speedMultiplier * zoomOutMultiplier);
+
+      this.activeStrokeSpacingMultiplier = multiplier;
+      namespace.lastBrushAdaptiveSpacing = {
+        multiplier,
+        pointerType,
+        screenSpeedPerSecond,
+        timestamp: Date.now(),
+        zoom,
+      };
+
+      return multiplier;
+    }
+,
+
+    getActiveAdaptiveSpacingMultiplier() {
+      if (!this.isAdaptiveBrushSpacingEnabled()) {
+        return 1;
+      }
+
+      const multiplier = Number(this.activeStrokeSpacingMultiplier);
+
+      return Number.isFinite(multiplier) && multiplier > 1 ? multiplier : 1;
     }
 ,
 
@@ -968,12 +1080,13 @@
       const brushSize = this.getBrushSize();
       const spacingFraction = Number(this.brushState.spacing);
       const safeSpacing = Number.isFinite(spacingFraction)
-        ? this.clamp(spacingFraction, 0, 1)
-        : 0.1;
+        ? this.clamp(spacingFraction, ADAPTIVE_SPACING_MIN_FRACTION, 1)
+        : Math.max(ADAPTIVE_SPACING_MIN_FRACTION, 0.1);
       const effectiveSpacing = this.getMobileLargeBlendSpacingFraction(safeSpacing, brushSize);
       const spacingJitter = this.clamp01(this.brushState.spacingJitter);
       const effectiveSizeScale = this.clamp(sizeScale, 0.05, 1);
-      const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * effectiveSpacing);
+      const adaptiveSpacingMultiplier = this.getActiveAdaptiveSpacingMultiplier();
+      const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * effectiveSpacing * adaptiveSpacingMultiplier);
       const jitterAmount = baseSpacing * spacingJitter * 0.85;
       const spacing = Math.max(0.5, baseSpacing + this.randomSigned() * jitterAmount);
 
@@ -2057,6 +2170,8 @@
 
       const sampleCount = this.getStrokeSegmentSampleCount(segmentDistance);
       let previousPoint = this.catmullRom(p0, p1, p2, p3, 0);
+
+      this.updateAdaptiveSpacingForSegment(p1, p2);
 
       for (let index = 1; index <= sampleCount; index += 1) {
         const t = index / sampleCount;

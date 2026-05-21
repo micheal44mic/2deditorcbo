@@ -1363,6 +1363,7 @@
       this.nextStampDistance = 1;
       this.strokeDistance = 0;
       this.strokeStampCount = 0;
+      this.activeStrokeSpacingMultiplier = 1;
     }
 ,
 
@@ -1377,6 +1378,7 @@
       this.strokeWetRandomState = null;
       this.strokeGrainRandomState = null;
       this.velocityPressureState = null;
+      this.adaptiveSpacingState = null;
       this.strokeChargeRadius = null;
       this.strokeGrainOffset = { x: 0, y: 0 };
       this.activeStrokeSymmetry = null;

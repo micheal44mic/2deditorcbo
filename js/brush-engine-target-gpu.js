@@ -1657,10 +1657,12 @@
       const coverage = this.getRasterRectCoverage(effectiveStrokeRect, documentTarget);
       const isMobileLike = Boolean(this.documentRenderer?.isMobileLikeDevice?.());
       const layerId = String(this.strokeTargetLayerId || documentTarget?.layerId || "").trim();
+      const isClippingMaskLayer = !isEraserStroke && this.isLayerClippingMask(layerId);
       const isClippingMaskBase = !isEraserStroke && this.isLayerClippingMaskBase(layerId);
       const shouldUseDenseTarget = Boolean(
         !isEraserStroke &&
         (
+          isClippingMaskLayer ||
           isClippingMaskBase ||
           (
             isMobileLike &&
@@ -1675,15 +1677,55 @@
 
       return {
         coverage,
-        mode: isClippingMaskBase
-          ? "dense-clipping-mask-base"
-          : shouldUseDenseTarget
-            ? "dense-mobile-large-stroke"
-            : "sparse-patch",
+        mode: isClippingMaskLayer
+          ? "dense-clipping-mask-layer"
+          : isClippingMaskBase
+            ? "dense-clipping-mask-base"
+            : shouldUseDenseTarget
+              ? "dense-mobile-large-stroke"
+              : "sparse-patch",
         sparse: !shouldUseDenseTarget,
         tilePatchRectCount,
         tilePatchRects: shouldUseDenseTarget ? null : tilePatchRects,
       };
+    }
+,
+
+    isLayerClippingMask(layerId) {
+      const normalizedLayerId = String(layerId || "").trim();
+
+      if (!normalizedLayerId) {
+        return false;
+      }
+
+      const renderer = this.documentRenderer || null;
+      const layerModel = renderer?.layerModel || namespace.documentLayerModel || null;
+      const modelEntry = typeof layerModel?.findEntryById === "function"
+        ? layerModel.findEntryById(normalizedLayerId)
+        : null;
+
+      if (modelEntry) {
+        return modelEntry.clippingMask === true;
+      }
+
+      let orderedLayers = [];
+
+      if (typeof renderer?.getOrderedLayersBottomToTop === "function") {
+        orderedLayers = renderer.getOrderedLayersBottomToTop();
+      } else if (typeof layerModel?.flattenTopToBottom === "function") {
+        orderedLayers = layerModel.flattenTopToBottom().slice().reverse();
+      } else if (typeof layerModel?.getEntries === "function") {
+        orderedLayers = layerModel.getEntries().slice().reverse();
+      }
+
+      if (!Array.isArray(orderedLayers) || orderedLayers.length === 0) {
+        return false;
+      }
+
+      return orderedLayers.some((layer) =>
+        layer?.id === normalizedLayerId &&
+        layer.clippingMask === true
+      );
     }
 ,
 

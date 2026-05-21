@@ -3243,6 +3243,7 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /const exactCacheDocRect = this\.getPreviewCacheExactDocumentRect\(cacheDocRect\)/);
   assert.doesNotMatch(source, /previewCacheCoversDocumentBounds/);
   assert.match(source, /allowPreviewCache &&\s*canUsePreviewCacheAtCurrentZoom/);
+  assert.match(source, /!hasClippingMasks &&/);
   assert.match(source, /this\.previewCacheReady && !this\.previewCacheDirty && this\.previewTexture/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
