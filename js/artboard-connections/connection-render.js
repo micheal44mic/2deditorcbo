@@ -63,8 +63,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.createConnectionPath = function createConnectionPath(connection, options = {}) {
     with (this) {
 
-    const sourceArtboard = getArtboardById(connection.sourceArtboardId);
-    const sourceDoc = getActionAnchorPoint(sourceArtboard);
+    const sourceDoc = getConnectionStartPoint(connection);
     const targetDoc = getConnectionEndPoint(connection);
 
     if (!sourceDoc || !targetDoc) {
@@ -77,12 +76,15 @@ window.CBO = window.CBO || {};
     const viewScale = getViewScale();
     const pathScale = plainArtboardMode ? CONNECTION_PLAIN_GEOMETRY_SCALE * viewScale : 1;
     const strokeWidth = plainArtboardMode ? getPlainConnectionStrokeWidth() : getConnectionStrokeWidth(1);
+    const isTextSource = isTextPromptConnection(connection);
 
     return createSvgElement("path", {
-      class: `editor-artboard-connection-path${options.active ? " is-active" : ""}`,
+      class: `editor-artboard-connection-path${options.active ? " is-active" : ""}${isTextSource ? " is-text-prompt-source" : ""}`,
       d: createConnectionPathD(source, target, pathScale),
       "data-connection-id": connection.id || "",
-      "marker-end": "url(#editor-artboard-connection-arrow)",
+      "marker-end": isTextSource
+        ? "url(#editor-text-prompt-connection-arrow)"
+        : "url(#editor-artboard-connection-arrow)",
       "stroke-width": strokeWidth,
     });
     }
@@ -110,6 +112,24 @@ window.CBO = window.CBO || {};
     marker.appendChild(arrow);
     defs.appendChild(marker);
 
+    const textMarker = createSvgElement("marker", {
+      id: "editor-text-prompt-connection-arrow",
+      markerHeight: "5",
+      markerUnits: "strokeWidth",
+      markerWidth: "5",
+      orient: "auto",
+      refX: "0",
+      refY: "2.5",
+      viewBox: "0 0 5 5",
+    });
+    const textArrow = createSvgElement("path", {
+      d: "M 0 0 L 5 2.5 L 0 5 z",
+      fill: "#346aa6",
+    });
+
+    textMarker.appendChild(textArrow);
+    defs.appendChild(textMarker);
+
     return defs;
     }
   };
@@ -136,13 +156,14 @@ window.CBO = window.CBO || {};
     with (this) {
 
     const records = connections.map((connection) => {
-      const sourceArtboard = getArtboardById(connection.sourceArtboardId);
-      const source = getActionAnchorPoint(sourceArtboard);
+      const source = getConnectionStartPoint(connection);
       const target = getConnectionEndPoint(connection);
 
       return [
         connection.id || "",
         connection.sourceArtboardId || "",
+        connection.sourceBoardId || "",
+        connection.sourceBoardType || "",
         connection.targetBoardId || "",
         connection.targetHandle || "",
         getPointGeometryKey(source),
@@ -151,14 +172,15 @@ window.CBO = window.CBO || {};
     });
 
     if (connectionDrag) {
-      const sourceArtboard = getArtboardById(connectionDrag.sourceArtboardId);
-      const source = getActionAnchorPoint(sourceArtboard);
+      const source = getConnectionStartPoint(connectionDrag);
       const target = getConnectionEndPoint(connectionDrag);
 
       records.push([
         "drag",
         connectionDrag.id || "",
         connectionDrag.sourceArtboardId || "",
+        connectionDrag.sourceBoardId || "",
+        connectionDrag.sourceBoardType || "",
         getPointGeometryKey(source),
         getPointGeometryKey(target),
       ].join(":"));
@@ -218,4 +240,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

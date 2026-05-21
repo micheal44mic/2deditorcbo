@@ -34,11 +34,21 @@ test("vector rectangle layers are lightweight, saved entries instead of raster t
   assert.match(toolSource, /const MIN_RECT_SIZE = 12/);
   assert.match(toolSource, /const RECT_RESIZE_HANDLE_SIZE_CSS_PX = 10/);
   assert.match(toolSource, /const RECT_ACTION_TOOLBAR_GAP_CSS_PX = 14/);
+  assert.match(toolSource, /const VECTOR_RECT_MOVE_TYPE = "vector-rect"/);
+  assert.match(toolSource, /const VECTOR_TEXT_LAYER_TYPE = "vector-text"/);
+  assert.match(toolSource, /class="lucide lucide-move-icon lucide-move"/);
   assert.match(toolSource, /const RECT_RESIZE_HANDLES = \[/);
   assert.match(toolSource, /const STAGE_INTERACTIVE_SELECTOR = \[/);
   assert.match(toolSource, /"\[data-mockup-slot\]"/);
   assert.match(toolSource, /"\[data-artboard-action-bubble\]"/);
+  assert.match(toolSource, /"\[data-vector-text-layer\]"/);
   assert.match(toolSource, /function isPointerOverStageInteractiveTarget\(event, overlay\)/);
+  assert.match(toolSource, /function documentPointToLayerPoint\(layer, point\)/);
+  assert.match(toolSource, /function getVectorTextApproxBounds\(layer\)/);
+  assert.match(toolSource, /function isPointInVectorTextApproxBounds\(point, layer, padding = 0\)/);
+  assert.match(toolSource, /function isPointerOverVectorTextLayer\(event, layer, point = null\)/);
+  assert.match(toolSource, /document\.querySelector\?\.\(`\.editor-vector-text-layer\[data-layer-id="\$\{cssEscape\(layerId\)\}"\]`\)/);
+  assert.match(toolSource, /isPointInVectorTextApproxBounds\(point, layer, cssPixelsToDocumentUnits\(12\)\)/);
   assert.match(toolSource, /document\.elementsFromPoint\(event\.clientX, event\.clientY\)/);
   assert.match(toolSource, /function isPointerOverDrawingArtboardLabel\(event, stage\)/);
   assert.match(toolSource, /function isPointInsideDrawingArtboard\(point\)/);
@@ -55,11 +65,31 @@ test("vector rectangle layers are lightweight, saved entries instead of raster t
   assert.match(toolSource, /rx: Number\.isFinite\(options\.rx\) \? Math\.max\(0, options\.rx\) : DEFAULT_RECT_RADIUS/);
   assert.match(toolSource, /locked: true/);
   assert.match(toolSource, /selectable: false/);
+  assert.match(toolSource, /canvasObject: true/);
   assert.match(toolSource, /vectorEffect: "non-scaling-stroke"/);
   assert.match(toolSource, /layerModel\.setEntries\(nextEntries/);
-  assert.match(toolSource, /insertEntryAtBottomOfArtboard\(entries, artboardId, layer, layerModel\)/);
-  assert.match(toolSource, /insertEntryAboveBackground\(entry\.children, layer\)/);
-  assert.match(toolSource, /getHitLayerAtPoint\(point\)/);
+  assert.match(toolSource, /function insertRectCanvasObjectAtBottom\(entries, layer\)/);
+  assert.match(toolSource, /const firstNonCanvasObjectIndex = entries\.findIndex\(\(entry\) => !isCanvasObjectEntry\(entry\)\)/);
+  assert.match(toolSource, /const didInsert = insertRectCanvasObjectAtBottom\(entries, layer\)/);
+  assert.match(layerModelSource, /isCanvasObjectLayerEntry\(entry\)/);
+  assert.match(layerModelSource, /entry\?\.type === "vector-rect"/);
+  assert.match(layerModelSource, /delete clone\.artboardId/);
+  assert.match(layersPanelSource, /function isCanvasObjectLayerEntry\(entry\)/);
+  assert.match(layersPanelSource, /function isLayerPanelHiddenEntry\(entry\)/);
+  assert.match(layersPanelSource, /entry\?\.type === "vector-rect"/);
+  assert.match(layersPanelSource, /collectLayerPanelHiddenEntries\(layerModel\.getEntries\?\.\(\) \|\| \[\]\)/);
+  assert.match(layersPanelSource, /if \(isLayerPanelHiddenEntry\(entry\)\) \{\s*return null;\s*\}/);
+  assert.match(layersPanelSource, /const nextEntries = \[\.\.\.looseCanvasObjectEntries, \.\.\.artboardEntries\]/);
+  assert.match(toolSource, /getHitLayerAtPoint\(point, event\)/);
+  assert.match(toolSource, /isPointerBlockedByPriorityLayer\(event, point\)/);
+  assert.match(toolSource, /return layers\.some\(\(layer\) => isVectorTextLayerEntry\(layer\) && isPointerOverVectorTextLayer\(event, layer, point\)\)/);
+  assert.doesNotMatch(toolSource, /function isSelectionToolState\(detail = \{\}\)/);
+  assert.match(toolSource, /this\.canSelectExistingRects = this\.isActive/);
+  assert.match(toolSource, /this\.clearSelection\("vector-rect-tool-change-clear-selection"\)/);
+  assert.match(toolSource, /const canMoveHitLayer = this\.isSelectedLayerMoveArmed\(hitLayer\.id\)/);
+  assert.match(toolSource, /if \(!canMoveHitLayer\) \{/);
+  assert.match(toolSource, /isMobileMovePointerTarget\(event\) \{[\s\S]*if \(!this\.isSelectedLayerMoveArmed\(\)\) \{/);
+  assert.doesNotMatch(toolSource, /if \(!isMobileMoveViewport\(\) \|\| !this\.isSelectedLayerMoveArmed\(\)\) \{/);
   assert.match(toolSource, /beginMoveDrag\(hitLayer, event, point\)/);
   assert.match(toolSource, /moveLayerByDelta\(state\.layerId, state\.startRect, delta\)/);
   assert.match(toolSource, /beginResizeDrag\(resizeHit\.layer, resizeHit\.handle, event, point\)/);
@@ -68,10 +98,18 @@ test("vector rectangle layers are lightweight, saved entries instead of raster t
   assert.match(toolSource, /createRectTitleNode\(layer, rect/);
   assert.match(toolSource, /createRectResizeHandlesNode\(layer, rect\)/);
   assert.match(toolSource, /this\.toolbar = document\.createElement\("div"\)/);
-  assert.match(toolSource, /this\.toolbar\.className = "editor-vector-rect-action-toolbar"/);
+  assert.match(toolSource, /this\.toolbar\.className = "editor-vector-rect-action-toolbar editor-ai-image-board-action-toolbar"/);
   assert.match(toolSource, /this\.toolbar\.innerHTML = getVectorRectActionToolbarMarkup\(\)/);
+  assert.match(toolSource, /editor-ai-image-board-action-toolbar-items editor-vector-rect-action-toolbar-items/);
+  assert.match(toolSource, /editor-ai-image-board-action-toolbar-button editor-vector-rect-fill-swatch/);
+  assert.match(toolSource, /editor-ai-image-board-action-toolbar-button editor-vector-rect-move-button/);
   assert.match(toolSource, /handleToolbarClick\(event\)/);
   assert.match(toolSource, /handleToolbarPointerDown\(event\)/);
+  assert.match(toolSource, /handleDocumentPointerDown\(event\)/);
+  assert.match(toolSource, /clearSelection\(source = "vector-rect-clear-selection"\)/);
+  assert.match(toolSource, /document\.addEventListener\("pointerdown", this\.handleDocumentPointerDown, true\)/);
+  assert.match(toolSource, /this\.clearSelection\("vector-rect-document-pointer-clear-selection"\)/);
+  assert.match(toolSource, /this\.clearSelection\("vector-rect-artboard-pointer-clear-selection"\)/);
   assert.match(toolSource, /setSelectedLayerFill\(fill\)/);
   assert.match(toolSource, /updateToolbar\(layers\)/);
   assert.match(toolSource, /function getRectTitleMetrics\(rect\)/);
@@ -83,7 +121,10 @@ test("vector rectangle layers are lightweight, saved entries instead of raster t
   assert.match(layoutSource, /\.editor-artboard-paper-layer \{[\s\S]*z-index: 2;/);
   assert.match(layoutSource, /\.editor-vector-rect-overlay \{[\s\S]*z-index: 1;/);
   assert.match(layoutSource, /\.editor-vector-rect-action-toolbar \{[\s\S]*z-index: 80;[\s\S]*width: max-content;[\s\S]*background: #ffffff;/);
-  assert.match(layoutSource, /\.editor-vector-rect-fill-swatch \{[\s\S]*width: 24px;[\s\S]*border-radius: 999px;/);
+  assert.match(layoutSource, /\.editor-vector-rect-fill-swatch \{[\s\S]*width: 32px;[\s\S]*border-radius: 10px;/);
+  assert.match(layoutSource, /\.editor-vector-rect-fill-swatch-chip \{[\s\S]*width: 22px;[\s\S]*border-radius: 999px;/);
+  assert.match(layoutSource, /\.editor-vector-rect-move-button \{[\s\S]*width: 32px;[\s\S]*height: 32px;/);
+  assert.match(layoutSource, /\.editor-vector-rect-move-button\.is-active \{[\s\S]*color: #d94116;/);
   assert.match(layoutSource, /\.editor-vector-rect-hit-area \{[\s\S]*pointer-events: none;/);
   assert.match(layoutSource, /\.editor-artboard-connection-layer \{[\s\S]*z-index: 5;/);
   assert.match(toolSource, /style: `fill: \$\{fill\};`/);
@@ -105,13 +146,20 @@ test("selected vector rectangles show a white fill swatch toolbar", () => {
   const swatchesSource = toolSource.match(/const RECT_FILL_SWATCHES = \[[\s\S]*?\];/)?.[0] || "";
 
   assert.match(toolSource, /this\.toolbar\.dataset\.vectorRectActionToolbar = ""/);
-  assert.match(toolSource, /this\.stage\.append\(this\.toolbar\)/);
+  assert.match(toolSource, /\(document\.body \|\| this\.stage\)\.appendChild\(this\.toolbar\)/);
   assert.match(toolSource, /getSelectedLayerDisplayRect\(layers = this\.getRenderableVectorRectLayers\(\)\)/);
   assert.match(toolSource, /getDocumentRectViewportRect\(rect\)/);
   assert.match(toolSource, /this\.toolbar\.setAttribute\("aria-hidden", "false"\)/);
+  assert.match(toolSource, /this\.toolbar\.classList\.add\("is-active"\)/);
+  assert.match(toolSource, /this\.toolbar\.classList\.remove\("is-active"\)/);
   assert.match(toolSource, /const layer = this\.canSelectExistingRects \? this\.getSelectedLayer\(layers\) : null/);
   assert.match(toolSource, /this\.toolbar\.style\.pointerEvents = "auto"/);
   assert.match(toolSource, /data-vector-rect-fill-swatch/);
+  assert.match(toolSource, /data-vector-rect-move/);
+  assert.match(toolSource, /toggleSelectedLayerMove\(\)/);
+  assert.match(toolSource, /namespace\.toggleMobileObjectMoveArmed\?\.\(\{[\s\S]*type: VECTOR_RECT_MOVE_TYPE/);
+  assert.equal(swatchesSource.match(/fill:/g)?.length, 4);
+  assert.match(swatchesSource, /#bfefff/);
   assert.match(toolSource, /this\.setSelectedLayerFill\(swatch\.dataset\.vectorRectFill\)/);
   assert.match(toolSource, /event\.stopImmediatePropagation\?\.\(\)/);
   assert.match(toolSource, /if \(normalizeFillColor\(currentLayer\?\.fill\) === swatch\.fill\.toLowerCase\(\)\)/);
@@ -122,14 +170,20 @@ test("selected vector rectangles show a white fill swatch toolbar", () => {
   assert.match(toolSource, /if \(didUpdate\) \{[\s\S]*this\.render\(\);[\s\S]*\}/);
   assert.doesNotMatch(swatchesSource, /transparent/i);
   assert.match(layoutSource, /\.editor-vector-rect-action-toolbar \{[\s\S]*height: 40px;[\s\S]*border-radius: 14px;/);
-  assert.match(layoutSource, /\.editor-vector-rect-fill-swatch\.is-active::after \{[\s\S]*border-color: #f05023;/);
+  assert.match(layoutSource, /@media \(hover: none\), \(pointer: coarse\), \(max-width: 900px\) \{[\s\S]*\.editor-vector-rect-action-toolbar \{[\s\S]*position: fixed;[\s\S]*bottom: calc\(var\(--cbo-mobile-floating-bottom\) \+ 28px\);[\s\S]*z-index: 9030;/);
+  assert.match(layoutSource, /\.editor-vector-rect-action-toolbar \{[\s\S]*left: 50% !important;[\s\S]*top: auto !important;/);
+  assert.ok(
+    layoutSource.lastIndexOf("@media (hover: none), (pointer: coarse), (max-width: 900px)") >
+      layoutSource.indexOf(".editor-vector-rect-action-toolbar {\n  position: absolute;"),
+  );
+  assert.match(layoutSource, /\.editor-vector-rect-fill-swatch\.is-active \.editor-vector-rect-fill-swatch-chip \{[\s\S]*0 0 0 2px #f05023;/);
 });
 
 test("selected vector rectangles can be resized with lightweight svg handles", () => {
   const toolSource = readRepoFile("js", "vector-rect-tool.js");
   const pointerDownSource = toolSource.match(/handlePointerDown\(event\) \{[\s\S]*?\n    getRenderableVectorRectLayers\(\)/)?.[0] || "";
 
-  assert.match(pointerDownSource, /const resizeHit = this\.canSelectExistingRects \? this\.getResizeHandleAtPoint\(point\) : null/);
+  assert.match(pointerDownSource, /const resizeHit = this\.canSelectExistingRects \? this\.getResizeHandleAtPoint\(point, event\) : null/);
   assert.ok(
     pointerDownSource.indexOf("const resizeHit = this.canSelectExistingRects") <
       pointerDownSource.indexOf("const hitLayer = this.canSelectExistingRects")

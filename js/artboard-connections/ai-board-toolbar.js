@@ -14,6 +14,17 @@ window.CBO = window.CBO || {};
 
   }
 
+  const AI_BOARD_MOVE_ICON = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-move-icon lucide-move" aria-hidden="true">
+      <path d="M12 2v20"></path>
+      <path d="m15 19-3 3-3-3"></path>
+      <path d="m19 9 3 3-3 3"></path>
+      <path d="M2 12h20"></path>
+      <path d="m5 9-3 3 3 3"></path>
+      <path d="m9 5 3-3 3 3"></path>
+    </svg>
+  `;
+
 
 
   Controller.prototype.handleAiImageBoardPointerDown = function handleAiImageBoardPointerDown(event) {
@@ -40,6 +51,9 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    namespace.clearMobileObjectMoveArmed?.({ type: "space-board" }, {
+      source: "space-board-document-pointer-clear-selection",
+    });
     selectedSpaceBoardId = "";
     renderSpaceBoards();
     }
@@ -93,7 +107,8 @@ window.CBO = window.CBO || {};
     if (
       !toolbar.querySelector("[data-ai-image-board-toolbar-action]") ||
       !toolbar.querySelector('[data-ai-image-board-toolbar-action="edit-preview"]') ||
-      !toolbar.querySelector('[data-ai-image-board-toolbar-action="video-mute"]')
+      !toolbar.querySelector('[data-ai-image-board-toolbar-action="video-mute"]') ||
+      !toolbar.querySelector('[data-ai-image-board-toolbar-action="move"]')
     ) {
       toolbar.innerHTML = getAiImageBoardActionToolbarMarkup();
     }
@@ -147,6 +162,9 @@ window.CBO = window.CBO || {};
             <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
           </svg>
         </button>
+        <button class="editor-ai-image-board-action-toolbar-button editor-ai-image-board-mobile-move-button" type="button" aria-label="Move" aria-pressed="false" data-ai-image-board-toolbar-action="move" data-ai-image-board-toolbar-label="Move">
+          ${AI_BOARD_MOVE_ICON}
+        </button>
       </div>
     `;
     }
@@ -169,7 +187,10 @@ window.CBO = window.CBO || {};
     with (this) {
 
     if (mobileActionToolbar?.isConnected) {
-      if (!mobileActionToolbar.querySelector('[data-ai-image-board-toolbar-action="video-mute"]')) {
+      if (
+        !mobileActionToolbar.querySelector('[data-ai-image-board-toolbar-action="video-mute"]') ||
+        !mobileActionToolbar.querySelector('[data-ai-image-board-toolbar-action="move"]')
+      ) {
         mobileActionToolbar.innerHTML = getAiImageBoardActionToolbarMarkup();
       }
 
@@ -215,6 +236,7 @@ window.CBO = window.CBO || {};
     const videoMuteButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="video-mute"]');
     const duplicateButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="duplicate"]');
     const deleteButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="delete"]');
+    const moveButton = toolbar?.querySelector?.('[data-ai-image-board-toolbar-action="move"]');
     const canEnlarge = Boolean(getAiImageBoardEnlargeMedia(board));
     const canEditPreview = Boolean(getAiImageBoardEditPreviewMedia(board));
     const canMuteVideo = typeof isAiImageBoardVideoMuteAvailable === "function" &&
@@ -239,6 +261,16 @@ window.CBO = window.CBO || {};
 
     setAiImageBoardToolbarButtonEnabled(duplicateButton, hasBoard);
     setAiImageBoardToolbarButtonEnabled(deleteButton, hasBoard);
+    setAiImageBoardToolbarButtonEnabled(moveButton, hasBoard);
+    if (moveButton) {
+      const isMoveArmed = hasBoard && namespace.isMobileObjectMoveArmed?.({
+        id: board.id,
+        type: "space-board",
+      });
+
+      moveButton.classList.toggle("is-active", Boolean(isMoveArmed));
+      moveButton.setAttribute("aria-pressed", isMoveArmed ? "true" : "false");
+    }
     }
   };
 
@@ -368,6 +400,12 @@ window.CBO = window.CBO || {};
       duplicateAiImageBoard(boardId);
     } else if (action === "delete") {
       deleteAiImageBoard(boardId);
+    } else if (action === "move") {
+      namespace.toggleMobileObjectMoveArmed?.({
+        id: boardId,
+        type: "space-board",
+      }, { source: "ai-board-mobile-move-toolbar" });
+      updateAiImageBoardActionToolbarState(toolbar, getSpaceBoardById(boardId));
     }
     }
   };

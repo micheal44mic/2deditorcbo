@@ -206,6 +206,57 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.getTextPromptBoardOutputAnchor = function getTextPromptBoardOutputAnchor(board) {
+    with (this) {
+
+    if (!board || !isTextPromptBoard(board)) {
+      return null;
+    }
+
+    const boardWidth = Math.max(TEXT_PROMPT_BOARD_MIN_WIDTH_DOC_PX, Number(board.width) || TEXT_PROMPT_BOARD_DEFAULT_WIDTH_DOC_PX);
+    const boardHeight = Math.max(TEXT_PROMPT_BOARD_MIN_HEIGHT_DOC_PX, Number(board.height) || TEXT_PROMPT_BOARD_DEFAULT_HEIGHT_DOC_PX);
+    const metrics = getActionBubbleMetrics(1, boardWidth, boardHeight);
+
+    return {
+      x: (Number(board.x) || 0) +
+        boardWidth +
+        metrics.outsideOffsetDoc,
+      y: (Number(board.y) || 0) +
+        metrics.outsideOffsetDoc,
+    };
+    }
+  };
+
+  Controller.prototype.isTextPromptConnection = function isTextPromptConnection(connection) {
+    with (this) {
+
+    const sourceBoardId = String(connection?.sourceBoardId || "").trim();
+    const sourceBoard = sourceBoardId ? getSpaceBoardById(sourceBoardId) : null;
+
+    return Boolean(
+      connection?.sourceBoardType === "text-prompt" ||
+      isTextPromptBoard(sourceBoard)
+    );
+    }
+  };
+
+  Controller.prototype.getConnectionStartPoint = function getConnectionStartPoint(connection) {
+    with (this) {
+
+    const sourceBoardId = String(connection?.sourceBoardId || "").trim();
+    const sourceBoard = sourceBoardId ? getSpaceBoardById(sourceBoardId) : null;
+    const sourceBoardAnchor = sourceBoard ? getTextPromptBoardOutputAnchor(sourceBoard) : null;
+
+    if (sourceBoardAnchor) {
+      return sourceBoardAnchor;
+    }
+
+    const sourceArtboard = getArtboardById(connection?.sourceArtboardId);
+
+    return getActionAnchorPoint(sourceArtboard);
+    }
+  };
+
   Controller.prototype.getConnectionEndPoint = function getConnectionEndPoint(connection) {
     with (this) {
 

@@ -145,6 +145,17 @@ const MOBILE_TEXT_BACK_ICON = `
   </svg>
 `;
 
+const MOBILE_MOVE_ICON = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-move-icon lucide-move" aria-hidden="true">
+    <path d="M12 2v20" />
+    <path d="m15 19-3 3-3-3" />
+    <path d="m19 9 3 3-3 3" />
+    <path d="M2 12h20" />
+    <path d="m5 9-3 3 3 3" />
+    <path d="m9 5 3-3 3 3" />
+  </svg>
+`;
+
 const MOBILE_TEXT_PANEL_BUTTONS = Object.freeze([
   { key: "color", label: "TEXT COLOR" },
   { key: "border", label: "BORDER" },
@@ -164,6 +175,9 @@ function createMobileTextSettingsToolbar() {
           ${MOBILE_TEXT_PANEL_ICONS[key]}
         </button>
       `).join("")}
+      <button class="tool-button mobile-text-settings-button mobile-text-move-button" type="button" aria-label="MOVE" aria-pressed="false" data-tooltip="MOVE" data-mobile-text-move>
+        ${MOBILE_MOVE_ICON}
+      </button>
     </nav>
   `;
 }
@@ -576,6 +590,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   const mobileTextShadowBlurField = mobileTextPanel?.querySelector("[data-mobile-text-shadow-blur-field]");
   const mobileTextShadowBlurInput = mobileTextPanel?.querySelector("[data-mobile-text-shadow-blur]");
   const mobileTextShadowBlurValue = mobileTextPanel?.querySelector("[data-mobile-text-shadow-blur-value]");
+  const mobileTextMoveButton = mobileTextToolbar?.querySelector("[data-mobile-text-move]");
   const quickControls = dock.querySelector("[data-brush-quick-controls]");
   const quickInputs = dock.querySelectorAll("[data-brush-quick-input]");
   const quickValues = dock.querySelectorAll("[data-brush-quick-value]");
@@ -1448,6 +1463,35 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     }
   }
 
+  function syncMobileTextMoveButton(layer = getActiveTextLayer()) {
+    if (!mobileTextMoveButton) {
+      return;
+    }
+
+    const isActive = Boolean(layer?.id && window.CBO.isMobileObjectMoveArmed?.({
+      id: layer.id,
+      type: "vector-text",
+    }));
+
+    mobileTextMoveButton.classList.toggle("active", isActive);
+    mobileTextMoveButton.setAttribute("aria-pressed", String(isActive));
+  }
+
+  function toggleMobileTextMoveMode() {
+    const layer = getActiveTextLayer();
+
+    if (!layer?.id) {
+      return;
+    }
+
+    closeMobileTextPanel();
+    window.CBO.toggleMobileObjectMoveArmed?.({
+      id: layer.id,
+      type: "vector-text",
+    }, { source: "mobile-text-move-toolbar" });
+    syncMobileTextMoveButton(layer);
+  }
+
   function closeMobileTextPanel() {
     if (mobileTextPanel) {
       mobileTextPanel.hidden = true;
@@ -1952,11 +1996,19 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   function syncMobileTextState() {
     const activeTextLayer = getActiveTextLayer();
     const hasTextLayer = Boolean(activeTextLayer);
+    const shouldShowMobileTextToolbar = hasTextLayer && isMobileTextToolbarViewport();
 
     showTextAddToolbar(currentToolIsText && !hasTextLayer);
-    showMobileTextToolbar(currentToolIsText && hasTextLayer);
+    showMobileTextToolbar(shouldShowMobileTextToolbar);
+    syncMobileTextMoveButton(activeTextLayer);
 
-    if (currentToolIsText && hasTextLayer) {
+    if (!hasTextLayer) {
+      window.CBO.clearMobileObjectMoveArmed?.({ type: "vector-text" }, {
+        source: "mobile-text-no-active-layer-clear-move",
+      });
+    }
+
+    if (shouldShowMobileTextToolbar) {
       syncMobileTextControlsFromLayer(activeTextLayer);
     }
   }
@@ -2039,6 +2091,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   });
 
   mobileTextBackButton?.addEventListener("click", returnFromMobileTextToolbar);
+  mobileTextMoveButton?.addEventListener("click", toggleMobileTextMoveMode);
 
   mobileTextFillInput?.addEventListener("input", () => {
     syncMobileHexColor(mobileTextFillInput, mobileTextFillHex, mobileTextFillSwatch);
@@ -2396,6 +2449,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     syncRasterizeTextButton();
     syncMobileTextState();
   });
+  window.addEventListener("cbo:mobile-object-move-change", syncMobileTextState);
   window.addEventListener("cbo:vector-text-rasterized", () => {
     syncRasterizeTextButton();
     syncMobileTextState();

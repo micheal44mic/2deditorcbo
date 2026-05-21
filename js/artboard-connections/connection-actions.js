@@ -777,6 +777,29 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    const requiresMobileMoveArm = (
+      (board.type === "ai-image" || (typeof isTextPromptBoard === "function" && isTextPromptBoard(board))) &&
+      event.pointerType === "touch" &&
+      isMobileLikeSpaceBoardViewport()
+    );
+
+    if (
+      requiresMobileMoveArm &&
+      !namespace.isMobileObjectMoveArmed?.({ id: boardId, type: "space-board" })
+    ) {
+      namespace.clearMobileObjectMoveArmed?.({ type: "space-board" }, {
+        source: "space-board-mobile-select-clear-move",
+      });
+      selectedSpaceBoardId = boardId;
+      if (board.type === "ai-image") {
+        ensureAiImageBoardHeavyContent(boardElement);
+      }
+      renderConnectionOverlay();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (menuState) {
       dismissConnectionMenu({ render: false });
     }
@@ -1068,9 +1091,10 @@ window.CBO = window.CBO || {};
 
     const connection = connectionDrag;
     const sourceElement = connection.sourceElement;
+    const isTextSource = isTextPromptConnection(connection);
 
     connectionDrag = null;
-    getStage()?.classList.remove("connection-dragging");
+    getStage()?.classList.remove("connection-dragging", "text-connection-dragging");
     setConnectionDropTargetBoard("");
     document.removeEventListener("pointermove", updateConnectionDrag, true);
     document.removeEventListener("pointerup", finishConnectionDrag, true);
@@ -1084,12 +1108,16 @@ window.CBO = window.CBO || {};
 
     const defaultEnd = connection.didMove
       ? null
+      : isTextSource
+      ? null
       : getDefaultConnectionEndPoint(connection.sourceArtboardId);
     const finalizedConnection = {
       endDocX: defaultEnd?.x ?? connection.endDocX,
       endDocY: defaultEnd?.y ?? connection.endDocY,
       id: connection.id,
-      sourceArtboardId: connection.sourceArtboardId,
+      sourceArtboardId: connection.sourceArtboardId || "",
+      sourceBoardId: connection.sourceBoardId || "",
+      sourceBoardType: connection.sourceBoardType || "",
     };
     const targetBoard = connection.targetBoardId
       ? getSpaceBoardById(connection.targetBoardId)
@@ -1123,6 +1151,13 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    if (isTextSource) {
+      renderConnectionOverlay();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     connections.push(finalizedConnection);
     showConnectionMenu(finalizedConnection);
 
@@ -1143,7 +1178,7 @@ window.CBO = window.CBO || {};
     const sourceElement = connectionDrag.sourceElement;
 
     connectionDrag = null;
-    getStage()?.classList.remove("connection-dragging");
+    getStage()?.classList.remove("connection-dragging", "text-connection-dragging");
     setConnectionDropTargetBoard("");
     document.removeEventListener("pointermove", updateConnectionDrag, true);
     document.removeEventListener("pointerup", finishConnectionDrag, true);
@@ -1156,6 +1191,59 @@ window.CBO = window.CBO || {};
     }
 
     renderConnections();
+    event.preventDefault();
+    event.stopPropagation();
+    }
+  };
+
+  Controller.prototype.startTextPromptConnectionDrag = function startTextPromptConnectionDrag(event) {
+    with (this) {
+
+    if (event.button !== 0 || event.isPrimary === false) {
+      return;
+    }
+
+    if (menuState) {
+      dismissConnectionMenu({ render: false });
+    }
+
+    const badge = event.currentTarget;
+    const boardElement = badge?.closest?.("[data-space-text-board]");
+    const sourceBoardId = String(boardElement?.dataset?.boardId || "").trim();
+    const sourceBoard = getSpaceBoardById(sourceBoardId);
+    const point = getEventDocumentPoint(event);
+
+    if (!sourceBoardId || !point || !isTextPromptBoard(sourceBoard)) {
+      return;
+    }
+
+    selectedSpaceBoardId = sourceBoardId;
+    syncAiImageBoardMobileActionToolbar("");
+    connectionDrag = {
+      didMove: false,
+      endDocX: point.docX,
+      endDocY: point.docY,
+      id: createConnectionId(),
+      pointerId: event.pointerId,
+      sourceBoardId,
+      sourceBoardType: "text-prompt",
+      sourceElement: badge,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    };
+
+    getStage()?.classList.add("connection-dragging", "text-connection-dragging");
+
+    try {
+      badge?.setPointerCapture?.(event.pointerId);
+    } catch (error) {
+      // Pointer capture is best-effort for browser compatibility.
+    }
+
+    document.addEventListener("pointermove", updateConnectionDrag, true);
+    document.addEventListener("pointerup", finishConnectionDrag, true);
+    document.addEventListener("pointercancel", cancelConnectionDrag, true);
+    renderConnectionOverlay();
     event.preventDefault();
     event.stopPropagation();
     }

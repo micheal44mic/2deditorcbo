@@ -843,7 +843,7 @@
     right: var(--cbo-mobile-edge-right);
     bottom: var(--cbo-mobile-floating-bottom);
     left: var(--cbo-mobile-edge-left);
-    z-index: 9021;
+    z-index: 9040;
     display: block;
     max-height: min(52vh, 360px);
     max-height: min(52dvh, calc(var(--cbo-visual-viewport-height) - var(--cbo-mobile-floating-bottom) - 24px), 360px);
@@ -869,7 +869,7 @@
     top: auto;
     bottom: var(--cbo-mobile-floating-bottom);
     left: 50%;
-    z-index: 9020;
+    z-index: 9030;
     justify-content: center;
     max-width: calc(100vw - 24px);
     transform: translateX(-50%);

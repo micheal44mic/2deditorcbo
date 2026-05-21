@@ -11,6 +11,16 @@ window.CBO = window.CBO || {};
   const TEXT_PROMPT_BOARD_SELECTOR = "[data-space-text-board]";
   const TEXT_PROMPT_EDITOR_SELECTOR = "[data-text-prompt-editor]";
   const TEXT_PROMPT_TRANSPARENT_BACKGROUND = "transparent";
+  const TEXT_PROMPT_MOVE_ICON = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-move-icon lucide-move" aria-hidden="true">
+      <path d="M12 2v20"></path>
+      <path d="m15 19-3 3-3-3"></path>
+      <path d="m19 9 3 3-3 3"></path>
+      <path d="M2 12h20"></path>
+      <path d="m5 9-3 3 3 3"></path>
+      <path d="m9 5 3-3 3 3"></path>
+    </svg>
+  `;
   const TEXT_PROMPT_ALLOWED_TAGS = new Set([
     "B",
     "BR",
@@ -581,6 +591,7 @@ window.CBO = window.CBO || {};
 
     closeTextPromptFocusMode({ commit: true });
     spaceBoards = spaceBoards.filter((entry) => entry.id !== normalizedBoardId);
+    connections = connections.filter((connection) => connection.sourceBoardId !== normalizedBoardId);
 
     if (selectedSpaceBoardId === normalizedBoardId) {
       selectedSpaceBoardId = "";
@@ -650,6 +661,7 @@ window.CBO = window.CBO || {};
       `;
       board.addEventListener("pointerdown", handleAiImageBoardPointerDown, true);
       board.addEventListener("pointerdown", startSpaceBoardDrag);
+      board.querySelector("[data-text-prompt-type-badge]")?.addEventListener("pointerdown", startTextPromptConnectionDrag);
       board.querySelector("[data-space-text-board-drag-handle]")?.addEventListener("pointerdown", startSpaceBoardDrag);
       board.querySelectorAll("[data-text-prompt-resize]").forEach((handle) => {
         handle.addEventListener("pointerdown", startTextPromptResize);
@@ -779,6 +791,8 @@ window.CBO = window.CBO || {};
       element.classList.toggle("is-editing", isEditing);
       element.classList.toggle("is-transparent-background", backgroundColor === TEXT_PROMPT_TRANSPARENT_BACKGROUND);
       element.classList.toggle("is-resizing", textPromptResize?.boardId === board.id);
+      element.classList.toggle("has-outgoing-connection", connections.some((connection) => connection.sourceBoardId === board.id));
+      element.classList.toggle("is-connection-source", connectionDrag?.sourceBoardId === board.id);
 
       const title = element.querySelector("[data-text-prompt-title]");
 
@@ -1326,6 +1340,9 @@ window.CBO = window.CBO || {};
             <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
           </svg>
         </button>
+        <button class="editor-ai-image-board-action-toolbar-button editor-text-prompt-mobile-move-button" type="button" data-text-prompt-command="move" data-ai-image-board-toolbar-label="Move" aria-label="Move" aria-pressed="false">
+          ${TEXT_PROMPT_MOVE_ICON}
+        </button>
       </div>
     `;
     textPromptToolbar.addEventListener("pointerdown", (event) => {
@@ -1336,7 +1353,7 @@ window.CBO = window.CBO || {};
     });
     textPromptToolbar.addEventListener("click", handleTextPromptToolbarClick);
     textPromptToolbar.addEventListener("change", handleTextPromptToolbarColorChange);
-    stage.appendChild(textPromptToolbar);
+    (document.body || stage).appendChild(textPromptToolbar);
     return textPromptToolbar;
     }
   };
@@ -1352,9 +1369,9 @@ window.CBO = window.CBO || {};
 
     textPromptToolbarBoardId = normalizedBoardId;
 
-    if (!toolbar || !stage || !isTextPromptBoard(board) || !element || isMobileLikeSpaceBoardViewport()) {
+    if (!toolbar || !stage || !isTextPromptBoard(board) || !element) {
       if (toolbar) {
-        toolbar.classList.remove("is-visible", "is-below");
+        toolbar.classList.remove("is-visible", "is-below", "is-mobile");
         toolbar.setAttribute("aria-hidden", "true");
       }
       return false;
@@ -1371,7 +1388,19 @@ window.CBO = window.CBO || {};
 
     toolbar.dataset.boardId = normalizedBoardId;
     toolbar.classList.add("is-visible");
+    toolbar.classList.toggle("is-mobile", isMobileLikeSpaceBoardViewport());
     toolbar.setAttribute("aria-hidden", "false");
+
+    if (isMobileLikeSpaceBoardViewport()) {
+      toolbar.style.left = "50%";
+      toolbar.style.top = "auto";
+      toolbar.style.bottom = "calc(var(--cbo-mobile-floating-bottom) + 28px)";
+      toolbar.classList.remove("is-below");
+      updateTextPromptToolbarState(toolbar);
+      return true;
+    }
+
+    toolbar.style.bottom = "";
 
     const toolbarWidth = Math.max(1, toolbar.offsetWidth || 360);
     const toolbarHeight = Math.max(1, toolbar.offsetHeight || 40);
@@ -1385,9 +1414,11 @@ window.CBO = window.CBO || {};
     const belowTop = boardRect.bottom - stageRect.top + 14;
     const shouldPlaceBelow = aboveTop < 8 && belowTop + toolbarHeight < (stage.clientHeight || stageRect.height || 1) - 8;
     const top = shouldPlaceBelow ? belowTop : Math.max(8, aboveTop);
+    const scrollX = Number(window.scrollX || window.pageXOffset || 0);
+    const scrollY = Number(window.scrollY || window.pageYOffset || 0);
 
-    toolbar.style.left = `${left}px`;
-    toolbar.style.top = `${top}px`;
+    toolbar.style.left = `${Math.round(stageRect.left + left + scrollX)}px`;
+    toolbar.style.top = `${Math.round(stageRect.top + top + scrollY)}px`;
     toolbar.classList.toggle("is-below", shouldPlaceBelow);
     updateTextPromptToolbarState(toolbar);
     return true;
@@ -1527,6 +1558,15 @@ window.CBO = window.CBO || {};
       return adjustTextPromptBoardFontSize(toolbarBoardId, TEXT_PROMPT_FONT_SIZE_STEP_DOC_PX * direction, options);
     }
 
+    if (normalizedCommand === "move") {
+      namespace.toggleMobileObjectMoveArmed?.({
+        id: toolbarBoardId,
+        type: "space-board",
+      }, { source: "text-prompt-mobile-move-toolbar" });
+      updateTextPromptToolbarState(options.toolbar || textPromptToolbar);
+      return true;
+    }
+
     if (normalizedCommand === "background-transparent") {
       return applyTextPromptStyleColor(toolbarBoardId, "background", TEXT_PROMPT_TRANSPARENT_BACKGROUND, options);
     }
@@ -1592,6 +1632,7 @@ window.CBO = window.CBO || {};
     const textSwatch = toolbar.querySelector('[data-text-prompt-color-swatch="text"]');
     const backgroundSwatch = toolbar.querySelector('[data-text-prompt-color-swatch="background"]');
     const transparentButton = toolbar.querySelector('[data-text-prompt-command="background-transparent"]');
+    const moveButton = toolbar.querySelector('[data-text-prompt-command="move"]');
 
     toolbar.querySelector('[data-text-prompt-command="bold"]')?.classList.toggle("is-active", bold);
     toolbar.querySelector('[data-text-prompt-command="italic"]')?.classList.toggle("is-active", italic);
@@ -1632,6 +1673,11 @@ window.CBO = window.CBO || {};
     }
 
     transparentButton?.classList.toggle("is-active", backgroundColor === TEXT_PROMPT_TRANSPARENT_BACKGROUND);
+    moveButton?.classList.toggle("is-active", Boolean(board?.id && namespace.isMobileObjectMoveArmed?.({
+      id: board.id,
+      type: "space-board",
+    })));
+    moveButton?.setAttribute("aria-pressed", moveButton.classList.contains("is-active") ? "true" : "false");
 
     return true;
     }

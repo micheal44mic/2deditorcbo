@@ -119,9 +119,12 @@ test("selection tool touch drag on empty stage starts camera pan before overlays
   assert.match(source, /toolMode === "selection" \|\| label === "selection"/);
   assert.match(source, /isTouchCanvasPanInteractiveTarget\(target\)/);
   assert.match(source, /\[data-ai-image-board\]/);
+  assert.match(source, /\[data-space-text-board\]/);
+  assert.match(source, /\.editor-vector-text-layer/);
   assert.match(source, /shouldStartSelectionTouchCanvasPan\(event, point\)/);
   assert.match(source, /this\.activeTouchPointers\.size === 1/);
   assert.match(source, /this\.shouldStartTouchCanvasPan\(event, point\)/);
+  assert.match(source, /!namespace\.isMobileObjectMovePointerTarget\?\.\(event\)/);
   assert.match(source, /!this\.isTouchCanvasPanInteractiveTarget\(event\.target\)/);
   assert.match(source, /const documentPoint = this\.screenToDocumentSpace\(event\.clientX, event\.clientY\)/);
   assert.match(source, /this\.shouldStartSelectionTouchCanvasPan\(event, documentPoint\)/);
@@ -146,6 +149,13 @@ test("touch navigation exposes an exclusive mobile gesture guard", () => {
   assert.match(appSource, /namespace\.isTouchNavigationExclusive = isTouchNavigationExclusive/);
   assert.match(appSource, /namespace\.isTouchNavigationGuardActive = isTouchNavigationGuardActive/);
   assert.match(appSource, /namespace\.setTouchNavigationExclusive = setTouchNavigationExclusive/);
+  assert.match(appSource, /mobileObjectMoveState = \{/);
+  assert.match(appSource, /namespace\.toggleMobileObjectMoveArmed = toggleMobileObjectMoveArmed/);
+  assert.match(appSource, /namespace\.isMobileObjectMoveArmed = isMobileObjectMoveArmed/);
+  assert.match(appSource, /const mobileObjectMoveKeepArmedSelector = \[/);
+  assert.match(appSource, /function handleMobileObjectMoveOutsidePointerDown\(event\)/);
+  assert.match(appSource, /mobile-object-move-outside-pointer-clear/);
+  assert.match(appSource, /document\.addEventListener\("pointerdown", handleMobileObjectMoveOutsidePointerDown, true\)/);
   assert.match(appSource, /"cbo:touch-navigation-start"/);
   assert.match(appSource, /"cbo:touch-navigation-end"/);
   assert.match(appSource, /document\.body\?\.classList\.toggle\("cbo-touch-navigation-active", nextActive\)/);

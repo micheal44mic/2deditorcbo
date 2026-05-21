@@ -102,6 +102,9 @@ window.CBO = window.CBO || {};
     window.addEventListener("cbo:touch-navigation-start", () => {
       cancelSpaceBoardDragForTouchNavigation();
     });
+    window.addEventListener("cbo:mobile-object-move-change", () => {
+      renderSpaceBoards();
+    });
     window.addEventListener("cbo:camera-change", (event) => {
       updateInfiniteCanvasDotGrid(event.detail || getCameraState());
     });

@@ -164,6 +164,11 @@ document.addEventListener(
 
 (() => {
   const namespace = window.CBO = window.CBO || {};
+  const mobileObjectMoveState = {
+    active: false,
+    id: "",
+    type: "",
+  };
   const TOUCH_NAVIGATION_GHOST_TAP_GUARD_MS = 120;
   const touchNavigationInteractiveSelector = [
     "a[href]",
@@ -182,6 +187,30 @@ document.addEventListener(
     ".artboard-create-popover",
     ".layer-effects-popover",
   ].join(", ");
+  const mobileObjectMoveKeepArmedSelector = [
+    "a[href]",
+    "button",
+    "input",
+    "textarea",
+    "select",
+    "[contenteditable='true']",
+    "[role='button']",
+    "[data-ai-image-board]",
+    "[data-ai-image-board-action-toolbar]",
+    "[data-ai-image-board-mobile-action-toolbar]",
+    "[data-space-board]",
+    "[data-space-text-board]",
+    "[data-text-prompt-toolbar]",
+    "[data-text-prompt-focus-overlay]",
+    "[data-vector-rect-action-toolbar]",
+    ".editor-vector-rect-layer",
+    ".editor-vector-text-layer",
+    ".toolbar-dock",
+    ".top-toolbar-dock",
+    ".text-add-toolbar",
+    ".mobile-text-panel",
+    ".side-panel",
+  ].join(", ");
   const state = {
     active: false,
     blockUntil: 0,
@@ -198,6 +227,105 @@ document.addEventListener(
 
   function isTouchNavigationGuardActive() {
     return state.active || Date.now() < state.blockUntil;
+  }
+
+  function getMobileObjectMoveState() {
+    return { ...mobileObjectMoveState };
+  }
+
+  function normalizeMobileObjectMoveTarget(target = {}) {
+    return {
+      id: String(target.id || target.boardId || target.layerId || "").trim(),
+      type: String(target.type || "").trim(),
+    };
+  }
+
+  function publishMobileObjectMoveState(source = "mobile-object-move") {
+    window.dispatchEvent(new CustomEvent("cbo:mobile-object-move-change", {
+      detail: {
+        ...getMobileObjectMoveState(),
+        source,
+      },
+    }));
+  }
+
+  function setMobileObjectMoveArmed(target = {}, options = {}) {
+    const normalized = normalizeMobileObjectMoveTarget(target);
+    const nextActive = options.active !== false && Boolean(normalized.type && normalized.id);
+    const previousKey = `${mobileObjectMoveState.type}:${mobileObjectMoveState.id}:${mobileObjectMoveState.active}`;
+
+    mobileObjectMoveState.active = nextActive;
+    mobileObjectMoveState.type = nextActive ? normalized.type : "";
+    mobileObjectMoveState.id = nextActive ? normalized.id : "";
+
+    if (`${mobileObjectMoveState.type}:${mobileObjectMoveState.id}:${mobileObjectMoveState.active}` !== previousKey) {
+      publishMobileObjectMoveState(options.source || "mobile-object-move");
+    }
+
+    return getMobileObjectMoveState();
+  }
+
+  function toggleMobileObjectMoveArmed(target = {}, options = {}) {
+    const normalized = normalizeMobileObjectMoveTarget(target);
+    const isAlreadyActive = Boolean(
+      mobileObjectMoveState.active &&
+      mobileObjectMoveState.type === normalized.type &&
+      mobileObjectMoveState.id === normalized.id
+    );
+
+    return setMobileObjectMoveArmed(normalized, {
+      ...options,
+      active: !isAlreadyActive,
+    });
+  }
+
+  function isMobileObjectMoveArmed(filter = {}) {
+    const normalized = normalizeMobileObjectMoveTarget(filter);
+
+    if (!mobileObjectMoveState.active) {
+      return false;
+    }
+
+    if (normalized.type && mobileObjectMoveState.type !== normalized.type) {
+      return false;
+    }
+
+    if (normalized.id && mobileObjectMoveState.id !== normalized.id) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function clearMobileObjectMoveArmed(filter = {}, options = {}) {
+    if (!isMobileObjectMoveArmed(filter)) {
+      return getMobileObjectMoveState();
+    }
+
+    return setMobileObjectMoveArmed({}, {
+      active: false,
+      source: options.source || "mobile-object-move-clear",
+    });
+  }
+
+  function shouldKeepMobileObjectMoveArmed(event) {
+    const target = event.target;
+
+    if (target instanceof Element && target.closest(mobileObjectMoveKeepArmedSelector)) {
+      return true;
+    }
+
+    return Boolean(namespace.isMobileObjectMovePointerTarget?.(event));
+  }
+
+  function handleMobileObjectMoveOutsidePointerDown(event) {
+    if (event.button !== 0 || !mobileObjectMoveState.active || shouldKeepMobileObjectMoveArmed(event)) {
+      return;
+    }
+
+    clearMobileObjectMoveArmed({}, {
+      source: "mobile-object-move-outside-pointer-clear",
+    });
   }
 
   function isTouchNavigationExclusive(options = {}) {
@@ -276,11 +404,17 @@ document.addEventListener(
   namespace.isTouchNavigationExclusive = isTouchNavigationExclusive;
   namespace.isTouchNavigationGuardActive = isTouchNavigationGuardActive;
   namespace.setTouchNavigationExclusive = setTouchNavigationExclusive;
+  namespace.getMobileObjectMoveState = getMobileObjectMoveState;
+  namespace.setMobileObjectMoveArmed = setMobileObjectMoveArmed;
+  namespace.toggleMobileObjectMoveArmed = toggleMobileObjectMoveArmed;
+  namespace.clearMobileObjectMoveArmed = clearMobileObjectMoveArmed;
+  namespace.isMobileObjectMoveArmed = isMobileObjectMoveArmed;
 
   ["pointerdown", "pointermove", "pointerup", "pointercancel", "click", "dblclick", "contextmenu", "auxclick"]
     .forEach((eventName) => {
       document.addEventListener(eventName, suppressTouchNavigationEvent, { capture: true, passive: false });
     });
+  document.addEventListener("pointerdown", handleMobileObjectMoveOutsidePointerDown, true);
 })();
 
 (() => {

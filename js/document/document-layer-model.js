@@ -624,6 +624,42 @@
       };
     }
 
+    isCanvasObjectLayerEntry(entry) {
+      return Boolean(
+        entry?.canvasObject === true ||
+        entry?.type === "vector-rect" ||
+        entry?.type === VECTOR_TEXT_TYPE
+      );
+    }
+
+    normalizeCanvasObjectLayerEntry(entry) {
+      const clone = this.cloneEntry(entry);
+
+      clone.canvasObject = true;
+      delete clone.artboardId;
+      return clone;
+    }
+
+    extractCanvasObjectLayerEntries(entries = [], extracted = []) {
+      return (Array.isArray(entries) ? entries : [])
+        .map((entry) => {
+          if (this.isCanvasObjectLayerEntry(entry)) {
+            extracted.push(this.normalizeCanvasObjectLayerEntry(entry));
+            return null;
+          }
+
+          if (entry?.type === "group") {
+            return {
+              ...this.cloneEntry(entry),
+              children: this.extractCanvasObjectLayerEntries(entry.children || [], extracted),
+            };
+          }
+
+          return this.cloneEntry(entry);
+        })
+        .filter(Boolean);
+    }
+
     ensureArtboardGroups(artboards = [], options = {}) {
       const records = Array.isArray(artboards) ? artboards.filter(Boolean) : [];
 
@@ -632,18 +668,27 @@
       }
 
       const existingGroupsByArtboardId = new Map();
+      const looseCanvasObjectEntries = [];
       const looseEntries = [];
 
       this.getEntries().forEach((entry) => {
         if (this.isArtboardGroup(entry)) {
-          existingGroupsByArtboardId.set(this.getArtboardIdFromGroup(entry), entry);
+          existingGroupsByArtboardId.set(this.getArtboardIdFromGroup(entry), {
+            ...this.cloneEntry(entry),
+            children: this.extractCanvasObjectLayerEntries(entry.children || [], looseCanvasObjectEntries),
+          });
+          return;
+        }
+
+        if (this.isCanvasObjectLayerEntry(entry)) {
+          looseCanvasObjectEntries.push(this.normalizeCanvasObjectLayerEntry(entry));
           return;
         }
 
         looseEntries.push(entry);
       });
 
-      const nextEntries = records.map((artboard, index) => {
+      const artboardGroupEntries = records.map((artboard, index) => {
         const artboardId = String(artboard?.id || (index === 0 ? "active-document" : `artboard-${index + 1}`)).trim();
         const existingGroup = existingGroupsByArtboardId.get(artboardId) || null;
         const existingChildren = Array.isArray(existingGroup?.children) ? existingGroup.children : [];
@@ -657,6 +702,7 @@
           name: artboard?.name || `Artboard ${index + 1}`,
         }, children, existingGroup);
       });
+      const nextEntries = [...looseCanvasObjectEntries, ...artboardGroupEntries];
 
       if (JSON.stringify(this.getEntries()) === JSON.stringify(nextEntries)) {
         return false;

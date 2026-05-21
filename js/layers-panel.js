@@ -660,6 +660,69 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     };
   }
 
+  function isCanvasObjectLayerEntry(entry) {
+    return Boolean(
+      entry?.canvasObject === true ||
+      entry?.type === "vector-rect" ||
+      entry?.type === "vector-text"
+    );
+  }
+
+  function isLayerPanelHiddenEntry(entry) {
+    return entry?.type === "vector-rect";
+  }
+
+  function cloneLayerPanelHiddenEntry(entry) {
+    return layerModel?.cloneEntry?.(entry) || {
+      ...(entry || {}),
+    };
+  }
+
+  function collectLayerPanelHiddenEntries(entries = [], hiddenEntries = []) {
+    (Array.isArray(entries) ? entries : []).forEach((entry) => {
+      if (isLayerPanelHiddenEntry(entry)) {
+        hiddenEntries.push(cloneLayerPanelHiddenEntry(entry));
+        return;
+      }
+
+      if (entry?.type === "group") {
+        collectLayerPanelHiddenEntries(entry.children || [], hiddenEntries);
+      }
+    });
+
+    return hiddenEntries;
+  }
+
+  function cloneCanvasObjectLayerEntry(entry) {
+    const clone = {
+      ...(entry || {}),
+      canvasObject: true,
+    };
+
+    delete clone.artboardId;
+    return clone;
+  }
+
+  function extractCanvasObjectLayerEntries(entries = [], extracted = []) {
+    return (Array.isArray(entries) ? entries : [])
+      .map((entry) => {
+        if (isCanvasObjectLayerEntry(entry)) {
+          extracted.push(cloneCanvasObjectLayerEntry(entry));
+          return null;
+        }
+
+        if (entry?.type === "group") {
+          return {
+            ...entry,
+            children: extractCanvasObjectLayerEntries(entry.children || [], extracted),
+          };
+        }
+
+        return entry;
+      })
+      .filter(Boolean);
+  }
+
   function ensureArtboardLayerGroups(source = "layers-panel-artboards") {
     if (!layerModel || isEnsuringArtboardLayerGroups) {
       return;
@@ -679,18 +742,27 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
     const entries = layerModel.getEntries?.() || [];
     const existingGroupsByArtboardId = new Map();
+    const looseCanvasObjectEntries = [];
     const looseEntries = [];
 
     entries.forEach((entry) => {
       if (isArtboardLayerGroup(entry)) {
-        existingGroupsByArtboardId.set(entry.artboardId || entry.id, entry);
+        existingGroupsByArtboardId.set(entry.artboardId || entry.id, {
+          ...entry,
+          children: extractCanvasObjectLayerEntries(entry.children || [], looseCanvasObjectEntries),
+        });
+        return;
+      }
+
+      if (isCanvasObjectLayerEntry(entry)) {
+        looseCanvasObjectEntries.push(cloneCanvasObjectLayerEntry(entry));
         return;
       }
 
       looseEntries.push(entry);
     });
 
-    const nextEntries = artboards.map((artboard, index) => {
+    const artboardEntries = artboards.map((artboard, index) => {
       const existingGroup = existingGroupsByArtboardId.get(artboard.id) ||
         existingGroupsByArtboardId.get(getArtboardLayerGroupId(artboard.id)) ||
         null;
@@ -701,6 +773,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
       return createArtboardLayerGroup(artboard, children, existingGroup);
     });
+    const nextEntries = [...looseCanvasObjectEntries, ...artboardEntries];
 
     if (JSON.stringify(entries) === JSON.stringify(nextEntries)) {
       return;
@@ -788,9 +861,14 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
     try {
       const rootList = panel.querySelector(".layers-list");
-      const entries = Array.from(rootList.children)
+      const visibleEntries = Array.from(rootList.children)
         .filter((entry) => entry.matches("[data-layer-entry]"))
         .map(serializeLayerEntry);
+      const hiddenEntries = collectLayerPanelHiddenEntries(layerModel.getEntries?.() || []);
+      const entries = [
+        ...hiddenEntries,
+        ...visibleEntries,
+      ];
       const activeLayerId = getLayerId(focusedLayer) || getLayerId(getFirstSelectedLayer());
 
       const syncOptions = { ...options, source };
@@ -1052,13 +1130,21 @@ window.CBO.initLayersPanel = function initLayersPanel() {
   }
 
   function createLayerEntryFromModel(entry) {
+    if (isLayerPanelHiddenEntry(entry)) {
+      return null;
+    }
+
     const layerEntry = createLayerEntry(entry.name, entry.type, entry.id, entry);
 
     if (entry.type === "group") {
       const children = getLayerChildren(layerEntry);
 
       (entry.children || []).forEach((childEntry) => {
-        children.append(createLayerEntryFromModel(childEntry));
+        const childLayerEntry = createLayerEntryFromModel(childEntry);
+
+        if (childLayerEntry) {
+          children.append(childLayerEntry);
+        }
       });
       const shouldCollapse = entry.artboardGroup === true
         ? !expandedArtboardGroupIds.has(entry.id)
@@ -1078,7 +1164,7 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     isRenderingLayerModel = true;
 
     try {
-      rootList.replaceChildren(...entries.map(createLayerEntryFromModel));
+      rootList.replaceChildren(...entries.map(createLayerEntryFromModel).filter(Boolean));
       updateLayerDepths();
 
       const activeRow =

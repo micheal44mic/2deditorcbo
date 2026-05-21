@@ -2,6 +2,25 @@
   const SVG_NS = "http://www.w3.org/2000/svg";
   const TEXT_LAYER_TYPE = "vector-text";
   const SELECTION_TOOL_MODE = "selection";
+  const VECTOR_TEXT_MOVE_TYPE = "vector-text";
+  const VECTOR_TEXT_KEEP_SELECTION_SELECTOR = [
+    ".toolbar-dock",
+    ".top-toolbar-dock",
+    ".text-add-toolbar",
+    ".mobile-text-panel",
+    ".right-vertical-toolbar-dock",
+    "[data-text-prompt-toolbar]",
+    "[data-text-prompt-focus-overlay]",
+    "[data-ai-image-board-action-toolbar]",
+    "[data-ai-image-board-mobile-action-toolbar]",
+    "[data-ai-image-enlarge-viewer]",
+    "[data-ai-image-edit-preview-viewer]",
+    "[contenteditable='true']",
+    "button",
+    "input",
+    "textarea",
+    "select",
+  ].join(", ");
   const CORNER_ENVELOPE_NODES = ["TL", "TR", "BL", "BR"];
   const CENTER_ENVELOPE_NODES = ["TC", "BC"];
   const HANDLE_ENVELOPE_NODES = ["TC_HandleL", "TC_HandleR", "BC_HandleL", "BC_HandleR"];
@@ -114,27 +133,6 @@
     return null;
   }
 
-  function insertEntryAbove(entries, targetId, entry) {
-    if (!targetId) {
-      return false;
-    }
-
-    for (let index = 0; index < entries.length; index += 1) {
-      const current = entries[index];
-
-      if (current.id === targetId) {
-        entries.splice(index, 0, entry);
-        return true;
-      }
-
-      if (current.type === "group" && insertEntryAbove(current.children || [], targetId, entry)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   function insertAboveBackground(entries, entry) {
     const backgroundIndex = entries.findIndex(
       (candidate) => candidate.id === "background" || candidate.type === "background",
@@ -142,6 +140,20 @@
     const index = backgroundIndex >= 0 ? backgroundIndex : entries.length;
 
     entries.splice(index, 0, entry);
+  }
+
+  function insertCanvasObjectAtTop(entries, entry, targetId = "") {
+    if (!Array.isArray(entries) || !entry) {
+      return false;
+    }
+
+    const normalizedTargetId = String(targetId || "").trim();
+    const topLevelIndex = normalizedTargetId
+      ? entries.findIndex((candidate) => candidate?.id === normalizedTargetId)
+      : -1;
+
+    entries.splice(topLevelIndex >= 0 ? topLevelIndex : 0, 0, entry);
+    return true;
   }
 
   function getPrimaryArtboardId() {
@@ -162,40 +174,6 @@
     return artboards.some((artboard) => artboard?.id === resolvedArtboardId)
       ? resolvedArtboardId
       : getPrimaryArtboardId();
-  }
-
-  function getEntryArtboardGroupId(entry, layerModel) {
-    return String(
-      layerModel?.getArtboardIdFromGroup?.(entry) ||
-      entry?.artboardId ||
-      "",
-    ).trim();
-  }
-
-  function insertEntryAtTopOfArtboard(entries, artboardId, entry, layerModel) {
-    const normalizedArtboardId = String(artboardId || "").trim();
-
-    if (!normalizedArtboardId || !Array.isArray(entries) || !entry) {
-      return false;
-    }
-
-    for (const candidate of entries) {
-      if (
-        candidate?.type === "group" &&
-        candidate.artboardGroup === true &&
-        getEntryArtboardGroupId(candidate, layerModel) === normalizedArtboardId
-      ) {
-        candidate.children = Array.isArray(candidate.children) ? candidate.children : [];
-        candidate.children.unshift(entry);
-        return true;
-      }
-
-      if (insertEntryAtTopOfArtboard(candidate?.children || [], normalizedArtboardId, entry, layerModel)) {
-        return true;
-      }
-    }
-
-    return false;
   }
 
   function toFiniteNumber(value, fallback) {
@@ -962,24 +940,20 @@
     const shouldCenterVisually = !Number.isFinite(layerSeed.x) && !Number.isFinite(layerSeed.y);
     const layer = layerModel.createLayer({
       ...layerSeed,
-      artboardId: targetArtboardId,
+      canvasObject: true,
       type: TEXT_LAYER_TYPE,
       x: Number.isFinite(layerSeed.x) ? layerSeed.x : centeredPoint.x,
       y: Number.isFinite(layerSeed.y) ? layerSeed.y : centeredPoint.y,
     });
-    const activeLayerArtboardId = activeLayer?.id
-      ? layerModel.findEntryArtboardId?.(activeLayer.id)
-      : "";
-    let didInsert = activeLayer?.type !== "background" &&
-      (!targetArtboardId || activeLayerArtboardId === targetArtboardId)
-      ? insertEntryAbove(entries, activeLayer?.id, layer)
-      : false;
+    const didInsert = insertCanvasObjectAtTop(
+      entries,
+      layer,
+      activeLayer?.canvasObject === true || activeLayer?.type === TEXT_LAYER_TYPE || activeLayer?.type === "vector-rect"
+        ? activeLayer.id
+        : "",
+    );
     const historyGroup = `vector-text-create-${layer.id}`;
     let shouldEndCreateGroup = true;
-
-    if (!didInsert && targetArtboardId) {
-      didInsert = insertEntryAtTopOfArtboard(entries, targetArtboardId, layer, layerModel);
-    }
 
     if (!didInsert) {
       insertAboveBackground(entries, layer);
@@ -1038,6 +1012,7 @@
       this.handleToolChange = this.handleToolChange.bind(this);
       this.handleTextTransformEditRequest = this.handleTextTransformEditRequest.bind(this);
       this.handlePointerDown = this.handlePointerDown.bind(this);
+      this.handleDocumentPointerDown = this.handleDocumentPointerDown.bind(this);
       this.handleWheel = this.handleWheel.bind(this);
       this.handleDragMove = this.handleDragMove.bind(this);
       this.handleDragEnd = this.handleDragEnd.bind(this);
@@ -1048,6 +1023,7 @@
 
       this.mount();
       this.bindEvents();
+      this.registerMobileMovePointerTarget();
       this.syncActiveToolFromToolbar();
       this.syncOverlayInteractivity();
       this.scheduleContentRender();
@@ -1094,6 +1070,7 @@
       window.addEventListener("cbo:text-transform-edit-request", this.handleTextTransformEditRequest);
       window.addEventListener("cbo:touch-navigation-start", this.handleTouchNavigationStart);
       window.addEventListener("keydown", this.handleKeyDown);
+      document.addEventListener("pointerdown", this.handleDocumentPointerDown, true);
       window.addEventListener("resize", () => {
         this.updateViewportSize();
         this.updateCameraTransform();
@@ -1101,6 +1078,36 @@
       this.svg.addEventListener("wheel", this.handleWheel, { passive: false });
       this.svg.addEventListener("pointerdown", this.handlePointerDown);
       this.layerModel?.addEventListener?.("change", this.handleDocumentChange);
+    }
+
+    registerMobileMovePointerTarget() {
+      const previousPredicate = namespace.isMobileObjectMovePointerTarget;
+
+      namespace.isMobileObjectMovePointerTarget = (event) => (
+        Boolean(previousPredicate?.(event)) ||
+        this.isMobileMovePointerTarget(event)
+      );
+    }
+
+    isMobileTextMoveArmed(layerId) {
+      return Boolean(namespace.isMobileObjectMoveArmed?.({
+        id: layerId,
+        type: VECTOR_TEXT_MOVE_TYPE,
+      }));
+    }
+
+    isMobileMovePointerTarget(event) {
+      if (!isMobileViewport()) {
+        return false;
+      }
+
+      const layerId = String(this.layerModel?.activeLayerId || "").trim();
+
+      if (!layerId || !this.isMobileTextMoveArmed(layerId)) {
+        return false;
+      }
+
+      return Boolean(event.target?.closest?.(`.editor-vector-text-layer[data-layer-id="${cssEscape(layerId)}"]`));
     }
 
     handleWheel(event) {
@@ -1113,6 +1120,27 @@
 
     isSelectionToolActive() {
       return this.activeTool === SELECTION_TOOL_MODE;
+    }
+
+    clearActiveTextSelection(source = "vector-text-clear-selection") {
+      const activeTextLayer = this.getActiveTextLayer();
+
+      if (!activeTextLayer?.id) {
+        return false;
+      }
+
+      namespace.clearMobileObjectMoveArmed?.({
+        id: activeTextLayer.id,
+        type: VECTOR_TEXT_MOVE_TYPE,
+      }, { source });
+      this.clearEnvelopeEdit();
+      this.layerModel?.setActiveLayer?.(null, {
+        history: false,
+        source,
+      });
+      this.syncOverlayInteractivity();
+      this.scheduleContentRender();
+      return true;
     }
 
     isEnvelopeEditLayer(layerId) {
@@ -2306,6 +2334,7 @@
       const group = createSvgElement("g", {
         class: `editor-vector-text-layer${options.active ? " active" : ""}`,
         "data-layer-id": layer.id,
+        "data-vector-text-layer": "",
         opacity: options.applyLayerOpacity === false ? 1 : toFiniteNumber(layer.opacity, 1),
         transform: formatLayerTransform(layer),
       });
@@ -2648,8 +2677,37 @@
       event.stopPropagation();
 
       if (isMobileViewport()) {
+        this.clearActiveTextSelection("vector-text-mobile-hitarea-clear-selection");
         return;
       }
+    }
+
+    handleDocumentPointerDown(event) {
+      if (
+        event.button !== 0 ||
+        this.dragState ||
+        this.envelopeDragState ||
+        !this.getActiveTextLayer()
+      ) {
+        return;
+      }
+
+      const target = event.target;
+
+      if (
+        target?.closest?.(VECTOR_TEXT_KEEP_SELECTION_SELECTOR) ||
+        target?.closest?.(".editor-vector-text-layer") ||
+        target?.closest?.(".editor-vector-envelope-handle-group") ||
+        target?.closest?.(".editor-vector-envelope-handle")
+      ) {
+        return;
+      }
+
+      if (!target?.closest?.(".editor-stage")) {
+        return;
+      }
+
+      this.clearActiveTextSelection("vector-text-document-pointer-clear-selection");
     }
 
     handleTextLayerPointerDown(event, layerId) {
@@ -2671,7 +2729,12 @@
       event.stopPropagation();
       this.layerModel.setActiveLayer(layerId, { source: "vector-text-select" });
 
-      if (!this.isSelectionToolActive() || layer.locked === true || event.button !== 0) {
+      const isMobileTouchMove = event.pointerType === "touch" && isMobileViewport();
+      const canMoveLayer = isMobileTouchMove
+        ? this.isMobileTextMoveArmed(layerId)
+        : this.isSelectionToolActive();
+
+      if (!canMoveLayer || layer.locked === true || event.button !== 0) {
         return;
       }
 

@@ -333,7 +333,7 @@ test("selection clicks on empty vector overlay space pass through to layer picki
   );
 });
 
-test("live vector text only starts layer drag from the selection tool", () => {
+test("live vector text starts layer drag from selection or armed mobile move", () => {
   const source = fs.readFileSync(
     path.join(repoRoot, "js", "text", "vector-text-renderer.js"),
     "utf8",
@@ -346,10 +346,19 @@ test("live vector text only starts layer drag from the selection tool", () => {
     source,
     /if \(!this\.isSelectionToolActive\(\) && !this\.isTextToolActive\(\)\) \{\s*return;\s*\}/,
   );
-  assert.match(
-    source,
-    /if \(!this\.isSelectionToolActive\(\) \|\| layer\.locked === true \|\| event\.button !== 0\) \{\s*return;\s*\}/,
-  );
+  assert.match(source, /const VECTOR_TEXT_MOVE_TYPE = "vector-text"/);
+  assert.match(source, /const VECTOR_TEXT_KEEP_SELECTION_SELECTOR = \[/);
+  assert.match(source, /handleDocumentPointerDown\(event\)/);
+  assert.match(source, /document\.addEventListener\("pointerdown", this\.handleDocumentPointerDown, true\)/);
+  assert.match(source, /clearActiveTextSelection\(source = "vector-text-clear-selection"\)/);
+  assert.match(source, /namespace\.clearMobileObjectMoveArmed\?\.\(\{[\s\S]*type: VECTOR_TEXT_MOVE_TYPE/);
+  assert.match(source, /this\.clearActiveTextSelection\("vector-text-document-pointer-clear-selection"\)/);
+  assert.match(source, /this\.clearActiveTextSelection\("vector-text-mobile-hitarea-clear-selection"\)/);
+  assert.match(source, /isMobileTextMoveArmed\(layerId\)/);
+  assert.match(source, /const isMobileTouchMove = event\.pointerType === "touch" && isMobileViewport\(\)/);
+  assert.match(source, /const canMoveLayer = isMobileTouchMove[\s\S]*\? this\.isMobileTextMoveArmed\(layerId\)[\s\S]*: this\.isSelectionToolActive\(\)/);
+  assert.match(source, /if \(!canMoveLayer \|\| layer\.locked === true \|\| event\.button !== 0\) \{\s*return;\s*\}/);
+  assert.match(source, /"data-vector-text-layer": ""/);
 });
 
 test("desktop text tool creates text when the tool is activated", () => {
@@ -393,8 +402,9 @@ test("mobile text tool exposes ADD TEXT as the layer creation action", () => {
   assert.match(vectorRendererSource, /const \{ centerAt, \.\.\.layerSeed \} = options;/);
   assert.match(vectorRendererSource, /const targetArtboardId = resolveVectorTextArtboardId\(layerModel, activeLayer\)/);
   assert.match(vectorRendererSource, /getFinitePoint\(centerAt\) \|\| getCenteredDocumentPoint\(\{\s*artboardId: targetArtboardId,\s*layerId: activeLayer\?\.id,/);
-  assert.match(vectorRendererSource, /artboardId: targetArtboardId/);
-  assert.match(vectorRendererSource, /insertEntryAtTopOfArtboard\(entries, targetArtboardId, layer, layerModel\)/);
+  assert.match(vectorRendererSource, /canvasObject: true/);
+  assert.match(vectorRendererSource, /function insertCanvasObjectAtTop\(entries, entry, targetId = ""\)/);
+  assert.match(vectorRendererSource, /const didInsert = insertCanvasObjectAtTop\(/);
   assert.match(appSource, /"\.text-add-toolbar"/);
   assert.match(appSource, /"\.mobile-text-panel"/);
 });
@@ -405,6 +415,13 @@ test("mobile text layer switches the bottom dock to icon settings panels", () =>
 
   assert.match(topToolbarSource, /data-mobile-text-settings-toolbar/);
   assert.match(topToolbarSource, /data-mobile-text-toolbar-back/);
+  assert.match(topToolbarSource, /data-mobile-text-move/);
+  assert.match(topToolbarSource, /class="lucide lucide-move-icon lucide-move"/);
+  assert.match(topToolbarSource, /function toggleMobileTextMoveMode\(\)/);
+  assert.match(topToolbarSource, /window\.CBO\.toggleMobileObjectMoveArmed\?\.\(\{[\s\S]*type: "vector-text"/);
+  assert.match(topToolbarSource, /window\.CBO\.clearMobileObjectMoveArmed\?\.\(\{ type: "vector-text" \}/);
+  assert.match(topToolbarSource, /source: "mobile-text-no-active-layer-clear-move"/);
+  assert.match(topToolbarSource, /mobileTextMoveButton\?\.addEventListener\("click", toggleMobileTextMoveMode\)/);
   assert.match(topToolbarSource, /function activateMainSelectionTool\(source = "mobile-text-toolbar-back"\)/);
   assert.match(topToolbarSource, /mobileTextBackButton\?\.addEventListener\("click", returnFromMobileTextToolbar\)/);
   assert.ok((topToolbarSource.match(/data-mobile-text-panel-trigger/g) || []).length >= 2);
@@ -419,7 +436,8 @@ test("mobile text layer switches the bottom dock to icon settings panels", () =>
   assert.match(topToolbarSource, /data-mobile-text-content/);
   assert.match(topToolbarSource, /data-mobile-text-panel-section="transform"/);
   assert.match(topToolbarSource, /data-mobile-text-panel-section="shadow"/);
-  assert.match(topToolbarSource, /showMobileTextToolbar\(currentToolIsText && hasTextLayer\)/);
+  assert.match(topToolbarSource, /const shouldShowMobileTextToolbar = hasTextLayer && isMobileTextToolbarViewport\(\)/);
+  assert.match(topToolbarSource, /showMobileTextToolbar\(shouldShowMobileTextToolbar\)/);
   assert.match(topToolbarSource, /toolbarDock\.classList\.toggle\("mobile-text-settings-active", shouldShow\)/);
   assert.match(topToolbarSource, /patchActiveTextLayer\(\s*\{ style: \{ fill: mobileTextFillInput\.value \} \}/);
   assert.match(topToolbarSource, /enableMobileTextBorderEffect\(\)/);
@@ -446,6 +464,7 @@ test("mobile text layer switches the bottom dock to icon settings panels", () =>
   assert.match(topToolbarCss, /\.toolbar-dock \.mobile-text-settings-toolbar:not\(\[hidden\]\) \{\s*display: flex;/);
   assert.doesNotMatch(topToolbarCss, /\.top-toolbar-dock \{\s*z-index: 9050;/);
   assert.match(topToolbarCss, /\.mobile-text-panel:not\(\[hidden\]\) \{[\s\S]*bottom: var\(--cbo-mobile-floating-bottom\);/);
+  assert.match(topToolbarCss, /\.mobile-text-panel:not\(\[hidden\]\) \{[\s\S]*z-index: 9040;/);
   assert.match(topToolbarCss, /\.mobile-text-content-input \{[\s\S]*background: #242832;[\s\S]*color: #ffffff;/);
   assert.match(topToolbarCss, /\.mobile-text-select \{[\s\S]*color-scheme: dark;/);
   assert.match(topToolbarCss, /\.mobile-text-select option \{[\s\S]*background: #242832;[\s\S]*color: #ffffff;/);

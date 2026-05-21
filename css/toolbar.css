@@ -99,6 +99,7 @@
   position: absolute;
   left: 50%;
   bottom: calc(100% + 12px);
+  z-index: 1100;
   display: none;
   width: max-content;
   min-width: 128px;
@@ -273,6 +274,7 @@
     left: var(--cbo-mobile-edge-left);
     right: var(--cbo-mobile-edge-right);
     bottom: var(--cbo-mobile-floating-bottom);
+    z-index: 9060;
     width: auto;
     min-width: 0;
     transform: none;

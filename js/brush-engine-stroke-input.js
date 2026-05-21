@@ -662,6 +662,8 @@
         "[contenteditable='true']",
         "[role='button']",
         "[data-ai-image-board]",
+        "[data-space-text-board]",
+        ".editor-vector-text-layer",
         "[data-artboard-action-bubble]",
         "[data-artboard-symmetry-button]",
         "[data-artboard-connection-menu]",
@@ -1063,6 +1065,7 @@
         this.activeTouchPointers.size === 1 &&
         this.isSelectionToolActiveForTouchPan() &&
         this.shouldStartTouchCanvasPan(event, point) &&
+        !namespace.isMobileObjectMovePointerTarget?.(event) &&
         !this.isTouchCanvasPanInteractiveTarget(event.target)
       );
     }

@@ -3,6 +3,7 @@ window.CBO = window.CBO || {};
 (function registerVectorRectTool(namespace) {
   const SVG_NS = "http://www.w3.org/2000/svg";
   const VECTOR_RECT_LAYER_TYPE = "vector-rect";
+  const VECTOR_TEXT_LAYER_TYPE = "vector-text";
   const VECTOR_RECT_TOOL_MODE = "vector-rect";
   const MIN_RECT_DRAG_CSS_PX = 4;
   const DEFAULT_RECT_FILL = "#bfefff";
@@ -15,11 +16,6 @@ window.CBO = window.CBO || {};
     { fill: "#111111", label: "Black" },
     { fill: "#8d3f35", label: "Brick" },
     { fill: "#b36b3a", label: "Copper" },
-    { fill: "#b99a43", label: "Ochre" },
-    { fill: "#3f8f55", label: "Green" },
-    { fill: "#2f7f95", label: "Teal" },
-    { fill: "#346aa6", label: "Blue" },
-    { fill: "#70449a", label: "Purple" },
   ];
   const RECT_TITLE_HEIGHT = 18;
   const RECT_TITLE_GAP = 7;
@@ -33,6 +29,17 @@ window.CBO = window.CBO || {};
   const RECT_RESIZE_HANDLE_HIT_SIZE_CSS_PX = 24;
   const RECT_ACTION_TOOLBAR_GAP_CSS_PX = 14;
   const RECT_ACTION_TOOLBAR_HEIGHT_CSS_PX = 40;
+  const VECTOR_RECT_MOVE_TYPE = "vector-rect";
+  const VECTOR_RECT_MOVE_ICON = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-move-icon lucide-move" aria-hidden="true">
+      <path d="M12 2v20"></path>
+      <path d="m15 19-3 3-3-3"></path>
+      <path d="m19 9 3 3-3 3"></path>
+      <path d="M2 12h20"></path>
+      <path d="m5 9-3 3 3 3"></path>
+      <path d="m9 5 3-3 3 3"></path>
+    </svg>
+  `;
   const RECT_RESIZE_HANDLES = [
     "nw",
     "ne",
@@ -80,6 +87,13 @@ window.CBO = window.CBO || {};
     return Math.min(max, Math.max(min, number));
   }
 
+  function isMobileMoveViewport() {
+    return Boolean(
+      window.matchMedia?.("(pointer: coarse), (max-width: 900px)")?.matches ||
+      (window.innerWidth || 0) <= 900
+    );
+  }
+
   function getViewportDocumentScale() {
     return Math.max(0.0001, (Number(namespace.brushEngine?.camera?.zoom) || 1) /
       Math.max(1, Number(namespace.brushEngine?.dpr || window.devicePixelRatio || 1)));
@@ -87,6 +101,61 @@ window.CBO = window.CBO || {};
 
   function cssPixelsToDocumentUnits(cssPixels) {
     return Math.max(0, Number(cssPixels) || 0) / getViewportDocumentScale();
+  }
+
+  function documentPointToLayerPoint(layer, point) {
+    if (!point) {
+      return null;
+    }
+
+    const scaleX = toFiniteNumber(layer?.scaleX, 1) || 1;
+    const scaleY = toFiniteNumber(layer?.scaleY, 1) || 1;
+    const radians = (-toFiniteNumber(layer?.rotation, 0) * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const dx = toFiniteNumber(point.x, 0) - toFiniteNumber(layer?.x, 0);
+    const dy = toFiniteNumber(point.y, 0) - toFiniteNumber(layer?.y, 0);
+
+    return {
+      x: (dx * cos - dy * sin) / scaleX,
+      y: (dx * sin + dy * cos) / scaleY,
+    };
+  }
+
+  function getVectorTextApproxBounds(layer) {
+    const fontSize = Math.max(1, toFiniteNumber(layer?.fontSize, 300));
+    const lineHeight = Math.max(1, toFiniteNumber(layer?.lineHeight, fontSize * 0.82));
+    const letterSpacing = toFiniteNumber(layer?.letterSpacing, 0);
+    const lines = String(layer?.text || "CBOs").split(/\r?\n/);
+    const longestLineLength = Math.max(1, ...lines.map((line) => Math.max(1, line.length)));
+    const width = Math.max(
+      fontSize * 0.5,
+      longestLineLength * fontSize * 0.62 + Math.max(0, longestLineLength - 1) * letterSpacing,
+    );
+    const height = Math.max(fontSize * 0.85, lines.length * lineHeight);
+    const align = String(layer?.textAlign || "center").toLowerCase();
+    const x1 = align === "right" ? -width : align === "left" ? 0 : -width / 2;
+
+    return {
+      x1,
+      y1: -fontSize,
+      x2: x1 + width,
+      y2: Math.max(height, lineHeight),
+    };
+  }
+
+  function isPointInVectorTextApproxBounds(point, layer, padding = 0) {
+    const localPoint = documentPointToLayerPoint(layer, point);
+    const bounds = getVectorTextApproxBounds(layer);
+    const hitPadding = Math.max(0, Number(padding) || 0);
+
+    return Boolean(
+      localPoint &&
+      localPoint.x >= bounds.x1 - hitPadding &&
+      localPoint.y >= bounds.y1 - hitPadding &&
+      localPoint.x <= bounds.x2 + hitPadding &&
+      localPoint.y <= bounds.y2 + hitPadding
+    );
   }
 
   function getCameraViewportOffset() {
@@ -111,9 +180,20 @@ window.CBO = window.CBO || {};
   }
 
   function getVectorRectActionToolbarMarkup() {
-    return RECT_FILL_SWATCHES.map((swatch) => (
-      `<button class="editor-vector-rect-fill-swatch" type="button" aria-label="${swatch.label}" aria-pressed="false" data-vector-rect-fill-swatch data-vector-rect-fill="${swatch.fill}" style="--vector-rect-swatch-color: ${swatch.fill};"></button>`
+    const swatches = RECT_FILL_SWATCHES.map((swatch) => (
+      `<button class="editor-ai-image-board-action-toolbar-button editor-vector-rect-fill-swatch" type="button" aria-label="${swatch.label}" aria-pressed="false" data-ai-image-board-toolbar-label="${swatch.label}" data-vector-rect-fill-swatch data-vector-rect-fill="${swatch.fill}" style="--vector-rect-swatch-color: ${swatch.fill};">
+        <span class="editor-vector-rect-fill-swatch-chip" aria-hidden="true"></span>
+      </button>`
     )).join("");
+
+    return `
+      <div class="editor-ai-image-board-action-toolbar-items editor-vector-rect-action-toolbar-items" data-vector-rect-action-toolbar-items>
+        ${swatches}
+        <span class="editor-ai-image-board-action-toolbar-separator editor-vector-rect-action-toolbar-separator" aria-hidden="true"></span>
+        <button class="editor-ai-image-board-action-toolbar-button editor-vector-rect-move-button" type="button" aria-label="Move" aria-pressed="false" data-ai-image-board-toolbar-label="Move" data-vector-rect-move data-vector-rect-toolbar-action="move">
+          ${VECTOR_RECT_MOVE_ICON}
+        </button>
+      </div>`;
   }
 
   function debugVectorRectFill(message, detail = {}) {
@@ -374,14 +454,6 @@ window.CBO = window.CBO || {};
     return layerModel;
   }
 
-  function getLayerArtboardIdFromGroup(entry, layerModel) {
-    return String(
-      layerModel?.getArtboardIdFromGroup?.(entry) ||
-      entry?.artboardId ||
-      "",
-    ).trim();
-  }
-
   function insertEntryAboveBackground(entries, layer) {
     if (!Array.isArray(entries) || !layer) {
       return false;
@@ -394,43 +466,23 @@ window.CBO = window.CBO || {};
     return true;
   }
 
-  function insertEntryAtBottomOfArtboard(entries, artboardId, layer, layerModel) {
-    const normalizedArtboardId = String(artboardId || "").trim();
+  function isCanvasObjectEntry(entry) {
+    return Boolean(
+      entry?.canvasObject === true ||
+      entry?.type === VECTOR_RECT_LAYER_TYPE ||
+      entry?.type === VECTOR_TEXT_LAYER_TYPE
+    );
+  }
 
-    if (!normalizedArtboardId || !Array.isArray(entries) || !layer) {
+  function insertRectCanvasObjectAtBottom(entries, layer) {
+    if (!Array.isArray(entries) || !layer) {
       return false;
     }
 
-    for (const entry of entries) {
-      if (
-        entry?.type === "group" &&
-        entry.artboardGroup === true &&
-        getLayerArtboardIdFromGroup(entry, layerModel) === normalizedArtboardId
-      ) {
-        entry.children = Array.isArray(entry.children) ? entry.children : [];
-        return insertEntryAboveBackground(entry.children, layer);
-      }
+    const firstNonCanvasObjectIndex = entries.findIndex((entry) => !isCanvasObjectEntry(entry));
 
-      if (insertEntryAtBottomOfArtboard(entry?.children || [], normalizedArtboardId, layer, layerModel)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  function getArtboardIdForPoint(point = {}, layerModel = null) {
-    const artboardAtPoint = namespace.getDocumentArtboardAtPoint?.({
-      docX: point.x,
-      docY: point.y,
-    });
-
-    return String(
-      artboardAtPoint?.id ||
-      namespace.getSelectedDocumentArtboardId?.() ||
-      namespace.getActiveDocumentArtboardId?.({ layerId: layerModel?.activeLayerId }) ||
-      "active-document",
-    ).trim() || "active-document";
+    entries.splice(firstNonCanvasObjectIndex >= 0 ? firstNonCanvasObjectIndex : entries.length, 0, layer);
+    return true;
   }
 
   function isVectorRectToolState(detail = {}) {
@@ -438,13 +490,6 @@ window.CBO = window.CBO || {};
     const toolMode = String(detail.toolMode || "").trim().toLowerCase();
 
     return toolMode === VECTOR_RECT_TOOL_MODE || label === "square";
-  }
-
-  function isSelectionToolState(detail = {}) {
-    const label = String(detail.label || "").trim().toLowerCase();
-    const toolMode = String(detail.toolMode || "").trim().toLowerCase();
-
-    return toolMode === "selection" || label === "selection";
   }
 
   function getInitialToolState() {
@@ -467,15 +512,70 @@ window.CBO = window.CBO || {};
     "[data-artboard-symmetry-button]",
     "[data-ai-image-board]",
     "[data-ai-image-board-action-toolbar]",
+    "[data-ai-image-board-mobile-action-toolbar]",
     "[data-ai-image-enlarge-viewer]",
     "[data-ai-image-edit-preview-viewer]",
+    "[data-space-board]",
+    "[data-space-text-board]",
+    "[data-text-prompt-toolbar]",
+    "[data-text-prompt-focus-overlay]",
     "[data-mockup-slot]",
     "[data-mockup-slot-popover]",
     "[data-vector-rect-action-toolbar]",
+    "[data-vector-text-layer]",
+    ".editor-vector-envelope-handle-group",
+    ".editor-vector-envelope-handle",
   ].join(",");
 
   function isStageInteractiveTarget(target) {
     return target instanceof Element && Boolean(target.closest(STAGE_INTERACTIVE_SELECTOR));
+  }
+
+  function cssEscape(value) {
+    return window.CSS?.escape
+      ? window.CSS.escape(String(value || ""))
+      : String(value || "").replace(/["\\]/g, "\\$&");
+  }
+
+  function isVectorTextLayerEntry(entry) {
+    return entry?.type === VECTOR_TEXT_LAYER_TYPE || entry?.type === "text" || entry?.kind === "text";
+  }
+
+  function isPointerInsideClientRect(event, rect, padding = 0) {
+    if (
+      !rect ||
+      !Number.isFinite(event?.clientX) ||
+      !Number.isFinite(event?.clientY) ||
+      rect.width <= 0 ||
+      rect.height <= 0
+    ) {
+      return false;
+    }
+
+    const hitPadding = Math.max(0, Number(padding) || 0);
+
+    return (
+      event.clientX >= rect.left - hitPadding &&
+      event.clientY >= rect.top - hitPadding &&
+      event.clientX <= rect.right + hitPadding &&
+      event.clientY <= rect.bottom + hitPadding
+    );
+  }
+
+  function isPointerOverVectorTextLayer(event, layer, point = null) {
+    const layerId = String(layer?.id || "").trim();
+
+    if (!layerId || layer?.visible === false) {
+      return false;
+    }
+
+    const node = document.querySelector?.(`.editor-vector-text-layer[data-layer-id="${cssEscape(layerId)}"]`);
+    const rect = node?.getBoundingClientRect?.();
+
+    return (
+      isPointerInsideClientRect(event, rect, 4) ||
+      isPointInVectorTextApproxBounds(point, layer, cssPixelsToDocumentUnits(12))
+    );
   }
 
   function isPointerOverStageInteractiveTarget(event, overlay) {
@@ -549,9 +649,12 @@ window.CBO = window.CBO || {};
       this.handlePointerEnd = this.handlePointerEnd.bind(this);
       this.handleToolbarClick = this.handleToolbarClick.bind(this);
       this.handleToolbarPointerDown = this.handleToolbarPointerDown.bind(this);
+      this.handleDocumentPointerDown = this.handleDocumentPointerDown.bind(this);
+      this.handleMobileObjectMoveChange = this.handleMobileObjectMoveChange.bind(this);
 
       this.mount();
       this.bindEvents();
+      this.registerMobileMovePointerTarget();
       this.handleToolChange({ detail: getInitialToolState() });
       this.render();
     }
@@ -581,7 +684,7 @@ window.CBO = window.CBO || {};
       this.viewportGroup.append(this.contentGroup, this.draftGroup);
       this.svg.append(hitArea, this.viewportGroup);
       this.toolbar = document.createElement("div");
-      this.toolbar.className = "editor-vector-rect-action-toolbar";
+      this.toolbar.className = "editor-vector-rect-action-toolbar editor-ai-image-board-action-toolbar";
       this.toolbar.dataset.vectorRectActionToolbar = "";
       this.toolbar.setAttribute("aria-hidden", "true");
       this.toolbar.innerHTML = getVectorRectActionToolbarMarkup();
@@ -596,7 +699,7 @@ window.CBO = window.CBO || {};
         this.stage.append(this.svg);
       }
 
-      this.stage.append(this.toolbar);
+      (document.body || this.stage).appendChild(this.toolbar);
       this.updateViewportSize();
       this.updateCameraTransform();
     }
@@ -605,18 +708,57 @@ window.CBO = window.CBO || {};
       window.addEventListener("cbo:tool-change", this.handleToolChange);
       window.addEventListener("cbo:camera-change", this.handleCameraChange);
       window.addEventListener("cbo:document-layers-change", this.handleDocumentChange);
+      window.addEventListener("cbo:mobile-object-move-change", this.handleMobileObjectMoveChange);
       window.addEventListener("resize", this.handleResize);
       this.layerModel?.addEventListener?.("change", this.handleDocumentChange);
+      document.addEventListener("pointerdown", this.handleDocumentPointerDown, true);
       this.stage.addEventListener("pointerdown", this.handlePointerDown, true);
+    }
+
+    registerMobileMovePointerTarget() {
+      const previousPredicate = namespace.isMobileObjectMovePointerTarget;
+
+      namespace.isMobileObjectMovePointerTarget = (event) => (
+        Boolean(previousPredicate?.(event)) ||
+        this.isMobileMovePointerTarget(event)
+      );
+    }
+
+    handleMobileObjectMoveChange() {
+      this.updateToolbar();
+    }
+
+    clearSelection(source = "vector-rect-clear-selection") {
+      const selectedLayerId = String(this.selectedLayerId || "").trim();
+
+      if (selectedLayerId) {
+        this.setSelectedLayerMoveArmed(false, selectedLayerId, source);
+      } else {
+        namespace.clearMobileObjectMoveArmed?.({ type: VECTOR_RECT_MOVE_TYPE }, { source });
+      }
+
+      if (!selectedLayerId && !this.toolbar) {
+        return false;
+      }
+
+      this.selectedLayerId = "";
+      this.render();
+      return Boolean(selectedLayerId);
     }
 
     handleToolChange(event) {
       const detail = event.detail || {};
 
       this.isActive = isVectorRectToolState(detail);
-      this.canSelectExistingRects = this.isActive || isSelectionToolState(detail);
+      this.canSelectExistingRects = this.isActive;
       this.svg?.classList.toggle("vector-rect-tool-active", this.isActive);
       this.stage?.classList.toggle("vector-rect-tool-active", this.isActive);
+
+      if (!this.isActive && this.selectedLayerId) {
+        this.clearSelection("vector-rect-tool-change-clear-selection");
+        return;
+      }
+
       this.updateToolbar();
     }
 
@@ -635,8 +777,48 @@ window.CBO = window.CBO || {};
       this.updateToolbar();
     }
 
+    handleDocumentPointerDown(event) {
+      if (!this.selectedLayerId || this.dragState || event.button !== 0) {
+        return;
+      }
+
+      const target = event.target;
+
+      if (target?.closest?.("[data-vector-rect-action-toolbar]")) {
+        return;
+      }
+
+      if (!target?.closest?.(".editor-stage")) {
+        return;
+      }
+
+      if (isPointerOverDrawingArtboardLabel(event, this.stage)) {
+        return;
+      }
+
+      const point = this.getEventDocumentPoint(event);
+      const hitLayer = isPointInsideDrawingArtboard(point)
+        ? null
+        : this.getHitLayerAtPoint(point, event);
+
+      if (hitLayer?.id === this.selectedLayerId) {
+        return;
+      }
+
+      this.clearSelection("vector-rect-document-pointer-clear-selection");
+    }
+
     handleToolbarPointerDown(event) {
       const swatch = event.target?.closest?.("[data-vector-rect-fill-swatch]");
+      const moveButton = event.target?.closest?.("[data-vector-rect-move]");
+
+      if (moveButton && this.toolbar?.contains(moveButton)) {
+        this.toggleSelectedLayerMove();
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        return;
+      }
 
       if (swatch && this.toolbar?.contains(swatch)) {
         debugVectorRectFill("swatch-pointerdown", {
@@ -653,6 +835,13 @@ window.CBO = window.CBO || {};
 
     handleToolbarClick(event) {
       const swatch = event.target?.closest?.("[data-vector-rect-fill-swatch]");
+      const moveButton = event.target?.closest?.("[data-vector-rect-move]");
+
+      if (moveButton && this.toolbar?.contains(moveButton)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
 
       if (!swatch || !this.toolbar?.contains(swatch)) {
         return;
@@ -661,6 +850,64 @@ window.CBO = window.CBO || {};
       event.preventDefault();
       event.stopPropagation();
       this.setSelectedLayerFill(swatch.dataset.vectorRectFill);
+    }
+
+    isSelectedLayerMoveArmed(layerId = this.selectedLayerId) {
+      return Boolean(namespace.isMobileObjectMoveArmed?.({
+        id: layerId,
+        type: VECTOR_RECT_MOVE_TYPE,
+      }));
+    }
+
+    setSelectedLayerMoveArmed(active, layerId = this.selectedLayerId, source = "vector-rect-move-toolbar") {
+      const normalizedLayerId = String(layerId || "").trim();
+
+      if (!normalizedLayerId) {
+        namespace.clearMobileObjectMoveArmed?.({ type: VECTOR_RECT_MOVE_TYPE }, { source });
+        this.updateToolbar();
+        return false;
+      }
+
+      if (active) {
+        namespace.setMobileObjectMoveArmed?.({
+          id: normalizedLayerId,
+          type: VECTOR_RECT_MOVE_TYPE,
+        }, { source });
+      } else {
+        namespace.clearMobileObjectMoveArmed?.({
+          id: normalizedLayerId,
+          type: VECTOR_RECT_MOVE_TYPE,
+        }, { source });
+      }
+
+      this.updateToolbar();
+      return true;
+    }
+
+    toggleSelectedLayerMove() {
+      const normalizedLayerId = String(this.selectedLayerId || "").trim();
+
+      if (!normalizedLayerId) {
+        return false;
+      }
+
+      namespace.toggleMobileObjectMoveArmed?.({
+        id: normalizedLayerId,
+        type: VECTOR_RECT_MOVE_TYPE,
+      }, { source: "vector-rect-move-toolbar" });
+      this.updateToolbar();
+      return true;
+    }
+
+    isMobileMovePointerTarget(event) {
+      if (!this.isSelectedLayerMoveArmed()) {
+        return false;
+      }
+
+      const point = this.getEventDocumentPoint(event);
+      const hitLayer = this.getHitLayerAtPoint(point, event);
+
+      return Boolean(hitLayer && hitLayer.id === this.selectedLayerId);
     }
 
     updateViewportSize() {
@@ -728,26 +975,42 @@ window.CBO = window.CBO || {};
       const point = this.getEventDocumentPoint(event);
 
       if (isPointInsideDrawingArtboard(point)) {
+        if (this.canSelectExistingRects && this.selectedLayerId) {
+          this.clearSelection("vector-rect-artboard-pointer-clear-selection");
+        }
         return;
       }
 
-      const resizeHit = this.canSelectExistingRects ? this.getResizeHandleAtPoint(point) : null;
+      const resizeHit = this.canSelectExistingRects ? this.getResizeHandleAtPoint(point, event) : null;
 
       if (resizeHit) {
         this.beginResizeDrag(resizeHit.layer, resizeHit.handle, event, point);
         return;
       }
 
-      const hitLayer = this.canSelectExistingRects ? this.getHitLayerAtPoint(point) : null;
+      const hitLayer = this.canSelectExistingRects ? this.getHitLayerAtPoint(point, event) : null;
 
       if (hitLayer) {
+        const canMoveHitLayer = this.isSelectedLayerMoveArmed(hitLayer.id);
+
+        if (!canMoveHitLayer) {
+          if (this.selectedLayerId !== hitLayer.id) {
+            this.setSelectedLayerMoveArmed(false, this.selectedLayerId, "vector-rect-select-clear-move");
+          }
+
+          this.selectedLayerId = hitLayer.id;
+          this.render();
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+
         this.beginMoveDrag(hitLayer, event, point);
         return;
       }
 
       if (this.canSelectExistingRects && this.selectedLayerId) {
-        this.selectedLayerId = "";
-        this.render();
+        this.clearSelection("vector-rect-clear-selection");
       }
 
       if (!this.isActive) {
@@ -755,7 +1018,6 @@ window.CBO = window.CBO || {};
       }
 
       this.dragState = {
-        artboardId: getArtboardIdForPoint(point, this.layerModel),
         mode: "create",
         pointerId: event.pointerId,
         startClientX: event.clientX,
@@ -782,12 +1044,27 @@ window.CBO = window.CBO || {};
         .filter((layer) => layer?.type === VECTOR_RECT_LAYER_TYPE && layer.visible !== false);
     }
 
-    getHitLayerAtPoint(point) {
-      const layers = this.getRenderableVectorRectLayers();
+    isPointerBlockedByPriorityLayer(event, point) {
+      const layers = this.layerModel?.getRenderableLayers?.() || [];
+
+      return layers.some((layer) => isVectorTextLayerEntry(layer) && isPointerOverVectorTextLayer(event, layer, point));
+    }
+
+    getHitLayerAtPoint(point, event = null) {
+      if (this.isPointerBlockedByPriorityLayer(event, point)) {
+        return null;
+      }
+
+      const layers = this.layerModel?.getRenderableLayers?.() || [];
       const padding = Math.max(2, cssPixelsToDocumentUnits(6));
 
       for (let index = layers.length - 1; index >= 0; index -= 1) {
         const layer = layers[index];
+
+        if (layer?.type !== VECTOR_RECT_LAYER_TYPE || layer.visible === false) {
+          continue;
+        }
+
         const rect = getLayerRect(layer);
 
         if (!rect) {
@@ -802,10 +1079,14 @@ window.CBO = window.CBO || {};
       return null;
     }
 
-    getResizeHandleAtPoint(point) {
+    getResizeHandleAtPoint(point, event = null) {
       const normalizedLayerId = String(this.selectedLayerId || "").trim();
 
       if (!normalizedLayerId) {
+        return null;
+      }
+
+      if (this.isPointerBlockedByPriorityLayer(event, point)) {
         return null;
       }
 
@@ -972,7 +1253,6 @@ window.CBO = window.CBO || {};
         const rect = roundRect(getRectFromPoints(state.startPoint, point, event));
 
         this.createLayerFromRect(rect, {
-          artboardId: state.artboardId,
           source: "vector-rect-drag",
         });
       }
@@ -1078,9 +1358,6 @@ window.CBO = window.CBO || {};
 
       this.layerModel = layerModel;
 
-      const artboardId = String(options.artboardId || getArtboardIdForPoint(normalizedRect, layerModel)).trim() ||
-        "active-document";
-
       namespace.ensureDocumentLayerArtboardGroups?.({
         history: false,
         source: "vector-rect-artboard-groups",
@@ -1088,7 +1365,7 @@ window.CBO = window.CBO || {};
 
       const layer = layerModel.createLayer({
         ...normalizedRect,
-        artboardId,
+        canvasObject: true,
         fill: options.fill || DEFAULT_RECT_FILL,
         kind: "rect",
         locked: true,
@@ -1104,7 +1381,7 @@ window.CBO = window.CBO || {};
         vectorEffect: "non-scaling-stroke",
       });
       const entries = layerModel.getEntries();
-      const didInsert = insertEntryAtBottomOfArtboard(entries, artboardId, layer, layerModel);
+      const didInsert = insertRectCanvasObjectAtBottom(entries, layer);
       const nextEntries = didInsert || insertEntryAboveBackground(entries, layer) ? entries : [layer, ...entries];
       const historyGroup = `vector-rect-create-${layer.id}`;
 
@@ -1135,7 +1412,7 @@ window.CBO = window.CBO || {};
       const layers = this.getRenderableVectorRectLayers();
 
       if (this.selectedLayerId && !layers.some((layer) => layer.id === this.selectedLayerId)) {
-        this.selectedLayerId = "";
+        this.clearSelection("vector-rect-selected-layer-removed");
       }
 
       this.contentGroup.replaceChildren(...layers.map((layer) => this.createRectLayerNode(layer)));
@@ -1204,6 +1481,7 @@ window.CBO = window.CBO || {};
       const viewportRect = this.getDocumentRectViewportRect(rect);
 
       if (!viewportRect) {
+        this.toolbar.classList.remove("is-active");
         this.toolbar.setAttribute("aria-hidden", "true");
         this.toolbar.style.opacity = "0";
         this.toolbar.style.pointerEvents = "none";
@@ -1219,20 +1497,48 @@ window.CBO = window.CBO || {};
         swatch.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
 
+      const moveButton = this.toolbar.querySelector("[data-vector-rect-move]");
+      const isMoveArmed = this.isSelectedLayerMoveArmed(layer.id);
+
+      if (moveButton) {
+        moveButton.classList.toggle("is-active", isMoveArmed);
+        moveButton.setAttribute("aria-pressed", isMoveArmed ? "true" : "false");
+      }
+
       const stageRect = this.stage.getBoundingClientRect();
       const centerX = viewportRect.x + viewportRect.width / 2;
       const top = viewportRect.y - RECT_ACTION_TOOLBAR_GAP_CSS_PX - RECT_ACTION_TOOLBAR_HEIGHT_CSS_PX;
       const belowTop = viewportRect.y + viewportRect.height + RECT_ACTION_TOOLBAR_GAP_CSS_PX;
+
+      if (isMobileMoveViewport()) {
+        this.toolbar.style.left = "50%";
+        this.toolbar.style.top = "auto";
+        this.toolbar.style.bottom = "calc(var(--cbo-mobile-floating-bottom) + 28px)";
+        this.toolbar.classList.add("is-active");
+        this.toolbar.style.opacity = "1";
+        this.toolbar.style.pointerEvents = "auto";
+        this.toolbar.setAttribute("aria-hidden", "false");
+        return;
+      }
+
       const safeTop = top >= 8
         ? top
         : Math.min(
             Math.max(8, stageRect.height - RECT_ACTION_TOOLBAR_HEIGHT_CSS_PX - 8),
             belowTop,
           );
-      const safeLeft = clampNumber(centerX, 24, Math.max(24, stageRect.width - 24));
+      const safeLeft = clampNumber(
+        stageRect.left + centerX,
+        stageRect.left + 24,
+        Math.max(stageRect.left + 24, stageRect.right - 24),
+      );
+      const scrollX = Number(window.scrollX || window.pageXOffset || 0);
+      const scrollY = Number(window.scrollY || window.pageYOffset || 0);
 
-      this.toolbar.style.left = `${Math.round(safeLeft)}px`;
-      this.toolbar.style.top = `${Math.round(safeTop)}px`;
+      this.toolbar.style.left = `${Math.round(safeLeft + scrollX)}px`;
+      this.toolbar.style.top = `${Math.round(stageRect.top + safeTop + scrollY)}px`;
+      this.toolbar.style.bottom = "";
+      this.toolbar.classList.add("is-active");
       this.toolbar.style.opacity = "1";
       this.toolbar.style.pointerEvents = "auto";
       this.toolbar.setAttribute("aria-hidden", "false");
