@@ -285,7 +285,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.getIncomingConnectionsForSpaceBoard = function getIncomingConnectionsForSpaceBoard(boardId) {
     with (this) {
 
-    const normalizedBoardId = String(board?.id || "").trim();
+    const normalizedBoardId = String(boardId || "").trim();
 
     if (!normalizedBoardId) {
       return [];
@@ -389,7 +389,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.closeAiImageBoardViewsForBoard = function closeAiImageBoardViewsForBoard(boardId) {
     with (this) {
 
-    const normalizedBoardId = String(board?.id || "").trim();
+    const normalizedBoardId = String(boardId || "").trim();
 
     if (!normalizedBoardId) {
       return false;

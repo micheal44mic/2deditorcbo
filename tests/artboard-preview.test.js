@@ -1026,6 +1026,8 @@ test("AI image boards expose a responsive create with AI preview shell", () => {
   assert.match(connectionsSource, /video\.play\?\.\(\)/);
   assert.match(connectionsSource, /function getAiImageBoardPromptText\(board\)/);
   assert.match(connectionsSource, /function normalizeAiImagePromptParts\(parts\)/);
+  assert.match(connectionsSource, /function getIncomingConnectionsForSpaceBoard\(boardId\)[\s\S]*const normalizedBoardId = String\(boardId \|\| ""\)\.trim\(\)/);
+  assert.match(connectionsSource, /function closeAiImageBoardViewsForBoard\(boardId\)[\s\S]*const normalizedBoardId = String\(boardId \|\| ""\)\.trim\(\)/);
   assert.match(connectionsSource, /function serializeAiImageEditPreviewPromptEditor\(editor\)/);
   assert.match(connectionsSource, /function renderAiImageEditPreviewPromptEditor\(editor, board\)/);
   assert.match(connectionsSource, /function setAiImageBoardPromptText\(board, value, options = \{\}\)/);
