@@ -732,7 +732,10 @@
       const quantum = this.isAndroidPerformanceMode()
         ? ANDROID_STROKE_ALLOCATION_QUANTUM
         : STROKE_ALLOCATION_QUANTUM;
-      const padding = Math.max(16, Math.ceil(this.getBrushSize()));
+      const brushSize = Math.max(0, Number(this.getBrushSize()) || 0);
+      const padding = this.shouldUseMobileLargeBlendFastPath?.(brushSize)
+        ? Math.max(48, Math.ceil(brushSize * 0.18))
+        : Math.max(16, Math.ceil(brushSize));
       const bounds = this.getStrokeAllocationBounds(target);
       const minX = Math.max(bounds.x, Math.floor((rect.x - padding) / quantum) * quantum);
       const minY = Math.max(bounds.y, Math.floor((rect.y - padding) / quantum) * quantum);
@@ -1173,6 +1176,7 @@
       const useGrainTexture = this.isGrainEnabled();
       const brushOpacity = this.getOpacity01();
       const renderMode = this.getStrokeRenderMode();
+      const brushProgramInfo = this.getBrushProgramInfoForFlush?.({ useGrainTexture }) || this.brushProgramInfo;
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
@@ -1198,26 +1202,26 @@
         floatCount: instanceData.length,
       });
 
-      gl.useProgram(this.brushProgramInfo.program);
-      gl.uniform2f(this.brushProgramInfo.uniforms.docResolution, target.width, target.height);
-      gl.uniform2f(this.brushProgramInfo.uniforms.targetOrigin, strokeBufferRect.x, strokeBufferRect.y);
-      gl.uniform2f(this.brushProgramInfo.uniforms.targetSize, strokeBufferRect.width, strokeBufferRect.height);
-      gl.uniform1f(this.brushProgramInfo.uniforms.brushSize, brushSize);
-      gl.uniform1f(this.brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
-      gl.uniform2f(this.brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
-      gl.uniform1f(this.brushProgramInfo.uniforms.flow, this.getFlow());
-      gl.uniform1f(this.brushProgramInfo.uniforms.hardness, this.getHardness());
-      gl.uniform1f(this.brushProgramInfo.uniforms.wetEdges, this.getWetEdges());
-      gl.uniform1f(this.brushProgramInfo.uniforms.burntEdges, this.getBurntEdges());
-      gl.uniform1i(this.brushProgramInfo.uniforms.burntEdgesMode, this.getBurntEdgesModeId());
-      gl.uniform1i(this.brushProgramInfo.uniforms.alphaThresholdEnabled, this.isAlphaThresholdEnabled() ? 1 : 0);
-      gl.uniform1f(this.brushProgramInfo.uniforms.alphaThreshold, this.getAlphaThreshold());
-      gl.uniform1f(this.brushProgramInfo.uniforms.useShapeTexture, useShapeTexture);
-      gl.uniform1i(this.brushProgramInfo.uniforms.shapeTexture, 1);
+      gl.useProgram(brushProgramInfo.program);
+      gl.uniform2f(brushProgramInfo.uniforms.docResolution, target.width, target.height);
+      gl.uniform2f(brushProgramInfo.uniforms.targetOrigin, strokeBufferRect.x, strokeBufferRect.y);
+      gl.uniform2f(brushProgramInfo.uniforms.targetSize, strokeBufferRect.width, strokeBufferRect.height);
+      gl.uniform1f(brushProgramInfo.uniforms.brushSize, brushSize);
+      gl.uniform1f(brushProgramInfo.uniforms.minSizeRatio, this.getMinSizeRatio());
+      gl.uniform2f(brushProgramInfo.uniforms.shapeFlip, this.getShapeFlipXSign(), this.getShapeFlipYSign());
+      gl.uniform1f(brushProgramInfo.uniforms.flow, this.getFlow());
+      gl.uniform1f(brushProgramInfo.uniforms.hardness, this.getHardness());
+      gl.uniform1f(brushProgramInfo.uniforms.wetEdges, this.getWetEdges());
+      gl.uniform1f(brushProgramInfo.uniforms.burntEdges, this.getBurntEdges());
+      gl.uniform1i(brushProgramInfo.uniforms.burntEdgesMode, this.getBurntEdgesModeId());
+      gl.uniform1i(brushProgramInfo.uniforms.alphaThresholdEnabled, this.isAlphaThresholdEnabled() ? 1 : 0);
+      gl.uniform1f(brushProgramInfo.uniforms.alphaThreshold, this.getAlphaThreshold());
+      gl.uniform1f(brushProgramInfo.uniforms.useShapeTexture, useShapeTexture);
+      gl.uniform1i(brushProgramInfo.uniforms.shapeTexture, 1);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, useShapeTexture ? this.shapeTexture : null);
-      gl.uniform1i(this.brushProgramInfo.uniforms.grainEnabled, useGrainTexture ? 1 : 0);
-      gl.uniform1i(this.brushProgramInfo.uniforms.grainTexture, 2);
+      gl.uniform1i(brushProgramInfo.uniforms.grainEnabled, useGrainTexture ? 1 : 0);
+      gl.uniform1i(brushProgramInfo.uniforms.grainTexture, 2);
 
       if (useGrainTexture) {
         const grainMode = this.getGrainMode();
@@ -1232,18 +1236,18 @@
         rotationMatrix[3] = cos;
         this.grainRotationMatrixData = rotationMatrix;
 
-        gl.uniform2f(this.brushProgramInfo.uniforms.grainTexSize, this.grainImageWidth, this.grainImageHeight);
-        gl.uniform1i(this.brushProgramInfo.uniforms.grainMode, grainMode === "moving" ? 1 : 0);
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainScale, this.getGrainScale());
-        gl.uniformMatrix2fv(this.brushProgramInfo.uniforms.grainRotationMat, false, rotationMatrix);
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainDepth, this.getActiveGrainDepth());
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainMovement, this.getGrainMovingMovement());
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainZoom, this.getGrainMovingZoom());
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainDepthMinimum, this.getGrainMovingDepthMinimum());
-        gl.uniform1i(this.brushProgramInfo.uniforms.grainBlendMode, this.getGrainBlendModeId());
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainBrightness, this.getGrainBrightness());
-        gl.uniform1f(this.brushProgramInfo.uniforms.grainContrast, this.getGrainContrast());
-        gl.uniform1i(this.brushProgramInfo.uniforms.grainInvert, this.isGrainInverted() ? 1 : 0);
+        gl.uniform2f(brushProgramInfo.uniforms.grainTexSize, this.grainImageWidth, this.grainImageHeight);
+        gl.uniform1i(brushProgramInfo.uniforms.grainMode, grainMode === "moving" ? 1 : 0);
+        gl.uniform1f(brushProgramInfo.uniforms.grainScale, this.getGrainScale());
+        gl.uniformMatrix2fv(brushProgramInfo.uniforms.grainRotationMat, false, rotationMatrix);
+        gl.uniform1f(brushProgramInfo.uniforms.grainDepth, this.getActiveGrainDepth());
+        gl.uniform1f(brushProgramInfo.uniforms.grainMovement, this.getGrainMovingMovement());
+        gl.uniform1f(brushProgramInfo.uniforms.grainZoom, this.getGrainMovingZoom());
+        gl.uniform1f(brushProgramInfo.uniforms.grainDepthMinimum, this.getGrainMovingDepthMinimum());
+        gl.uniform1i(brushProgramInfo.uniforms.grainBlendMode, this.getGrainBlendModeId());
+        gl.uniform1f(brushProgramInfo.uniforms.grainBrightness, this.getGrainBrightness());
+        gl.uniform1f(brushProgramInfo.uniforms.grainContrast, this.getGrainContrast());
+        gl.uniform1i(brushProgramInfo.uniforms.grainInvert, this.isGrainInverted() ? 1 : 0);
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, this.grainTexture);
       }
@@ -2618,6 +2622,8 @@
 
       this.cancelActiveStrokeDirtyRegionDebug();
       this.cancelStrokeTargetPrewarm();
+      this.clearQuickLineHoldTimer?.();
+      this.cancelQuickShapePreviewFrame?.();
 
       window.removeEventListener("resize", this.handleResize);
       window.removeEventListener("cbo:brush-settings-change", this.handleBrushSettingsChange);
@@ -2736,6 +2742,11 @@
       if (this.brushProgramInfo?.program) {
         gl.deleteProgram(this.brushProgramInfo.program);
         this.brushProgramInfo = null;
+      }
+
+      if (this.brushSimpleProgramInfo?.program) {
+        gl.deleteProgram(this.brushSimpleProgramInfo.program);
+        this.brushSimpleProgramInfo = null;
       }
 
     }

@@ -65,6 +65,26 @@
       STROKE_RENDER_MODE_ACCUM,
       STROKE_RENDER_MODE_MIXED,
       COLOR_GOLDEN_RATIO,
+      QUICK_LINE_HOLD_DELAY_MS,
+      QUICK_LINE_MIN_SCREEN_DISTANCE,
+      QUICK_LINE_MAX_PATH_RATIO,
+      QUICK_LINE_DEVIATION_SCREEN_FRACTION,
+      QUICK_LINE_MIN_SCREEN_DEVIATION,
+      QUICK_LINE_MAX_SCREEN_DEVIATION,
+      QUICK_LINE_MAX_SOURCE_SAMPLES,
+      QUICK_SHAPE_PREVIEW_MIN_INTERVAL_MS,
+      QUICK_SHAPE_PREVIEW_MAX_INTERVAL_MS,
+      QUICK_CIRCLE_MIN_SCREEN_DIAMETER,
+      QUICK_CIRCLE_MAX_ASPECT_RATIO,
+      QUICK_CIRCLE_MAX_CLOSE_GAP_FRACTION,
+      QUICK_CIRCLE_MIN_PATH_RATIO,
+      QUICK_CIRCLE_MAX_PATH_RATIO,
+      QUICK_CIRCLE_MAX_RADIAL_DEVIATION_FRACTION,
+      QUICK_CIRCLE_MAX_AVERAGE_DEVIATION_FRACTION,
+      QUICK_CIRCLE_MIN_SYNTHETIC_SAMPLES,
+      QUICK_CIRCLE_MAX_SYNTHETIC_SAMPLES,
+      QUICK_CIRCLE_SNAP_ASPECT_RATIO,
+      QUICK_ELLIPSE_MAX_ASPECT_RATIO,
     } = internals;
 
     defineBrushEngineMethods(BrushEngine, {
@@ -481,6 +501,7 @@
       this.documentRenderer?.invalidatePreviewCache?.("touch-navigation-cancel-stroke", {
         layerId,
       });
+      this.resetQuickLineState();
       this.clearStrokeLayer();
       this.releaseStrokeLayerTarget();
       this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
@@ -1345,6 +1366,7 @@
 ,
 
     resetStrokeRuntimeState() {
+      this.resetQuickLineState();
       this.cancelActiveStrokeDirtyRegionDebug();
       this.cancelStrokeTargetPrewarm();
       this.resetStrokeProgress();
@@ -1362,6 +1384,8 @@
       this.lastStrokePreviewDirtyRects = null;
       this.strokeTargetLayerId = null;
       this.strokeRenderMode = null;
+      this.largeBlendLivePreviewUsed = false;
+      this.largeBlendFinalQualityReplay = false;
       this.currentStrokeTool = this.activeStrokeTool || "brush";
     }
 ,
@@ -1388,6 +1412,17 @@
       }
 
       return this.isMobilePerformanceMode() ? "mobile" : "desktop";
+    }
+,
+
+    getLargeBlendReplayQualityKey() {
+      if (this.largeBlendFinalQualityReplay === true) {
+        return "large-blend-final-full";
+      }
+
+      return this.shouldUseMobileLargeBlendFastPath?.() === true
+        ? "large-blend-live-preview"
+        : "large-blend-full";
     }
 ,
 
@@ -1436,6 +1471,7 @@
       const settings = this.brushState || {};
       const taperActive = taperTotalLength != null;
       const baseKeys = [
+        this.getLargeBlendReplayQualityKey(),
         this.roundReplayCacheNumber(settings.radius ?? settings.size, 10000),
         this.roundReplayCacheNumber(settings.size ?? settings.radius, 10000),
         this.roundReplayCacheNumber(settings.spacing, 10000),
@@ -1499,6 +1535,7 @@
       return [
         "expanded",
         this.getReplayStrokePaintKey(),
+        this.getLargeBlendReplayQualityKey(),
         this.shapeTextureReady && this.shapeTexture ? 1 : 0,
         this.roundReplayCacheNumber(settings.minSizeRatio, 10000),
         settings.shapeRandomized === true ? 1 : 0,
@@ -1965,6 +2002,164 @@
     }
 ,
 
+    shouldRegenerateLargeBlendFinalQuality(rawSamples = this.recordedStroke) {
+      return (
+        namespace.mobileLargeBlendFullQualityBake !== false &&
+        namespace.androidLargeBlendFullQualityBake !== false &&
+        this.largeBlendLivePreviewUsed === true &&
+        Array.isArray(rawSamples) &&
+        rawSamples.length > 0
+      );
+    }
+,
+
+    getLargeBlendFinalReplayLimits() {
+      const configuredMaxStamps = Number(
+        namespace.mobileLargeBlendFinalReplayMaxStamps ??
+        namespace.androidLargeBlendFinalReplayMaxStamps,
+      );
+      const configuredMaxMP = Number(
+        namespace.mobileLargeBlendFinalReplayMaxMP ??
+        namespace.androidLargeBlendFinalReplayMaxMP,
+      );
+
+      return {
+        maxEstimatedStamps: Number.isFinite(configuredMaxStamps) && configuredMaxStamps > 0
+          ? Math.round(configuredMaxStamps)
+          : (this.isAndroidPerformanceMode?.() ? 384 : 512),
+        maxEstimatedMP: Number.isFinite(configuredMaxMP) && configuredMaxMP > 0
+          ? configuredMaxMP
+          : (this.isAndroidPerformanceMode?.() ? 96 : 128),
+      };
+    }
+,
+
+    estimateLargeBlendFinalReplayFromLive() {
+      const previousFinalQualityReplay = this.largeBlendFinalQualityReplay === true;
+      const liveStamps = Math.max(
+        0,
+        Math.round(Number(this.strokeStampCount) || 0) +
+          Math.round(Number(this.stampsBuffer?.length) || 0),
+      );
+      const liveShapeCount = Math.max(1, Math.round(Number(this.getEffectiveShapeCount?.(() => 0.999999)) || 1));
+      const liveSpacing = Math.max(0.5, Number(this.getStampSpacing?.()) || 0.5);
+      let finalShapeCount = liveShapeCount;
+      let finalSpacing = liveSpacing;
+
+      this.largeBlendFinalQualityReplay = true;
+
+      try {
+        finalShapeCount = Math.max(1, Math.round(Number(this.getEffectiveShapeCount?.(() => 0.999999)) || liveShapeCount));
+        finalSpacing = Math.max(0.5, Number(this.getStampSpacing?.()) || liveSpacing);
+      } finally {
+        this.largeBlendFinalQualityReplay = previousFinalQualityReplay;
+      }
+
+      const spacingFactor = Math.max(1, liveSpacing / finalSpacing);
+      const shapeFactor = Math.max(1, finalShapeCount / liveShapeCount);
+      const estimatedStamps = Math.ceil(liveStamps * spacingFactor * shapeFactor);
+      const brushSize = Math.max(0, Number(this.getBrushSize?.()) || 0);
+      const drawPasses = this.getBrushStrokeRenderMode?.() === STROKE_RENDER_MODE_MIXED ? 2 : 1;
+      const estimatedMP = estimatedStamps * brushSize * brushSize * drawPasses / 1000000;
+      const limits = this.getLargeBlendFinalReplayLimits();
+      const allowed = estimatedStamps <= limits.maxEstimatedStamps && estimatedMP <= limits.maxEstimatedMP;
+
+      return {
+        allowed,
+        drawPasses,
+        estimatedMP: this.roundEraserDebugValue(estimatedMP, 2),
+        estimatedStamps,
+        finalShapeCount,
+        finalSpacing: this.roundEraserDebugValue(finalSpacing, 2),
+        liveShapeCount,
+        liveSpacing: this.roundEraserDebugValue(liveSpacing, 2),
+        liveStamps,
+        maxEstimatedMP: limits.maxEstimatedMP,
+        maxEstimatedStamps: limits.maxEstimatedStamps,
+        reason: allowed ? "safe" : "too-expensive",
+      };
+    }
+,
+
+    createSkippedLargeBlendFinalReplayReport(preflight, startedAt = this.getNow()) {
+      return {
+        durationMs: this.roundEraserDebugValue(this.getNow() - startedAt, 2),
+        estimatedMP: preflight?.estimatedMP ?? 0,
+        estimatedStamps: preflight?.estimatedStamps ?? 0,
+        maxEstimatedMP: preflight?.maxEstimatedMP ?? 0,
+        maxEstimatedStamps: preflight?.maxEstimatedStamps ?? 0,
+        reason: preflight?.reason || "too-expensive",
+        shapeCount: preflight?.finalShapeCount ?? this.getShapeCount?.(),
+        shapeCountEffective: preflight?.liveShapeCount ?? this.getEffectiveShapeCount?.(() => 0.999999),
+        spacing: preflight?.liveSpacing ?? this.roundEraserDebugValue(this.getStampSpacing?.(), 2),
+        status: "skipped",
+        strokeStamps: this.strokeStampCount,
+        tool: this.currentStrokeTool || "brush",
+      };
+    }
+,
+
+    regenerateLargeBlendStrokeForFinalBake(rawSamples) {
+      if (!this.shouldRegenerateLargeBlendFinalQuality(rawSamples)) {
+        return null;
+      }
+
+      const startedAt = this.getNow();
+      const preflight = this.estimateLargeBlendFinalReplayFromLive();
+
+      if (!preflight.allowed) {
+        const skippedReport = this.createSkippedLargeBlendFinalReplayReport(preflight, startedAt);
+
+        this.lastLargeBlendFinalQualityReplay = skippedReport;
+        return skippedReport;
+      }
+
+      const previousFinalQualityReplay = this.largeBlendFinalQualityReplay === true;
+      const previousTaperSpacingCap = this.taperSpacingCap;
+      const previousStrokeTotalLength = this.strokeTotalLength;
+      const firstSample = rawSamples[0];
+
+      this.largeBlendFinalQualityReplay = true;
+
+      try {
+        const replayPlan = this.getReplayStrokeRenderPlan(rawSamples);
+        const expandedStamps = this.getReplayExpandedStamps(replayPlan);
+
+        this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+        this.activeStrokeBounds = null;
+        this.activeStrokeTilePatchRects = null;
+        this.strokePreviewDirtyRects = null;
+        this.lastStrokePreviewDirtyRects = null;
+
+        this.beginStrokeDynamics(firstSample);
+        this.renderReplayExpandedStamps(expandedStamps);
+
+        const report = {
+          baseStamps: Math.max(0, replayPlan?.baseStamps?.length || 0),
+          durationMs: this.roundEraserDebugValue(this.getNow() - startedAt, 2),
+          estimatedMP: preflight.estimatedMP,
+          estimatedStamps: preflight.estimatedStamps,
+          expandedStamps: Math.max(0, expandedStamps.length || 0),
+          shapeCount: this.getShapeCount(),
+          shapeCountEffective: this.getEffectiveShapeCount(() => 0.999999),
+          spacing: this.roundEraserDebugValue(this.getStampSpacing(), 2),
+          status: "rendered",
+          strokeStamps: this.strokeStampCount,
+          taper: replayPlan?.taperTotalLength != null,
+          tool: this.currentStrokeTool || "brush",
+        };
+
+        this.lastLargeBlendFinalQualityReplay = report;
+        return report;
+      } finally {
+        this.largeBlendFinalQualityReplay = previousFinalQualityReplay;
+        this.strokeTotalLength = previousStrokeTotalLength;
+        this.taperSpacingCap = previousTaperSpacingCap;
+      }
+    }
+,
+
     replayStroke(rawSamples) {
       if (!Array.isArray(rawSamples) || rawSamples.length === 0 || this.isDrawing) {
         return;
@@ -2197,7 +2392,6 @@
         return false;
       }
 
-      const initialPendingSamples = this.pendingPointerSamples.length;
       const samples = this.takePointerSamplesForFrame(options);
       const frameBudgetMs = options.drainAll === true ? Infinity : this.getPointerFrameBudgetMs();
       const startedAt = this.getNow();
@@ -2257,6 +2451,1227 @@
     }
 ,
 
+    isQuickLineEnabled() {
+      return namespace.quickLineEnabled !== false;
+    }
+,
+
+    clearQuickLineHoldTimer() {
+      if (!this.quickLineHoldTimer) {
+        return;
+      }
+
+      window.clearTimeout?.(this.quickLineHoldTimer);
+      this.quickLineHoldTimer = 0;
+    }
+,
+
+    cancelQuickShapePreviewFrame() {
+      if (this.quickShapePreviewTimer) {
+        window.clearTimeout?.(this.quickShapePreviewTimer);
+        this.quickShapePreviewTimer = 0;
+      }
+
+      if (!this.quickShapePreviewFrame) {
+        this.quickShapePendingSample = null;
+        return;
+      }
+
+      if (window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(this.quickShapePreviewFrame);
+      } else {
+        window.clearTimeout?.(this.quickShapePreviewFrame);
+      }
+
+      this.quickShapePreviewFrame = 0;
+      this.quickShapePendingSample = null;
+    }
+,
+
+    resetQuickLineState() {
+      this.clearQuickLineHoldTimer();
+      this.cancelQuickShapePreviewFrame();
+      this.quickLineState = null;
+      this.quickShapeLastPreviewAt = 0;
+      this.quickShapeLastPreviewDurationMs = 0;
+    }
+,
+
+    isQuickLineActive() {
+      return this.quickLineState?.active === true;
+    }
+,
+
+    getQuickShapePreviewMinIntervalMs() {
+      const configured = Number(namespace.quickShapePreviewMinIntervalMs);
+
+      if (Number.isFinite(configured) && configured >= 0) {
+        return configured;
+      }
+
+      const lastDuration = Math.max(0, Number(this.quickShapeLastPreviewDurationMs) || 0);
+      const baseInterval = Number.isFinite(Number(QUICK_SHAPE_PREVIEW_MIN_INTERVAL_MS))
+        ? QUICK_SHAPE_PREVIEW_MIN_INTERVAL_MS
+        : 34;
+      const maxInterval = Number.isFinite(Number(QUICK_SHAPE_PREVIEW_MAX_INTERVAL_MS))
+        ? QUICK_SHAPE_PREVIEW_MAX_INTERVAL_MS
+        : 96;
+
+      if (lastDuration <= 10) {
+        return baseInterval;
+      }
+
+      return this.clamp(lastDuration * 2, baseInterval, maxInterval);
+    }
+,
+
+    canScheduleQuickLineHold() {
+      return (
+        this.isQuickLineEnabled() &&
+        this.isDrawing === true &&
+        this.currentStrokeTool !== "eraser" &&
+        this.isQuickLineActive() !== true &&
+        this.incrementalStrokeBakeCount === 0 &&
+        !this.incrementalStrokeBakedRect
+      );
+    }
+,
+
+    scheduleQuickLineHold() {
+      this.clearQuickLineHoldTimer();
+
+      if (!this.canScheduleQuickLineHold()) {
+        return false;
+      }
+
+      const configuredDelay = Number(namespace.quickLineHoldDelayMs);
+      const holdDelay = Number.isFinite(configuredDelay) && configuredDelay >= 0
+        ? configuredDelay
+        : QUICK_LINE_HOLD_DELAY_MS;
+
+      this.quickLineHoldTimer = window.setTimeout?.(() => {
+        this.quickLineHoldTimer = 0;
+        this.tryActivateQuickLine("hold");
+      }, holdDelay) || 0;
+
+      return this.quickLineHoldTimer !== 0;
+    }
+,
+
+    deferQuickShapePreviewSample(rawSample) {
+      const sample = this.cloneQuickLineSample(rawSample);
+
+      if (!sample || !this.isQuickLineActive()) {
+        return false;
+      }
+
+      this.quickShapePendingSample = sample;
+
+      if (this.quickShapePreviewFrame || this.quickShapePreviewTimer) {
+        return true;
+      }
+
+      const runPreview = () => {
+        this.quickShapePreviewFrame = 0;
+        const pendingSample = this.quickShapePendingSample;
+
+        this.quickShapePendingSample = null;
+
+        if (!pendingSample || !this.isQuickLineActive()) {
+          return;
+        }
+
+        this.updateQuickLinePreviewFromSample(pendingSample, { immediate: true });
+      };
+      const requestFrame = window.requestAnimationFrame ||
+        ((callback) => window.setTimeout?.(callback, 16) || 0);
+      const now = this.getNow();
+      const lastPreviewAt = Number(this.quickShapeLastPreviewAt) || 0;
+      const elapsed = Math.max(0, now - lastPreviewAt);
+      const delay = Math.max(0, this.getQuickShapePreviewMinIntervalMs() - elapsed);
+
+      if (delay > 1) {
+        this.quickShapePreviewTimer = window.setTimeout?.(() => {
+          this.quickShapePreviewTimer = 0;
+
+          if (!this.quickShapePendingSample || !this.isQuickLineActive()) {
+            this.quickShapePendingSample = null;
+            return;
+          }
+
+          this.quickShapePreviewFrame = requestFrame(runPreview);
+        }, delay) || 0;
+
+        return this.quickShapePreviewTimer !== 0;
+      }
+
+      this.quickShapePreviewFrame = requestFrame(runPreview);
+
+      return this.quickShapePreviewFrame !== 0;
+    }
+,
+
+    cloneQuickLineSample(sample) {
+      const x = Number(sample?.x);
+      const y = Number(sample?.y);
+
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+      }
+
+      const pressure = Number(sample?.pressure);
+      const tiltX = Number(sample?.tiltX);
+      const tiltY = Number(sample?.tiltY);
+      const time = Number(sample?.time);
+      const strokeSeed = Number(sample?.strokeSeed);
+      const clone = {
+        x,
+        y,
+        pressure: Number.isFinite(pressure) ? pressure : 1,
+        pointerType: sample?.pointerType || "",
+        tiltX: Number.isFinite(tiltX) ? tiltX : 0,
+        tiltY: Number.isFinite(tiltY) ? tiltY : 0,
+        time: Number.isFinite(time) ? time : this.getNow(),
+      };
+
+      if (Number.isFinite(strokeSeed)) {
+        clone.strokeSeed = strokeSeed >>> 0;
+      }
+
+      return clone;
+    }
+,
+
+    getQuickLineSourceSamples(rawSamples = this.recordedStroke) {
+      const samples = Array.isArray(rawSamples)
+        ? rawSamples.map((sample) => this.cloneQuickLineSample(sample)).filter(Boolean)
+        : [];
+
+      if (samples.length <= QUICK_LINE_MAX_SOURCE_SAMPLES) {
+        return samples;
+      }
+
+      const reduced = [];
+      const maxIndex = samples.length - 1;
+      let previousIndex = -1;
+
+      for (let index = 0; index < QUICK_LINE_MAX_SOURCE_SAMPLES; index += 1) {
+        const sourceIndex = Math.round((index / (QUICK_LINE_MAX_SOURCE_SAMPLES - 1)) * maxIndex);
+
+        if (sourceIndex === previousIndex) {
+          continue;
+        }
+
+        reduced.push({ ...samples[sourceIndex] });
+        previousIndex = sourceIndex;
+      }
+
+      return reduced;
+    }
+,
+
+    measureQuickLinePathLength(samples) {
+      if (!Array.isArray(samples) || samples.length < 2) {
+        return 0;
+      }
+
+      let pathLength = 0;
+
+      for (let index = 1; index < samples.length; index += 1) {
+        pathLength += Math.hypot(
+          samples[index].x - samples[index - 1].x,
+          samples[index].y - samples[index - 1].y,
+        );
+      }
+
+      return pathLength;
+    }
+,
+
+    getQuickShapeTValues(sourceSamples = this.recordedStroke) {
+      const samples = this.getQuickLineSourceSamples(sourceSamples);
+
+      if (samples.length <= 1) {
+        return samples.map(() => 0);
+      }
+
+      const pathLength = Math.max(0.0001, this.measureQuickLinePathLength(samples));
+      let traveled = 0;
+
+      return samples.map((sample, index) => {
+        if (index === 0) {
+          return 0;
+        }
+
+        traveled += Math.hypot(
+          sample.x - samples[index - 1].x,
+          sample.y - samples[index - 1].y,
+        );
+
+        return index === samples.length - 1
+          ? 1
+          : this.clamp(traveled / pathLength, 0, 1);
+      });
+    }
+,
+
+    measureQuickEllipseCircumference(radiusX, radiusY) {
+      const a = Math.max(0.0001, Math.abs(Number(radiusX) || 0));
+      const b = Math.max(0.0001, Math.abs(Number(radiusY) || 0));
+      const h = ((a - b) * (a - b)) / ((a + b) * (a + b));
+
+      return Math.PI * (a + b) * (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h)));
+    }
+,
+
+    analyzeQuickLineStroke(rawSamples = this.recordedStroke) {
+      const samples = this.getQuickLineSourceSamples(rawSamples);
+
+      if (samples.length < 2) {
+        return { eligible: false, reason: "not-enough-samples" };
+      }
+
+      const start = samples[0];
+      const end = samples[samples.length - 1];
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const lineDistance = Math.hypot(dx, dy);
+      const screenScale = Math.max(0.0001, Number(this.camera?.zoom) || 1);
+      const screenDistance = lineDistance * screenScale;
+
+      if (screenDistance < QUICK_LINE_MIN_SCREEN_DISTANCE) {
+        return {
+          eligible: false,
+          lineDistance,
+          reason: "too-short",
+          screenDistance,
+        };
+      }
+
+      const pathLength = this.measureQuickLinePathLength(samples);
+
+      if (pathLength <= 0) {
+        return { eligible: false, lineDistance, reason: "empty-path", screenDistance };
+      }
+
+      const pathRatio = pathLength / Math.max(lineDistance, 0.0001);
+
+      if (pathRatio > QUICK_LINE_MAX_PATH_RATIO) {
+        return {
+          eligible: false,
+          lineDistance,
+          pathLength,
+          pathRatio,
+          reason: "too-curved",
+          screenDistance,
+        };
+      }
+
+      let maxDeviation = 0;
+      let totalDeviation = 0;
+
+      for (let index = 1; index < samples.length - 1; index += 1) {
+        const sample = samples[index];
+        const deviation = Math.abs((sample.x - start.x) * dy - (sample.y - start.y) * dx) / lineDistance;
+
+        maxDeviation = Math.max(maxDeviation, deviation);
+        totalDeviation += deviation;
+      }
+
+      const allowedScreenDeviation = this.clamp(
+        screenDistance * QUICK_LINE_DEVIATION_SCREEN_FRACTION,
+        QUICK_LINE_MIN_SCREEN_DEVIATION,
+        QUICK_LINE_MAX_SCREEN_DEVIATION,
+      );
+      const allowedDeviation = allowedScreenDeviation / screenScale;
+
+      if (maxDeviation > allowedDeviation) {
+        return {
+          allowedDeviation,
+          eligible: false,
+          lineDistance,
+          maxDeviation,
+          pathLength,
+          pathRatio,
+          reason: "too-wobbly",
+          screenDistance,
+        };
+      }
+
+      return {
+        allowedDeviation,
+        averageDeviation: samples.length > 2 ? totalDeviation / (samples.length - 2) : 0,
+        eligible: true,
+        end: { ...end },
+        lineDistance,
+        maxDeviation,
+        pathLength,
+        pathRatio,
+        screenDistance,
+        start: { ...start },
+      };
+    }
+,
+
+    createQuickLineSamples(sourceSamples = this.recordedStroke, tValues = null) {
+      const samples = this.getQuickLineSourceSamples(sourceSamples);
+
+      if (samples.length < 2) {
+        return samples;
+      }
+
+      const start = samples[0];
+      const end = samples[samples.length - 1];
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+
+      const normalizedTValues =
+        Array.isArray(tValues) && tValues.length === samples.length
+          ? tValues
+          : this.getQuickShapeTValues(samples);
+
+      return samples.map((sample, index) => {
+        const rawT = normalizedTValues[index];
+        const t = index === 0
+          ? 0
+          : index === samples.length - 1
+            ? 1
+            : this.clamp(
+                Number.isFinite(Number(rawT)) ? Number(rawT) : index / (samples.length - 1),
+                0,
+                1,
+              );
+
+        return {
+          ...sample,
+          x: start.x + dx * t,
+          y: start.y + dy * t,
+        };
+      });
+    }
+,
+
+    getQuickShapeSampleBounds(samples) {
+      if (!Array.isArray(samples) || samples.length === 0) {
+        return null;
+      }
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      samples.forEach((sample) => {
+        minX = Math.min(minX, sample.x);
+        minY = Math.min(minY, sample.y);
+        maxX = Math.max(maxX, sample.x);
+        maxY = Math.max(maxY, sample.y);
+      });
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+        return null;
+      }
+
+      return {
+        center: {
+          x: (minX + maxX) * 0.5,
+          y: (minY + maxY) * 0.5,
+        },
+        height: maxY - minY,
+        maxX,
+        maxY,
+        minX,
+        minY,
+        width: maxX - minX,
+      };
+    }
+,
+
+    analyzeQuickCircleStroke(rawSamples = this.recordedStroke) {
+      const samples = this.getQuickLineSourceSamples(rawSamples);
+
+      if (samples.length < 6) {
+        return { eligible: false, reason: "not-enough-samples", shapeType: "ellipse" };
+      }
+
+      const bounds = this.getQuickShapeSampleBounds(samples);
+      const width = Math.max(0, Number(bounds?.width) || 0);
+      const height = Math.max(0, Number(bounds?.height) || 0);
+      const minDiameter = Math.min(width, height);
+      const maxDiameter = Math.max(width, height);
+      const screenScale = Math.max(0.0001, Number(this.camera?.zoom) || 1);
+      const screenDiameter = maxDiameter * screenScale;
+
+      if (!bounds || screenDiameter < QUICK_CIRCLE_MIN_SCREEN_DIAMETER || minDiameter <= 0) {
+        return {
+          eligible: false,
+          reason: "too-small",
+          screenDiameter,
+          shapeType: "ellipse",
+        };
+      }
+
+      const aspectRatio = maxDiameter / Math.max(minDiameter, 0.0001);
+
+      if (aspectRatio > QUICK_ELLIPSE_MAX_ASPECT_RATIO) {
+        return {
+          aspectRatio,
+          eligible: false,
+          reason: "too-flat-for-ellipse",
+          screenDiameter,
+          shapeType: "ellipse",
+        };
+      }
+
+      const first = samples[0];
+      const last = samples[samples.length - 1];
+      const center = bounds.center;
+      const rawRadiusX = Math.max(0.0001, width * 0.5);
+      const rawRadiusY = Math.max(0.0001, height * 0.5);
+      const averageRadius = (rawRadiusX + rawRadiusY) * 0.5;
+
+      const closeGap = Math.hypot(last.x - first.x, last.y - first.y);
+      const maxCloseGap = Math.max(
+        QUICK_LINE_MIN_SCREEN_DEVIATION / screenScale,
+        averageRadius * QUICK_CIRCLE_MAX_CLOSE_GAP_FRACTION,
+      );
+
+      if (closeGap > maxCloseGap) {
+        return {
+          closeGap,
+          eligible: false,
+          maxCloseGap,
+          reason: "open-shape",
+          screenDiameter,
+          shapeType: "ellipse",
+        };
+      }
+
+      const pathLength = this.measureQuickLinePathLength(samples);
+      const circumference = Math.max(
+        0.0001,
+        this.measureQuickEllipseCircumference(rawRadiusX, rawRadiusY),
+      );
+      const pathRatio = pathLength / circumference;
+
+      if (pathRatio < QUICK_CIRCLE_MIN_PATH_RATIO || pathRatio > QUICK_CIRCLE_MAX_PATH_RATIO) {
+        return {
+          circumference,
+          eligible: false,
+          pathLength,
+          pathRatio,
+          reason: "bad-circumference",
+          screenDiameter,
+          shapeType: "ellipse",
+        };
+      }
+
+      let maxNormalizedDeviation = 0;
+      let totalNormalizedDeviation = 0;
+
+      samples.forEach((sample) => {
+        const normalizedRadius = Math.hypot(
+          (sample.x - center.x) / rawRadiusX,
+          (sample.y - center.y) / rawRadiusY,
+        );
+        const deviation = Math.abs(normalizedRadius - 1);
+
+        maxNormalizedDeviation = Math.max(maxNormalizedDeviation, deviation);
+        totalNormalizedDeviation += deviation;
+      });
+
+      const averageNormalizedDeviation = totalNormalizedDeviation / samples.length;
+
+      if (
+        maxNormalizedDeviation > QUICK_CIRCLE_MAX_RADIAL_DEVIATION_FRACTION ||
+        averageNormalizedDeviation > QUICK_CIRCLE_MAX_AVERAGE_DEVIATION_FRACTION
+      ) {
+        return {
+          averageDeviationFraction: averageNormalizedDeviation,
+          eligible: false,
+          maxDeviationFraction: maxNormalizedDeviation,
+          reason: "too-irregular",
+          screenDiameter,
+          shapeType: "ellipse",
+        };
+      }
+
+      const shapeType = aspectRatio <= QUICK_CIRCLE_SNAP_ASPECT_RATIO
+        ? "circle"
+        : "ellipse";
+
+      const radiusX = shapeType === "circle" ? averageRadius : rawRadiusX;
+      const radiusY = shapeType === "circle" ? averageRadius : rawRadiusY;
+
+      const startAngle = Math.atan2(
+        (first.y - center.y) / radiusY,
+        (first.x - center.x) / radiusX,
+      );
+
+      return {
+        aspectRatio,
+        averageDeviationFraction: averageNormalizedDeviation,
+        center: { ...center },
+        closeGap,
+        eligible: true,
+        maxDeviationFraction: maxNormalizedDeviation,
+        pathLength,
+        pathRatio,
+        radius: averageRadius,
+        radiusFromBounds: averageRadius,
+        radiusX,
+        radiusY,
+        screenDiameter,
+        shapeType,
+        startAngle: Number.isFinite(startAngle) ? startAngle : 0,
+      };
+    }
+,
+
+    createQuickCircleSamplesFromGeometry(sourceSamples, geometry = {}) {
+      const samples = this.getQuickLineSourceSamples(sourceSamples);
+
+      if (samples.length < 2 || !geometry?.center) {
+        return samples;
+      }
+
+      const center = geometry.center;
+
+      const radiusFallback = Math.max(0.0001, Number(geometry.radius) || 0);
+      const radiusX = Math.max(
+        0.0001,
+        Number(geometry.radiusX) || radiusFallback,
+      );
+      const radiusY = Math.max(
+        0.0001,
+        Number(geometry.radiusY) || radiusFallback,
+      );
+
+      const startAngle = Number.isFinite(Number(geometry.startAngle))
+        ? Number(geometry.startAngle)
+        : Math.atan2(
+            (samples[0].y - center.y) / radiusY,
+            (samples[0].x - center.x) / radiusX,
+          );
+
+      const tValues = Array.isArray(geometry.tValues) && geometry.tValues.length > 1
+        ? geometry.tValues
+        : this.getQuickShapeTValues(samples);
+
+      const requestedSampleCount = Number(geometry.sampleCount);
+      const sampleCount = Math.round(this.clamp(
+        Number.isFinite(requestedSampleCount) && requestedSampleCount >= 2
+          ? requestedSampleCount
+          : Math.max(2, tValues.length || samples.length),
+        2,
+        QUICK_LINE_MAX_SOURCE_SAMPLES,
+      ));
+      const maxSourceIndex = samples.length - 1;
+
+      return Array.from({ length: sampleCount }, (_, index) => {
+        const fallbackT = sampleCount <= 1 ? 0 : index / (sampleCount - 1);
+        const rawT = tValues[index];
+        const t = this.clamp(
+          Number.isFinite(Number(rawT)) ? Number(rawT) : fallbackT,
+          0,
+          1,
+        );
+        const sourceIndex = Math.min(
+          maxSourceIndex,
+          Math.round(fallbackT * maxSourceIndex),
+        );
+        const sourceSample = samples[sourceIndex] || samples[0];
+        const angle = startAngle + Math.PI * 2 * t;
+
+        return {
+          ...sourceSample,
+          x: center.x + Math.cos(angle) * radiusX,
+          y: center.y + Math.sin(angle) * radiusY,
+        };
+      });
+    }
+,
+
+    createQuickCircleSamples(sourceSamples = this.recordedStroke, geometry = {}) {
+      return this.createQuickCircleSamplesFromGeometry(sourceSamples, geometry);
+    }
+,
+
+    cloneQuickShapeBaseStamp(baseStamp) {
+      if (!baseStamp?.stamp) {
+        return null;
+      }
+
+      const stamp = baseStamp.stamp;
+      const x = Number(stamp.x);
+      const y = Number(stamp.y);
+
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+      }
+
+      return {
+        distance: Number(baseStamp.distance) || 0,
+        randomSeedBeforeShape: (Number(baseStamp.randomSeedBeforeShape) || this.strokeInitialSeed || 1) >>> 0,
+        stamp: {
+          ...stamp,
+          x,
+          y,
+        },
+        tangent: baseStamp.tangent
+          ? {
+              x: Number(baseStamp.tangent.x) || 0,
+              y: Number(baseStamp.tangent.y) || 0,
+            }
+          : null,
+      };
+    }
+,
+
+    createQuickShapeBaseStampState(rawSamples = this.recordedStroke) {
+      try {
+        const pathCache = this.getReplayStrokePathCache(rawSamples);
+        const replayPlan = this.getReplayStrokeRenderPlan(rawSamples);
+        const baseStamps = Array.isArray(replayPlan?.baseStamps)
+          ? replayPlan.baseStamps
+              .map((baseStamp) => this.cloneQuickShapeBaseStamp(baseStamp))
+              .filter(Boolean)
+          : [];
+
+        if (baseStamps.length === 0) {
+          return null;
+        }
+
+        const lastDistance = Number(baseStamps[baseStamps.length - 1]?.distance) || 0;
+        const pathLength = Math.max(
+          0.0001,
+          Number(pathCache?.pathLength) || lastDistance || this.measureQuickLinePathLength(rawSamples),
+        );
+        const tValues = baseStamps.map((baseStamp, index) => {
+          if (index === 0) {
+            return 0;
+          }
+
+          if (index === baseStamps.length - 1 && baseStamps.length > 1) {
+            return this.clamp((Number(baseStamp.distance) || pathLength) / pathLength, 0, 1);
+          }
+
+          return this.clamp((Number(baseStamp.distance) || 0) / pathLength, 0, 1);
+        });
+
+        return {
+          baseStamps,
+          pathLength,
+          tValues,
+        };
+      } catch (error) {
+        namespace.lastBrushQuickShapeBaseStampError = {
+          message: error?.message || String(error),
+          timestamp: Date.now(),
+        };
+        return null;
+      }
+    }
+,
+
+    getQuickShapeBaseStampStateFromQuickLineState(state = this.quickLineState) {
+      const baseStamps = Array.isArray(state?.quickShapeBaseStamps)
+        ? state.quickShapeBaseStamps
+            .map((baseStamp) => this.cloneQuickShapeBaseStamp(baseStamp))
+            .filter(Boolean)
+        : [];
+
+      if (baseStamps.length === 0) {
+        return null;
+      }
+
+      const pathLength = Math.max(
+        0.0001,
+        Number(state.quickShapeBaseStampPathLength) ||
+          Number(baseStamps[baseStamps.length - 1]?.distance) ||
+          0,
+      );
+      const tValues = Array.isArray(state.quickShapeBaseStampTValues) &&
+        state.quickShapeBaseStampTValues.length === baseStamps.length
+        ? state.quickShapeBaseStampTValues.map((value) => this.clamp(Number(value) || 0, 0, 1))
+        : baseStamps.map((baseStamp) => this.clamp((Number(baseStamp.distance) || 0) / pathLength, 0, 1));
+
+      return {
+        baseStamps,
+        pathLength,
+        tValues,
+      };
+    }
+,
+
+    createQuickLineBaseStamps(sourceSamples, baseStampState) {
+      const samples = this.getQuickLineSourceSamples(sourceSamples);
+      const baseStamps = Array.isArray(baseStampState?.baseStamps)
+        ? baseStampState.baseStamps
+        : [];
+
+      if (samples.length < 2 || baseStamps.length === 0) {
+        return null;
+      }
+
+      const start = samples[0];
+      const end = samples[samples.length - 1];
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const distance = Math.hypot(dx, dy);
+      const tangent = distance > 0
+        ? {
+            x: dx / distance,
+            y: dy / distance,
+          }
+        : null;
+      const tValues = Array.isArray(baseStampState.tValues) ? baseStampState.tValues : [];
+
+      return baseStamps.map((baseStamp, index) => {
+        const t = this.clamp(Number(tValues[index]) || 0, 0, 1);
+
+        return {
+          ...baseStamp,
+          stamp: {
+            ...baseStamp.stamp,
+            x: start.x + dx * t,
+            y: start.y + dy * t,
+          },
+          tangent: tangent ? { ...tangent } : baseStamp.tangent,
+        };
+      });
+    }
+,
+
+    createQuickCircleBaseStampsFromGeometry(geometry = {}, baseStampState) {
+      const baseStamps = Array.isArray(baseStampState?.baseStamps)
+        ? baseStampState.baseStamps
+        : [];
+      const center = geometry?.center;
+
+      if (!center || baseStamps.length === 0) {
+        return null;
+      }
+
+      const radiusFallback = Math.max(0.0001, Number(geometry.radius) || 0);
+      const radiusX = Math.max(0.0001, Number(geometry.radiusX) || radiusFallback);
+      const radiusY = Math.max(0.0001, Number(geometry.radiusY) || radiusFallback);
+      const startAngle = Number.isFinite(Number(geometry.startAngle))
+        ? Number(geometry.startAngle)
+        : 0;
+      const tValues = Array.isArray(baseStampState.tValues) ? baseStampState.tValues : [];
+
+      return baseStamps.map((baseStamp, index) => {
+        const t = this.clamp(Number(tValues[index]) || 0, 0, 1);
+        const angle = startAngle + Math.PI * 2 * t;
+        const tangentDx = -Math.sin(angle) * radiusX;
+        const tangentDy = Math.cos(angle) * radiusY;
+        const tangentLength = Math.hypot(tangentDx, tangentDy);
+        const tangent = tangentLength > 0
+          ? {
+              x: tangentDx / tangentLength,
+              y: tangentDy / tangentLength,
+            }
+          : baseStamp.tangent;
+
+        return {
+          ...baseStamp,
+          stamp: {
+            ...baseStamp.stamp,
+            x: center.x + Math.cos(angle) * radiusX,
+            y: center.y + Math.sin(angle) * radiusY,
+          },
+          tangent: tangent ? { ...tangent } : null,
+        };
+      });
+    }
+,
+
+    renderQuickLinePreview(lineSamples, options = {}) {
+      if (!Array.isArray(lineSamples) || lineSamples.length < 2) {
+        return false;
+      }
+
+      const layerId = this.strokeTargetLayerId;
+      const strokeTool = this.currentStrokeTool;
+      const strokeRenderMode = this.strokeRenderMode;
+      const startedAt = this.getNow();
+
+      this.clearPendingPointerSamples();
+      if (this.strokeTexture || this.strokeFBO) {
+        this.clearStrokeLayer();
+      } else {
+        this.releaseStrokeLayerTarget();
+        this.documentRenderer?.deleteActiveStrokeScratchTarget?.();
+      }
+      this.activeStrokeBounds = null;
+      this.activeStrokeTilePatchRects = null;
+      this.strokePreviewDirtyRects = null;
+      this.lastStrokePreviewDirtyRects = null;
+      this.invalidateReplayStrokeCache();
+
+      try {
+        this.beginStrokeDynamics(lineSamples[0]);
+        const baseStamps = Array.isArray(options.baseStamps) && options.baseStamps.length > 0
+          ? options.baseStamps
+          : null;
+        const expandedStamps = baseStamps
+          ? this.buildReplayExpandedStamps(baseStamps)
+          : this.getReplayExpandedStamps(this.getReplayStrokeRenderPlan(lineSamples));
+
+        this.renderReplayExpandedStamps(expandedStamps);
+        return true;
+      } catch (error) {
+        namespace.lastBrushQuickLineError = {
+          message: error?.message || String(error),
+          timestamp: Date.now(),
+        };
+        return false;
+      } finally {
+        this.strokeTargetLayerId = layerId;
+        this.currentStrokeTool = strokeTool;
+        this.strokeRenderMode = strokeRenderMode;
+        this.quickShapeLastPreviewAt = this.getNow();
+        this.quickShapeLastPreviewDurationMs = Math.max(0, this.quickShapeLastPreviewAt - startedAt);
+      }
+    }
+,
+
+    tryActivateQuickLine(source = "hold") {
+      this.clearQuickLineHoldTimer();
+
+      if (!this.canScheduleQuickLineHold()) {
+        return false;
+      }
+
+      this.processPendingPointerSamples({
+        drainAll: true,
+        requestDraw: false,
+      });
+
+      if (this.incrementalStrokeBakeCount > 0 || this.incrementalStrokeBakedRect) {
+        namespace.lastBrushQuickLine = {
+          reason: "incremental-bake-active",
+          source,
+          status: "rejected",
+          timestamp: Date.now(),
+        };
+        return false;
+      }
+
+      const lineAnalysis = this.analyzeQuickLineStroke(this.recordedStroke);
+      const circleAnalysis = lineAnalysis.eligible
+        ? null
+        : this.analyzeQuickCircleStroke(this.recordedStroke);
+      const analysis = lineAnalysis.eligible ? lineAnalysis : circleAnalysis;
+      const shapeType = lineAnalysis.eligible
+        ? "line"
+        : analysis?.shapeType || "circle";
+
+      if (!analysis?.eligible) {
+        namespace.lastBrushQuickLine = {
+          circle: circleAnalysis,
+          line: lineAnalysis,
+          source,
+          status: "rejected",
+          timestamp: Date.now(),
+        };
+        return false;
+      }
+
+      const sourceSamples = this.getQuickLineSourceSamples(this.recordedStroke);
+      const quickShapeTValues = this.getQuickShapeTValues(sourceSamples);
+      const quickShapeSampleCount = sourceSamples.length;
+      const quickShapeBaseStampState = this.createQuickShapeBaseStampState(this.recordedStroke);
+      const lineSamples = shapeType === "line"
+        ? this.createQuickLineSamples(sourceSamples, quickShapeTValues)
+        : this.createQuickCircleSamplesFromGeometry(sourceSamples, {
+            ...analysis,
+            sampleCount: quickShapeSampleCount,
+            tValues: quickShapeTValues,
+          });
+      const quickShapePreviewBaseStamps = shapeType === "line"
+        ? this.createQuickLineBaseStamps(sourceSamples, quickShapeBaseStampState)
+        : this.createQuickCircleBaseStampsFromGeometry({
+            ...analysis,
+            sampleCount: quickShapeSampleCount,
+            tValues: quickShapeTValues,
+          }, quickShapeBaseStampState);
+
+      if (!this.renderQuickLinePreview(lineSamples, { baseStamps: quickShapePreviewBaseStamps })) {
+        namespace.lastBrushQuickLine = {
+          reason: "render-failed",
+          source,
+          status: "rejected",
+          timestamp: Date.now(),
+        };
+        return false;
+      }
+
+      this.quickLineState = {
+        active: true,
+        analysis,
+        circleCenter: shapeType !== "line" ? { ...analysis.center } : null,
+        circleRadius: shapeType !== "line" ? analysis.radius : null,
+        circleRadiusX: shapeType !== "line" ? analysis.radiusX : null,
+        circleRadiusY: shapeType !== "line" ? analysis.radiusY : null,
+        circleStartAngle: shapeType !== "line" ? analysis.startAngle : null,
+        lineSamples: lineSamples.map((sample) => ({ ...sample })),
+        quickShapeBaseStampPathLength: quickShapeBaseStampState?.pathLength || null,
+        quickShapeBaseStampTValues: quickShapeBaseStampState?.tValues || null,
+        quickShapeBaseStamps: quickShapeBaseStampState?.baseStamps || null,
+        quickShapeSampleCount,
+        quickShapeTValues,
+        shapeType,
+        source,
+        sourceSamples: sourceSamples.map((sample) => ({ ...sample })),
+      };
+      this.recordedStroke = lineSamples.map((sample) => ({ ...sample }));
+      namespace.lastBrushQuickLine = {
+        ...analysis,
+        shapeType,
+        source,
+        status: "active",
+        timestamp: Date.now(),
+      };
+      namespace.EngineGovernor?.markActivity?.({ source: "brush-quick-line" });
+      this.requestDraw();
+
+      return true;
+    }
+,
+
+    updateQuickCirclePreviewFromSample(rawSample) {
+      if (!this.isQuickLineActive()) {
+        return false;
+      }
+
+      const sample = this.cloneQuickLineSample(rawSample);
+      const state = this.quickLineState || {};
+      const center = state.circleCenter || state.analysis?.center;
+
+      if (!sample || !center) {
+        return false;
+      }
+
+      const previousSource = Array.isArray(state.sourceSamples)
+        ? state.sourceSamples
+        : this.recordedStroke;
+
+      const sourceSamples = previousSource.length > 1
+        ? previousSource.slice(0, -1).map((sourceSample) => ({ ...sourceSample }))
+        : previousSource.map((sourceSample) => ({ ...sourceSample }));
+
+      sourceSamples.push(sample);
+
+      const screenScale = Math.max(0.0001, Number(this.camera?.zoom) || 1);
+      const minRadius = QUICK_CIRCLE_MIN_SCREEN_DIAMETER / (2 * screenScale);
+
+      const shapeType = state.shapeType === "ellipse" || state.analysis?.shapeType === "ellipse"
+        ? "ellipse"
+        : "circle";
+
+      const fallbackRadius = Math.max(
+        minRadius,
+        Number(state.circleRadius) ||
+          Number(state.analysis?.radius) ||
+          minRadius,
+      );
+
+      const fallbackRadiusX = Math.max(
+        minRadius,
+        Number(state.circleRadiusX) ||
+          Number(state.analysis?.radiusX) ||
+          fallbackRadius,
+      );
+
+      const fallbackRadiusY = Math.max(
+        minRadius,
+        Number(state.circleRadiusY) ||
+          Number(state.analysis?.radiusY) ||
+          fallbackRadius,
+      );
+
+      const startAngle = Number.isFinite(Number(state.circleStartAngle))
+        ? Number(state.circleStartAngle)
+        : Math.atan2(
+            (sourceSamples[0]?.y - center.y) / fallbackRadiusY,
+            (sourceSamples[0]?.x - center.x) / fallbackRadiusX,
+          );
+
+      let radiusX = fallbackRadiusX;
+      let radiusY = fallbackRadiusY;
+
+      if (shapeType === "circle") {
+        const pointerRadius = Math.hypot(sample.x - center.x, sample.y - center.y);
+        const radius = Math.max(
+          minRadius,
+          Number.isFinite(pointerRadius) && pointerRadius > 0
+            ? pointerRadius
+            : fallbackRadius,
+        );
+
+        radiusX = radius;
+        radiusY = radius;
+      } else {
+        const dx = sample.x - center.x;
+        const dy = sample.y - center.y;
+        const cosA = Math.cos(startAngle);
+        const sinA = Math.sin(startAngle);
+
+        radiusX = Math.abs(cosA) > 0.15
+          ? Math.abs(dx / cosA)
+          : Math.abs(dx) > minRadius
+            ? Math.abs(dx)
+            : fallbackRadiusX;
+
+        radiusY = Math.abs(sinA) > 0.15
+          ? Math.abs(dy / sinA)
+          : Math.abs(dy) > minRadius
+            ? Math.abs(dy)
+            : fallbackRadiusY;
+
+        radiusX = Math.max(minRadius, radiusX);
+        radiusY = Math.max(minRadius, radiusY);
+      }
+
+      const radius = (radiusX + radiusY) * 0.5;
+
+      const circleSamples = this.createQuickCircleSamplesFromGeometry(sourceSamples, {
+        center,
+        radius,
+        radiusX,
+        radiusY,
+        sampleCount: state.quickShapeSampleCount || sourceSamples.length,
+        startAngle,
+        tValues: state.quickShapeTValues,
+      });
+      const quickShapeBaseStampState = this.getQuickShapeBaseStampStateFromQuickLineState(state);
+      const circleBaseStamps = this.createQuickCircleBaseStampsFromGeometry({
+        center,
+        radius,
+        radiusX,
+        radiusY,
+        startAngle,
+      }, quickShapeBaseStampState);
+
+      if (!this.renderQuickLinePreview(circleSamples, { baseStamps: circleBaseStamps })) {
+        return false;
+      }
+
+      this.quickLineState = {
+        ...state,
+        analysis: {
+          ...(state.analysis || {}),
+          center: { ...center },
+          eligible: true,
+          radius,
+          radiusX,
+          radiusY,
+          shapeType,
+        },
+        circleCenter: { ...center },
+        circleRadius: radius,
+        circleRadiusX: radiusX,
+        circleRadiusY: radiusY,
+        circleStartAngle: startAngle,
+        lineSamples: circleSamples.map((circleSample) => ({ ...circleSample })),
+        quickShapeSampleCount: state.quickShapeSampleCount || circleSamples.length,
+        quickShapeTValues: state.quickShapeTValues || this.getQuickShapeTValues(sourceSamples),
+        shapeType,
+        sourceSamples: sourceSamples.map((sourceSample) => ({ ...sourceSample })),
+      };
+      this.recordedStroke = circleSamples.map((circleSample) => ({ ...circleSample }));
+      namespace.lastBrushQuickLine = {
+        ...this.quickLineState.analysis,
+        shapeType,
+        status: "active",
+        timestamp: Date.now(),
+      };
+      namespace.EngineGovernor?.markActivity?.({
+        source: shapeType === "ellipse"
+          ? "brush-quick-ellipse-update"
+          : "brush-quick-circle-update",
+      });
+      this.requestDraw();
+
+      return true;
+    }
+,
+
+    updateQuickLinePreviewFromSample(rawSample, options = {}) {
+      if (!this.isQuickLineActive()) {
+        return false;
+      }
+
+      if (options.defer === true) {
+        return this.deferQuickShapePreviewSample(rawSample);
+      }
+
+      const state = this.quickLineState || {};
+
+      if (state.shapeType === "circle" || state.shapeType === "ellipse") {
+        return this.updateQuickCirclePreviewFromSample(rawSample);
+      }
+
+      const sample = this.cloneQuickLineSample(rawSample);
+
+      if (!sample) {
+        return false;
+      }
+
+      const previousSource = Array.isArray(state.sourceSamples)
+        ? state.sourceSamples
+        : this.recordedStroke;
+      const sourceSamples = previousSource.length > 1
+        ? previousSource.slice(0, -1).map((sourceSample) => ({ ...sourceSample }))
+        : previousSource.map((sourceSample) => ({ ...sourceSample }));
+
+      sourceSamples.push(sample);
+      const lineSamples = this.createQuickLineSamples(
+        sourceSamples,
+        state.quickShapeTValues,
+      );
+      const quickShapeBaseStampState = this.getQuickShapeBaseStampStateFromQuickLineState(state);
+      const lineBaseStamps = this.createQuickLineBaseStamps(sourceSamples, quickShapeBaseStampState);
+
+      if (!this.renderQuickLinePreview(lineSamples, { baseStamps: lineBaseStamps })) {
+        return false;
+      }
+
+      const analysis = this.analyzeQuickLineStroke(lineSamples);
+
+      this.quickLineState = {
+        ...this.quickLineState,
+        analysis: {
+          ...analysis,
+          eligible: true,
+        },
+        lineSamples: lineSamples.map((lineSample) => ({ ...lineSample })),
+        sourceSamples: sourceSamples.map((sourceSample) => ({ ...sourceSample })),
+      };
+      this.recordedStroke = lineSamples.map((lineSample) => ({ ...lineSample }));
+      namespace.lastBrushQuickLine = {
+        ...this.quickLineState.analysis,
+        shapeType: "line",
+        status: "active",
+        timestamp: Date.now(),
+      };
+      namespace.EngineGovernor?.markActivity?.({ source: "brush-quick-line-update" });
+      this.requestDraw();
+
+      return true;
+    }
+,
+
+    updateQuickLinePreviewFromEvent(event, options = {}) {
+      const samples = this.getPointerEventSamples(event);
+      const sample = samples[samples.length - 1] || this.createPointerSample(event);
+
+      return this.updateQuickLinePreviewFromSample(sample, options);
+    }
+,
+
     handlePointerDown(event) {
       if (event.__cboNavigationHandled) {
         return;
@@ -2304,6 +3719,7 @@
       }
 
       event.preventDefault();
+      this.resetQuickLineState();
       this.clearPendingBrushHistoryTimer();
       const strokeTool = this.activeStrokeTool || "brush";
       let strokeTarget = null;
@@ -2367,6 +3783,9 @@
 
       this.isDrawing = true;
       this.activePointerId = event.pointerId;
+      this.largeBlendFinalQualityReplay = false;
+      this.largeBlendLivePreviewUsed = this.shouldUseMobileLargeBlendFastPath?.() === true;
+      this.lastLargeBlendFinalQualityReplay = null;
       this.resetStrokeProgress();
       const startStamp = this.createStamp(point);
 
@@ -2376,6 +3795,7 @@
       this.nextStampDistance = this.getStampSpacing();
       this.currentStroke = [point, point, point];
       this.canvas.setPointerCapture(event.pointerId);
+      this.scheduleQuickLineHold();
       this.requestDraw();
     }
 ,
@@ -2402,7 +3822,14 @@
 
       event.preventDefault();
       namespace.EngineGovernor?.markActivity?.({ source: "brush-pointermove" });
+
+      if (this.isQuickLineActive()) {
+        this.updateQuickLinePreviewFromEvent(event, { defer: true });
+        return;
+      }
+
       this.enqueuePointerMoveSamples(event);
+      this.scheduleQuickLineHold();
       this.requestDraw();
     }
 ,
@@ -2429,23 +3856,31 @@
 
       event.preventDefault();
       namespace.EngineGovernor?.markActivity?.({ source: "brush-pointerup" });
+      const quickLineWasActive = this.isQuickLineActive();
+
+      this.clearQuickLineHoldTimer();
+      this.cancelQuickShapePreviewFrame();
 
       try {
-        this.processPendingPointerSamples({
-          drainAll: true,
-          requestDraw: false,
-        });
-        const rawSample = this.createPointerSample(event);
+        if (quickLineWasActive) {
+          this.updateQuickLinePreviewFromEvent(event);
+        } else {
+          this.processPendingPointerSamples({
+            drainAll: true,
+            requestDraw: false,
+          });
+          const rawSample = this.createPointerSample(event);
 
-        this.recordedStroke.push(rawSample);
+          this.recordedStroke.push(rawSample);
 
-        const point = this.applyStabilization(rawSample);
+          const point = this.applyStabilization(rawSample);
 
-        this.currentStroke.push(point);
-        this.processStamps();
-        this.currentStroke.push(point);
-        this.processStamps();
-        this.flushStamps();
+          this.currentStroke.push(point);
+          this.processStamps();
+          this.currentStroke.push(point);
+          this.processStamps();
+          this.flushStamps();
+        }
 
         if (this.currentStrokeTool === "eraser") {
           this.logEraserZoomDebug("eraser-pointerup-before-bake", {
@@ -2459,9 +3894,11 @@
           });
         }
 
+        if (!quickLineWasActive && this.shouldRegenerateLargeBlendFinalQuality(this.recordedStroke)) {
+          this.regenerateLargeBlendStrokeForFinalBake(this.recordedStroke);
         // Taper: rifaccio l'intero tratto in strokeFBO conoscendo la lunghezza totale,
         // cosi' posso modulare size+opacity ai due estremi. Solo dopo bake.
-        if (this.isTaperActive() && this.recordedStroke.length > 1) {
+        } else if (!quickLineWasActive && this.isTaperActive() && this.recordedStroke.length > 1) {
           this.regenerateStrokeWithTaper(this.recordedStroke, this.getCurrentStrokePathLength());
         }
 
@@ -2523,6 +3960,8 @@
       if (!this.isDrawing || this.activePointerId !== event.pointerId) {
         return;
       }
+
+      this.resetQuickLineState();
 
       if (this.currentStrokeTool === "eraser") {
         this.warnEraserZoomDebug("eraser-pointercancel", {

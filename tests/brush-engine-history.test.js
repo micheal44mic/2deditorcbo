@@ -503,6 +503,133 @@ test("round brush stamp bounds stay tight while shape textures stay conservative
   assert.equal(Math.round((stamp.x - shapedBounds.minX) * 1000), Math.round((100 * Math.SQRT1_2 + 2) * 1000));
 });
 
+test("android large intense blending uses a lighter live stroke footprint", () => {
+  const { BrushEngine, window } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  window.CBO.androidPerformanceMode = true;
+  engine.brushState = {
+    radius: 434,
+    renderingMode: "intense-blending",
+    shapeCount: 13,
+    spacing: 0.08,
+    spacingJitter: 0,
+  };
+  engine.getStrokeAllocationBounds = () => ({
+    height: 2048,
+    width: 2048,
+    x: 0,
+    y: 0,
+  });
+
+  engine.isDrawing = true;
+  assert.equal(engine.shouldUseAndroidLargeBlendFastPath(), true);
+  assert.equal(engine.getEffectiveShapeCount(), 6);
+  assert.equal(Math.round(engine.getStampSpacing() * 10) / 10, 71.8);
+  assert.deepEqual(JSON.parse(JSON.stringify(engine.getPaddedStrokeAllocationRect({
+    height: 860,
+    width: 860,
+    x: 512,
+    y: 512,
+  }, {
+    height: 2048,
+    width: 2048,
+  }))), {
+    height: 1280,
+    width: 1280,
+    x: 256,
+    y: 256,
+  });
+
+  engine.largeBlendFinalQualityReplay = true;
+  assert.equal(engine.shouldUseAndroidLargeBlendFastPath(), false);
+  assert.equal(engine.getEffectiveShapeCount(), 13);
+  assert.equal(Math.round(engine.getStampSpacing() * 10) / 10, 34.7);
+
+  engine.largeBlendFinalQualityReplay = false;
+  engine.isDrawing = false;
+  assert.equal(engine.isMobileLargeBlendFastPathCandidate(), true);
+  assert.equal(engine.shouldUseAndroidLargeBlendFastPath(), false);
+  assert.equal(engine.getEffectiveShapeCount(), 13);
+
+  engine.isDrawing = true;
+  window.CBO.androidLargeBlendBrushFastPath = false;
+  assert.equal(engine.shouldUseAndroidLargeBlendFastPath(), false);
+  assert.equal(engine.getEffectiveShapeCount(), 13);
+  assert.equal(Math.round(engine.getStampSpacing() * 10) / 10, 34.7);
+});
+
+test("ios-style mobile large intense blending also uses live preview only", () => {
+  const { BrushEngine, window } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  window.CBO.androidPerformanceMode = false;
+  window.CBO.deviceIsAndroid = false;
+  engine.isAndroidPerformanceMode = () => false;
+  engine.isMobilePerformanceMode = () => true;
+  engine.isDrawing = true;
+  engine.brushState = {
+    radius: 500,
+    renderingMode: "intense-blending",
+    shapeCount: 12,
+    spacing: 0.08,
+    spacingJitter: 0,
+  };
+
+  assert.equal(engine.isMobileLargeBlendFastPathCandidate(), true);
+  assert.equal(engine.shouldUseMobileLargeBlendFastPath(), true);
+  assert.equal(engine.getEffectiveShapeCount(), 6);
+  assert.equal(Math.round(engine.getStampSpacing() * 10) / 10, 88.9);
+
+  engine.largeBlendFinalQualityReplay = true;
+  assert.equal(engine.shouldUseMobileLargeBlendFastPath(), false);
+  assert.equal(engine.getEffectiveShapeCount(), 12);
+  assert.equal(engine.getStampSpacing(), 40);
+});
+
+test("mobile large intense blending skips unsafe full-quality replay", () => {
+  const { BrushEngine, window } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  window.CBO.androidPerformanceMode = true;
+  engine.brushState = {
+    radius: 500,
+    renderingMode: "intense-blending",
+    shapeCount: 12,
+    spacing: 0.08,
+    spacingJitter: 0,
+  };
+  engine.currentStrokeTool = "brush";
+  engine.isDrawing = true;
+  engine.largeBlendLivePreviewUsed = true;
+  engine.strokeStampCount = 552;
+  engine.stampsBuffer = [];
+
+  const preflight = engine.estimateLargeBlendFinalReplayFromLive();
+
+  assert.equal(preflight.allowed, false);
+  assert.equal(preflight.liveShapeCount, 6);
+  assert.equal(preflight.finalShapeCount, 12);
+  assert.ok(preflight.estimatedStamps > preflight.maxEstimatedStamps);
+
+  const report = engine.regenerateLargeBlendStrokeForFinalBake([
+    { pointerType: "touch", pressure: 1, time: 0, x: 10, y: 10 },
+  ]);
+
+  assert.equal(report.status, "skipped");
+  assert.equal(report.reason, "too-expensive");
+  assert.equal(engine.strokeStampCount, 552);
+});
+
+test("mobile large intense blending uses a specialized simple brush shader when effects are off", () => {
+  const source = readBrushEngineSources();
+
+  assert.match(source, /BRUSH_SIMPLE_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /createSimpleBrushProgramInfo\(\)/);
+  assert.match(source, /shouldUseSimpleBrushProgram\(useGrainTexture/);
+  assert.match(source, /getBrushProgramInfoForFlush\?\.\(\{ useGrainTexture \}\)/);
+});
+
 test("brush stroke history batches tile captures until the idle commit", () => {
   const { BrushEngine, window } = loadBrushEngine();
   const engine = Object.create(BrushEngine.prototype);

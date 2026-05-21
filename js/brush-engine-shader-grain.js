@@ -379,6 +379,62 @@ void main() {
 }
 `;
 
+  const BRUSH_SIMPLE_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform float u_flow;
+uniform float u_hardness;
+uniform sampler2D u_shapeTexture;
+uniform float u_useShapeTexture;
+
+in vec2 v_uv;
+in vec3 v_color;
+in float v_alpha;
+
+out vec4 outColor;
+
+float applyFlowCoverageCurve(float coverage, float flow) {
+  float safeCoverage = clamp(coverage, 0.0, 1.0);
+  float safeFlow = clamp(flow, 0.0, 1.0);
+  float edgePower = mix(2.35, 1.0, safeFlow);
+
+  return pow(safeCoverage, edgePower);
+}
+
+void main() {
+  float shape = 1.0;
+
+  if (u_useShapeTexture > 0.5) {
+    shape = texture(u_shapeTexture, v_uv).a;
+  } else {
+    float distanceFromCenter = distance(v_uv, vec2(0.5));
+
+    if (distanceFromCenter > 0.5) {
+      discard;
+    }
+
+    float fw = max(fwidth(distanceFromCenter), 0.001);
+    float edgeStart = mix(0.0, 0.5 - fw, clamp(u_hardness, 0.0, 1.0));
+    shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
+  }
+
+  if (shape <= 0.001) {
+    discard;
+  }
+
+  float flow = clamp(u_flow, 0.0, 2.0);
+  float coverage = shape;
+
+  if (flow < 1.0) {
+    coverage = applyFlowCoverageCurve(coverage, flow);
+  }
+
+  float alpha = clamp(coverage * v_alpha * flow, 0.0, 1.0);
+
+  outColor = vec4(clamp(v_color, vec3(0.0), vec3(1.0)) * alpha, alpha);
+}
+`;
+
   const COMPOSITE_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -525,10 +581,10 @@ void main() {
     } = internals;
 
     defineBrushEngineMethods(BrushEngine, {
-    createBrushProgramInfo() {
+    createBrushProgramInfo(fragmentSource = BRUSH_FRAGMENT_SHADER_SOURCE) {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, BRUSH_VERTEX_SHADER_SOURCE);
-      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, BRUSH_FRAGMENT_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, fragmentSource);
       const program = gl.createProgram();
 
       if (!program) {
@@ -584,6 +640,33 @@ void main() {
           grainInvert: gl.getUniformLocation(program, "u_grainInvert"),
         },
       };
+    }
+,
+
+    createSimpleBrushProgramInfo() {
+      return this.createBrushProgramInfo(BRUSH_SIMPLE_FRAGMENT_SHADER_SOURCE);
+    }
+,
+
+    shouldUseSimpleBrushProgram(useGrainTexture = this.isGrainEnabled()) {
+      return (
+        namespace.mobileLargeBlendSimpleShader !== false &&
+        namespace.androidLargeBlendSimpleShader !== false &&
+        this.isMobileLargeBlendFastPathCandidate?.() === true &&
+        useGrainTexture !== true &&
+        this.getWetEdges() <= 0 &&
+        this.getBurntEdges() <= 0 &&
+        this.isAlphaThresholdEnabled() !== true
+      );
+    }
+,
+
+    getBrushProgramInfoForFlush(detail = {}) {
+      if (this.shouldUseSimpleBrushProgram(detail.useGrainTexture === true)) {
+        return this.brushSimpleProgramInfo || this.brushProgramInfo;
+      }
+
+      return this.brushProgramInfo;
     }
 ,
 
@@ -1153,6 +1236,42 @@ void main() {
     }
 ,
 
+    getMobileLargeBlendEffectiveShapeCount(count = this.getShapeCount()) {
+      const safeCount = this.clamp(Math.round(Number(count) || 1), 1, 16);
+
+      if (
+        namespace.mobileLargeBlendShapeCountCap === false ||
+        namespace.androidLargeBlendShapeCountCap === false
+      ) {
+        return safeCount;
+      }
+
+      if (!this.shouldUseMobileLargeBlendFastPath?.()) {
+        return safeCount;
+      }
+
+      const configuredCap = Number(
+        namespace.mobileLargeBlendShapeCountCap ??
+        namespace.androidLargeBlendShapeCountCap,
+      );
+
+      if (Number.isFinite(configuredCap) && configuredCap > 0) {
+        return this.clamp(Math.round(configuredCap), 1, safeCount);
+      }
+
+      const brushSize = Math.max(0, Number(this.getBrushSize?.()) || 0);
+      const largeBrushFactor = this.clamp((brushSize - 192) / 320, 0, 1);
+      const defaultCap = Math.round(this.lerp(8, 6, largeBrushFactor));
+
+      return Math.min(safeCount, defaultCap);
+    }
+,
+
+    getAndroidLargeBlendEffectiveShapeCount(count = this.getShapeCount()) {
+      return this.getMobileLargeBlendEffectiveShapeCount(count);
+    }
+,
+
     getShapeCountJitter() {
       return this.clamp01(this.brushState.shapeCountJitter);
     }
@@ -1330,7 +1449,7 @@ void main() {
 ,
 
     getEffectiveShapeCount(randomUnit = null) {
-      const count = this.getShapeCount();
+      const count = this.getMobileLargeBlendEffectiveShapeCount(this.getShapeCount());
       const jitter = this.getShapeCountJitter();
 
       if (jitter <= 0 || count <= 1) {

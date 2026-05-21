@@ -896,6 +896,67 @@
     }
 ,
 
+    isMobileLargeBlendFastPathCandidate(brushSize = this.getBrushSize()) {
+      if (
+        namespace.mobileLargeBlendBrushFastPath === false ||
+        namespace.androidLargeBlendBrushFastPath === false
+      ) {
+        return false;
+      }
+
+      if (!this.isAndroidPerformanceMode?.() && !this.isMobilePerformanceMode?.()) {
+        return false;
+      }
+
+      const size = Math.max(0, Number(brushSize) || 0);
+
+      if (size < 192) {
+        return false;
+      }
+
+      const buildUp = typeof this.getStrokeBuildUp === "function"
+        ? this.getStrokeBuildUp()
+        : 0;
+
+      return buildUp >= 0.8;
+    }
+,
+
+    shouldUseMobileLargeBlendFastPath(brushSize = this.getBrushSize()) {
+      return (
+        this.isMobileLargeBlendFastPathCandidate(brushSize) &&
+        this.largeBlendFinalQualityReplay !== true &&
+        this.isDrawing === true
+      );
+    }
+,
+
+    shouldUseAndroidLargeBlendFastPath(brushSize = this.getBrushSize()) {
+      return this.shouldUseMobileLargeBlendFastPath(brushSize);
+    }
+,
+
+    getMobileLargeBlendSpacingFraction(spacingFraction, brushSize = this.getBrushSize()) {
+      const safeSpacing = Number.isFinite(Number(spacingFraction))
+        ? this.clamp(Number(spacingFraction), 0, 1)
+        : 0.1;
+
+      if (!this.shouldUseMobileLargeBlendFastPath(brushSize)) {
+        return safeSpacing;
+      }
+
+      const largeBrushFactor = this.clamp((Math.max(0, Number(brushSize) || 0) - 192) / 320, 0, 1);
+      const spacingFloor = this.lerp(0.12, 0.18, largeBrushFactor);
+
+      return Math.max(safeSpacing, spacingFloor);
+    }
+,
+
+    getAndroidLargeBlendSpacingFraction(spacingFraction, brushSize = this.getBrushSize()) {
+      return this.getMobileLargeBlendSpacingFraction(spacingFraction, brushSize);
+    }
+,
+
     getStrokeChargeRadius() {
       const radius = Number(this.strokeChargeRadius);
 
@@ -909,9 +970,10 @@
       const safeSpacing = Number.isFinite(spacingFraction)
         ? this.clamp(spacingFraction, 0, 1)
         : 0.1;
+      const effectiveSpacing = this.getMobileLargeBlendSpacingFraction(safeSpacing, brushSize);
       const spacingJitter = this.clamp01(this.brushState.spacingJitter);
       const effectiveSizeScale = this.clamp(sizeScale, 0.05, 1);
-      const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * safeSpacing);
+      const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * effectiveSpacing);
       const jitterAmount = baseSpacing * spacingJitter * 0.85;
       const spacing = Math.max(0.5, baseSpacing + this.randomSigned() * jitterAmount);
 

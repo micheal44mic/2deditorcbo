@@ -66,6 +66,26 @@ window.CBO = window.CBO || {};
   const STROKE_RENDER_MODE_ACCUM = "accum";
   const STROKE_RENDER_MODE_MIXED = "mixed";
   const COLOR_GOLDEN_RATIO = 0.618033988749895;
+  const QUICK_LINE_HOLD_DELAY_MS = 520;
+  const QUICK_LINE_MIN_SCREEN_DISTANCE = 24;
+  const QUICK_LINE_MAX_PATH_RATIO = 1.22;
+  const QUICK_LINE_DEVIATION_SCREEN_FRACTION = 0.075;
+  const QUICK_LINE_MIN_SCREEN_DEVIATION = 7;
+  const QUICK_LINE_MAX_SCREEN_DEVIATION = 28;
+  const QUICK_LINE_MAX_SOURCE_SAMPLES = 96;
+  const QUICK_SHAPE_PREVIEW_MIN_INTERVAL_MS = 34;
+  const QUICK_SHAPE_PREVIEW_MAX_INTERVAL_MS = 96;
+  const QUICK_CIRCLE_MIN_SCREEN_DIAMETER = 32;
+  const QUICK_CIRCLE_MAX_ASPECT_RATIO = 1.75;
+  const QUICK_CIRCLE_MAX_CLOSE_GAP_FRACTION = 1.05;
+  const QUICK_CIRCLE_MIN_PATH_RATIO = 0.45;
+  const QUICK_CIRCLE_MAX_PATH_RATIO = 2.15;
+  const QUICK_CIRCLE_MAX_RADIAL_DEVIATION_FRACTION = 0.72;
+  const QUICK_CIRCLE_MAX_AVERAGE_DEVIATION_FRACTION = 0.36;
+  const QUICK_CIRCLE_MIN_SYNTHETIC_SAMPLES = 36;
+  const QUICK_CIRCLE_MAX_SYNTHETIC_SAMPLES = 64;
+  const QUICK_CIRCLE_SNAP_ASPECT_RATIO = 1.18;
+  const QUICK_ELLIPSE_MAX_ASPECT_RATIO = 10;
 
   class BrushEngine {
     constructor(canvas, options = {}) {
@@ -148,6 +168,13 @@ window.CBO = window.CBO || {};
       this.lastRecordedStroke = [];
       this.replayStrokeCache = null;
       this.pendingPointerSamples = [];
+      this.quickLineHoldTimer = 0;
+      this.quickLineState = null;
+      this.quickShapePreviewFrame = 0;
+      this.quickShapePreviewTimer = 0;
+      this.quickShapePendingSample = null;
+      this.quickShapeLastPreviewAt = 0;
+      this.quickShapeLastPreviewDurationMs = 0;
       this.activeTouchPointers = new Map();
       this.touchNavigationGesture = null;
       this.touchNavigationExclusive = false;
@@ -179,6 +206,7 @@ window.CBO = window.CBO || {};
       this.strokeTexture = null;
       this.strokeFBO = null;
       this.strokeRenderMode = null;
+      this.brushSimpleProgramInfo = null;
       this.strokePlateauTexture = null;
       this.strokePlateauFBO = null;
       this.strokeAccumTexture = null;
@@ -190,6 +218,9 @@ window.CBO = window.CBO || {};
       this.strokeTargetPeakScratchBytes = 0;
       this.strokeTargetPeakCoverage = 0;
       this.strokeTargetLastAllocationRect = null;
+      this.largeBlendLivePreviewUsed = false;
+      this.largeBlendFinalQualityReplay = false;
+      this.lastLargeBlendFinalQualityReplay = null;
       this.strokeScratchPressureEvictionCount = 0;
       this.lastStrokeScratchDiagnostics = null;
       this.incrementalStrokeBakeCount = 0;
@@ -256,6 +287,7 @@ window.CBO = window.CBO || {};
       // Misuriamo prima il viewport: serve a calcolare il documento con il giusto aspect ratio.
       this.resizeViewport();
       this.brushProgramInfo = this.createBrushProgramInfo();
+      this.brushSimpleProgramInfo = this.createSimpleBrushProgramInfo();
       this.compositeProgramInfo = this.createCompositeProgramInfo();
       this.strokeBuildupProgramInfo = this.createStrokeBuildupProgramInfo();
       this.fullscreenQuad = this.createFullscreenQuad();
@@ -332,6 +364,26 @@ window.CBO = window.CBO || {};
     STROKE_RENDER_MODE_ACCUM,
     STROKE_RENDER_MODE_MIXED,
     COLOR_GOLDEN_RATIO,
+    QUICK_LINE_HOLD_DELAY_MS,
+    QUICK_LINE_MIN_SCREEN_DISTANCE,
+    QUICK_LINE_MAX_PATH_RATIO,
+    QUICK_LINE_DEVIATION_SCREEN_FRACTION,
+    QUICK_LINE_MIN_SCREEN_DEVIATION,
+    QUICK_LINE_MAX_SCREEN_DEVIATION,
+    QUICK_LINE_MAX_SOURCE_SAMPLES,
+    QUICK_SHAPE_PREVIEW_MIN_INTERVAL_MS,
+    QUICK_SHAPE_PREVIEW_MAX_INTERVAL_MS,
+    QUICK_CIRCLE_MIN_SCREEN_DIAMETER,
+    QUICK_CIRCLE_MAX_ASPECT_RATIO,
+    QUICK_CIRCLE_MAX_CLOSE_GAP_FRACTION,
+    QUICK_CIRCLE_MIN_PATH_RATIO,
+    QUICK_CIRCLE_MAX_PATH_RATIO,
+    QUICK_CIRCLE_MAX_RADIAL_DEVIATION_FRACTION,
+    QUICK_CIRCLE_MAX_AVERAGE_DEVIATION_FRACTION,
+    QUICK_CIRCLE_MIN_SYNTHETIC_SAMPLES,
+    QUICK_CIRCLE_MAX_SYNTHETIC_SAMPLES,
+    QUICK_CIRCLE_SNAP_ASPECT_RATIO,
+    QUICK_ELLIPSE_MAX_ASPECT_RATIO,
   });
 
   function installBrushEngineMixin(name) {
