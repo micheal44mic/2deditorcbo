@@ -68,17 +68,35 @@
     } = internals;
     const ADAPTIVE_SPACING_MIN_FRACTION = 0.01;
     const ADAPTIVE_SPACING_MIN_ZOOM = 0.1;
-    const ADAPTIVE_SPACING_DESKTOP = Object.freeze({
+    const ADAPTIVE_BRUSH_SPACING_DESKTOP = Object.freeze({
       full: 2800,
-      maxMultiplier: 4,
+      maxMultiplier: 2.25,
+      maxTotalMultiplier: 3,
+      simpleMaxTotalMultiplier: 1.45,
       smoothing: 0.35,
       start: 650,
     });
-    const ADAPTIVE_SPACING_MOBILE = Object.freeze({
+    const ADAPTIVE_BRUSH_SPACING_MOBILE = Object.freeze({
       full: 1700,
-      maxMultiplier: 7,
+      maxMultiplier: 2.75,
+      maxTotalMultiplier: 3.5,
+      simpleMaxTotalMultiplier: 1.7,
       smoothing: 0.45,
       start: 380,
+    });
+    const ADAPTIVE_ERASER_SPACING_DESKTOP = Object.freeze({
+      full: 3200,
+      maxMultiplier: 1.35,
+      maxTotalMultiplier: 1.75,
+      smoothing: 0.28,
+      start: 900,
+    });
+    const ADAPTIVE_ERASER_SPACING_MOBILE = Object.freeze({
+      full: 2200,
+      maxMultiplier: 1.5,
+      maxTotalMultiplier: 2,
+      smoothing: 0.35,
+      start: 650,
     });
 
     defineBrushEngineMethods(BrushEngine, {
@@ -248,12 +266,20 @@
     }
 ,
 
-    isAdaptiveBrushSpacingEnabled() {
+    isAdaptiveStrokeSpacingEnabled() {
+      const tool = this.currentStrokeTool || "brush";
+      const toolEnabled = tool === "brush"
+        ? namespace.adaptiveBrushSpacingEnabled !== false && namespace.brushAdaptiveSpacingEnabled !== false
+        : (
+            tool === "eraser" &&
+            namespace.adaptiveEraserSpacingEnabled !== false &&
+            namespace.eraserAdaptiveSpacingEnabled !== false
+          );
+
       return (
-        namespace.adaptiveBrushSpacingEnabled !== false &&
-        namespace.brushAdaptiveSpacingEnabled !== false &&
+        namespace.adaptiveStrokeSpacingEnabled !== false &&
+        toolEnabled &&
         this.brushState?.adaptiveSpacingEnabled !== false &&
-        this.currentStrokeTool === "brush" &&
         this.isDrawing === true &&
         this.largeBlendFinalQualityReplay !== true &&
         this.strokeTotalLength == null
@@ -263,10 +289,51 @@
 
     getAdaptiveSpacingConfig(pointerType = "") {
       const normalizedPointerType = String(pointerType || "").toLowerCase();
+      const isMobileLike = this.isMobilePerformanceMode() || this.isAndroidPerformanceMode() || normalizedPointerType === "touch";
 
-      return this.isMobilePerformanceMode() || this.isAndroidPerformanceMode() || normalizedPointerType === "touch"
-        ? ADAPTIVE_SPACING_MOBILE
-        : ADAPTIVE_SPACING_DESKTOP;
+      if (this.currentStrokeTool === "eraser") {
+        return isMobileLike ? ADAPTIVE_ERASER_SPACING_MOBILE : ADAPTIVE_ERASER_SPACING_DESKTOP;
+      }
+
+      return isMobileLike ? ADAPTIVE_BRUSH_SPACING_MOBILE : ADAPTIVE_BRUSH_SPACING_DESKTOP;
+    }
+,
+
+    getAdaptiveSpacingShapeLoad() {
+      const shapeCount = this.clamp(Math.round(Number(this.brushState?.shapeCount) || 1), 1, 16);
+      const shapeScatter = this.clamp(Number(this.brushState?.shapeScatter) || 0, 0, 2);
+      const shapeCountJitter = this.clamp01(this.brushState?.shapeCountJitter);
+      const countLoad = this.clamp((shapeCount - 1) / 7, 0, 1);
+      const scatterLoad = this.clamp(shapeScatter / 0.75, 0, 1);
+      const jitterLoad = countLoad * shapeCountJitter;
+      const value = this.clamp(countLoad * 0.55 + scatterLoad * 0.35 + jitterLoad * 0.1, 0, 1);
+
+      return {
+        countLoad,
+        scatterLoad,
+        shapeCount,
+        shapeCountJitter,
+        shapeScatter,
+        value,
+      };
+    }
+,
+
+    getAdaptiveSpacingMaxTotalMultiplier(config, shapeLoad = this.getAdaptiveSpacingShapeLoad()) {
+      const configuredMax = Math.max(1, Number(config?.maxTotalMultiplier) || 1);
+
+      if (this.currentStrokeTool === "eraser") {
+        return configuredMax;
+      }
+
+      const simpleMax = this.clamp(
+        Number(config?.simpleMaxTotalMultiplier) || configuredMax,
+        1,
+        configuredMax,
+      );
+      const load = this.clamp01(Number(shapeLoad?.value) || 0);
+
+      return simpleMax + (configuredMax - simpleMax) * load;
     }
 ,
 
@@ -285,7 +352,7 @@
 ,
 
     updateAdaptiveSpacingForSegment(from, to) {
-      if (!this.isAdaptiveBrushSpacingEnabled() || !from || !to) {
+      if (!this.isAdaptiveStrokeSpacingEnabled() || !from || !to) {
         this.activeStrokeSpacingMultiplier = 1;
         return 1;
       }
@@ -319,14 +386,23 @@
       const eased = ramp * ramp * (3 - 2 * ramp);
       const speedMultiplier = 1 + eased * (config.maxMultiplier - 1);
       const zoomOutMultiplier = zoom < 1 ? 1 / zoom : 1;
-      const multiplier = Math.max(1, speedMultiplier * zoomOutMultiplier);
+      const uncappedMultiplier = Math.max(1, speedMultiplier * zoomOutMultiplier);
+      const shapeLoad = this.getAdaptiveSpacingShapeLoad();
+      const maxTotalMultiplier = this.getAdaptiveSpacingMaxTotalMultiplier(config, shapeLoad);
+      const multiplier = Math.min(uncappedMultiplier, maxTotalMultiplier);
 
       this.activeStrokeSpacingMultiplier = multiplier;
       namespace.lastBrushAdaptiveSpacing = {
+        maxTotalMultiplier,
         multiplier,
         pointerType,
         screenSpeedPerSecond,
+        shapeCount: shapeLoad.shapeCount,
+        shapeLoad: shapeLoad.value,
+        shapeScatter: shapeLoad.shapeScatter,
         timestamp: Date.now(),
+        tool: this.currentStrokeTool || "brush",
+        uncappedMultiplier,
         zoom,
       };
 
@@ -335,13 +411,85 @@
 ,
 
     getActiveAdaptiveSpacingMultiplier() {
-      if (!this.isAdaptiveBrushSpacingEnabled()) {
+      if (!this.isAdaptiveStrokeSpacingEnabled()) {
         return 1;
       }
 
       const multiplier = Number(this.activeStrokeSpacingMultiplier);
 
       return Number.isFinite(multiplier) && multiplier > 1 ? multiplier : 1;
+    }
+,
+
+    emitBrushSpacingDebug(detail = {}) {
+      const debugDetail = {
+        ...detail,
+        timestamp: Date.now(),
+      };
+
+      this.lastBrushSpacingDebug = debugDetail;
+      namespace.lastBrushSpacingDebug = debugDetail;
+
+      if (typeof window === "undefined" || typeof document === "undefined") {
+        return false;
+      }
+
+      if (this.brushSpacingDebugFrame) {
+        return true;
+      }
+
+      const scheduleFrame = typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : ((callback) => window.setTimeout(callback, 16));
+
+      this.brushSpacingDebugFrame = scheduleFrame(() => {
+        this.brushSpacingDebugFrame = 0;
+        this.updateBrushSpacingDebugButton(this.lastBrushSpacingDebug);
+      });
+
+      return true;
+    }
+,
+
+    updateBrushSpacingDebugButton(detail = null) {
+      if (typeof document === "undefined") {
+        return false;
+      }
+
+      const button = document.querySelector("[data-brush-spacing-debug]");
+
+      if (!button || !detail) {
+        return false;
+      }
+
+      const formatNumber = (value, digits = 1) => {
+        const number = Number(value);
+
+        if (!Number.isFinite(number)) {
+          return "--";
+        }
+
+        return number.toFixed(digits).replace(/\.0$/, "");
+      };
+      const tool = String(detail.tool || "brush").toLowerCase();
+      const toolLabel = tool === "eraser" ? "GOMMA" : "BRUSH";
+      const spacingText = formatNumber(detail.spacing, 1);
+      const baseText = formatNumber(detail.baseSpacing, 1);
+      const multiplierText = formatNumber(Math.max(1, Number(detail.adaptiveSpacingMultiplier) || 1), 2);
+      const capText = formatNumber(detail.maxTotalMultiplier, 2);
+      const percentText = formatNumber((Number(detail.spacingFraction) || 0) * 100, 0);
+      const zoomText = formatNumber(detail.zoom, 2);
+      const speedText = formatNumber(detail.screenSpeedPerSecond, 0);
+      const shapeCountText = formatNumber(detail.shapeCount, 0);
+      const shapeScatterText = formatNumber(detail.shapeScatter, 2);
+
+      button.hidden = false;
+      button.dataset.tool = tool;
+      button.textContent = `DEBUG SPACING ${toolLabel} ${spacingText}px x${multiplierText}`;
+      button.title = `Spacing ${spacingText}px | base ${baseText}px | setting ${percentText}% | zoom ${zoomText} | speed ${speedText}px/s | cap x${capText} | count ${shapeCountText} | scatter ${shapeScatterText}`;
+      button.setAttribute("aria-label", `${toolLabel} spacing ${spacingText} pixels`);
+
+      return true;
     }
 ,
 
@@ -1089,12 +1237,32 @@
       const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * effectiveSpacing * adaptiveSpacingMultiplier);
       const jitterAmount = baseSpacing * spacingJitter * 0.85;
       const spacing = Math.max(0.5, baseSpacing + this.randomSigned() * jitterAmount);
+      const strokeSpacing = this.taperSpacingCap != null ? Math.min(spacing, this.taperSpacingCap) : spacing;
 
-      if (this.taperSpacingCap != null) {
-        return Math.min(spacing, this.taperSpacingCap);
+      if (
+        this.isDrawing === true &&
+        (this.currentStrokeTool === "brush" || this.currentStrokeTool === "eraser")
+      ) {
+        const adaptiveSpacing = namespace.lastBrushAdaptiveSpacing || {};
+
+        this.emitBrushSpacingDebug?.({
+          adaptiveSpacingMultiplier,
+          baseSpacing,
+          brushSize,
+          effectiveSpacing,
+          maxTotalMultiplier: adaptiveSpacing.maxTotalMultiplier,
+          screenSpeedPerSecond: this.adaptiveSpacingState?.speed || 0,
+          shapeCount: adaptiveSpacing.shapeCount,
+          shapeScatter: adaptiveSpacing.shapeScatter,
+          spacing: strokeSpacing,
+          spacingFraction: safeSpacing,
+          spacingJitter,
+          tool: this.currentStrokeTool || "brush",
+          zoom: Number(this.camera?.zoom) || 1,
+        });
       }
 
-      return spacing;
+      return strokeSpacing;
     }
 ,
 

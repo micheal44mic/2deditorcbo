@@ -52,3 +52,31 @@ test("brush engine maps non-pen pointer velocity to smoothed pressure", () => {
   assert.match(source, /state\.pressure \+= \(targetPressure - state\.pressure\) \* VELOCITY_PRESSURE_SMOOTHING/);
   assert.match(source, /this\.initializeVelocityPressureState\(firstSample\)/);
 });
+
+test("brush spacing is clamped to one percent and adapts to velocity and zoom", () => {
+  const defaultsSource = fs.readFileSync(path.join(repoRoot, "js", "brush-defaults.js"), "utf8");
+  const studioSource = fs.readFileSync(path.join(repoRoot, "js", "brush-studio.js"), "utf8");
+  const source = readBrushEngineSources();
+
+  assert.match(defaultsSource, /const minimumSpacing = 0\.01/);
+  assert.match(defaultsSource, /nextSettings\.spacing = normalizeRange\(nextSettings\.spacing, settings\.spacing, minimumSpacing, 1\)/);
+  assert.match(studioSource, /const minimumSpacingPercent = Math\.max\(1, Math\.round\(\(BrushDefaults\.minimumSpacing \|\| 0\.01\) \* 100\)\)/);
+  assert.match(studioSource, /key: "spacing"[\s\S]*min: minimumSpacingPercent[\s\S]*toSetting: \(displayValue\) => Math\.max\(minimumSpacingPercent, displayValue\) \/ 100/);
+  assert.match(source, /ADAPTIVE_BRUSH_SPACING_DESKTOP/);
+  assert.match(source, /ADAPTIVE_BRUSH_SPACING_MOBILE/);
+  assert.match(source, /ADAPTIVE_ERASER_SPACING_DESKTOP/);
+  assert.match(source, /ADAPTIVE_ERASER_SPACING_MOBILE/);
+  assert.match(source, /maxTotalMultiplier: 3/);
+  assert.match(source, /simpleMaxTotalMultiplier: 1\.45/);
+  assert.match(source, /maxTotalMultiplier: 1\.75/);
+  assert.match(source, /getAdaptiveSpacingShapeLoad\(\)/);
+  assert.match(source, /shapeCount = this\.clamp\(Math\.round\(Number\(this\.brushState\?\.shapeCount\) \|\| 1\), 1, 16\)/);
+  assert.match(source, /shapeScatter = this\.clamp\(Number\(this\.brushState\?\.shapeScatter\) \|\| 0, 0, 2\)/);
+  assert.match(source, /getAdaptiveSpacingMaxTotalMultiplier\(config, shapeLoad = this\.getAdaptiveSpacingShapeLoad\(\)\)/);
+  assert.match(source, /this\.currentStrokeTool === "eraser"/);
+  assert.match(source, /updateAdaptiveSpacingForSegment\(p1, p2\)/);
+  assert.match(source, /const zoomOutMultiplier = zoom < 1 \? 1 \/ zoom : 1/);
+  assert.match(source, /const maxTotalMultiplier = this\.getAdaptiveSpacingMaxTotalMultiplier\(config, shapeLoad\)/);
+  assert.match(source, /const multiplier = Math\.min\(uncappedMultiplier, maxTotalMultiplier\)/);
+  assert.match(source, /brushSize \* effectiveSizeScale \* effectiveSpacing \* adaptiveSpacingMultiplier/);
+});
