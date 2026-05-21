@@ -725,7 +725,7 @@ test("ios-style mobile large intense blending also uses live preview only", () =
   assert.equal(engine.getStampSpacing(), 40);
 });
 
-test("mobile large intense blending skips unsafe full-quality replay", () => {
+test("mobile large intense blending keeps live preview bake unless full-quality replay is enabled", () => {
   const { BrushEngine, window } = loadBrushEngine();
   const engine = Object.create(BrushEngine.prototype);
 
@@ -743,6 +743,15 @@ test("mobile large intense blending skips unsafe full-quality replay", () => {
   engine.strokeStampCount = 552;
   engine.stampsBuffer = [];
 
+  const samples = [
+    { pointerType: "touch", pressure: 1, time: 0, x: 10, y: 10 },
+  ];
+
+  assert.equal(engine.shouldRegenerateLargeBlendFinalQuality(samples), false);
+  assert.equal(engine.regenerateLargeBlendStrokeForFinalBake(samples), null);
+
+  window.CBO.mobileLargeBlendFullQualityBake = true;
+
   const preflight = engine.estimateLargeBlendFinalReplayFromLive();
 
   assert.equal(preflight.allowed, false);
@@ -750,9 +759,7 @@ test("mobile large intense blending skips unsafe full-quality replay", () => {
   assert.equal(preflight.finalShapeCount, 12);
   assert.ok(preflight.estimatedStamps > preflight.maxEstimatedStamps);
 
-  const report = engine.regenerateLargeBlendStrokeForFinalBake([
-    { pointerType: "touch", pressure: 1, time: 0, x: 10, y: 10 },
-  ]);
+  const report = engine.regenerateLargeBlendStrokeForFinalBake(samples);
 
   assert.equal(report.status, "skipped");
   assert.equal(report.reason, "too-expensive");

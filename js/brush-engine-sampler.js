@@ -392,19 +392,6 @@
       const multiplier = Math.min(uncappedMultiplier, maxTotalMultiplier);
 
       this.activeStrokeSpacingMultiplier = multiplier;
-      namespace.lastBrushAdaptiveSpacing = {
-        maxTotalMultiplier,
-        multiplier,
-        pointerType,
-        screenSpeedPerSecond,
-        shapeCount: shapeLoad.shapeCount,
-        shapeLoad: shapeLoad.value,
-        shapeScatter: shapeLoad.shapeScatter,
-        timestamp: Date.now(),
-        tool: this.currentStrokeTool || "brush",
-        uncappedMultiplier,
-        zoom,
-      };
 
       return multiplier;
     }
@@ -418,78 +405,6 @@
       const multiplier = Number(this.activeStrokeSpacingMultiplier);
 
       return Number.isFinite(multiplier) && multiplier > 1 ? multiplier : 1;
-    }
-,
-
-    emitBrushSpacingDebug(detail = {}) {
-      const debugDetail = {
-        ...detail,
-        timestamp: Date.now(),
-      };
-
-      this.lastBrushSpacingDebug = debugDetail;
-      namespace.lastBrushSpacingDebug = debugDetail;
-
-      if (typeof window === "undefined" || typeof document === "undefined") {
-        return false;
-      }
-
-      if (this.brushSpacingDebugFrame) {
-        return true;
-      }
-
-      const scheduleFrame = typeof window.requestAnimationFrame === "function"
-        ? window.requestAnimationFrame.bind(window)
-        : ((callback) => window.setTimeout(callback, 16));
-
-      this.brushSpacingDebugFrame = scheduleFrame(() => {
-        this.brushSpacingDebugFrame = 0;
-        this.updateBrushSpacingDebugButton(this.lastBrushSpacingDebug);
-      });
-
-      return true;
-    }
-,
-
-    updateBrushSpacingDebugButton(detail = null) {
-      if (typeof document === "undefined") {
-        return false;
-      }
-
-      const button = document.querySelector("[data-brush-spacing-debug]");
-
-      if (!button || !detail) {
-        return false;
-      }
-
-      const formatNumber = (value, digits = 1) => {
-        const number = Number(value);
-
-        if (!Number.isFinite(number)) {
-          return "--";
-        }
-
-        return number.toFixed(digits).replace(/\.0$/, "");
-      };
-      const tool = String(detail.tool || "brush").toLowerCase();
-      const toolLabel = tool === "eraser" ? "GOMMA" : "BRUSH";
-      const spacingText = formatNumber(detail.spacing, 1);
-      const baseText = formatNumber(detail.baseSpacing, 1);
-      const multiplierText = formatNumber(Math.max(1, Number(detail.adaptiveSpacingMultiplier) || 1), 2);
-      const capText = formatNumber(detail.maxTotalMultiplier, 2);
-      const percentText = formatNumber((Number(detail.spacingFraction) || 0) * 100, 0);
-      const zoomText = formatNumber(detail.zoom, 2);
-      const speedText = formatNumber(detail.screenSpeedPerSecond, 0);
-      const shapeCountText = formatNumber(detail.shapeCount, 0);
-      const shapeScatterText = formatNumber(detail.shapeScatter, 2);
-
-      button.hidden = false;
-      button.dataset.tool = tool;
-      button.textContent = `DEBUG SPACING ${toolLabel} ${spacingText}px x${multiplierText}`;
-      button.title = `Spacing ${spacingText}px | base ${baseText}px | setting ${percentText}% | zoom ${zoomText} | speed ${speedText}px/s | cap x${capText} | count ${shapeCountText} | scatter ${shapeScatterText}`;
-      button.setAttribute("aria-label", `${toolLabel} spacing ${spacingText} pixels`);
-
-      return true;
     }
 ,
 
@@ -1237,32 +1152,12 @@
       const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * effectiveSpacing * adaptiveSpacingMultiplier);
       const jitterAmount = baseSpacing * spacingJitter * 0.85;
       const spacing = Math.max(0.5, baseSpacing + this.randomSigned() * jitterAmount);
-      const strokeSpacing = this.taperSpacingCap != null ? Math.min(spacing, this.taperSpacingCap) : spacing;
 
-      if (
-        this.isDrawing === true &&
-        (this.currentStrokeTool === "brush" || this.currentStrokeTool === "eraser")
-      ) {
-        const adaptiveSpacing = namespace.lastBrushAdaptiveSpacing || {};
-
-        this.emitBrushSpacingDebug?.({
-          adaptiveSpacingMultiplier,
-          baseSpacing,
-          brushSize,
-          effectiveSpacing,
-          maxTotalMultiplier: adaptiveSpacing.maxTotalMultiplier,
-          screenSpeedPerSecond: this.adaptiveSpacingState?.speed || 0,
-          shapeCount: adaptiveSpacing.shapeCount,
-          shapeScatter: adaptiveSpacing.shapeScatter,
-          spacing: strokeSpacing,
-          spacingFraction: safeSpacing,
-          spacingJitter,
-          tool: this.currentStrokeTool || "brush",
-          zoom: Number(this.camera?.zoom) || 1,
-        });
+      if (this.taperSpacingCap != null) {
+        return Math.min(spacing, this.taperSpacingCap);
       }
 
-      return strokeSpacing;
+      return spacing;
     }
 ,
 

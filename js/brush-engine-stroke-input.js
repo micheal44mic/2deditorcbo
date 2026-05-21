@@ -2016,9 +2016,12 @@
 ,
 
     shouldRegenerateLargeBlendFinalQuality(rawSamples = this.recordedStroke) {
+      const fullQualityBakeEnabled =
+        namespace.mobileLargeBlendFullQualityBake === true ||
+        namespace.androidLargeBlendFullQualityBake === true;
+
       return (
-        namespace.mobileLargeBlendFullQualityBake !== false &&
-        namespace.androidLargeBlendFullQualityBake !== false &&
+        fullQualityBakeEnabled &&
         this.largeBlendLivePreviewUsed === true &&
         Array.isArray(rawSamples) &&
         rawSamples.length > 0
