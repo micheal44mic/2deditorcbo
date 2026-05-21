@@ -58,6 +58,14 @@ window.CBO = window.CBO || {};
           </svg>
           <span>AI Video board</span>
         </button>
+        <button class="editor-artboard-connection-menu-button" type="button" role="menuitem" data-artboard-connection-action="text-prompt">
+          <svg class="editor-artboard-connection-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7V4h16v3"></path>
+            <path d="M9 20h6"></path>
+            <path d="M12 4v16"></path>
+          </svg>
+          <span>Text Prompt</span>
+        </button>
         <button class="editor-artboard-connection-menu-button" type="button" role="menuitem" data-artboard-connection-action="mockup">
           <svg class="editor-artboard-connection-menu-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 1.2.8L6 9.5V20a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9.5l1.94.46a1 1 0 0 0 1.2-.8l.58-3.47a2 2 0 0 0-1.34-2.23Z"></path>
@@ -83,6 +91,8 @@ window.CBO = window.CBO || {};
           materializeAiImageBoardFromMenu({ generationKind: "image" });
         } else if (action === "ai-video") {
           materializeAiImageBoardFromMenu({ generationKind: "video" });
+        } else if (action === "text-prompt") {
+          materializeTextPromptBoardFromMenu();
         }
       });
       stage.appendChild(menu);
@@ -238,7 +248,7 @@ window.CBO = window.CBO || {};
     with (this) {
 
     const boardId = String(board?.id || "").trim();
-    const focusedBoardId = String(document.activeElement?.closest?.("[data-ai-image-board]")?.dataset?.boardId || "").trim();
+    const focusedBoardId = String(document.activeElement?.closest?.("[data-space-board], [data-ai-image-board], [data-space-text-board]")?.dataset?.boardId || "").trim();
 
     return Boolean(
       boardId &&

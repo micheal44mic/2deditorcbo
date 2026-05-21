@@ -39,6 +39,7 @@ const artboardConnectionModulePaths = [
   ["js", "artboard-connections", "ai-board-generation.js"],
   ["js", "artboard-connections", "ai-board-media.js"],
   ["js", "artboard-connections", "ai-board-text.js"],
+  ["js", "artboard-connections", "space-board-text.js"],
   ["js", "artboard-connections", "placement.js"],
   ["js", "artboard-connections", "connection-render.js"],
   ["js", "artboard-connections", "space-board-render.js"],
@@ -852,7 +853,7 @@ test("selected AI image boards expose a floating toolbar shell", () => {
   assert.match(cssSource, /\.editor-ai-image-board\.is-selected \.editor-ai-image-board-action-toolbar[\s\S]*opacity: 1/);
   assert.match(cssSource, /@media \(hover: none\), \(pointer: coarse\), \(max-width: 900px\) \{[\s\S]*\.editor-ai-image-board > \.editor-ai-image-board-action-toolbar[\s\S]*display: none/);
   assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*bottom: calc\(var\(--cbo-mobile-floating-bottom\) \+ 28px\)/);
-  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*z-index: 9010/);
+  assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*z-index: 9030/);
   assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*width: min\(360px/);
   assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar[\s\S]*height: 44px/);
   assert.match(cssSource, /\.editor-ai-image-board-mobile-action-toolbar \.editor-ai-image-board-action-toolbar-button[\s\S]*width: 36px/);
@@ -973,6 +974,75 @@ test("AI image boards can open a responsive enlarge viewer", () => {
   assert.match(cssSource, /\.editor-ai-image-enlarge-meta \[data-ai-image-enlarge-dimensions\][\s\S]*display: none/);
   assert.match(cssSource, /@media \(hover: none\), \(pointer: coarse\), \(max-width: 900px\) \{[\s\S]*\.editor-ai-image-enlarge-header[\s\S]*env\(safe-area-inset-top/);
   assert.match(cssSource, /@media \(hover: none\), \(pointer: coarse\), \(max-width: 900px\) \{[\s\S]*\.editor-ai-image-enlarge-image[\s\S]*max-width: 100%/);
+});
+
+test("AI menu can create editable Text Prompt boards on the infinite canvas", () => {
+  const indexSource = readRepoFile("index.html");
+  const connectionsSource = readArtboardConnectionSources();
+  const cssSource = readRepoFile("css", "layout.css");
+
+  assert.match(indexSource, /<script src="\.\/js\/artboard-connections\/space-board-text\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.match(connectionsSource, /data-artboard-connection-action="text-prompt"/);
+  assert.match(connectionsSource, />Text Prompt<\/span>/);
+  assert.match(connectionsSource, /materializeTextPromptBoardFromMenu\(\)/);
+  assert.match(connectionsSource, /TEXT_PROMPT_BOARD_DEFAULT_WIDTH_DOC_PX = 687/);
+  assert.match(connectionsSource, /TEXT_PROMPT_BOARD_MIN_WIDTH_DOC_PX = 200/);
+  assert.match(connectionsSource, /TEXT_PROMPT_BOARD_MIN_HEIGHT_DOC_PX = 120/);
+  assert.match(connectionsSource, /TEXT_PROMPT_FONT_SIZE_DOC_PX = 14/);
+  assert.match(connectionsSource, /TEXT_PROMPT_FONT_SIZE_MAX_DOC_PX = 72/);
+  assert.match(connectionsSource, /TEXT_PROMPT_TEXT_COLOR = "#15171c"/);
+  assert.match(connectionsSource, /TEXT_PROMPT_BACKGROUND_COLOR = "#ffffff"/);
+  assert.match(connectionsSource, /type: TEXT_PROMPT_BOARD_TYPE/);
+  assert.match(connectionsSource, /fontSizeDoc: normalizeTextPromptFontSizeDoc/);
+  assert.match(connectionsSource, /textColor: normalizeTextPromptColor/);
+  assert.match(connectionsSource, /backgroundColor: normalizeTextPromptBackgroundColor/);
+  assert.match(connectionsSource, /data-space-text-board/);
+  assert.match(connectionsSource, /data-text-prompt-editor/);
+  assert.match(connectionsSource, /contenteditable="false"/);
+  assert.match(connectionsSource, /contenteditable="true"/);
+  assert.match(connectionsSource, /data-text-prompt-color-input="text"/);
+  assert.match(connectionsSource, /data-text-prompt-color-input="background"/);
+  assert.match(connectionsSource, /data-text-prompt-color-input="text"[\s\S]*data-text-prompt-command="font-increase"[\s\S]*data-text-prompt-command="font-decrease"[\s\S]*data-text-prompt-color-input="background"/);
+  assert.match(connectionsSource, /data-text-prompt-command="background-transparent"/);
+  assert.match(connectionsSource, /applyTextPromptStyleColor/);
+  assert.match(connectionsSource, /textPromptToolbar\.className = "editor-text-prompt-toolbar editor-ai-image-board-action-toolbar"/);
+  assert.match(connectionsSource, /editor-ai-image-board-action-toolbar-items editor-text-prompt-toolbar-items/);
+  assert.match(connectionsSource, /class="editor-ai-image-board-action-toolbar-button" type="button" data-text-prompt-command="focus"/);
+  assert.match(connectionsSource, /class="lucide lucide-copy-icon lucide-copy"/);
+  assert.match(connectionsSource, /class="lucide lucide-trash2-icon lucide-trash-2"/);
+  assert.match(connectionsSource, /data-text-prompt-command="font-increase"/);
+  assert.match(connectionsSource, /data-text-prompt-command="font-decrease"/);
+  assert.match(connectionsSource, /adjustTextPromptBoardFontSize/);
+  assert.match(connectionsSource, /board\.addEventListener\("wheel", handleSpaceBoardWheel, \{ passive: false \}\)/);
+  assert.match(connectionsSource, /data-text-prompt-resize="nw"/);
+  assert.match(connectionsSource, /data-text-prompt-resize="se"/);
+  assert.match(connectionsSource, /startTextPromptResize/);
+  assert.match(connectionsSource, /enterTextPromptInlineEditing\(board\.id, \{ select: false \}\)/);
+  assert.match(connectionsSource, /data-text-prompt-focus-overlay/);
+  assert.match(connectionsSource, /renderTextPromptBoards\(\{ pane, viewScale, viewState \}\)/);
+  assert.match(connectionsSource, /source: "space-board-create-text-prompt"/);
+  assert.match(connectionsSource, /source: "text-prompt-resize"/);
+  assert.match(connectionsSource, /source: "text-prompt-font-size"/);
+  assert.match(connectionsSource, /source: "text-prompt-style-color"/);
+
+  assert.match(cssSource, /\.editor-space-text-board \{/);
+  assert.match(cssSource, /\.editor-space-text-board \{[\s\S]*outline: var\(--text-prompt-board-outline, 5px\) solid #dbdbdb/);
+  assert.match(cssSource, /\.editor-space-text-board\.is-selected[\s\S]*outline-color: #f05023/);
+  assert.match(cssSource, /\.editor-space-text-board\.is-transparent-background \.editor-space-text-board-shell[\s\S]*background: transparent/);
+  assert.match(cssSource, /\.editor-space-text-board-editor[\s\S]*caret-color: transparent/);
+  assert.match(cssSource, /\.editor-space-text-board\.is-editing \.editor-space-text-board-editor[\s\S]*caret-color: auto/);
+  assert.match(cssSource, /\.editor-space-text-board-scroll\.is-overflowing[\s\S]*mask-image/);
+  assert.match(cssSource, /\.editor-space-text-board-resize-handle[\s\S]*width: var\(--text-prompt-resize-handle, 30px\)/);
+  assert.match(cssSource, /\.editor-text-prompt-toolbar[\s\S]*position: absolute/);
+  assert.match(cssSource, /\.editor-text-prompt-toolbar\.editor-ai-image-board-action-toolbar[\s\S]*z-index: 90/);
+  assert.match(cssSource, /\.editor-text-prompt-color-control[\s\S]*grid-template-columns: 18px 14px/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-overlay[\s\S]*position: fixed/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-overlay[\s\S]*place-items: center/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-overlay[\s\S]*background: rgba\(12, 12, 14, 0\.62\)/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-shell[\s\S]*width: min\(1232px, calc\(100vw - 80px\)\)/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-shell[\s\S]*border-radius: 14px/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-header[\s\S]*height: 40px/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-header[\s\S]*background: rgba\(58, 58, 58, 0\.92\)/);
 });
 
 test("AI image boards expose a responsive create with AI preview shell", () => {

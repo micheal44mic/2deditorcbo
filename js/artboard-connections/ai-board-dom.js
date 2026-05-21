@@ -34,6 +34,7 @@ window.CBO = window.CBO || {};
       board.className = shouldUsePlainAiBoardArtboards()
         ? "editor-ai-image-board is-plain-artboard editor-artboard-frame"
         : "editor-ai-image-board";
+      board.dataset.spaceBoard = "";
       board.dataset.aiImageBoard = "";
       board.dataset.boardId = normalizedBoardId;
       board.innerHTML = shouldUsePlainAiBoardArtboards()
@@ -273,4 +274,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

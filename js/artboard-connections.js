@@ -77,7 +77,15 @@ window.CBO = window.CBO || {};
     aiBoardPreviewDebugEventId = 1;
     promptEditState = null;
     captionEditState = null;
+    textPromptEditState = null;
+    textPromptInlineEditBoardId = "";
     clearPromptFocusViewportTimers();
+    if (typeof closeTextPromptFocusMode === "function") {
+      closeTextPromptFocusMode({ commit: false });
+    }
+    if (typeof syncTextPromptToolbar === "function") {
+      syncTextPromptToolbar("");
+    }
     clearAiImageGenerationPreview();
     closeAiImageBoardEnlargeViewer();
     closeAiImageBoardEditPreview();

@@ -43,6 +43,9 @@ window.CBO = window.CBO || {};
 
     if (!layer || !pane) {
       syncAiImageBoardMobileActionToolbar("");
+      if (typeof syncTextPromptToolbar === "function") {
+        syncTextPromptToolbar("");
+      }
       metrics.frameMs = roundMetricValue((performance.now?.() || Date.now()) - renderStartedAt, 2);
       publishAiBoardMetrics(metrics);
       return;
@@ -331,6 +334,10 @@ window.CBO = window.CBO || {};
         element.remove();
       }
     });
+
+    if (typeof renderTextPromptBoards === "function") {
+      renderTextPromptBoards({ pane, viewScale, viewState });
+    }
 
     syncAiImageBoardMobileActionToolbar(
       !spaceBoardDrag && renderedIds.has(selectedSpaceBoardId) ? selectedSpaceBoardId : "",

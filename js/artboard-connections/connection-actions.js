@@ -768,7 +768,7 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    const boardElement = event.currentTarget?.closest?.("[data-ai-image-board]");
+    const boardElement = event.currentTarget?.closest?.("[data-space-board], [data-ai-image-board], [data-space-text-board]");
     const boardId = String(boardElement?.dataset?.boardId || "").trim();
     const board = getSpaceBoardById(boardId);
     const point = getEventDocumentPoint(event);
@@ -782,7 +782,9 @@ window.CBO = window.CBO || {};
     }
 
     selectedSpaceBoardId = boardId;
-    ensureAiImageBoardHeavyContent(boardElement);
+    if (board.type === "ai-image") {
+      ensureAiImageBoardHeavyContent(boardElement);
+    }
     syncAiImageBoardMobileActionToolbar("");
 
     spaceBoardDrag = {

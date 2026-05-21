@@ -249,7 +249,7 @@ window.CBO = window.CBO || {};
       pane.dataset.spaceBoardPane = "";
 
       const movableChildren = Array.from(layer.children).filter((child) => (
-        child.matches?.("[data-artboard-connection-layer], [data-ai-image-board]")
+        child.matches?.("[data-artboard-connection-layer], [data-ai-image-board], [data-space-text-board]")
       ));
 
       movableChildren.forEach((child) => pane.appendChild(child));

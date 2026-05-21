@@ -19,7 +19,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.handleAiImageBoardPointerDown = function handleAiImageBoardPointerDown(event) {
     with (this) {
 
-    const boardId = String(event.target?.closest?.("[data-ai-image-board]")?.dataset?.boardId || "").trim();
+    const boardId = String(event.target?.closest?.("[data-space-board], [data-ai-image-board], [data-space-text-board]")?.dataset?.boardId || "").trim();
 
     if (!boardId || selectedSpaceBoardId === boardId) {
       return;
@@ -35,7 +35,7 @@ window.CBO = window.CBO || {};
 
     if (
       !selectedSpaceBoardId ||
-      event.target?.closest?.("[data-ai-image-board], [data-ai-image-board-action-toolbar], [data-ai-image-enlarge-viewer], [data-ai-image-edit-preview-viewer]")
+      event.target?.closest?.("[data-space-board], [data-ai-image-board], [data-space-text-board], [data-ai-image-board-action-toolbar], [data-text-prompt-toolbar], [data-text-prompt-focus-overlay], [data-ai-image-enlarge-viewer], [data-ai-image-edit-preview-viewer]")
     ) {
       return;
     }
@@ -60,6 +60,9 @@ window.CBO = window.CBO || {};
       "[data-ai-image-board-footer]",
       "[data-ai-image-board-generate]",
       "[data-ai-image-board-prompt-input]",
+      "[data-text-prompt-editor]",
+      "[data-text-prompt-toolbar]",
+      "[data-text-prompt-resize]",
       "[contenteditable]",
       "button",
       "input",
