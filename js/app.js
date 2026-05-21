@@ -338,6 +338,7 @@ document.addEventListener("DOMContentLoaded", () => {
     window.CBO.initRasterTransformTool?.();
     window.CBO.initPuppetTransformTool?.();
     window.CBO.initVectorTextRenderer();
+    window.CBO.initVectorRectTool?.();
   }
 
   window.addEventListener("cbo:editor-canvas-ready", initCanvasDependentTools);

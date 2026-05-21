@@ -187,7 +187,7 @@
           </div>
 
           <div class="tool-group" aria-label="Shape tools">
-            <button class="tool-button" type="button" aria-label="SQUARE" aria-pressed="false" data-tooltip="SQUARE" data-toolset-primary="shape" data-tool>
+            <button class="tool-button" type="button" aria-label="SQUARE" aria-pressed="false" data-tooltip="SQUARE" data-toolset-primary="shape" data-tool-mode="vector-rect" data-tool>
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect width="18" height="18" x="3" y="3" rx="2" />
               </svg>
@@ -197,7 +197,7 @@
                 <path d="m6 9 6 6 6-6" />
               </svg>
               <span class="tool-popover" aria-hidden="true">
-                <span class="popover-option active" data-toolset-option="shape" data-shortcut="r" data-label="SQUARE">
+                <span class="popover-option active" data-toolset-option="shape" data-shortcut="r" data-label="SQUARE" data-tool-mode="vector-rect">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <rect width="18" height="18" x="3" y="3" rx="2" />
                   </svg>
@@ -384,6 +384,7 @@
     <script src="./js/text/vector-text-engine.js"></script>
     <script src="./js/text/vector-text-renderer.js?v=vector-text-distort-handle-scale-v1"></script>
     <script src="./js/text/vector-text-rasterizer.js"></script>
+    <script src="./js/vector-rect-tool.js"></script>
     <script src="./js/layers-panel.js?v=clip-mask-fix-v1"></script>
     <script src="./js/drag-scroll.js"></script>
     <script src="./data/grain-textures.js"></script>

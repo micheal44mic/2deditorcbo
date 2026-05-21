@@ -554,6 +554,10 @@
         return "Text";
       }
 
+      if (type === "vector-rect") {
+        return "Rectangle";
+      }
+
       if (type === "svg" || type === "vector") {
         return "SVG";
       }

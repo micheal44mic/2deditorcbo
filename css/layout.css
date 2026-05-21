@@ -331,7 +331,7 @@
   position: absolute;
   left: 0;
   top: 0;
-  z-index: 1;
+  z-index: 5;
   display: block;
   width: 1px;
   height: 1px;
@@ -444,7 +444,7 @@
 .editor-space-board-layer {
   position: absolute;
   inset: 0;
-  z-index: 5;
+  z-index: 8;
   overflow: visible;
   pointer-events: none;
   contain: layout style;
@@ -507,6 +507,7 @@
 }
 
 .editor-ai-image-board.is-plain-artboard.is-selected {
+  z-index: 40;
   box-shadow: none;
   outline-color: #f05023;
 }
@@ -538,7 +539,7 @@
   position: absolute;
   left: 50%;
   top: calc(var(--editor-artboard-label-top, -25px) - 50px);
-  z-index: 12;
+  z-index: 80;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2145,7 +2146,7 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   position: absolute;
   right: var(--ai-video-mute-inset, 18px);
   top: var(--ai-video-mute-inset, 18px);
-  z-index: 5;
+  z-index: 80;
   display: grid;
   place-items: center;
   box-sizing: border-box;
@@ -2411,7 +2412,7 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
     right: auto;
     bottom: calc(var(--cbo-mobile-floating-bottom) + 28px);
     left: 50%;
-    z-index: 9010;
+    z-index: 9030;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3173,18 +3174,21 @@ body.cbo-memory-recovery-active .editor-stage > .editor-webgl-canvas,
 body.cbo-memory-recovery-active .editor-stage > .editor-artboard-paper-layer,
 body.cbo-memory-recovery-active .editor-stage > .editor-artboard-preview-layer,
 body.cbo-memory-recovery-active .editor-stage > .editor-vector-overlay,
+body.cbo-memory-recovery-active .editor-stage > .editor-vector-rect-overlay,
 body.cbo-memory-recovery-active .editor-stage > .editor-raster-transform-overlay,
 body.cbo-memory-recovery-active .editor-stage > .editor-puppet-overlay,
 body.cbo-document-restore-active .editor-stage > .editor-webgl-canvas,
 body.cbo-document-restore-active .editor-stage > .editor-artboard-paper-layer,
 body.cbo-document-restore-active .editor-stage > .editor-artboard-preview-layer,
 body.cbo-document-restore-active .editor-stage > .editor-vector-overlay,
+body.cbo-document-restore-active .editor-stage > .editor-vector-rect-overlay,
 body.cbo-document-restore-active .editor-stage > .editor-raster-transform-overlay,
 body.cbo-document-restore-active .editor-stage > .editor-puppet-overlay,
 body.cbo-history-busy-active .editor-stage > .editor-webgl-canvas,
 body.cbo-history-busy-active .editor-stage > .editor-artboard-paper-layer,
 body.cbo-history-busy-active .editor-stage > .editor-artboard-preview-layer,
 body.cbo-history-busy-active .editor-stage > .editor-vector-overlay,
+body.cbo-history-busy-active .editor-stage > .editor-vector-rect-overlay,
 body.cbo-history-busy-active .editor-stage > .editor-raster-transform-overlay,
 body.cbo-history-busy-active .editor-stage > .editor-puppet-overlay {
   filter: blur(7px) saturate(0.82);
@@ -3667,6 +3671,185 @@ body.cbo-document-restore-active .editor-stage {
   height: 100%;
   overflow: hidden;
   pointer-events: none;
+}
+
+.editor-vector-rect-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.editor-vector-rect-overlay.vector-rect-tool-active {
+  pointer-events: none;
+}
+
+.editor-vector-rect-action-toolbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 0;
+  height: 40px;
+  padding: 4px 6px;
+  border: 1px solid rgba(16, 16, 16, 0.05);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 2px 5px rgba(55, 73, 87, 0.1);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 120ms ease;
+  -webkit-backdrop-filter: blur(64px);
+  backdrop-filter: blur(64px);
+}
+
+.editor-vector-rect-action-toolbar[aria-hidden="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.editor-vector-rect-fill-swatch {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(16, 16, 16, 0.15);
+  border-radius: 999px;
+  appearance: none;
+  background: var(--vector-rect-swatch-color, #bfefff);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.editor-vector-rect-fill-swatch::after {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid rgba(240, 80, 35, 0);
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+  transition: border-color 120ms ease;
+}
+
+.editor-vector-rect-fill-swatch:hover,
+.editor-vector-rect-fill-swatch:focus-visible {
+  outline: none;
+}
+
+.editor-vector-rect-fill-swatch:hover::after,
+.editor-vector-rect-fill-swatch:focus-visible::after,
+.editor-vector-rect-fill-swatch.is-active::after {
+  border-color: #f05023;
+}
+
+.editor-stage.vector-rect-tool-active {
+  cursor: crosshair;
+}
+
+.editor-vector-rect-hit-area {
+  pointer-events: none;
+}
+
+.editor-vector-rect-layer,
+.editor-vector-rect-draft {
+  pointer-events: none;
+}
+
+.editor-vector-rect-shape {
+  stroke: #dbdbdb;
+  stroke-linejoin: round;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.editor-vector-rect-layer.is-selected .editor-vector-rect-shape {
+  stroke: #f05023;
+}
+
+.editor-vector-rect-draft .editor-vector-rect-shape {
+  fill-opacity: 0.82;
+  stroke: #f05023;
+}
+
+.editor-vector-rect-title {
+  pointer-events: none;
+}
+
+.editor-vector-rect-title-bg {
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.12));
+}
+
+.editor-vector-rect-title.is-selected .editor-vector-rect-title-bg {
+  fill: #f05023;
+}
+
+.editor-vector-rect-title-text {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  pointer-events: none;
+  text-anchor: start;
+  user-select: none;
+}
+
+.editor-vector-rect-resize-handles {
+  pointer-events: none;
+}
+
+.editor-vector-rect-resize-handle-group {
+  pointer-events: none;
+}
+
+.editor-vector-rect-resize-handle-group[data-resize-handle="n"],
+.editor-vector-rect-resize-handle-group[data-resize-handle="s"] {
+  cursor: ns-resize;
+}
+
+.editor-vector-rect-resize-handle-group[data-resize-handle="e"],
+.editor-vector-rect-resize-handle-group[data-resize-handle="w"] {
+  cursor: ew-resize;
+}
+
+.editor-vector-rect-resize-handle-group[data-resize-handle="nw"],
+.editor-vector-rect-resize-handle-group[data-resize-handle="se"] {
+  cursor: nwse-resize;
+}
+
+.editor-vector-rect-resize-handle-group[data-resize-handle="ne"],
+.editor-vector-rect-resize-handle-group[data-resize-handle="sw"] {
+  cursor: nesw-resize;
+}
+
+.editor-vector-rect-resize-hit {
+  fill: transparent;
+  pointer-events: none;
+}
+
+.editor-vector-rect-resize-handle {
+  fill: #ffffff;
+  stroke: #f05023;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.18));
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
 }
 
 .editor-vector-overlay.text-tool-active,

@@ -893,6 +893,14 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       `;
     }
 
+    if (type === "vector-rect") {
+      return `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="16" height="12" x="4" y="6" rx="1.5" ry="1.5" />
+        </svg>
+      `;
+    }
+
     if (type === "vector" || type === "svg") {
       return `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
