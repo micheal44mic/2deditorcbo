@@ -1629,7 +1629,7 @@ window.CBO = window.CBO || {};
   }
 
   function handleStagePointerDown(event) {
-    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-connection-menu], [data-ai-image-board], [data-mockup-slot], [data-mockup-slot-popover]")) {
+    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-symmetry-button], [data-artboard-connection-menu], [data-ai-image-board], [data-mockup-slot], [data-mockup-slot-popover]")) {
       return;
     }
 

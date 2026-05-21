@@ -167,6 +167,106 @@ test("brush artboard clipping accepts stamps outside the primary document rect",
   assert.equal(engine.isStampCompletelyOutsideDocument({}), true);
 });
 
+test("brush vertical symmetry mirrors prepared brush and eraser stamps only", () => {
+  const { BrushEngine, window } = loadBrushEngine();
+  const engine = Object.create(BrushEngine.prototype);
+
+  window.CBO.getActiveVerticalSymmetryConfig = ({ layerId }) => ({
+    artboardId: layerId === "paint-main" ? "active-artboard" : "",
+    axisX: 100,
+    mode: "vertical",
+  });
+  engine.strokeTargetLayerId = "paint-main";
+  engine.currentStrokeTool = "brush";
+
+  const brushSymmetry = engine.resolveActiveStrokeSymmetry({
+    layerId: "paint-main",
+    tool: "brush",
+  });
+
+  assert.equal(brushSymmetry.artboardId, "active-artboard");
+  assert.equal(brushSymmetry.axisX, 100);
+  assert.equal(engine.resolveActiveStrokeSymmetry({ layerId: "paint-main", tool: "eraser" }).axisX, 100);
+  assert.equal(engine.resolveActiveStrokeSymmetry({ layerId: "paint-main", tool: "smudge" }), null);
+
+  const includedBounds = [];
+
+  engine.activeStrokeSymmetry = brushSymmetry;
+  engine.stampsBuffer = [];
+  engine.getDocumentDrawTarget = () => ({
+    height: 300,
+    layerId: "paint-main",
+    width: 300,
+  });
+  engine.getActiveDocumentPaintRect = () => ({
+    height: 300,
+    width: 300,
+    x: 0,
+    y: 0,
+  });
+  engine.getStampBounds = (stamp) => ({
+    maxX: stamp.x + 5,
+    maxY: stamp.y + 5,
+    minX: stamp.x - 5,
+    minY: stamp.y - 5,
+  });
+  engine.applyMovingGrainToStamp = (stamp) => {
+    stamp.grainTravel = 24;
+  };
+  engine.getNextStampColorRgb = () => [0.1, 0.2, 0.3];
+  engine.includeStrokeStampBounds = (stamp) => {
+    includedBounds.push(stamp.x);
+  };
+
+  assert.equal(engine.pushPreparedShapeStamp({
+    mirrorX: 1,
+    pressure: 1,
+    rotation: 0.25,
+    x: 70,
+    y: 40,
+  }, { x: 1, y: 0 }), true);
+
+  assert.deepEqual(engine.stampsBuffer.map((stamp) => stamp.x), [70, 130]);
+  assert.deepEqual(includedBounds, [70, 130]);
+  assert.equal(engine.stampsBuffer[1].mirrorX, -1);
+  assert.equal(engine.stampsBuffer[1].rotation, -0.25);
+  assert.deepEqual(Array.from(engine.stampsBuffer[1].colorRgb), [0.1, 0.2, 0.3]);
+
+  engine.stampsBuffer = [];
+  assert.equal(engine.pushPreparedShapeStamp({
+    pressure: 1,
+    rotation: 0.5,
+    x: 100,
+    y: 40,
+  }, { x: 1, y: 0 }), true);
+  assert.equal(engine.stampsBuffer.length, 1);
+
+  engine.stampsBuffer = [
+    { mirrorX: 1, needsShapeRotationTangent: true, shapeScatterRotation: 0.1 },
+    { mirrorX: -1, needsShapeRotationTangent: true, shapeScatterRotation: 0.1 },
+  ];
+  engine.hasUsableShapeTangent = () => true;
+  engine.getShapeDirectionalRotation = () => 0.4;
+  engine.applyPendingShapeRotation({ x: 1, y: 0 });
+
+  assert.equal(engine.stampsBuffer[0].rotation, 0.5);
+  assert.equal(engine.stampsBuffer[1].rotation, -0.5);
+});
+
+test("brush vertical symmetry sends mirror flags through GPU instance data", () => {
+  const source = readBrushEngineSources();
+
+  assert.match(source, /layout\(location = 11\) in float aInstanceMirrorX/);
+  assert.match(source, /localPosition = a_position \* u_shapeFlip \* vec2\(aInstanceMirrorX, 1\.0\)/);
+  assert.match(source, /gl\.vertexAttribPointer\(11, 1, gl\.FLOAT, false, 60, 56\)/);
+  assert.match(source, /const requiredFloats = Math\.max\(15, Math\.round\(Number\(stampCount\) \|\| 0\) \* 15\)/);
+  assert.match(source, /const offset = index \* 15/);
+  assert.match(source, /instanceData\[offset \+ 14\] = Number\(stamp\.mirrorX\) < 0 \? -1 : 1/);
+  assert.match(source, /this\.activeStrokeSymmetry = this\.resolveActiveStrokeSymmetry\?\.\(\{[\s\S]*tool: strokeTool/);
+  assert.match(source, /tool !== "brush" && tool !== "eraser"/);
+  assert.match(source, /symmetry:off/);
+});
+
 test("brush stroke history records memory policy and disables redo for huge strokes", () => {
   const source = readBrushEngineSources();
 

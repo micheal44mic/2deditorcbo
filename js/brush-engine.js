@@ -196,6 +196,7 @@ window.CBO = window.CBO || {};
       this.activeStrokeTool = this.activeStrokeTool || (this.isBrushToolActive ? "brush" : "");
       this.currentStrokeTool = "brush";
       this.strokeTargetLayerId = null;
+      this.activeStrokeSymmetry = null;
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
       this.activeStrokeDirtyDebugFrame = 0;

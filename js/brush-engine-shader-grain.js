@@ -15,6 +15,7 @@ layout(location = 7) in vec2 aInstanceGrainOffset;
 layout(location = 8) in float aInstanceGrainTravel;
 layout(location = 9) in float aInstanceGrainRotation;
 layout(location = 10) in float aInstanceGrainDepthScale;
+layout(location = 11) in float aInstanceMirrorX;
 
 uniform vec2 u_docResolution;
 uniform vec2 u_targetOrigin;
@@ -42,7 +43,7 @@ void main() {
   // aInstanceSizeScale e' il moltiplicatore esterno dei dab (taper, ecc.):
   // bypassa il min-size ratio quindi puo' arrivare davvero a 0 (taper a punta).
   float scale = max(aInstanceSizeScale, 0.0);
-  vec2 localPosition = a_position * u_shapeFlip;
+  vec2 localPosition = a_position * u_shapeFlip * vec2(aInstanceMirrorX, 1.0);
   float angle = aInstanceRotation;
   float c = cos(angle);
   float s = sin(angle);
@@ -800,37 +801,40 @@ void main() {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, instanceVBO);
       gl.bufferData(gl.ARRAY_BUFFER, 0, gl.DYNAMIC_DRAW);
-      // Instance stride 56 byte: pos, pressure, alpha, size, rotation, color, grain moving data.
+      // Instance stride 60 byte: pos, pressure, alpha, size, rotation, color, grain moving data, mirror flag.
       gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 56, 0);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 60, 0);
       gl.vertexAttribDivisor(1, 1);
       gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 56, 8);
+      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 60, 8);
       gl.vertexAttribDivisor(2, 1);
       gl.enableVertexAttribArray(3);
-      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 56, 12);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 60, 12);
       gl.vertexAttribDivisor(3, 1);
       gl.enableVertexAttribArray(4);
-      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 56, 16);
+      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 60, 16);
       gl.vertexAttribDivisor(4, 1);
       gl.enableVertexAttribArray(5);
-      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 56, 20);
+      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 60, 20);
       gl.vertexAttribDivisor(5, 1);
       gl.enableVertexAttribArray(6);
-      gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 56, 24);
+      gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 60, 24);
       gl.vertexAttribDivisor(6, 1);
       gl.enableVertexAttribArray(7);
-      gl.vertexAttribPointer(7, 2, gl.FLOAT, false, 56, 36);
+      gl.vertexAttribPointer(7, 2, gl.FLOAT, false, 60, 36);
       gl.vertexAttribDivisor(7, 1);
       gl.enableVertexAttribArray(8);
-      gl.vertexAttribPointer(8, 1, gl.FLOAT, false, 56, 44);
+      gl.vertexAttribPointer(8, 1, gl.FLOAT, false, 60, 44);
       gl.vertexAttribDivisor(8, 1);
       gl.enableVertexAttribArray(9);
-      gl.vertexAttribPointer(9, 1, gl.FLOAT, false, 56, 48);
+      gl.vertexAttribPointer(9, 1, gl.FLOAT, false, 60, 48);
       gl.vertexAttribDivisor(9, 1);
       gl.enableVertexAttribArray(10);
-      gl.vertexAttribPointer(10, 1, gl.FLOAT, false, 56, 52);
+      gl.vertexAttribPointer(10, 1, gl.FLOAT, false, 60, 52);
       gl.vertexAttribDivisor(10, 1);
+      gl.enableVertexAttribArray(11);
+      gl.vertexAttribPointer(11, 1, gl.FLOAT, false, 60, 56);
+      gl.vertexAttribDivisor(11, 1);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
@@ -1514,7 +1518,9 @@ void main() {
           return;
         }
 
-        stamp.rotation = directionalRotation + (stamp.shapeScatterRotation ?? 0);
+        const nextRotation = directionalRotation + (stamp.shapeScatterRotation ?? 0);
+
+        stamp.rotation = Number(stamp.mirrorX) < 0 ? -nextRotation : nextRotation;
         stamp.needsShapeRotationTangent = false;
       });
     }
@@ -1574,11 +1580,11 @@ void main() {
 ,
 
     getStampInstanceData(stampCount) {
-      const requiredFloats = Math.max(14, Math.round(Number(stampCount) || 0) * 14);
+      const requiredFloats = Math.max(15, Math.round(Number(stampCount) || 0) * 15);
 
       if (!this.stampInstanceData || this.stampInstanceCapacity < requiredFloats) {
         const previousCapacity = Math.max(0, Math.round(Number(this.stampInstanceCapacity) || 0));
-        const nextCapacity = Math.max(requiredFloats, Math.ceil(previousCapacity * 1.5), 14 * 256);
+        const nextCapacity = Math.max(requiredFloats, Math.ceil(previousCapacity * 1.5), 15 * 256);
 
         this.stampInstanceData = new Float32Array(nextCapacity);
         this.stampInstanceCapacity = nextCapacity;

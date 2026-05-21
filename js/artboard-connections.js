@@ -103,6 +103,9 @@ window.CBO = window.CBO || {};
     window.addEventListener("resize", () => {
       updateInfiniteCanvasDotGrid();
     });
+    window.addEventListener("cbo:artboard-symmetry-change", () => {
+      renderActions();
+    });
     updateInfiniteCanvasDotGrid();
     }
   };

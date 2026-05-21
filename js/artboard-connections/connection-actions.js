@@ -1241,6 +1241,8 @@ window.CBO = window.CBO || {};
       }
 
       const bubble = ensureActionBubble(view.artboard.id);
+      const symmetryButton = ensureSymmetryButton(view.artboard.id);
+      const symmetryLine = ensureSymmetryLine(view.artboard.id);
 
       if (!bubble) {
         return;
@@ -1254,6 +1256,9 @@ window.CBO = window.CBO || {};
       );
       const left = view.left + view.width + gap;
       const top = view.top + gap;
+      const symmetryLeft = view.left - gap - size;
+      const symmetryLineWidth = Math.max(1, borderWidth);
+      const isSymmetryActive = namespace.isArtboardVerticalSymmetryEnabled?.(view.artboard.id) === true;
 
       nextAnchorOverrides.set(view.artboard.id, stagePointToDocumentPoint({
         x: left + size * 0.5,
@@ -1267,6 +1272,26 @@ window.CBO = window.CBO || {};
       bubble.style.borderWidth = `${borderWidth}px`;
       bubble.style.setProperty("--artboard-action-icon-size", `${iconSize}px`);
       bubble.classList.add("is-visible");
+
+      if (symmetryButton) {
+        symmetryButton.style.left = `${symmetryLeft}px`;
+        symmetryButton.style.top = `${top}px`;
+        symmetryButton.style.width = `${size}px`;
+        symmetryButton.style.height = `${size}px`;
+        symmetryButton.style.borderWidth = `${borderWidth}px`;
+        symmetryButton.style.setProperty("--artboard-action-icon-size", `${iconSize}px`);
+        symmetryButton.classList.toggle("is-active", isSymmetryActive);
+        symmetryButton.setAttribute("aria-pressed", isSymmetryActive ? "true" : "false");
+        symmetryButton.classList.add("is-visible");
+      }
+
+      if (symmetryLine) {
+        symmetryLine.style.left = `${view.left + view.width * 0.5 - symmetryLineWidth * 0.5}px`;
+        symmetryLine.style.top = `${view.top}px`;
+        symmetryLine.style.width = `${symmetryLineWidth}px`;
+        symmetryLine.style.height = `${view.height}px`;
+        symmetryLine.classList.toggle("is-visible", isSymmetryActive);
+      }
     });
 
     anchorOverrides = nextAnchorOverrides;
@@ -1274,6 +1299,18 @@ window.CBO = window.CBO || {};
     getStage()?.querySelectorAll("[data-artboard-action-bubble]").forEach((bubble) => {
       if (!renderedIds.has(bubble.dataset.artboardId || "")) {
         bubble.classList.remove("is-visible", "is-hovered");
+      }
+    });
+
+    getStage()?.querySelectorAll("[data-artboard-symmetry-button]").forEach((button) => {
+      if (!renderedIds.has(button.dataset.artboardId || "")) {
+        button.classList.remove("is-visible", "is-hovered");
+      }
+    });
+
+    getStage()?.querySelectorAll("[data-artboard-symmetry-line]").forEach((line) => {
+      if (!renderedIds.has(line.dataset.artboardId || "")) {
+        line.classList.remove("is-visible");
       }
     });
     }

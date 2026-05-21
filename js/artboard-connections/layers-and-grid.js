@@ -14,6 +14,87 @@ window.CBO = window.CBO || {};
 
   }
 
+  function getVerticalSymmetrySet() {
+    if (!(namespace.artboardVerticalSymmetryIds instanceof Set)) {
+      namespace.artboardVerticalSymmetryIds = new Set();
+    }
+
+    return namespace.artboardVerticalSymmetryIds;
+  }
+
+  function normalizeSymmetryArtboardId(artboardId) {
+    return String(artboardId || "").trim();
+  }
+
+  if (typeof namespace.isArtboardVerticalSymmetryEnabled !== "function") {
+    namespace.isArtboardVerticalSymmetryEnabled = function isArtboardVerticalSymmetryEnabled(artboardId) {
+      const normalizedArtboardId = normalizeSymmetryArtboardId(artboardId);
+
+      return Boolean(normalizedArtboardId && getVerticalSymmetrySet().has(normalizedArtboardId));
+    };
+  }
+
+  if (typeof namespace.setArtboardVerticalSymmetryEnabled !== "function") {
+    namespace.setArtboardVerticalSymmetryEnabled = function setArtboardVerticalSymmetryEnabled(artboardId, enabled, options = {}) {
+      const normalizedArtboardId = normalizeSymmetryArtboardId(artboardId);
+
+      if (!normalizedArtboardId) {
+        return false;
+      }
+
+      const ids = getVerticalSymmetrySet();
+      const nextEnabled = enabled === true;
+      const wasEnabled = ids.has(normalizedArtboardId);
+
+      if (nextEnabled) {
+        ids.add(normalizedArtboardId);
+      } else {
+        ids.delete(normalizedArtboardId);
+      }
+
+      if (wasEnabled !== nextEnabled) {
+        window.dispatchEvent(new CustomEvent("cbo:artboard-symmetry-change", {
+          detail: {
+            artboardId: normalizedArtboardId,
+            enabled: nextEnabled,
+            mode: "vertical",
+            source: options.source || "artboard-symmetry-button",
+          },
+        }));
+      }
+
+      namespace.brushEngine?.requestDraw?.();
+      return true;
+    };
+  }
+
+  if (typeof namespace.getActiveVerticalSymmetryConfig !== "function") {
+    namespace.getActiveVerticalSymmetryConfig = function getActiveVerticalSymmetryConfig(options = {}) {
+      const artboardId = normalizeSymmetryArtboardId(
+        options.artboardId ||
+        namespace.getActiveDocumentArtboardId?.({ layerId: options.layerId }),
+      );
+
+      if (!artboardId || !namespace.isArtboardVerticalSymmetryEnabled?.(artboardId)) {
+        return null;
+      }
+
+      const rect = namespace.getDocumentArtboardRect?.(artboardId) ||
+        namespace.getActiveDocumentArtboardRect?.({ artboardId, layerId: options.layerId });
+
+      if (!rect) {
+        return null;
+      }
+
+      return {
+        artboardId,
+        axisX: (Number(rect.x) || 0) + Math.max(1, Number(rect.width) || 1) * 0.5,
+        mode: "vertical",
+        rect: { ...rect },
+      };
+    };
+  }
+
 
 
   Controller.prototype.ensureActionBubble = function ensureActionBubble(artboardId) {
@@ -54,6 +135,91 @@ window.CBO = window.CBO || {};
 
     bubble.dataset.artboardId = normalizedArtboardId;
     return bubble;
+    }
+  };
+
+  Controller.prototype.ensureSymmetryLine = function ensureSymmetryLine(artboardId) {
+    with (this) {
+
+    const stage = getStage();
+    const normalizedArtboardId = String(artboardId || "").trim();
+
+    if (!stage || !getRenderer() || !normalizedArtboardId) {
+      return null;
+    }
+
+    let line = Array.from(stage.querySelectorAll("[data-artboard-symmetry-line]"))
+      .find((element) => element.dataset.artboardId === normalizedArtboardId) || null;
+
+    if (!line) {
+      line = document.createElement("div");
+      line.className = "editor-artboard-symmetry-line";
+      line.dataset.artboardSymmetryLine = "";
+      line.dataset.artboardId = normalizedArtboardId;
+      line.setAttribute("aria-hidden", "true");
+      stage.appendChild(line);
+    }
+
+    line.dataset.artboardId = normalizedArtboardId;
+    return line;
+    }
+  };
+
+  Controller.prototype.ensureSymmetryButton = function ensureSymmetryButton(artboardId) {
+    with (this) {
+
+    const stage = getStage();
+    const normalizedArtboardId = String(artboardId || "").trim();
+
+    if (!stage || !getRenderer() || !normalizedArtboardId) {
+      return null;
+    }
+
+    let button = Array.from(stage.querySelectorAll("[data-artboard-symmetry-button]"))
+      .find((element) => element.dataset.artboardId === normalizedArtboardId) || null;
+
+    if (!button) {
+      button = document.createElement("button");
+      button.className = "editor-artboard-action-bubble editor-artboard-symmetry-button";
+      button.dataset.artboardSymmetryButton = "";
+      button.dataset.artboardId = normalizedArtboardId;
+      button.type = "button";
+      button.setAttribute("aria-label", "SYMMETRY");
+      button.setAttribute("aria-pressed", "false");
+      button.setAttribute("data-tooltip", "SYMMETRY");
+      button.addEventListener("pointerenter", () => {
+        button.classList.add("is-hovered");
+      });
+      button.addEventListener("pointerleave", () => {
+        button.classList.remove("is-hovered");
+      });
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      button.addEventListener("click", (event) => {
+        const isActive = !button.classList.contains("is-active");
+        namespace.setArtboardVerticalSymmetryEnabled?.(button.dataset.artboardId || "", isActive, {
+          source: "artboard-symmetry-button",
+        });
+        button.classList.toggle("is-active", namespace.isArtboardVerticalSymmetryEnabled?.(button.dataset.artboardId || "") === true);
+        button.setAttribute("aria-pressed", button.classList.contains("is-active") ? "true" : "false");
+        renderActions();
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      button.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-git-commit-vertical-icon lucide-git-commit-vertical" aria-hidden="true">
+          <path d="M12 3v6"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M12 15v6"></path>
+        </svg>
+      `;
+      stage.appendChild(button);
+    }
+
+    button.dataset.artboardId = normalizedArtboardId;
+    return button;
     }
   };
 
@@ -373,4 +539,3 @@ window.CBO = window.CBO || {};
   };
 
 })(window.CBO);
-

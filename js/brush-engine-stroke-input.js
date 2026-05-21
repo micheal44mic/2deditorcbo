@@ -663,6 +663,7 @@
         "[role='button']",
         "[data-ai-image-board]",
         "[data-artboard-action-bubble]",
+        "[data-artboard-symmetry-button]",
         "[data-artboard-connection-menu]",
       ].join(", ")));
     }
@@ -1378,6 +1379,7 @@
       this.velocityPressureState = null;
       this.strokeChargeRadius = null;
       this.strokeGrainOffset = { x: 0, y: 0 };
+      this.activeStrokeSymmetry = null;
       this.activeStrokeBounds = null;
       this.activeStrokeTilePatchRects = null;
       this.strokePreviewDirtyRects = null;
@@ -1511,6 +1513,7 @@
       const layerId = this.strokeTargetLayerId || target?.layerId || "";
       const paintRect = this.getActiveDocumentPaintRect?.(layerId) ||
         (target ? this.getFullDocumentRect(target) : null);
+      const symmetry = this.getActiveStrokeSymmetry?.() || null;
       const rectKey = paintRect
         ? [
             this.roundReplayCacheNumber(paintRect.x, 1000),
@@ -1525,6 +1528,14 @@
         Math.max(0, Math.round(Number(target?.width) || 0)),
         Math.max(0, Math.round(Number(target?.height) || 0)),
         rectKey,
+        symmetry
+          ? [
+              "symmetry",
+              symmetry.mode || "vertical",
+              symmetry.artboardId || "",
+              this.roundReplayCacheNumber(symmetry.axisX, 1000),
+            ].join(":")
+          : "symmetry:off",
       ].join("|");
     }
 ,
@@ -3773,6 +3784,10 @@
       this.currentStrokeTool = strokeTool;
       this.strokeRenderMode = this.getBrushStrokeRenderMode();
       this.strokeTargetLayerId = strokeTarget?.layerId || null;
+      this.activeStrokeSymmetry = this.resolveActiveStrokeSymmetry?.({
+        layerId: this.strokeTargetLayerId || "",
+        tool: strokeTool,
+      }) || null;
       const rawSample = this.createPointerSample(event);
 
       this.strokeInputStats = this.createStrokeInputStats(rawSample);

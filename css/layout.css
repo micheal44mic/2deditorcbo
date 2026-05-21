@@ -359,12 +359,15 @@
   display: grid;
   place-items: center;
   box-sizing: border-box;
+  padding: 0;
   border: 3px solid #f05023;
   border-radius: 999px;
+  appearance: none;
   background: #ffffff;
   color: #111111;
   box-shadow: none;
   cursor: pointer;
+  font: inherit;
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
@@ -374,6 +377,20 @@
   transition:
     opacity 120ms ease;
   will-change: opacity;
+}
+
+.editor-artboard-symmetry-button {
+  border-radius: 8px;
+}
+
+.editor-artboard-symmetry-line {
+  position: absolute;
+  z-index: 5;
+  background: #f05023;
+  opacity: 0;
+  pointer-events: none;
+  transform: none;
+  transition: opacity 120ms ease;
 }
 
 .editor-artboard-action-bubble::before {
@@ -396,6 +413,17 @@
   opacity: 1;
   pointer-events: auto;
   transform: none;
+}
+
+.editor-artboard-symmetry-line.is-visible {
+  opacity: 0.78;
+}
+
+.editor-artboard-symmetry-button.is-visible.is-active {
+  border-color: #ffffff;
+  background: #f05023;
+  color: #ffffff;
+  transform: scale(1.08);
 }
 
 .editor-stage.artboard-dragging .editor-artboard-action-bubble {

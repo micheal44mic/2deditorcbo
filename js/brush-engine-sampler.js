@@ -1892,10 +1892,65 @@
     }
 ,
 
-    pushPreparedShapeStamp(stamp, tangent, options = {}) {
-      if (this.isStampCompletelyOutsideDocument(stamp)) {
-        return false;
+    resolveActiveStrokeSymmetry(options = {}) {
+      const tool = String(options.tool || this.currentStrokeTool || "").trim().toLowerCase();
+
+      if (tool !== "brush" && tool !== "eraser") {
+        return null;
       }
+
+      const config = namespace.getActiveVerticalSymmetryConfig?.({
+        layerId: options.layerId || this.strokeTargetLayerId || "",
+      });
+
+      return config?.mode === "vertical" && Number.isFinite(Number(config.axisX))
+        ? {
+            ...config,
+            axisX: Number(config.axisX),
+          }
+        : null;
+    }
+,
+
+    getActiveStrokeSymmetry() {
+      const symmetry = this.activeStrokeSymmetry;
+
+      return symmetry?.mode === "vertical" && Number.isFinite(Number(symmetry.axisX))
+        ? symmetry
+        : null;
+    }
+,
+
+    createVerticalSymmetryStamp(stamp, symmetry = this.getActiveStrokeSymmetry()) {
+      if (!stamp || !symmetry) {
+        return null;
+      }
+
+      const axisX = Number(symmetry.axisX);
+      const stampX = Number(stamp.x);
+
+      if (!Number.isFinite(axisX) || !Number.isFinite(stampX)) {
+        return null;
+      }
+
+      const mirroredX = axisX * 2 - stampX;
+
+      if (Math.abs(mirroredX - stampX) < 0.001) {
+        return null;
+      }
+
+      return {
+        ...stamp,
+        colorRgb: Array.isArray(stamp.colorRgb) ? [...stamp.colorRgb] : stamp.colorRgb,
+        mirrorX: -(Number(stamp.mirrorX) || 1),
+        rotation: -(Number(stamp.rotation) || 0),
+        x: mirroredX,
+      };
+    }
+,
+
+    pushPreparedShapeStamp(stamp, tangent, options = {}) {
+      const originalOutsideDocument = this.isStampCompletelyOutsideDocument(stamp);
 
       this.applyMovingGrainToStamp(stamp, tangent);
 
@@ -1903,12 +1958,29 @@
         stamp.colorRgb = this.getNextStampColorRgb();
       }
 
-      if (options.includeBounds !== false) {
+      let didPushStamp = false;
+
+      if (!originalOutsideDocument && options.includeBounds !== false) {
         this.includeStrokeStampBounds(stamp);
       }
 
-      this.stampsBuffer.push(stamp);
-      return true;
+      if (!originalOutsideDocument) {
+        this.stampsBuffer.push(stamp);
+        didPushStamp = true;
+      }
+
+      const mirroredStamp = this.createVerticalSymmetryStamp(stamp);
+
+      if (mirroredStamp && !this.isStampCompletelyOutsideDocument(mirroredStamp)) {
+        if (options.includeBounds !== false) {
+          this.includeStrokeStampBounds(mirroredStamp);
+        }
+
+        this.stampsBuffer.push(mirroredStamp);
+        didPushStamp = true;
+      }
+
+      return didPushStamp;
     }
 ,
 
