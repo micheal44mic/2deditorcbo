@@ -625,6 +625,13 @@ window.CBO = window.CBO || {};
           </svg>
           <span class="editor-space-text-board-title" data-text-prompt-title></span>
         </div>
+        <span class="editor-space-text-board-type" data-text-prompt-type-badge aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-type-icon lucide-type">
+            <path d="M12 4v16"></path>
+            <path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2"></path>
+            <path d="M9 20h6"></path>
+          </svg>
+        </span>
         <div class="editor-space-text-board-resize-controls" data-text-prompt-resize-controls aria-hidden="true">
           <span class="editor-space-text-board-resize-line is-top" data-text-prompt-resize="n"></span>
           <span class="editor-space-text-board-resize-line is-right" data-text-prompt-resize="e"></span>
@@ -736,6 +743,7 @@ window.CBO = window.CBO || {};
       const height = plainArtboardMode ? Math.max(1, docHeight * viewScale) : docHeight;
       const boardScale = plainArtboardMode ? viewScale : 1;
       const labelMetrics = getArtboardLabelMetrics(docWidth, docHeight, boardScale);
+      const plainControlMetrics = getAiImagePlainControlMetrics(boardScale, docWidth, docHeight);
       const typography = getTextPromptTypography(board, boardScale);
       const isSelected = selectedSpaceBoardId === board.id;
       const isEditing = textPromptInlineEditBoardId === board.id;
@@ -758,6 +766,10 @@ window.CBO = window.CBO || {};
       setCssVarIfChanged(element, "--text-prompt-heading-line-height", `${typography.headingLineHeight}px`);
       setCssVarIfChanged(element, "--text-prompt-resize-handle", `${TEXT_PROMPT_RESIZE_HANDLE_DOC_PX * boardScale}px`);
       setCssVarIfChanged(element, "--text-prompt-resize-line", `${TEXT_PROMPT_RESIZE_LINE_DOC_PX * boardScale}px`);
+      setCssVarIfChanged(element, "--ai-plain-control-size", `${plainControlMetrics.size}px`);
+      setCssVarIfChanged(element, "--ai-plain-control-outside-offset", `${plainControlMetrics.outsideOffset}px`);
+      setCssVarIfChanged(element, "--ai-plain-control-border-width", `${plainControlMetrics.borderWidth}px`);
+      setCssVarIfChanged(element, "--ai-plain-control-icon-size", `${plainControlMetrics.iconSize}px`);
       setCssVarIfChanged(element, "--editor-artboard-label-height", `${labelMetrics.height}px`);
       setCssVarIfChanged(element, "--editor-artboard-label-padding-x", `${labelMetrics.paddingX}px`);
       setCssVarIfChanged(element, "--editor-artboard-label-radius", `${labelMetrics.radius}px`);

@@ -997,9 +997,15 @@ test("AI menu can create editable Text Prompt boards on the infinite canvas", ()
   assert.match(connectionsSource, /textColor: normalizeTextPromptColor/);
   assert.match(connectionsSource, /backgroundColor: normalizeTextPromptBackgroundColor/);
   assert.match(connectionsSource, /data-space-text-board/);
+  assert.match(connectionsSource, /data-text-prompt-type-badge/);
+  assert.match(connectionsSource, /class="lucide lucide-type-icon lucide-type"/);
   assert.match(connectionsSource, /data-text-prompt-editor/);
   assert.match(connectionsSource, /contenteditable="false"/);
   assert.match(connectionsSource, /contenteditable="true"/);
+  assert.match(connectionsSource, /--ai-plain-control-size", `\$\{plainControlMetrics\.size\}px`/);
+  assert.match(connectionsSource, /--ai-plain-control-outside-offset", `\$\{plainControlMetrics\.outsideOffset\}px`/);
+  assert.match(connectionsSource, /--ai-plain-control-border-width", `\$\{plainControlMetrics\.borderWidth\}px`/);
+  assert.match(connectionsSource, /--ai-plain-control-icon-size", `\$\{plainControlMetrics\.iconSize\}px`/);
   assert.match(connectionsSource, /data-text-prompt-color-input="text"/);
   assert.match(connectionsSource, /data-text-prompt-color-input="background"/);
   assert.match(connectionsSource, /data-text-prompt-color-input="text"[\s\S]*data-text-prompt-command="font-increase"[\s\S]*data-text-prompt-command="font-decrease"[\s\S]*data-text-prompt-color-input="background"/);
@@ -1028,6 +1034,11 @@ test("AI menu can create editable Text Prompt boards on the infinite canvas", ()
   assert.match(cssSource, /\.editor-space-text-board \{/);
   assert.match(cssSource, /\.editor-space-text-board \{[\s\S]*outline: var\(--text-prompt-board-outline, 5px\) solid #dbdbdb/);
   assert.match(cssSource, /\.editor-space-text-board\.is-selected[\s\S]*outline-color: #f05023/);
+  assert.match(cssSource, /\.editor-space-text-board-type[\s\S]*left: calc\(100% \+ var\(--ai-plain-control-outside-offset, 17px\)\)/);
+  assert.match(cssSource, /\.editor-space-text-board-type[\s\S]*top: var\(--ai-plain-control-outside-offset, 17px\)/);
+  assert.match(cssSource, /\.editor-space-text-board-type[\s\S]*border: var\(--ai-plain-control-border-width, 1\.5px\) solid #f05023/);
+  assert.match(cssSource, /\.editor-space-text-board:hover \.editor-space-text-board-type[\s\S]*opacity: 1/);
+  assert.match(cssSource, /\.editor-space-text-board-type svg[\s\S]*width: var\(--ai-plain-control-icon-size, 58%\)/);
   assert.match(cssSource, /\.editor-space-text-board\.is-transparent-background \.editor-space-text-board-shell[\s\S]*background: transparent/);
   assert.match(cssSource, /\.editor-space-text-board-editor[\s\S]*caret-color: transparent/);
   assert.match(cssSource, /\.editor-space-text-board\.is-editing \.editor-space-text-board-editor[\s\S]*caret-color: auto/);
@@ -1043,6 +1054,9 @@ test("AI menu can create editable Text Prompt boards on the infinite canvas", ()
   assert.match(cssSource, /\.editor-text-prompt-focus-shell[\s\S]*border-radius: 14px/);
   assert.match(cssSource, /\.editor-text-prompt-focus-header[\s\S]*height: 40px/);
   assert.match(cssSource, /\.editor-text-prompt-focus-header[\s\S]*background: rgba\(58, 58, 58, 0\.92\)/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-overlay\.is-transparent-background \.editor-text-prompt-focus-body[\s\S]*background: rgba\(255, 255, 255, 0\.22\)/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-overlay\.is-transparent-background \.editor-text-prompt-focus-body[\s\S]*backdrop-filter: blur\(28px\) saturate\(1\.2\)/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-overlay\.is-transparent-background \.editor-text-prompt-focus-shell[\s\S]*background: rgba\(255, 255, 255, 0\.16\)/);
 });
 
 test("AI image boards expose a responsive create with AI preview shell", () => {

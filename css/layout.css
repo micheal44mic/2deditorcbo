@@ -548,6 +548,42 @@
   text-overflow: ellipsis;
 }
 
+.editor-space-text-board-type {
+  position: absolute;
+  left: calc(100% + var(--ai-plain-control-outside-offset, 17px));
+  top: var(--ai-plain-control-outside-offset, 17px);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: var(--ai-plain-control-size, 22px);
+  height: var(--ai-plain-control-size, 22px);
+  padding: 0;
+  border: var(--ai-plain-control-border-width, 1.5px) solid #f05023;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111111;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.editor-space-text-board:hover .editor-space-text-board-type {
+  opacity: 1;
+}
+
+.editor-space-text-board-type svg {
+  width: var(--ai-plain-control-icon-size, 58%);
+  height: var(--ai-plain-control-icon-size, 58%);
+  pointer-events: none;
+}
+
 .editor-space-text-board-shell {
   position: absolute;
   inset: 0;
@@ -1057,10 +1093,17 @@ body.editor-text-prompt-focus-open {
 }
 
 .editor-text-prompt-focus-overlay.is-transparent-background .editor-text-prompt-focus-body {
-  background:
-    linear-gradient(45deg, rgba(18, 20, 24, 0.055) 25%, transparent 25% 75%, rgba(18, 20, 24, 0.055) 75%) 0 0 / 22px 22px,
-    linear-gradient(45deg, rgba(18, 20, 24, 0.055) 25%, transparent 25% 75%, rgba(18, 20, 24, 0.055) 75%) 11px 11px / 22px 22px,
-    #ffffff;
+  background: rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(28px) saturate(1.2);
+  backdrop-filter: blur(28px) saturate(1.2);
+}
+
+.editor-text-prompt-focus-overlay.is-transparent-background .editor-text-prompt-focus-shell {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 26px 80px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .editor-text-prompt-focus-editor {
