@@ -1226,12 +1226,7 @@
         options.deferPreviewCacheUpdate === true &&
         activeStrokeLayerHasEffects
       );
-      const activeStrokeDefersLayerBlend = Boolean(
-        options.activeStrokeTexture &&
-        options.deferPreviewCacheUpdate === true &&
-        activeStrokeMode === "eraser" &&
-        activeStrokeLayerHasBlendMode
-      );
+      const activeStrokeDefersLayerBlend = false;
       const activeStrokeLayerUsesAdvancedCompositing = Boolean(
         activeStrokeLayer &&
         (
@@ -1992,10 +1987,7 @@
           );
           const skipLayerBlendForInteractiveStroke = Boolean(
             isActiveStrokeLayer &&
-            (
-              activeStrokeMode === "eraser" ||
-              activeStrokeDefersLayerBlend
-            )
+            activeStrokeDefersLayerBlend
           );
           let layerTarget = this.getRenderableLayerTarget(layer, rawLayerTarget, {
             forceSingleTexture: Boolean(eraserMaskTexture || isClippingLayer),

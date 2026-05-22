@@ -3231,13 +3231,14 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /const deferPreviewCacheUpdate = Boolean\(/);
   assert.match(source, /options\.deferPreviewCacheUpdate === true/);
   assert.match(source, /const activeStrokeDefersLayerEffects = Boolean\(/);
-  assert.match(source, /const activeStrokeDefersLayerBlend = Boolean\(/);
+  assert.match(source, /const activeStrokeDefersLayerBlend = false/);
   assert.match(source, /const deferInteractiveResidencyHydration = Boolean\(/);
   assert.match(source, /deferInteractiveResidencyHydration\s*\?\s*0\s*:\s*this\.hydrateHotArtboardTargets/);
   assert.match(source, /const delay = Math\.max\(idleDelay, warmHold\)/);
   assert.match(source, /skipLayerEffectsForInteractiveStroke/);
   assert.match(source, /skipLayerBlendForInteractiveStroke/);
-  assert.match(source, /activeStrokeMode === "eraser"[\s\S]*activeStrokeDefersLayerBlend/);
+  assert.match(source, /const skipLayerBlendForInteractiveStroke = Boolean\(\s*isActiveStrokeLayer &&\s*activeStrokeDefersLayerBlend\s*\)/);
+  assert.doesNotMatch(source, /activeStrokeMode === "eraser"\s*\|\|[\s\S]*activeStrokeDefersLayerBlend/);
   assert.match(source, /skipLayerEffects: skipLayerEffectsForInteractiveStroke/);
   assert.match(source, /skipLayerBlendForInteractiveStroke \? 0 : this\.getLayerBlendModeId\(layer\)/);
   assert.match(source, /!options\.skipLayerEffects && this\.hasEnabledLayerEffects\(layer\)/);
