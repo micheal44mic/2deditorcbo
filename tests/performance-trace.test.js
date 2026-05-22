@@ -44,6 +44,7 @@ test("performance trace stays available but is not loaded by default", () => {
 
   assert.doesNotMatch(indexSource, /<script src="\.\/js\/debug\/performance-trace\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.doesNotMatch(indexSource, /<script src="\.\/js\/debug\/engine-governor\.js(?:\?v=[^"]+)?"><\/script>/);
+  assert.doesNotMatch(indexSource, /<script src="\.\/js\/debug\/layer-blend-console\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(source, /const OVERLAY_ID = "cbo-performance-trace-overlay"/);
   assert.match(source, /textContent = "Trace"/);
   assert.match(source, /CBO PERF TRACE/);

@@ -3211,6 +3211,9 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.doesNotMatch(source, /^\s*this\.createPreviewCache\(\);$/m);
   assert.match(source, /const didCreate = this\.createPreviewCache\(options\)/);
   assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
+  assert.match(source, /previewCacheMipmapped/);
+  assert.match(source, /mipmapped \? gl\.LINEAR_MIPMAP_LINEAR : gl\.LINEAR/);
+  assert.match(source, /this\.previewCacheMipmapped !== false && this\.previewMipLevels > 1/);
   assert.match(source, /const PREVIEW_CACHE_ZOOM_THRESHOLD = 1\.0/);
   assert.match(source, /const PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD = 10\.01/);
   assert.match(source, /if \(safeZoom < 10\.01\) \{\s*discard;/);
@@ -3244,7 +3247,8 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.doesNotMatch(source, /previewCacheCoversDocumentBounds/);
   assert.match(source, /allowPreviewCache &&\s*canUsePreviewCacheAtCurrentZoom/);
   assert.match(source, /!hasClippingMasks &&/);
-  assert.match(source, /this\.previewCacheReady && !this\.previewCacheDirty && this\.previewTexture/);
+  assert.match(source, /const canUseStalePreviewCacheForInteraction = Boolean\(/);
+  assert.match(source, /!this\.previewCacheDirty \|\| canUseStalePreviewCacheForInteraction/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
 });
@@ -3395,6 +3399,46 @@ test("preview cache supports dirty-region compositing", () => {
   assert.match(previewCacheBody, /withLayerPreviewArtboardClip\(layer, \(\) =>/);
   assert.match(previewCacheBody, /this\.previewDirtyRects = \[\]/);
   assert.match(previewCacheBody, /this\.recordPreviewDirtyFrame\(\{/);
+});
+
+test("blend mode layer changes defer immediate preview cache rebuild", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  let now = 100;
+  let timerCallback = null;
+  let timerDelay = 0;
+  let drawCount = 0;
+
+  window.performance = {
+    now: () => now,
+  };
+  window.setTimeout = (callback, delay) => {
+    timerCallback = callback;
+    timerDelay = delay;
+    return 42;
+  };
+  window.clearTimeout = () => {};
+  renderer.previewCacheDirty = true;
+  renderer.requestDraw = () => {
+    drawCount += 1;
+  };
+
+  assert.equal(renderer.deferPreviewCacheUpdateForInteraction("layers-change", {
+    source: "layer-sidebar-blend-mode",
+  }), true);
+  assert.equal(renderer.previewCacheUpdateDeferReason, "layer-sidebar-blend-mode");
+  assert.equal(timerDelay, 120);
+  assert.equal(drawCount, 1);
+  assert.equal(renderer.shouldDeferPreviewCacheUpdateForInteraction(), true);
+
+  now = 221;
+  timerCallback();
+
+  assert.equal(drawCount, 2);
+  assert.equal(renderer.shouldDeferPreviewCacheUpdateForInteraction(), true);
+  assert.equal(renderer.finishPreviewCacheInteractionDeferFrame(true), true);
+  assert.equal(drawCount, 3);
+  assert.equal(renderer.shouldDeferPreviewCacheUpdateForInteraction(), false);
 });
 
 test("preview dirty regions can preserve adjacent tile rectangles", () => {
@@ -3662,6 +3706,39 @@ test("preview cache dimensions cap large documents while preserving aspect", () 
   assert.equal(dimensions.width, 1200);
   assert.equal(dimensions.height, 800);
   assert.equal(dimensions.scale, 1);
+});
+
+test("preview cache dimensions shrink overkill caches at deep zoom out", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = { previewCacheMaxSize: 2048 };
+  renderer.width = 4000;
+  renderer.height = 4000;
+
+  let dimensions = renderer.getPreviewCacheDimensions({
+    camera: { x: 0, y: 0, zoom: 0.148 },
+    dpr: 1,
+    viewportHeight: 945,
+    viewportWidth: 1352,
+  });
+
+  assert.equal(dimensions.width, 640);
+  assert.equal(dimensions.height, 640);
+  assert.equal(dimensions.scale, 0.16);
+  assert.equal(dimensions.mipmapped, false);
+
+  dimensions = renderer.getPreviewCacheDimensions({
+    camera: { x: 0, y: 0, zoom: 0.20025 },
+    dpr: 1,
+    viewportHeight: 945,
+    viewportWidth: 1352,
+  });
+
+  assert.equal(dimensions.width, 896);
+  assert.equal(dimensions.height, 896);
+  assert.equal(dimensions.scale, 0.224);
+  assert.equal(dimensions.mipmapped, false);
 });
 
 test("preview cache spans artboard bounds and offsets dirty scissors", () => {
@@ -4666,9 +4743,12 @@ test("document renderer composites supported layer blend modes in shader", () =>
   assert.doesNotMatch(previewCacheBody, /copyCurrentFramebufferToLayerBlendBackdrop/);
   assert.doesNotMatch(drawToCanvasBody, /copyCurrentFramebufferToLayerBlendBackdrop/);
   assert.match(source, /renderLayerWithActiveStrokeTexture\(layerTexture, strokeTexture, strokeRect = null, options = \{\}\)/);
+  assert.match(source, /const renderResults = Array\.isArray\(options\.renderResults\)/);
   assert.match(source, /const layerRect = options\.layerRect/);
   assert.match(source, /drawSource\(layerTexture, layerDrawWidth, layerDrawHeight, layerOriginX, layerOriginY\)/);
+  assert.match(source, /drawLayerSources\(\);/);
   assert.match(source, /layerRect: this\.getRasterTargetDocumentRect\(layerTarget\)/);
+  assert.match(drawToCanvasBody, /this\.isSparseRasterTarget\(layerTarget\)[\s\S]*isActiveStrokeLayer && activeStrokeNeedsScratchMerge[\s\S]*renderLayerWithActiveStrokeTexture\(\s*null,\s*options\.activeStrokeTexture,[\s\S]*renderResults,[\s\S]*drawBlendTexture\(mergedTarget\.texture, opacity, null, clipBase, blendModeId\)/);
   assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, (?:this\.getLayerBlendModeId\(layer\)|blendModeId), renderResult\.rect, clipBase\)/);
   assert.match(drawToCanvasBody, /activeStrokeNeedsFullStack/);
   assert.match(drawToCanvasBody, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);
@@ -4676,6 +4756,10 @@ test("document renderer composites supported layer blend modes in shader", () =>
   assert.match(drawToCanvasBody, /drawRasterTransformPreview\(opacity, clipBase, this\.getLayerBlendModeId\(layer\)\)/);
   assert.match(drawToCanvasBody, /backdropTexture: canBlendTransformPreview \? canvasCompositeState\.read\.texture : null/);
   assert.match(drawToCanvasBody, /blendModeId: canBlendTransformPreview \? transformBlendModeId : 0/);
+  assert.doesNotMatch(drawToCanvasBody, /rasterTransformPreview\.transformMode !== "warp" &&/);
+  assert.match(source, /PUPPET_FRAGMENT_SHADER_SOURCE[\s\S]*uniform sampler2D u_backdropTexture[\s\S]*uniform float u_blendModeEnabled[\s\S]*vec3 applyBlendMode/);
+  assert.match(source, /createPuppetProgramInfo\(\)[\s\S]*blendModeEnabled: gl\.getUniformLocation\(program, "u_blendModeEnabled"\)/);
+  assert.match(source, /drawWarpTexturedMesh\(texture, controlPoints, options = \{\}\)[\s\S]*const useAdvancedBlend = Boolean\(blendModeId !== 0 && backdropTexture\)/);
 });
 
 test("sparse blend transform preview is drawn before skipping the sparse branch", () => {

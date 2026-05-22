@@ -126,6 +126,10 @@
       normalizeRadialBlurMode,
       normalizeThresholdValue,
     } = internals;
+    const PREVIEW_CACHE_INTERACTION_DEFER_MS = 120;
+    const PREVIEW_CACHE_LOW_ZOOM_MIN_SIZE = 512;
+    const PREVIEW_CACHE_ZOOM_OVERSAMPLE = 1.08;
+    const PREVIEW_CACHE_ZOOM_SIZE_STEP = 128;
 
     defineDocumentRendererMethods(DocumentRenderer, {
     createArtboardQuad() {
@@ -1921,7 +1925,25 @@
       const documentRect = resolvedPreviewRect.documentRect;
       const documentWidth = documentRect.width;
       const documentHeight = documentRect.height;
-      const maxSize = this.getPreviewCacheMaxSize(options);
+      const documentMaxSize = Math.max(documentWidth, documentHeight);
+      let maxSize = this.getPreviewCacheMaxSize(options);
+      const zoom = Math.abs(Number(options.camera?.zoom) || 0);
+      const dpr = Math.max(1, Number(options.dpr) || 1);
+      let mipmapped = true;
+
+      if (
+        zoom > 0 &&
+        zoom < PREVIEW_CACHE_ZOOM_THRESHOLD &&
+        documentMaxSize > 0
+      ) {
+        const targetScale = Math.min(1, zoom * dpr * PREVIEW_CACHE_ZOOM_OVERSAMPLE);
+        const targetSize = Math.ceil(documentMaxSize * targetScale);
+        const zoomMaxSize = Math.ceil(targetSize / PREVIEW_CACHE_ZOOM_SIZE_STEP) * PREVIEW_CACHE_ZOOM_SIZE_STEP;
+
+        maxSize = Math.min(maxSize, Math.max(PREVIEW_CACHE_LOW_ZOOM_MIN_SIZE, zoomMaxSize));
+        mipmapped = false;
+      }
+
       const scale = Math.min(1, maxSize / Math.max(documentWidth, documentHeight));
       const width = Math.max(1, Math.floor(documentWidth * scale));
       const height = Math.max(1, Math.floor(documentHeight * scale));
@@ -1934,6 +1956,7 @@
         documentX: documentRect.x,
         documentY: documentRect.y,
         height,
+        mipmapped,
         scale: Math.max(0.0001, effectiveScale),
         scopeInfo: resolvedPreviewRect.scopeInfo,
         width,
@@ -2015,7 +2038,8 @@
         this.previewFramebuffer &&
         this.areDocumentRectsEqual(this.previewCacheDocumentRect, dimensions.documentRect) &&
         this.previewCacheWidth === dimensions.width &&
-        this.previewCacheHeight === dimensions.height
+        this.previewCacheHeight === dimensions.height &&
+        this.previewCacheMipmapped === dimensions.mipmapped
       ) {
         this.publishPreviewCacheScopeInfo(dimensions.scopeInfo);
         return true;
@@ -2042,8 +2066,10 @@
         return false;
       }
 
-      const { documentHeight, documentWidth, height, scale, width } = dimensions;
-      const levels = Math.max(1, Math.floor(Math.log2(Math.max(width, height))) + 1);
+      const { documentHeight, documentWidth, height, mipmapped, scale, width } = dimensions;
+      const levels = mipmapped
+        ? Math.max(1, Math.floor(Math.log2(Math.max(width, height))) + 1)
+        : 1;
 
       gl.bindTexture(gl.TEXTURE_2D, texture);
 
@@ -2053,7 +2079,7 @@
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       }
 
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mipmapped ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -2086,6 +2112,7 @@
       this.previewCacheDocumentRect = { ...dimensions.documentRect };
       this.publishPreviewCacheScopeInfo(dimensions.scopeInfo);
       this.previewMipLevels = levels;
+      this.previewCacheMipmapped = mipmapped;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
       this.previewDirtyCompactOptions = null;
@@ -2137,6 +2164,8 @@
     deletePreviewCache() {
       const gl = this.gl;
 
+      this.clearPreviewCacheInteractionDefer?.();
+
       if (this.previewFramebuffer) {
         this.deleteRasterFramebuffer(this.previewFramebuffer);
         gl.deleteFramebuffer(this.previewFramebuffer);
@@ -2156,6 +2185,7 @@
       this.previewCacheScopeInfo = null;
       namespace.lastPreviewCacheScope = null;
       this.previewMipLevels = 0;
+      this.previewCacheMipmapped = true;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
       this.previewDirtyCompactOptions = null;
@@ -3153,6 +3183,128 @@
     }
 ,
 
+    getPreviewCacheUpdateNow() {
+      const perf = typeof performance !== "undefined"
+        ? performance
+        : (typeof window !== "undefined" ? window.performance : null);
+
+      return typeof perf?.now === "function" ? perf.now() : Date.now();
+    }
+,
+
+    recordLayerOpacityDebug(name, detail = {}) {
+      namespace.LayerOpacityDebug?.record?.(name, detail);
+    }
+,
+
+    markLayerOpacityDebugActive(detail = {}) {
+      this.layerOpacityDebugUntil = this.getPreviewCacheUpdateNow() + 1500;
+      this.recordLayerOpacityDebug("renderer.active", detail);
+    }
+,
+
+    isLayerOpacityDebugActive() {
+      return this.getPreviewCacheUpdateNow() <= Math.max(0, Number(this.layerOpacityDebugUntil) || 0);
+    }
+,
+
+    isPreviewCacheInteractionDeferSource(reason = "unknown", options = {}) {
+      const source = String(options.source || reason || "");
+
+      return source === "layer-sidebar-blend-mode" || source === "layer-blend-mode";
+    }
+,
+
+    getPreviewCacheUpdateDeferRemainingMs() {
+      const until = Math.max(0, Number(this.previewCacheUpdateDeferUntil) || 0);
+
+      return Math.max(0, until - this.getPreviewCacheUpdateNow());
+    }
+,
+
+    shouldDeferPreviewCacheUpdateForInteraction() {
+      if (this.previewCacheDirty !== true) {
+        return false;
+      }
+
+      return this.previewCacheUpdateDeferFramePending === true ||
+        this.getPreviewCacheUpdateDeferRemainingMs() > 0;
+    }
+,
+
+    finishPreviewCacheInteractionDeferFrame(wasDeferred = false) {
+      if (wasDeferred !== true || this.previewCacheUpdateDeferFramePending !== true) {
+        return false;
+      }
+
+      this.previewCacheUpdateDeferFramePending = false;
+
+      if (this.previewCacheDirty === true && this.getPreviewCacheUpdateDeferRemainingMs() <= 0) {
+        this.requestDraw?.();
+      }
+
+      return true;
+    }
+,
+
+    scheduleDeferredPreviewCacheUpdate() {
+      const root = typeof window !== "undefined" ? window : globalThis;
+      const setTimer = typeof root.setTimeout === "function" ? root.setTimeout.bind(root) : null;
+      const clearTimer = typeof root.clearTimeout === "function" ? root.clearTimeout.bind(root) : null;
+
+      if (this.previewCacheUpdateDeferTimer && clearTimer) {
+        clearTimer(this.previewCacheUpdateDeferTimer);
+      }
+
+      if (!setTimer) {
+        this.previewCacheUpdateDeferTimer = 0;
+        this.previewCacheUpdateDeferUntil = 0;
+        this.requestDraw?.();
+        return;
+      }
+
+      this.previewCacheUpdateDeferTimer = setTimer(() => {
+        this.previewCacheUpdateDeferTimer = 0;
+        this.previewCacheUpdateDeferUntil = 0;
+        this.requestDraw?.();
+      }, Math.round(this.getPreviewCacheUpdateDeferRemainingMs()));
+    }
+,
+
+    clearPreviewCacheInteractionDefer() {
+      const root = typeof window !== "undefined" ? window : globalThis;
+      const clearTimer = typeof root.clearTimeout === "function" ? root.clearTimeout.bind(root) : null;
+
+      if (this.previewCacheUpdateDeferTimer && clearTimer) {
+        clearTimer(this.previewCacheUpdateDeferTimer);
+      }
+
+      this.previewCacheUpdateDeferTimer = 0;
+      this.previewCacheUpdateDeferUntil = 0;
+      this.previewCacheUpdateDeferFramePending = false;
+      this.previewCacheUpdateDeferReason = "";
+    }
+,
+
+    deferPreviewCacheUpdateForInteraction(reason = "unknown", options = {}) {
+      if (!this.isPreviewCacheInteractionDeferSource(reason, options)) {
+        return false;
+      }
+
+      const delayMs = Math.max(
+        1,
+        Math.round(Number(options.previewCacheDeferMs) || PREVIEW_CACHE_INTERACTION_DEFER_MS),
+      );
+
+      this.previewCacheUpdateDeferUntil = this.getPreviewCacheUpdateNow() + delayMs;
+      this.previewCacheUpdateDeferReason = String(options.source || reason || "interaction");
+      this.previewCacheUpdateDeferFramePending = true;
+      this.requestDraw?.();
+      this.scheduleDeferredPreviewCacheUpdate();
+      return true;
+    }
+,
+
     getPreviewDirtyRegionScissor(rect, cacheWidth, cacheHeight, cacheScale, options = {}) {
       const dirtyRect = this.normalizeDirtyRegionRect(rect);
 
@@ -3285,6 +3437,19 @@
 
       this.previewCacheDirty = true;
       this.previewCacheReason = reason;
+      this.deferPreviewCacheUpdateForInteraction(reason, options);
+
+      if ((options.source || reason) === "layer-sidebar-opacity" || this.isLayerOpacityDebugActive()) {
+        this.recordLayerOpacityDebug("preview.invalidate", {
+          defer: this.shouldDeferPreviewCacheUpdateForInteraction(),
+          dirtyRects: dirtyRects.length,
+          full: !dirtyRects.length || !this.previewCacheReady,
+          incomingRects: incomingDirtyRectCount,
+          ready: this.previewCacheReady,
+          reason,
+          source: options.source || "",
+        });
+      }
 
       if (!dirtyRects.length || !this.previewCacheReady) {
         const forcedFullCause = !dirtyRects.length
@@ -3940,7 +4105,7 @@
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
 
-      if (this.previewMipLevels > 1) {
+      if (this.previewCacheMipmapped !== false && this.previewMipLevels > 1) {
         gl.generateMipmap(gl.TEXTURE_2D);
       }
 
@@ -3961,6 +4126,7 @@
       this.captureArtboardFlatPreviewsFromPreviewCache({
         reason: this.previewCacheReason || "preview-cache-update",
       });
+      this.clearPreviewCacheInteractionDefer();
 
       return true;
       } finally {

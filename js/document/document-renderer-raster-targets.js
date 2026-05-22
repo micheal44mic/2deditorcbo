@@ -4841,6 +4841,7 @@
       const changeType = event?.detail?.changeType || "";
       const isRasterTransformArtboardTransfer =
         source.endsWith("-artboard-transfer") && source.includes("raster-transform");
+      const isLayerOpacityChange = source === "layer-sidebar-opacity";
       const nonVisualSources = new Set([
         "active-layer",
         "image-rasterize",
@@ -4863,6 +4864,13 @@
         this.requestDraw();
         this.pruneOrphanRasterTargets();
         return;
+      }
+
+      if (isLayerOpacityChange) {
+        this.markLayerOpacityDebugActive?.({
+          activeLayerId: event?.detail?.activeLayerId || "",
+          source,
+        });
       }
 
       if (changeType !== "active-layer" && !nonVisualSources.has(source) && !isRasterTransformArtboardTransfer) {

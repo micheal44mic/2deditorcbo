@@ -1,5 +1,102 @@
 window.CBO = window.CBO || {};
 
+(function registerLayerOpacityDebug(namespace) {
+  const MAX_EVENTS = 24;
+  const state = namespace.layerOpacityDebugState || {
+    events: [],
+    sequence: 0,
+  };
+
+  function nowMs() {
+    const perf = typeof performance !== "undefined"
+      ? performance
+      : (typeof window !== "undefined" ? window.performance : null);
+
+    return typeof perf?.now === "function" ? perf.now() : Date.now();
+  }
+
+  function cleanNumber(value, digits = 2) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Number(number.toFixed(digits)) : null;
+  }
+
+  function cleanDetail(detail = {}) {
+    const result = {};
+
+    Object.entries(detail || {}).forEach(([key, value]) => {
+      if (value == null) {
+        return;
+      }
+
+      if (typeof value === "number") {
+        result[key] = cleanNumber(value, key.endsWith("Ms") ? 2 : 3);
+        return;
+      }
+
+      if (typeof value === "boolean" || typeof value === "string") {
+        result[key] = value;
+      }
+    });
+
+    return result;
+  }
+
+  function formatEvent(event, firstTime) {
+    const delta = cleanNumber(event.timeMs - firstTime, 1);
+    const detail = Object.entries(event.detail || {})
+      .map(([key, value]) => `${key}=${value}`)
+      .join(" ");
+
+    return `+${delta}ms ${event.name}${detail ? ` ${detail}` : ""}`;
+  }
+
+  const api = {
+    collect() {
+      return {
+        events: state.events.slice(),
+        generatedAt: new Date().toISOString(),
+      };
+    },
+    copy() {
+      const events = state.events.slice();
+      const firstTime = events[0]?.timeMs || nowMs();
+      const text = [
+        "CBO LAYER OPACITY DEBUG",
+        `generatedAt=${new Date().toISOString()}`,
+        `events=${events.length}/${MAX_EVENTS}`,
+        "",
+        ...events.map((event) => formatEvent(event, firstTime)),
+      ].join("\n");
+
+      void navigator.clipboard?.writeText?.(text);
+      console.log(text);
+      return text;
+    },
+    record(name, detail = {}) {
+      state.sequence += 1;
+      state.events.push({
+        detail: cleanDetail(detail),
+        name: String(name || "event"),
+        sequence: state.sequence,
+        timeMs: nowMs(),
+      });
+
+      if (state.events.length > MAX_EVENTS) {
+        state.events.splice(0, state.events.length - MAX_EVENTS);
+      }
+    },
+    reset() {
+      state.events.length = 0;
+      state.sequence = 0;
+    },
+  };
+
+  namespace.layerOpacityDebugState = state;
+  namespace.LayerOpacityDebug = api;
+  namespace.copyLayerOpacityDebug = () => api.copy();
+})(window.CBO);
+
 window.CBO.initRightSidebar = function initRightSidebar() {
   const panel = document.querySelector(".right-panel");
 
@@ -1155,8 +1252,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   function patchActiveLayer(patch, source = "layer-sidebar", historyOptions = {}) {
     const layerModel = getLayerModel();
     const layer = getActiveLayer();
+    const isOpacityDebug = source === "layer-sidebar-opacity";
+    const startedAt = isOpacityDebug ? performance.now() : 0;
 
     if (!isLayerSidebarEligible(layer) || !layerModel?.updateLayer) {
+      if (isOpacityDebug) {
+        window.CBO.LayerOpacityDebug?.record?.("patch.skip", {
+          layerId: layer?.id || "",
+          reason: !layerModel?.updateLayer ? "missing-layer-model" : "ineligible-layer",
+        });
+      }
       return false;
     }
 
@@ -1165,8 +1270,23 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       source,
     });
 
+    if (isOpacityDebug) {
+      window.CBO.LayerOpacityDebug?.record?.("patch.update", {
+        didUpdate,
+        historyGroup: historyOptions.historyGroup || "",
+        layerId: layer.id,
+        opacity: patch?.opacity,
+        updateMs: performance.now() - startedAt,
+      });
+    }
+
     if (didUpdate) {
       window.CBO.documentRenderer?.requestDraw?.();
+      if (isOpacityDebug) {
+        window.CBO.LayerOpacityDebug?.record?.("requestDraw", {
+          layerId: layer.id,
+        });
+      }
     }
 
     return didUpdate;
@@ -2339,9 +2459,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   });
 
   layerOpacityInput?.addEventListener("input", () => {
+    const opacity = clamp(layerOpacityInput.value, 0, 100) / 100;
+    const layer = getActiveLayer();
+
+    window.CBO.LayerOpacityDebug?.record?.("input", {
+      layerId: layer?.id || "",
+      opacity,
+    });
     updateLayerOpacityProgress();
     patchActiveLayer(
-      { opacity: clamp(layerOpacityInput.value, 0, 100) / 100 },
+      { opacity },
       "layer-sidebar-opacity",
       getLayerHistoryOptions("opacity"),
     );

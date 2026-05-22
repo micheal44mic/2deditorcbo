@@ -508,6 +508,7 @@
       this.previewCacheDocumentRect = null;
       this.previewCacheScopeInfo = null;
       this.previewMipLevels = 0;
+      this.previewCacheMipmapped = true;
       this.previewCacheDirty = true;
       this.previewDirtyRects = null;
       this.previewDirtyCompactOptions = null;
@@ -516,6 +517,7 @@
       this.previewDirtyStats = this.createPreviewDirtyStats();
       this.previewCacheReady = false;
       this.previewCacheReason = "init";
+      this.previewCacheUpdateDeferFramePending = false;
       this.viewportCullingStatsSequence = 0;
       this.viewportCullingLastStats = null;
       this.artboardResidencyWarmUntilById = new Map();

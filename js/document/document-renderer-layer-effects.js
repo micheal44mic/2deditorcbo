@@ -631,7 +631,11 @@
 ,
 
     renderLayerWithActiveStrokeTexture(layerTexture, strokeTexture, strokeRect = null, options = {}) {
-      if (!strokeTexture || !this.programInfo || !this.quad) {
+      const renderResults = Array.isArray(options.renderResults)
+        ? options.renderResults.filter((renderResult) => renderResult?.texture)
+        : null;
+
+      if (!strokeTexture || (!layerTexture && !renderResults) || !this.programInfo || !this.quad) {
         return null;
       }
 
@@ -685,6 +689,24 @@
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, 1);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      };
+      const drawLayerSources = () => {
+        if (renderResults) {
+          renderResults.forEach((renderResult) => {
+            const rect = renderResult.rect
+              ? this.getUnclampedDocumentRect?.(renderResult.rect) || renderResult.rect
+              : null;
+            const sourceWidth = Math.max(1, Math.round(rect?.width || width));
+            const sourceHeight = Math.max(1, Math.round(rect?.height || height));
+            const sourceX = Number.isFinite(rect?.x) ? rect.x : 0;
+            const sourceY = Number.isFinite(rect?.y) ? rect.y : 0;
+
+            drawSource(renderResult.texture, sourceWidth, sourceHeight, sourceX, sourceY);
+          });
+          return;
+        }
+
+        drawSource(layerTexture, layerDrawWidth, layerDrawHeight, layerOriginX, layerOriginY);
       };
       const drawStrokeSource = (documentWidth, documentHeight, originX = 0, originY = 0) => {
         if (hasStrokeClip && strokeClipRects.length === 0) {
@@ -747,7 +769,7 @@
       gl.bindVertexArray(this.quad.vao);
       gl.activeTexture(gl.TEXTURE0);
 
-      drawSource(layerTexture, layerDrawWidth, layerDrawHeight, layerOriginX, layerOriginY);
+      drawLayerSources();
 
       if (strokeRect) {
         const rectWidth = Math.max(1, Math.round(strokeRect.width || width));

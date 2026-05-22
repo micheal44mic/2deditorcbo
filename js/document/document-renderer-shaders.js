@@ -232,6 +232,7 @@ uniform vec2 uCameraPosition;
 uniform float uCameraZoom;
 
 out vec2 v_uv;
+out vec2 v_backdropUv;
 
 void main() {
   vec2 viewportPixel = uCameraPosition + aDestPixel * uCameraZoom;
@@ -241,6 +242,7 @@ void main() {
   );
 
   v_uv = aSourceUv;
+  v_backdropUv = vec2(viewportPixel.x / uViewportSize.x, 1.0 - viewportPixel.y / uViewportSize.y);
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
 `;
@@ -249,14 +251,82 @@ void main() {
 precision highp float;
 
 uniform sampler2D u_texture;
+uniform sampler2D u_backdropTexture;
 uniform float u_opacity;
+uniform float u_blendModeEnabled;
+uniform int u_blendMode;
 
 in vec2 v_uv;
+in vec2 v_backdropUv;
 
 out vec4 outColor;
 
+vec3 blendOverlay(vec3 baseColor, vec3 sourceColor) {
+  vec3 dark = 2.0 * baseColor * sourceColor;
+  vec3 light = 1.0 - 2.0 * (1.0 - baseColor) * (1.0 - sourceColor);
+
+  return mix(dark, light, step(vec3(0.5), baseColor));
+}
+
+vec3 applyBlendMode(vec3 baseColor, vec3 sourceColor, int blendMode) {
+  if (blendMode == 1) {
+    return baseColor * sourceColor;
+  }
+
+  if (blendMode == 2) {
+    return 1.0 - (1.0 - baseColor) * (1.0 - sourceColor);
+  }
+
+  if (blendMode == 3) {
+    return blendOverlay(baseColor, sourceColor);
+  }
+
+  if (blendMode == 4) {
+    return min(baseColor, sourceColor);
+  }
+
+  if (blendMode == 5) {
+    return max(baseColor, sourceColor);
+  }
+
+  if (blendMode == 6) {
+    return abs(baseColor - sourceColor);
+  }
+
+  if (blendMode == 7) {
+    return baseColor + sourceColor - 2.0 * baseColor * sourceColor;
+  }
+
+  return sourceColor;
+}
+
 void main() {
-  outColor = texture(u_texture, v_uv) * u_opacity;
+  vec4 source = texture(u_texture, v_uv) * u_opacity;
+
+  if (u_blendModeEnabled <= 0.5) {
+    outColor = source;
+    return;
+  }
+
+  vec4 backdrop = texture(u_backdropTexture, v_backdropUv);
+  float sourceAlpha = clamp(source.a, 0.0, 1.0);
+  float backdropAlpha = clamp(backdrop.a, 0.0, 1.0);
+
+  if (sourceAlpha <= 0.0) {
+    outColor = backdrop;
+    return;
+  }
+
+  vec3 sourceColor = sourceAlpha > 0.0 ? source.rgb / sourceAlpha : vec3(0.0);
+  vec3 backdropColor = backdropAlpha > 0.0 ? backdrop.rgb / backdropAlpha : vec3(0.0);
+  vec3 blendedColor = applyBlendMode(backdropColor, sourceColor, u_blendMode);
+  float outputAlpha = sourceAlpha + backdropAlpha * (1.0 - sourceAlpha);
+  vec3 outputRgb =
+    blendedColor * sourceAlpha * backdropAlpha +
+    sourceColor * sourceAlpha * (1.0 - backdropAlpha) +
+    backdropColor * backdropAlpha * (1.0 - sourceAlpha);
+
+  outColor = vec4(clamp(outputRgb, vec3(0.0), vec3(1.0)), outputAlpha);
 }
 `;
 

@@ -1136,6 +1136,7 @@
         this.deleteActiveStrokeSelectionClipTexture();
       }
 
+      const interactionDefersPreviewCacheUpdate = this.shouldDeferPreviewCacheUpdateForInteraction?.(options) === true;
       const orderedLayers = this.getOrderedLayersBottomToTop();
       const artboardResidency = this.resolveAndPublishArtboardResidency({
         activeLayerId: activeStrokeLayerId,
@@ -1158,7 +1159,8 @@
       });
       const deferInteractiveResidencyHydration = Boolean(
         options.activeStrokeTexture ||
-        options.deferPreviewCacheUpdate === true
+        options.deferPreviewCacheUpdate === true ||
+        interactionDefersPreviewCacheUpdate
       );
       const artboardResidencyHydrated = deferInteractiveResidencyHydration
         ? 0
@@ -1252,7 +1254,7 @@
         activeStrokeMode !== "eraser" &&
         activeStrokeLayer &&
         (
-          (!activeStrokeHasClip && activeStrokeLayerUsesAdvancedCompositing) ||
+          activeStrokeLayerUsesAdvancedCompositing ||
           activeStrokeIsClipBaseLayer
         )
       );
@@ -1305,7 +1307,8 @@
 
       const deferPreviewCacheUpdate = Boolean(
         options.deferPreviewCacheUpdate === true ||
-        options.activeStrokeTexture
+        options.activeStrokeTexture ||
+        interactionDefersPreviewCacheUpdate
       );
       const viewportCullingDebug = this.isViewportCullingDebugEnabled(options);
       const viewportLayerCullingEnabled = this.isViewportLayerCullingEnabled(options);
@@ -1844,7 +1847,6 @@
         const transformBlendModeId = Math.max(0, Math.round(Number(blendModeId) || 0));
         const canBlendTransformPreview = Boolean(
           transformBlendModeId !== 0 &&
-          rasterTransformPreview.transformMode !== "warp" &&
           canvasCompositeState?.read?.texture &&
           canvasCompositeState?.write?.framebuffer
         );
@@ -1898,10 +1900,21 @@
 
         bindArtboardProgram();
       };
+      const canUseStalePreviewCacheForInteraction = Boolean(
+        interactionDefersPreviewCacheUpdate &&
+        this.previewCacheReady &&
+        this.previewTexture &&
+        this.previewCacheDirty === true &&
+        this.areDocumentRectsEqual(this.previewCacheDocumentRect, previewCacheDocumentRect)
+      );
       const didUpdatePreviewCache = canUsePreviewCache
         ? (
             deferPreviewCacheUpdate
-              ? Boolean(this.previewCacheReady && !this.previewCacheDirty && this.previewTexture)
+              ? Boolean(
+                  this.previewCacheReady &&
+                  this.previewTexture &&
+                  (!this.previewCacheDirty || canUseStalePreviewCacheForInteraction)
+                )
               : this.updatePreviewCacheIfNeeded(previewCacheOptions)
           )
         : false;
@@ -2237,6 +2250,38 @@
             const blendModeId = skipLayerBlendForInteractiveStroke ? 0 : this.getLayerBlendModeId(layer);
             const renderResults = this.getLayerRenderResults(layer, layerTarget, viewportLayerRenderOptions);
 
+            if (isActiveStrokeLayer && activeStrokeNeedsScratchMerge) {
+              const mergedTarget = this.renderLayerWithActiveStrokeTexture(
+                null,
+                options.activeStrokeTexture,
+                activeStrokeRect,
+                {
+                  clipRects: activeStrokeScratchClipRects,
+                  hasClip: activeStrokeHasClip,
+                  renderResults,
+                },
+              );
+
+              if (mergedTarget?.texture) {
+                withLayerArtboardClip(layer, () => {
+                  drawBlendTexture(mergedTarget.texture, opacity, null, clipBase, blendModeId);
+                });
+                didDrawActiveStroke = true;
+                if (!isClippingLayer && isClipBaseLayer) {
+                  currentClipBase = this.createClipBaseForLayer(layer, mergedTarget, layer.visible !== false, {
+                    transformPreview: transformPreviewForClipBase,
+                  });
+                }
+
+                if (isRasterTransformPreviewLayer) {
+                  setPreviewCut(null);
+                  drawRasterTransformPreview(opacity, clipBase, blendModeId);
+                }
+
+                continue;
+              }
+            }
+
             if (
               blendModeId !== 0 &&
               canvasCompositeState?.read?.texture &&
@@ -2382,6 +2427,7 @@
           layersCulled: viewportCullingStats.layers.safelyCulled,
           sparseTilesSkipped: viewportCullingStats.sparseTiles.skippedOutsideRenderRect,
         });
+        this.finishPreviewCacheInteractionDeferFrame?.(interactionDefersPreviewCacheUpdate);
         this.scheduleArtboardResidencyMaintenance(artboardResidency, {
           activeLayerId: activeStrokeLayerId,
           activeStrokeTexture: Boolean(options.activeStrokeTexture),

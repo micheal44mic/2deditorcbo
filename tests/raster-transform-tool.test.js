@@ -106,6 +106,8 @@ test("raster transform supports Photoshop-style warp mesh preview and commit", (
   assert.match(rendererSource, /const RASTER_WARP_MESH_COLS = 64;/);
   assert.match(rendererSource, /createRasterWarpMeshResource/);
   assert.match(rendererSource, /drawWarpTexturedMesh/);
+  assert.match(rendererSource, /drawWarpTexturedMesh\(texture, controlPoints, options = \{\}\)[\s\S]*const useAdvancedBlend = Boolean\(blendModeId !== 0 && backdropTexture\)/);
+  assert.doesNotMatch(rendererSource, /rasterTransformPreview\.transformMode !== "warp" &&/);
   assert.match(rendererSource, /warpControlPoints/);
   assert.match(rendererSource, /rasterTransformPreview\.transformMode === "warp"/);
   assert.match(cssSource, /\.editor-raster-transform-warp-line/);
