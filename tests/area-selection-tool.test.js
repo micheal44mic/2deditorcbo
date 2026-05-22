@@ -170,7 +170,8 @@ test("brush and fill constrain raster edits to an active area selection", () => 
   assert.match(brushSource, /const hasEmptySelectionCoverage = Array\.isArray\(selectionCoverageRects\) && selectionCoverageRects\.length === 0/);
   assert.match(brushSource, /this\.getBoundsForDocumentRects\(selectionCoverageRects\)/);
   assert.match(brushSource, /filterTilePatchRectsToCoverage\(/);
-  assert.match(brushSource, /ensureRasterTargetsForPaintRect\?\.\(layerId, effectiveStrokeRect/);
+  assert.match(brushSource, /const paintTargetRect = !isEraserStroke && targetStrategy\.sparse === false[\s\S]*: effectiveStrokeRect/);
+  assert.match(brushSource, /ensureRasterTargetsForPaintRect\?\.\(layerId, paintTargetRect/);
   assert.match(brushSource, /beginRasterTileHistory\?\.\(layerId, effectiveStrokeRect/);
   assert.match(brushSource, /activeStrokeClipRect: namespace\.areaSelection\?\.hasSelection\?\.\(\)/);
   assert.match(brushSource, /activeStrokeClipRects: this\.getActiveAreaSelectionCoverageRects\(this\.strokeBufferRect\)/);
@@ -192,7 +193,8 @@ test("brush and fill constrain raster edits to an active area selection", () => 
   assert.match(rendererSource, /let currentMaskClipRect = null/);
   assert.match(rendererSource, /let currentMaskClipRects = null/);
   assert.match(rendererSource, /currentMaskClipRects = activeStrokeClipRects \|\| null/);
-  assert.match(rendererSource, /const activeStrokeNeedsScratchMerge = Boolean\([\s\S]*options\.activeStrokeTexture[\s\S]*activeStrokeMode !== "eraser"[\s\S]*activeStrokeLayer[\s\S]*!activeStrokeHasClip[\s\S]*activeStrokeLayerUsesAdvancedCompositing/);
+  assert.match(rendererSource, /const activeStrokeNeedsFullStack = Boolean\([\s\S]*activeStrokeUsesClippingMask/);
+  assert.match(rendererSource, /const activeStrokeNeedsScratchMerge = Boolean\([\s\S]*options\.activeStrokeTexture[\s\S]*activeStrokeMode !== "eraser"[\s\S]*activeStrokeLayer[\s\S]*activeStrokeLayerUsesAdvancedCompositing[\s\S]*activeStrokeIsClipBaseLayer/);
   assert.match(brushSource, /targetCoverageRects\.forEach\(\(selectionTargetRect\) => \{/);
   assert.match(brushSource, /gl\.enable\(gl\.SCISSOR_TEST\)/);
   assert.match(smudgeSource, /getActiveAreaSelectionCoverageRects\(bounds\) \{/);

@@ -1,0 +1,13 @@
+{
+  "name": "editor-2d-cbos",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Static browser-based 2D editor for CBO workflows.",
+  "scripts": {
+    "start": "py -m http.server 8000 --bind 0.0.0.0",
+    "test": "node --test tests/*.test.js",
+    "test:dot": "node --test --test-reporter=dot tests/*.test.js",
+    "test:one": "node --test",
+    "benchmark:raster-memory": "node tools/raster-memory-benchmark.js"
+  }
+}

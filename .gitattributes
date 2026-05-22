@@ -1,0 +1,17 @@
+* text=auto
+
+*.css text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+*.txt text eol=lf
+*.c text eol=lf
+
+*.jpeg binary
+*.jpg binary
+*.mp4 binary
+*.png binary
+*.ttf binary
+*.wasm binary
