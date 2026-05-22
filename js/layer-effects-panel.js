@@ -910,6 +910,14 @@ window.CBO = window.CBO || {};
     return isBlurEligibleLayer(layer) && getRenderableEffects(layer).length > 0;
   };
 
+  function updateLayerEffectsPatch(layerModel, layerId, patch, updateOptions) {
+    return layerModel.updateLayer(layerId, patch, updateOptions);
+  }
+
+  function requestLayerEffectsDraw() {
+    namespace.documentRenderer?.requestDraw?.();
+  }
+
   namespace.setLayerGaussianBlurRadius = function setLayerGaussianBlurRadius(layerId, radius, options = {}) {
     const layerModel = namespace.documentLayerModel;
     const layer = layerModel?.findEntryById?.(layerId);
@@ -918,6 +926,7 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const nextRadius = clamp(radius, 0, MAX_GAUSSIAN_BLUR_RADIUS);
     const updateOptions = {
       historyGroup: options.historyGroup || `gaussian-blur-${layerId}`,
       source: options.source || "layer-effects-gaussian-blur",
@@ -927,12 +936,21 @@ window.CBO = window.CBO || {};
       updateOptions.history = false;
     }
 
-    const didUpdate = layerModel.updateLayer(layerId, {
-      effects: getNextEffects(layer, radius),
-    }, updateOptions);
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextEffects(layer, nextRadius),
+      },
+      updateOptions,
+      {
+        effect: "gaussian-blur",
+        radius: nextRadius,
+      },
+    );
 
     if (didUpdate) {
-      namespace.documentRenderer?.requestDraw?.();
+      requestLayerEffectsDraw("gaussian-blur", layerId, updateOptions.source);
     }
 
     return didUpdate;
@@ -946,6 +964,8 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const nextDistance = clamp(distance, 0, MAX_MOTION_BLUR_DISTANCE);
+    const nextAngle = normalizeAngle(angle);
     const updateOptions = {
       historyGroup: options.historyGroup || `motion-blur-${layerId}`,
       source: options.source || "layer-effects-motion-blur",
@@ -955,12 +975,22 @@ window.CBO = window.CBO || {};
       updateOptions.history = false;
     }
 
-    const didUpdate = layerModel.updateLayer(layerId, {
-      effects: getNextMotionBlurEffects(layer, distance, angle),
-    }, updateOptions);
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextMotionBlurEffects(layer, nextDistance, nextAngle),
+      },
+      updateOptions,
+      {
+        angle: nextAngle,
+        distance: nextDistance,
+        effect: "motion-blur",
+      },
+    );
 
     if (didUpdate) {
-      namespace.documentRenderer?.requestDraw?.();
+      requestLayerEffectsDraw("motion-blur", layerId, updateOptions.source);
     }
 
     return didUpdate;
@@ -974,6 +1004,7 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const nextPins = normalizeFieldBlurPins(pins);
     const updateOptions = {
       historyGroup: options.historyGroup || `field-blur-${layerId}`,
       source: options.source || "layer-effects-field-blur",
@@ -983,12 +1014,22 @@ window.CBO = window.CBO || {};
       updateOptions.history = false;
     }
 
-    const didUpdate = layerModel.updateLayer(layerId, {
-      effects: getNextFieldBlurEffects(layer, pins),
-    }, updateOptions);
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextFieldBlurEffects(layer, nextPins),
+      },
+      updateOptions,
+      {
+        effect: "field-blur",
+        maxPinBlur: nextPins.reduce((max, pin) => Math.max(max, Number(pin.blur) || 0), 0),
+        pinCount: nextPins.length,
+      },
+    );
 
     if (didUpdate) {
-      namespace.documentRenderer?.requestDraw?.();
+      requestLayerEffectsDraw("field-blur", layerId, updateOptions.source);
     }
 
     return didUpdate;
@@ -1011,6 +1052,10 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const nextAmount = clamp(amount, 0, MAX_RADIAL_BLUR_AMOUNT);
+    const nextMode = normalizeRadialBlurMode(updateMode);
+    const nextEffects = getNextRadialBlurEffects(layer, nextAmount, centerX, centerY, nextMode);
+    const nextRadialBlur = nextEffects.find((effect) => effect && effect.type === "radial-blur") || null;
     const updateOptions = {
       historyGroup: updateOptionsSource.historyGroup || `radial-blur-${layerId}`,
       source: updateOptionsSource.source || "layer-effects-radial-blur",
@@ -1020,12 +1065,24 @@ window.CBO = window.CBO || {};
       updateOptions.history = false;
     }
 
-    const didUpdate = layerModel.updateLayer(layerId, {
-      effects: getNextRadialBlurEffects(layer, amount, centerX, centerY, updateMode),
-    }, updateOptions);
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: nextEffects,
+      },
+      updateOptions,
+      {
+        amount: nextAmount,
+        centerX: nextRadialBlur?.centerX,
+        centerY: nextRadialBlur?.centerY,
+        effect: "radial-blur",
+        mode: nextMode,
+      },
+    );
 
     if (didUpdate) {
-      namespace.documentRenderer?.requestDraw?.();
+      requestLayerEffectsDraw("radial-blur", layerId, updateOptions.source);
     }
 
     return didUpdate;
@@ -1039,6 +1096,9 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const nextAmount = clamp(amount, 0, MAX_GRAIN_AMOUNT);
+    const nextScale = clamp(scale, 1, MAX_GRAIN_SCALE);
+    const nextMonochrome = monochrome !== false;
     const updateOptions = {
       historyGroup: options.historyGroup || `grain-${layerId}`,
       source: options.source || "layer-effects-grain",
@@ -1048,12 +1108,23 @@ window.CBO = window.CBO || {};
       updateOptions.history = false;
     }
 
-    const didUpdate = layerModel.updateLayer(layerId, {
-      effects: getNextGrainEffects(layer, amount, scale, monochrome),
-    }, updateOptions);
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextGrainEffects(layer, nextAmount, nextScale, nextMonochrome),
+      },
+      updateOptions,
+      {
+        amount: nextAmount,
+        effect: "grain",
+        monochrome: nextMonochrome,
+        scale: nextScale,
+      },
+    );
 
     if (didUpdate) {
-      namespace.documentRenderer?.requestDraw?.();
+      requestLayerEffectsDraw("grain", layerId, updateOptions.source);
     }
 
     return didUpdate;
@@ -1067,6 +1138,9 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const nextAmount = clamp(amount, 0, MAX_NOISE_AMOUNT);
+    const nextScale = clamp(scale, 1, MAX_NOISE_SCALE);
+    const nextMonochrome = monochrome !== false;
     const updateOptions = {
       historyGroup: options.historyGroup || `noise-${layerId}`,
       source: options.source || "layer-effects-noise",
@@ -1076,12 +1150,23 @@ window.CBO = window.CBO || {};
       updateOptions.history = false;
     }
 
-    const didUpdate = layerModel.updateLayer(layerId, {
-      effects: getNextNoiseEffects(layer, amount, scale, monochrome),
-    }, updateOptions);
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextNoiseEffects(layer, nextAmount, nextScale, nextMonochrome),
+      },
+      updateOptions,
+      {
+        amount: nextAmount,
+        effect: "noise",
+        monochrome: nextMonochrome,
+        scale: nextScale,
+      },
+    );
 
     if (didUpdate) {
-      namespace.documentRenderer?.requestDraw?.();
+      requestLayerEffectsDraw("noise", layerId, updateOptions.source);
     }
 
     return didUpdate;
@@ -1095,6 +1180,7 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const nextThreshold = normalizeThresholdValue(threshold);
     const updateOptions = {
       historyGroup: options.historyGroup || `threshold-${layerId}`,
       source: options.source || "layer-effects-threshold",
@@ -1104,12 +1190,22 @@ window.CBO = window.CBO || {};
       updateOptions.history = false;
     }
 
-    const didUpdate = layerModel.updateLayer(layerId, {
-      effects: getNextThresholdEffects(layer, threshold, options.enabled),
-    }, updateOptions);
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextThresholdEffects(layer, nextThreshold, options.enabled),
+      },
+      updateOptions,
+      {
+        effect: "threshold",
+        enabled: options.enabled !== false,
+        threshold: nextThreshold,
+      },
+    );
 
     if (didUpdate) {
-      namespace.documentRenderer?.requestDraw?.();
+      requestLayerEffectsDraw("threshold", layerId, updateOptions.source);
     }
 
     return didUpdate;
@@ -1123,6 +1219,7 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    const nextPoints = normalizeCurvesPoints(pointsByChannel);
     const updateOptions = {
       historyGroup: options.historyGroup || `curves-${layerId}`,
       source: options.source || "layer-effects-curves",
@@ -1132,12 +1229,22 @@ window.CBO = window.CBO || {};
       updateOptions.history = false;
     }
 
-    const didUpdate = layerModel.updateLayer(layerId, {
-      effects: getNextCurvesEffects(layer, pointsByChannel, options.enabled),
-    }, updateOptions);
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextCurvesEffects(layer, nextPoints, options.enabled),
+      },
+      updateOptions,
+      {
+        effect: "curves",
+        enabled: options.enabled !== false,
+        meaningful: hasMeaningfulCurves(nextPoints),
+      },
+    );
 
     if (didUpdate) {
-      namespace.documentRenderer?.requestDraw?.();
+      requestLayerEffectsDraw("curves", layerId, updateOptions.source);
     }
 
     return didUpdate;
@@ -1685,6 +1792,8 @@ window.CBO = window.CBO || {};
     let fieldBlurPreviewTimer = 0;
     let fieldBlurPins = [];
     let mobileLayerEffectsSession = null;
+    let pendingLayerEffectPreview = null;
+    let pendingLayerEffectPreviewFrame = 0;
     let previewSession = null;
 
     document.body.append(panel);
@@ -1968,6 +2077,72 @@ window.CBO = window.CBO || {};
       return layerModel?.findEntryById?.(layerModel.activeLayerId) || null;
     }
 
+    function cancelPendingLayerEffectPreviewFrame() {
+      if (!pendingLayerEffectPreviewFrame) {
+        return;
+      }
+
+      if (typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(pendingLayerEffectPreviewFrame);
+      } else if (typeof window.clearTimeout === "function") {
+        window.clearTimeout(pendingLayerEffectPreviewFrame);
+      }
+
+      pendingLayerEffectPreviewFrame = 0;
+    }
+
+    function flushPendingLayerEffectPreview() {
+      const pending = pendingLayerEffectPreview;
+
+      if (!pending) {
+        cancelPendingLayerEffectPreviewFrame();
+        return false;
+      }
+
+      cancelPendingLayerEffectPreviewFrame();
+      pendingLayerEffectPreview = null;
+
+      return pending.apply?.() === true;
+    }
+
+    function cancelPendingLayerEffectPreview() {
+      if (!pendingLayerEffectPreview) {
+        cancelPendingLayerEffectPreviewFrame();
+        return false;
+      }
+
+      cancelPendingLayerEffectPreviewFrame();
+      pendingLayerEffectPreview = null;
+      return true;
+    }
+
+    function queueLayerEffectPreview(effect, layerId, apply) {
+      pendingLayerEffectPreview = {
+        apply,
+        effect,
+        layerId,
+      };
+
+      if (pendingLayerEffectPreviewFrame) {
+        return true;
+      }
+
+      const flush = () => {
+        pendingLayerEffectPreviewFrame = 0;
+        flushPendingLayerEffectPreview();
+      };
+
+      if (typeof window.requestAnimationFrame === "function") {
+        pendingLayerEffectPreviewFrame = window.requestAnimationFrame(flush);
+      } else if (typeof window.setTimeout === "function") {
+        pendingLayerEffectPreviewFrame = window.setTimeout(flush, 16);
+      } else {
+        flush();
+      }
+
+      return true;
+    }
+
     function getDefaultFieldBlurPoint() {
       return getLayerEffectCenterPoint(getActiveLayer());
     }
@@ -2239,6 +2414,7 @@ window.CBO = window.CBO || {};
         return false;
       }
 
+      flushPendingLayerEffectPreview();
       flushMobileFieldBlurPins();
 
       const layerModel = getLayerModel();
@@ -2388,18 +2564,42 @@ window.CBO = window.CBO || {};
       startMobileLayerEffectsSession();
 
       if (name === "gaussian-radius") {
-        namespace.setLayerGaussianBlurRadius(layer.id, value, {
-          history: false,
-          source: "mobile-layer-effects-gaussian-blur",
-        });
-      } else if (name === "motion-distance" || name === "motion-angle") {
-        namespace.setLayerMotionBlur(
+        const nextValue = clamp(value, 0, MAX_GAUSSIAN_BLUR_RADIUS);
+
+        queueLayerEffectPreview(
+          "gaussian-blur",
           layer.id,
-          getMobileLayerEffectInput("motion-distance")?.value,
-          getMobileLayerEffectInput("motion-angle")?.value,
-          {
+          () => namespace.setLayerGaussianBlurRadius(layer.id, nextValue, {
             history: false,
-            source: "mobile-layer-effects-motion-blur",
+            source: "mobile-layer-effects-gaussian-blur",
+          }),
+          {
+            control: name,
+            radius: nextValue,
+            source: "mobile",
+          },
+        );
+      } else if (name === "motion-distance" || name === "motion-angle") {
+        const nextDistance = clamp(getMobileLayerEffectInput("motion-distance")?.value, 0, MAX_MOTION_BLUR_DISTANCE);
+        const nextAngle = normalizeAngle(getMobileLayerEffectInput("motion-angle")?.value);
+
+        queueLayerEffectPreview(
+          "motion-blur",
+          layer.id,
+          () => namespace.setLayerMotionBlur(
+            layer.id,
+            nextDistance,
+            nextAngle,
+            {
+              history: false,
+              source: "mobile-layer-effects-motion-blur",
+            },
+          ),
+          {
+            angle: nextAngle,
+            control: name,
+            distance: nextDistance,
+            source: "mobile",
           },
         );
       } else if (name === "field-blur") {
@@ -2415,53 +2615,122 @@ window.CBO = window.CBO || {};
           }
         }
 
-        namespace.setLayerFieldBlurPins(
+        const nextPins = getMobileFieldBlurPins(layer, value);
+
+        queueLayerEffectPreview(
+          "field-blur",
           layer.id,
-          getMobileFieldBlurPins(layer, value),
+          () => namespace.setLayerFieldBlurPins(
+            layer.id,
+            nextPins,
+            {
+              history: false,
+              source: "mobile-layer-effects-field-blur",
+            },
+          ),
           {
-            history: false,
-            source: "mobile-layer-effects-field-blur",
+            control: name,
+            pinCount: nextPins.length,
+            source: "mobile",
           },
         );
       } else if (name === "radial-amount" || name === "radial-center-x" || name === "radial-center-y") {
-        namespace.setLayerRadialBlur(
+        const nextAmount = clamp(getMobileLayerEffectInput("radial-amount")?.value, 0, MAX_RADIAL_BLUR_AMOUNT);
+        const nextCenterX = normalizePercent(getMobileLayerEffectInput("radial-center-x")?.value);
+        const nextCenterY = normalizePercent(getMobileLayerEffectInput("radial-center-y")?.value);
+        const nextMode = getSelectedMobileRadialMode();
+
+        queueLayerEffectPreview(
+          "radial-blur",
           layer.id,
-          getMobileLayerEffectInput("radial-amount")?.value,
-          getMobileLayerEffectInput("radial-center-x")?.value,
-          getMobileLayerEffectInput("radial-center-y")?.value,
-          getSelectedMobileRadialMode(),
+          () => namespace.setLayerRadialBlur(
+            layer.id,
+            nextAmount,
+            nextCenterX,
+            nextCenterY,
+            nextMode,
+            {
+              history: false,
+              source: "mobile-layer-effects-radial-blur",
+            },
+          ),
           {
-            history: false,
-            source: "mobile-layer-effects-radial-blur",
+            amount: nextAmount,
+            centerX: nextCenterX,
+            centerY: nextCenterY,
+            control: name,
+            mode: nextMode,
+            source: "mobile",
           },
         );
       } else if (name === "grain-amount" || name === "grain-scale") {
-        namespace.setLayerGrain(
+        const nextAmount = clamp(getMobileLayerEffectInput("grain-amount")?.value, 0, MAX_GRAIN_AMOUNT);
+        const nextScale = clamp(getMobileLayerEffectInput("grain-scale")?.value, 1, MAX_GRAIN_SCALE);
+        const nextMonochrome = isMobileGrainMonochromeEnabled();
+
+        queueLayerEffectPreview(
+          "grain",
           layer.id,
-          getMobileLayerEffectInput("grain-amount")?.value,
-          getMobileLayerEffectInput("grain-scale")?.value,
-          isMobileGrainMonochromeEnabled(),
+          () => namespace.setLayerGrain(
+            layer.id,
+            nextAmount,
+            nextScale,
+            nextMonochrome,
+            {
+              history: false,
+              source: "mobile-layer-effects-grain",
+            },
+          ),
           {
-            history: false,
-            source: "mobile-layer-effects-grain",
+            amount: nextAmount,
+            control: name,
+            monochrome: nextMonochrome,
+            scale: nextScale,
+            source: "mobile",
           },
         );
       } else if (name === "noise-amount" || name === "noise-scale") {
-        namespace.setLayerNoise(
+        const nextAmount = clamp(getMobileLayerEffectInput("noise-amount")?.value, 0, MAX_NOISE_AMOUNT);
+        const nextScale = clamp(getMobileLayerEffectInput("noise-scale")?.value, 1, MAX_NOISE_SCALE);
+        const nextMonochrome = isMobileNoiseMonochromeEnabled();
+
+        queueLayerEffectPreview(
+          "noise",
           layer.id,
-          getMobileLayerEffectInput("noise-amount")?.value,
-          getMobileLayerEffectInput("noise-scale")?.value,
-          isMobileNoiseMonochromeEnabled(),
+          () => namespace.setLayerNoise(
+            layer.id,
+            nextAmount,
+            nextScale,
+            nextMonochrome,
+            {
+              history: false,
+              source: "mobile-layer-effects-noise",
+            },
+          ),
           {
-            history: false,
-            source: "mobile-layer-effects-noise",
+            amount: nextAmount,
+            control: name,
+            monochrome: nextMonochrome,
+            scale: nextScale,
+            source: "mobile",
           },
         );
       } else if (name === "threshold-level") {
-        namespace.setLayerThreshold(layer.id, value, {
-          history: false,
-          source: "mobile-layer-effects-threshold",
-        });
+        const nextThreshold = normalizeThresholdValue(value);
+
+        queueLayerEffectPreview(
+          "threshold",
+          layer.id,
+          () => namespace.setLayerThreshold(layer.id, nextThreshold, {
+            history: false,
+            source: "mobile-layer-effects-threshold",
+          }),
+          {
+            control: name,
+            source: "mobile",
+            threshold: nextThreshold,
+          },
+        );
       }
 
       syncMobileLayerEffectsControls();
@@ -2476,6 +2745,7 @@ window.CBO = window.CBO || {};
       }
 
       startMobileLayerEffectsSession();
+      cancelPendingLayerEffectPreview();
 
       if (effectType === "gaussian-blur") {
         namespace.setLayerGaussianBlurRadius(layer.id, 0, {
@@ -3064,6 +3334,7 @@ window.CBO = window.CBO || {};
       const layerModel = getLayerModel();
       const session = previewSession;
 
+      cancelPendingLayerEffectPreview();
       if (!session?.layerId || !layerModel?.updateLayer) {
         previewSession = null;
         return false;
@@ -3180,6 +3451,7 @@ window.CBO = window.CBO || {};
       if (shouldCancel) {
         restorePreviewSession();
       } else {
+        flushPendingLayerEffectPreview();
         previewSession = null;
       }
 
@@ -3342,10 +3614,14 @@ window.CBO = window.CBO || {};
       const nextRadius = clamp(radius, 0, MAX_GAUSSIAN_BLUR_RADIUS);
 
       blurValue.textContent = `${Math.round(nextRadius)} px`;
-      namespace.setLayerGaussianBlurRadius(layer.id, nextRadius, {
-        history: false,
-        source: "layer-effects-preview",
-      });
+      queueLayerEffectPreview(
+        "gaussian-blur",
+        layer.id,
+        () => namespace.setLayerGaussianBlurRadius(layer.id, nextRadius, {
+          history: false,
+          source: "layer-effects-preview",
+        }),
+      );
     }
 
     function applyMotionBlur(distance, angle = motionAngleInput?.value) {
@@ -3366,10 +3642,14 @@ window.CBO = window.CBO || {};
         return;
       }
 
-      namespace.setLayerMotionBlur(layer.id, nextDistance, nextAngle, {
-        history: false,
-        source: "layer-effects-preview",
-      });
+      queueLayerEffectPreview(
+        "motion-blur",
+        layer.id,
+        () => namespace.setLayerMotionBlur(layer.id, nextDistance, nextAngle, {
+          history: false,
+          source: "layer-effects-preview",
+        }),
+      );
     }
 
     function applyRadialBlur(
@@ -3399,10 +3679,14 @@ window.CBO = window.CBO || {};
       }
 
       setRadialModeButtonState(nextMode);
-      namespace.setLayerRadialBlur(layer.id, nextAmount, nextCenterX, nextCenterY, nextMode, {
-        history: false,
-        source: "layer-effects-preview",
-      });
+      queueLayerEffectPreview(
+        "radial-blur",
+        layer.id,
+        () => namespace.setLayerRadialBlur(layer.id, nextAmount, nextCenterX, nextCenterY, nextMode, {
+          history: false,
+          source: "layer-effects-preview",
+        }),
+      );
     }
 
     function applyGrain(
@@ -3428,10 +3712,14 @@ window.CBO = window.CBO || {};
         return;
       }
 
-      namespace.setLayerGrain(layer.id, nextAmount, nextScale, nextMonochrome, {
-        history: false,
-        source: "layer-effects-preview",
-      });
+      queueLayerEffectPreview(
+        "grain",
+        layer.id,
+        () => namespace.setLayerGrain(layer.id, nextAmount, nextScale, nextMonochrome, {
+          history: false,
+          source: "layer-effects-preview",
+        }),
+      );
     }
 
     function applyNoise(
@@ -3457,10 +3745,14 @@ window.CBO = window.CBO || {};
         return;
       }
 
-      namespace.setLayerNoise(layer.id, nextAmount, nextScale, nextMonochrome, {
-        history: false,
-        source: "layer-effects-preview",
-      });
+      queueLayerEffectPreview(
+        "noise",
+        layer.id,
+        () => namespace.setLayerNoise(layer.id, nextAmount, nextScale, nextMonochrome, {
+          history: false,
+          source: "layer-effects-preview",
+        }),
+      );
     }
 
     function applyThreshold(threshold) {
@@ -3474,10 +3766,14 @@ window.CBO = window.CBO || {};
       const nextThreshold = normalizeThresholdValue(threshold);
 
       thresholdValue.textContent = String(Math.round(nextThreshold));
-      namespace.setLayerThreshold(layer.id, nextThreshold, {
-        history: false,
-        source: "layer-effects-preview",
-      });
+      queueLayerEffectPreview(
+        "threshold",
+        layer.id,
+        () => namespace.setLayerThreshold(layer.id, nextThreshold, {
+          history: false,
+          source: "layer-effects-preview",
+        }),
+      );
     }
 
     function clearThreshold() {
@@ -3490,11 +3786,15 @@ window.CBO = window.CBO || {};
 
       thresholdInput.value = String(DEFAULT_THRESHOLD_VALUE);
       thresholdValue.textContent = String(DEFAULT_THRESHOLD_VALUE);
-      namespace.setLayerThreshold(layer.id, DEFAULT_THRESHOLD_VALUE, {
-        enabled: false,
-        history: false,
-        source: "layer-effects-preview",
-      });
+      queueLayerEffectPreview(
+        "threshold",
+        layer.id,
+        () => namespace.setLayerThreshold(layer.id, DEFAULT_THRESHOLD_VALUE, {
+          enabled: false,
+          history: false,
+          source: "layer-effects-preview",
+        }),
+      );
     }
 
     function filterEffectMenu() {
@@ -3919,6 +4219,8 @@ window.CBO = window.CBO || {};
 
       if (activeEffectType === "field-blur") {
         flushFieldBlurPreview();
+      } else {
+        flushPendingLayerEffectPreview();
       }
 
       const didRasterize = namespace.rasterizeActiveLayerEffects?.({

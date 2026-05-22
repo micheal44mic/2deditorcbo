@@ -251,13 +251,14 @@ test("mobile adjustment layer exposes implemented effects as bottom toolbar pane
   assert.match(source, /namespace\.rasterizeLayerEffects\?\.\(session\.layerId, \{[\s\S]*beforeState: session\.beforeState/);
   assert.match(source, /window\.addEventListener\("cbo:before-history-action", handleMobileLayerEffectsBeforeHistory\)/);
   assert.match(source, /openMobileLayerEffectPanel\(effectButton\.dataset\.mobileLayerEffectTrigger\)/);
-  assert.match(source, /namespace\.setLayerGaussianBlurRadius\(layer\.id, value/);
+  assert.match(source, /queueLayerEffectPreview\(\s*"gaussian-blur"/);
+  assert.match(source, /namespace\.setLayerGaussianBlurRadius\(layer\.id, nextValue/);
   assert.match(source, /namespace\.setLayerMotionBlur\(/);
   assert.match(source, /namespace\.setLayerFieldBlurPins\(/);
   assert.match(source, /namespace\.setLayerRadialBlur\(/);
   assert.match(source, /namespace\.setLayerNoise\(/);
   assert.match(source, /namespace\.setLayerGrain\(/);
-  assert.match(source, /namespace\.setLayerThreshold\(layer\.id, value/);
+  assert.match(source, /namespace\.setLayerThreshold\(layer\.id, nextThreshold/);
   assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-gaussian-blur"/);
   assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-motion-blur"/);
   assert.match(source, /history: false,[\s\S]*source: "mobile-layer-effects-field-blur"/);
@@ -309,6 +310,19 @@ test("gaussian blur preview writes bypass document history", () => {
     "update:paint-main:layer-effects-preview:false:gaussian-blur-paint-main",
     "draw",
   ]);
+});
+
+test("layer effects slider previews coalesce model updates to animation frames", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "layer-effects-panel.js"), "utf8");
+
+  assert.match(source, /function queueLayerEffectPreview\(/);
+  assert.match(source, /window\.requestAnimationFrame\(flush\)/);
+  assert.match(source, /function flushPendingLayerEffectPreview\(\)/);
+  assert.match(source, /flushPendingLayerEffectPreview\(\)/);
+  assert.match(source, /cancelPendingLayerEffectPreview\(\)/);
+  assert.match(source, /queueLayerEffectPreview\(\s*"gaussian-blur"[\s\S]*namespace\.setLayerGaussianBlurRadius/);
+  assert.match(source, /queueLayerEffectPreview\(\s*"noise"[\s\S]*namespace\.setLayerNoise/);
+  assert.match(source, /queueLayerEffectPreview\(\s*"threshold"[\s\S]*namespace\.setLayerThreshold/);
 });
 
 test("motion blur preview writes bypass document history", () => {
