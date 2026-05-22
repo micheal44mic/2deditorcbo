@@ -1,102 +1,5 @@
 window.CBO = window.CBO || {};
 
-(function registerLayerOpacityDebug(namespace) {
-  const MAX_EVENTS = 24;
-  const state = namespace.layerOpacityDebugState || {
-    events: [],
-    sequence: 0,
-  };
-
-  function nowMs() {
-    const perf = typeof performance !== "undefined"
-      ? performance
-      : (typeof window !== "undefined" ? window.performance : null);
-
-    return typeof perf?.now === "function" ? perf.now() : Date.now();
-  }
-
-  function cleanNumber(value, digits = 2) {
-    const number = Number(value);
-
-    return Number.isFinite(number) ? Number(number.toFixed(digits)) : null;
-  }
-
-  function cleanDetail(detail = {}) {
-    const result = {};
-
-    Object.entries(detail || {}).forEach(([key, value]) => {
-      if (value == null) {
-        return;
-      }
-
-      if (typeof value === "number") {
-        result[key] = cleanNumber(value, key.endsWith("Ms") ? 2 : 3);
-        return;
-      }
-
-      if (typeof value === "boolean" || typeof value === "string") {
-        result[key] = value;
-      }
-    });
-
-    return result;
-  }
-
-  function formatEvent(event, firstTime) {
-    const delta = cleanNumber(event.timeMs - firstTime, 1);
-    const detail = Object.entries(event.detail || {})
-      .map(([key, value]) => `${key}=${value}`)
-      .join(" ");
-
-    return `+${delta}ms ${event.name}${detail ? ` ${detail}` : ""}`;
-  }
-
-  const api = {
-    collect() {
-      return {
-        events: state.events.slice(),
-        generatedAt: new Date().toISOString(),
-      };
-    },
-    copy() {
-      const events = state.events.slice();
-      const firstTime = events[0]?.timeMs || nowMs();
-      const text = [
-        "CBO LAYER OPACITY DEBUG",
-        `generatedAt=${new Date().toISOString()}`,
-        `events=${events.length}/${MAX_EVENTS}`,
-        "",
-        ...events.map((event) => formatEvent(event, firstTime)),
-      ].join("\n");
-
-      void navigator.clipboard?.writeText?.(text);
-      console.log(text);
-      return text;
-    },
-    record(name, detail = {}) {
-      state.sequence += 1;
-      state.events.push({
-        detail: cleanDetail(detail),
-        name: String(name || "event"),
-        sequence: state.sequence,
-        timeMs: nowMs(),
-      });
-
-      if (state.events.length > MAX_EVENTS) {
-        state.events.splice(0, state.events.length - MAX_EVENTS);
-      }
-    },
-    reset() {
-      state.events.length = 0;
-      state.sequence = 0;
-    },
-  };
-
-  namespace.layerOpacityDebugState = state;
-  namespace.LayerOpacityDebug = api;
-  namespace.copyLayerOpacityDebug = () => api.copy();
-})(window.CBO);
-
 window.CBO.initRightSidebar = function initRightSidebar() {
   const panel = document.querySelector(".right-panel");
 
@@ -1252,16 +1155,8 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   function patchActiveLayer(patch, source = "layer-sidebar", historyOptions = {}) {
     const layerModel = getLayerModel();
     const layer = getActiveLayer();
-    const isOpacityDebug = source === "layer-sidebar-opacity";
-    const startedAt = isOpacityDebug ? performance.now() : 0;
 
     if (!isLayerSidebarEligible(layer) || !layerModel?.updateLayer) {
-      if (isOpacityDebug) {
-        window.CBO.LayerOpacityDebug?.record?.("patch.skip", {
-          layerId: layer?.id || "",
-          reason: !layerModel?.updateLayer ? "missing-layer-model" : "ineligible-layer",
-        });
-      }
       return false;
     }
 
@@ -1270,26 +1165,200 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       source,
     });
 
-    if (isOpacityDebug) {
-      window.CBO.LayerOpacityDebug?.record?.("patch.update", {
-        didUpdate,
-        historyGroup: historyOptions.historyGroup || "",
-        layerId: layer.id,
-        opacity: patch?.opacity,
-        updateMs: performance.now() - startedAt,
-      });
-    }
-
     if (didUpdate) {
       window.CBO.documentRenderer?.requestDraw?.();
-      if (isOpacityDebug) {
-        window.CBO.LayerOpacityDebug?.record?.("requestDraw", {
-          layerId: layer.id,
-        });
-      }
     }
 
     return didUpdate;
+  }
+
+  const LAYER_OPACITY_COMMIT_SOURCE = "layer-sidebar-opacity";
+  const LAYER_OPACITY_PREVIEW_SOURCE = "layer-sidebar-opacity-preview";
+  const LAYER_OPACITY_EPSILON = 0.0005;
+  const LAYER_OPACITY_KEYBOARD_COMMIT_DELAY_MS = 160;
+  let layerOpacityPreviewState = null;
+  let layerOpacityDrawFrame = 0;
+  let layerOpacityCommitTimer = 0;
+  let layerOpacityPointerActive = false;
+
+  function normalizeLayerOpacityValue(value) {
+    return Math.min(1, Math.max(0, Number.isFinite(Number(value)) ? Number(value) : 1));
+  }
+
+  function requestLayerOpacityPreviewDraw() {
+    if (layerOpacityDrawFrame) {
+      return;
+    }
+
+    const draw = () => {
+      layerOpacityDrawFrame = 0;
+      window.CBO.documentRenderer?.requestDraw?.();
+    };
+
+    layerOpacityDrawFrame = typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame(draw)
+      : window.setTimeout(draw, 16);
+  }
+
+  function beginLayerOpacityPreview(layer = getActiveLayer()) {
+    const layerModel = getLayerModel();
+
+    if (!isLayerSidebarEligible(layer) || !layerModel?.updateLayer) {
+      return null;
+    }
+
+    if (layerOpacityPreviewState?.layerId === layer.id) {
+      return layerOpacityPreviewState;
+    }
+
+    if (layerOpacityPreviewState) {
+      commitLayerOpacityPreview();
+    }
+
+    const historyOptions = getLayerHistoryOptions("opacity");
+
+    layerOpacityPreviewState = {
+      beforeState: layerModel.captureHistoryState?.({
+        ...historyOptions,
+        source: LAYER_OPACITY_COMMIT_SOURCE,
+      }) || null,
+      historyGroup: historyOptions.historyGroup || "",
+      layerId: layer.id,
+      startOpacity: normalizeLayerOpacityValue(layer.opacity),
+      latestOpacity: normalizeLayerOpacityValue(layer.opacity),
+    };
+    return layerOpacityPreviewState;
+  }
+
+  function invalidateLayerOpacityPreview(layerId) {
+    const renderer = window.CBO.documentRenderer;
+
+    renderer?.invalidatePreviewCache?.(LAYER_OPACITY_PREVIEW_SOURCE, {
+      layerId,
+      source: LAYER_OPACITY_PREVIEW_SOURCE,
+    });
+    requestLayerOpacityPreviewDraw();
+  }
+
+  function updateLayerOpacityPreview(opacity) {
+    const layerModel = getLayerModel();
+    const layer = getActiveLayer();
+    const state = beginLayerOpacityPreview(layer);
+
+    if (!state || !isLayerSidebarEligible(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const nextOpacity = normalizeLayerOpacityValue(opacity);
+    const currentOpacity = normalizeLayerOpacityValue(layer.opacity);
+
+    state.latestOpacity = nextOpacity;
+    if (Math.abs(currentOpacity - nextOpacity) <= LAYER_OPACITY_EPSILON) {
+      requestLayerOpacityPreviewDraw();
+      return true;
+    }
+
+    const didUpdate = layerModel.updateLayer(layer.id, { opacity: nextOpacity }, {
+      emit: false,
+      history: false,
+      source: LAYER_OPACITY_PREVIEW_SOURCE,
+    });
+
+    if (didUpdate) {
+      invalidateLayerOpacityPreview(layer.id);
+    }
+
+    return didUpdate;
+  }
+
+  function clearLayerOpacityCommitTimer() {
+    if (!layerOpacityCommitTimer) {
+      return;
+    }
+
+    window.clearTimeout(layerOpacityCommitTimer);
+    layerOpacityCommitTimer = 0;
+  }
+
+  function scheduleLayerOpacityKeyboardCommit() {
+    if (layerOpacityPointerActive) {
+      return;
+    }
+
+    clearLayerOpacityCommitTimer();
+    layerOpacityCommitTimer = window.setTimeout(() => {
+      layerOpacityCommitTimer = 0;
+      commitLayerOpacityPreview();
+    }, LAYER_OPACITY_KEYBOARD_COMMIT_DELAY_MS);
+  }
+
+  function commitLayerOpacityPreview() {
+    const state = layerOpacityPreviewState;
+
+    clearLayerOpacityCommitTimer();
+    if (!state) {
+      return false;
+    }
+
+    layerOpacityPreviewState = null;
+
+    const layerModel = getLayerModel();
+    const layer = layerModel?.findEntryById?.(state.layerId);
+
+    if (!isLayerSidebarEligible(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const finalOpacity = normalizeLayerOpacityValue(state.latestOpacity);
+    const currentOpacity = normalizeLayerOpacityValue(layer.opacity);
+
+    if (Math.abs(currentOpacity - finalOpacity) > LAYER_OPACITY_EPSILON) {
+      layerModel.updateLayer(layer.id, { opacity: finalOpacity }, {
+        emit: false,
+        history: false,
+        source: LAYER_OPACITY_PREVIEW_SOURCE,
+      });
+    }
+
+    const didChange = Math.abs(state.startOpacity - finalOpacity) > LAYER_OPACITY_EPSILON;
+    let didRecordHistory = false;
+
+    if (didChange) {
+      layerModel.emitChange?.(LAYER_OPACITY_COMMIT_SOURCE, {
+        changeType: "layer-opacity",
+        layerId: layer.id,
+      });
+
+      didRecordHistory = layerModel.recordHistoryStateChange?.(state.beforeState, {
+        historyGroup: state.historyGroup,
+        source: LAYER_OPACITY_COMMIT_SOURCE,
+      }) === true;
+    }
+
+    window.CBO.documentRenderer?.requestDraw?.();
+    return didChange || didRecordHistory;
+  }
+
+  function clearLayerOpacityPointerInteraction() {
+    layerOpacityPointerActive = false;
+    window.removeEventListener("pointerup", handleLayerOpacityPointerEnd);
+    window.removeEventListener("pointercancel", handleLayerOpacityPointerEnd);
+  }
+
+  function handleLayerOpacityPointerEnd() {
+    clearLayerOpacityPointerInteraction();
+    commitLayerOpacityPreview();
+  }
+
+  function beginLayerOpacityPointerInteraction() {
+    if (layerOpacityPointerActive) {
+      return;
+    }
+
+    layerOpacityPointerActive = true;
+    beginLayerOpacityPreview();
+    window.addEventListener("pointerup", handleLayerOpacityPointerEnd, { passive: true });
+    window.addEventListener("pointercancel", handleLayerOpacityPointerEnd, { passive: true });
   }
 
   function syncLayerControlsFromLayer() {
@@ -2458,20 +2527,22 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     });
   });
 
+  layerOpacityInput?.addEventListener("pointerdown", () => {
+    beginLayerOpacityPointerInteraction();
+  });
   layerOpacityInput?.addEventListener("input", () => {
     const opacity = clamp(layerOpacityInput.value, 0, 100) / 100;
-    const layer = getActiveLayer();
 
-    window.CBO.LayerOpacityDebug?.record?.("input", {
-      layerId: layer?.id || "",
-      opacity,
-    });
     updateLayerOpacityProgress();
-    patchActiveLayer(
-      { opacity },
-      "layer-sidebar-opacity",
-      getLayerHistoryOptions("opacity"),
-    );
+    updateLayerOpacityPreview(opacity);
+    scheduleLayerOpacityKeyboardCommit();
+  });
+  layerOpacityInput?.addEventListener("change", () => {
+    commitLayerOpacityPreview();
+  });
+  layerOpacityInput?.addEventListener("blur", () => {
+    clearLayerOpacityPointerInteraction();
+    commitLayerOpacityPreview();
   });
   layerBlendToggle?.addEventListener("click", (event) => {
     event.preventDefault();

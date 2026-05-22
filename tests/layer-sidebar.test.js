@@ -41,6 +41,10 @@ test("right sidebar shows layer controls for the selection tool", () => {
   assert.match(source, /source: "layer-sidebar-align"/);
   assert.match(source, /layerAlignButtons\.forEach\(\(button\) => \{/);
   assert.match(source, /data-layer-opacity/);
+  assert.match(source, /const LAYER_OPACITY_PREVIEW_SOURCE = "layer-sidebar-opacity-preview"/);
+  assert.match(source, /layerModel\.updateLayer\(layer\.id, \{ opacity: nextOpacity \}, \{[\s\S]*emit: false,[\s\S]*history: false,/);
+  assert.match(source, /function commitLayerOpacityPreview\(\)/);
+  assert.doesNotMatch(source, /LayerOpacityDebug|copyLayerOpacityDebug/);
   assert.match(source, /data-layer-blend-outline/);
   assert.match(source, /function shouldShowLayerSettings\(activeTool = currentToolName\)/);
   assert.match(source, /const activeLayer = getActiveLayer\(\);/);

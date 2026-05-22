@@ -3192,22 +3192,6 @@
     }
 ,
 
-    recordLayerOpacityDebug(name, detail = {}) {
-      namespace.LayerOpacityDebug?.record?.(name, detail);
-    }
-,
-
-    markLayerOpacityDebugActive(detail = {}) {
-      this.layerOpacityDebugUntil = this.getPreviewCacheUpdateNow() + 1500;
-      this.recordLayerOpacityDebug("renderer.active", detail);
-    }
-,
-
-    isLayerOpacityDebugActive() {
-      return this.getPreviewCacheUpdateNow() <= Math.max(0, Number(this.layerOpacityDebugUntil) || 0);
-    }
-,
-
     isPreviewCacheInteractionDeferSource(reason = "unknown", options = {}) {
       const source = String(options.source || reason || "");
 
@@ -3438,18 +3422,6 @@
       this.previewCacheDirty = true;
       this.previewCacheReason = reason;
       this.deferPreviewCacheUpdateForInteraction(reason, options);
-
-      if ((options.source || reason) === "layer-sidebar-opacity" || this.isLayerOpacityDebugActive()) {
-        this.recordLayerOpacityDebug("preview.invalidate", {
-          defer: this.shouldDeferPreviewCacheUpdateForInteraction(),
-          dirtyRects: dirtyRects.length,
-          full: !dirtyRects.length || !this.previewCacheReady,
-          incomingRects: incomingDirtyRectCount,
-          ready: this.previewCacheReady,
-          reason,
-          source: options.source || "",
-        });
-      }
 
       if (!dirtyRects.length || !this.previewCacheReady) {
         const forcedFullCause = !dirtyRects.length
