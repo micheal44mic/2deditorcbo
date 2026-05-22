@@ -174,8 +174,15 @@
     }
 
     window.clearTimeout(thresholdHideTimer);
+
+    if (delay <= 0) {
+      thresholdToolbar.classList.remove("visible");
+      thresholdToolbar.hidden = true;
+      return;
+    }
+
     thresholdHideTimer = window.setTimeout(() => {
-      if (delay > 0 && isThresholdControlInteractive()) {
+      if (isThresholdControlInteractive()) {
         hideThresholdControl();
         return;
       }
@@ -197,6 +204,22 @@
 
   function cancelDropDrag() {
     hideThresholdControl(0);
+  }
+
+  function handleToolPointerDown(event) {
+    const target = event.target;
+
+    if (!target || typeof target.closest !== "function") {
+      return;
+    }
+
+    if (target.closest(".color-fill-threshold-toolbar")) {
+      return;
+    }
+
+    if (target.closest("[data-tool], [data-toolset-option]")) {
+      hideThresholdControl(0);
+    }
   }
 
   function getReferenceLayerId() {
@@ -503,6 +526,14 @@
     getFillCoveragePadding,
     getFillMaskMemoryBytes,
   });
+
+  window.addEventListener("cbo:tool-change", () => {
+    hideThresholdControl(0);
+  });
+
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+    document.addEventListener("pointerdown", handleToolPointerDown, true);
+  }
 
   namespace.colorFill = {
     beginDropDrag,

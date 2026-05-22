@@ -7,7 +7,8 @@
   const LATEST_META_KEY = "latest";
   const PROJECT_NAME_STORAGE_KEY = namespace.documentProjectNameStorageKey || "cbo-project-name";
   const TILE_SIZE = 256;
-  const AUTOSAVE_FORMAT_VERSION = 2;
+  const AUTOSAVE_FORMAT_VERSION = 3;
+  const AI_WORKSPACE_FORMAT_VERSION = 1;
   const TILE_PIXEL_FORMAT = "rgba8";
   const TILE_CODECS = Object.freeze(["zstd", "gzip", "deflate"]);
   const RAW_TILE_CODEC = "raw";
@@ -447,6 +448,52 @@
     return name;
   }
 
+  function getCurrentAiWorkspace() {
+    const boards = typeof namespace.getArtboardConnectionBoards === "function"
+      ? namespace.getArtboardConnectionBoards()
+      : [];
+    const connections = typeof namespace.getArtboardConnections === "function"
+      ? namespace.getArtboardConnections()
+      : [];
+
+    return {
+      boards: cloneValue(Array.isArray(boards) ? boards : []),
+      connections: cloneValue(Array.isArray(connections) ? connections : []),
+      version: AI_WORKSPACE_FORMAT_VERSION,
+    };
+  }
+
+  function getSessionAiWorkspace(session) {
+    const workspace = session?.document?.aiWorkspace || session?.aiWorkspace || {};
+    const boards = Array.isArray(workspace?.boards)
+      ? workspace.boards
+      : Array.isArray(workspace?.spaceBoards)
+        ? workspace.spaceBoards
+        : [];
+    const connections = Array.isArray(workspace?.connections) ? workspace.connections : [];
+
+    return {
+      connections: cloneValue(connections),
+      spaceBoards: cloneValue(boards),
+      version: Math.max(1, Math.round(Number(workspace?.version) || 1)),
+    };
+  }
+
+  function restoreSessionAiWorkspace(session, source = "autosave-restore-ai-workspace") {
+    const state = getSessionAiWorkspace(session);
+
+    if (typeof namespace.restoreArtboardConnections === "function") {
+      return namespace.restoreArtboardConnections(state, { source });
+    }
+
+    namespace.pendingArtboardConnectionRestore = {
+      source,
+      state,
+    };
+
+    return false;
+  }
+
   function getRestoreUiTitle(options = {}) {
     return String(options.title || "Loading saved document...").trim() || "Loading saved document...";
   }
@@ -818,6 +865,10 @@
       return null;
     }
 
+    namespace.prepareArtboardConnectionsForSave?.({
+      source: "autosave-ai-workspace",
+    });
+
     history?.flushLayerState?.(layerModel);
 
     const sessionId = createId("session");
@@ -844,6 +895,7 @@
       session: {
         activeLayerId: layerModel.activeLayerId || null,
         document: {
+          aiWorkspace: getCurrentAiWorkspace(),
           artboards: namespace.getDocumentArtboards?.() || [],
           height: Math.max(1, Math.round(renderer.height || namespace.documentSettings?.height || 1)),
           presetId: namespace.documentSettings?.presetId || "",
@@ -1255,6 +1307,7 @@
       }
 
       restoreSessionArtboards(session);
+      restoreSessionAiWorkspace(session);
       fitRestoreViewToArtboards(session);
       await restoreRasterLayers(session, tileRecords);
 

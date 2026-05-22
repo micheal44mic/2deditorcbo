@@ -14,7 +14,7 @@ test("document autosave stores one recoverable IndexedDB session with raster til
 
   assert.match(source, /const DB_NAME = "cbo-editor-autosave"/);
   assert.match(source, /const TILE_SIZE = 256/);
-  assert.match(source, /const AUTOSAVE_FORMAT_VERSION = 2/);
+  assert.match(source, /const AUTOSAVE_FORMAT_VERSION = 3/);
   assert.match(source, /db\.createObjectStore\(META_STORE, \{ keyPath: "key" \}\)/);
   assert.match(source, /db\.createObjectStore\(SESSIONS_STORE, \{ keyPath: "id" \}\)/);
   assert.match(source, /db\.createObjectStore\(TILES_STORE, \{ keyPath: "key" \}\)/);
@@ -52,6 +52,7 @@ test("document autosave captures layer structure and sparse raster content only"
   assert.match(source, /const projectName = getCurrentProjectName\(\)/);
   assert.match(source, /entries: cloneValue\(entries\)/);
   assert.match(source, /activeLayerId: layerModel\.activeLayerId \|\| null/);
+  assert.match(source, /aiWorkspace: getCurrentAiWorkspace\(\)/);
   assert.match(source, /project: \{[\s\S]*name: projectName,[\s\S]*\}/);
   assert.match(source, /referenceLayerId: history\?\.getReferenceLayerId\?\.\(\) \|\| null/);
   assert.match(source, /countEntries\(entries\)/);
@@ -68,6 +69,7 @@ test("document autosave captures layer structure and sparse raster content only"
   assert.match(source, /rect: \{ \.\.\.targetRect \}/);
   assert.match(source, /rect: \{ \.\.\.snapshot\.rect \}/);
   assert.match(source, /version: AUTOSAVE_FORMAT_VERSION/);
+  assert.match(source, /prepareArtboardConnectionsForSave\?\.\(\{[\s\S]*source: "autosave-ai-workspace"/);
   assert.doesNotMatch(source, /layerRecord\.rect = unionRects/);
   assert.doesNotMatch(source, /window\.addEventListener\("cbo:document-content-change"/);
   assert.doesNotMatch(source, /window\.addEventListener\("cbo:document-layers-change"/);
@@ -153,6 +155,21 @@ test("document autosave can restore sessions while the start screen restores sav
   assert.match(editorCanvasSource, /saveSystem\.restore\(sessionId\)/);
   assert.match(editorCanvasSource, /window\.CBO\.emitEditorCanvasReady = function emitEditorCanvasReady/);
   assert.match(editorCanvasSource, /if \(options\.deferReadyEvent === true\)/);
+});
+
+test("document autosave captures and restores the AI workspace graph", () => {
+  const source = readRepoFile("js", "document", "document-autosave.js");
+
+  assert.match(source, /const AI_WORKSPACE_FORMAT_VERSION = 1/);
+  assert.match(source, /function getCurrentAiWorkspace\(\)/);
+  assert.match(source, /namespace\.getArtboardConnectionBoards\(\)/);
+  assert.match(source, /namespace\.getArtboardConnections\(\)/);
+  assert.match(source, /boards: cloneValue/);
+  assert.match(source, /connections: cloneValue/);
+  assert.match(source, /function restoreSessionAiWorkspace\(session, source = "autosave-restore-ai-workspace"\)/);
+  assert.match(source, /namespace\.restoreArtboardConnections\(state, \{ source \}\)/);
+  assert.match(source, /namespace\.pendingArtboardConnectionRestore = \{/);
+  assert.match(source, /restoreSessionAiWorkspace\(session\)/);
 });
 
 test("document restore locks the UI and fits all artboards while loading", () => {

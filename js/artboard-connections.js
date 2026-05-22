@@ -30,13 +30,19 @@ window.CBO = window.CBO || {};
 
   Controller.prototype.getArtboardConnections = function getArtboardConnections() {
     with (this) {
-    return connections.map((connection) => ({ ...connection }));
+    return connections.map(cloneConnection);
     }
   };
 
   Controller.prototype.getArtboardConnectionBoards = function getArtboardConnectionBoards() {
     with (this) {
-    return spaceBoards.map((board) => ({ ...board }));
+    return spaceBoards.map(cloneSpaceBoard);
+    }
+  };
+
+  Controller.prototype.restoreArtboardConnections = function restoreArtboardConnections(state, options = {}) {
+    with (this) {
+    return restoreArtboardConnectionState(state, options.source || "artboard-connections-restore");
     }
   };
 
@@ -96,6 +102,59 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.prepareArtboardConnectionsForSave = function prepareArtboardConnectionsForSave(options = {}) {
+    with (this) {
+    const source = options.source || "artboard-connections-save";
+    const active = document.activeElement;
+
+    if (
+      active?.matches?.("[data-ai-image-board-prompt-input]") &&
+      typeof setAiImageBoardPromptText === "function"
+    ) {
+      const boardId = String(active.closest?.("[data-ai-image-board]")?.dataset?.boardId || "").trim();
+      const board = getSpaceBoardById(boardId);
+
+      if (board) {
+        setAiImageBoardPromptText(board, active.value || "", {
+          emitSource: source,
+        });
+      }
+    }
+
+    if (
+      active?.matches?.("[data-ai-image-board-caption-editor]") &&
+      typeof setAiImageBoardPromptText === "function" &&
+      typeof getAiImageCaptionEditorText === "function"
+    ) {
+      const boardId = String(active.closest?.("[data-ai-image-board]")?.dataset?.boardId || "").trim();
+      const board = getSpaceBoardById(boardId);
+
+      if (board) {
+        setAiImageBoardPromptText(board, getAiImageCaptionEditorText(active), {
+          emitSource: source,
+        });
+      }
+    }
+
+    if (
+      active?.matches?.("[data-ai-image-edit-preview-prompt-input]") &&
+      typeof commitAiImageEditPreviewPromptInput === "function"
+    ) {
+      commitAiImageEditPreviewPromptInput(active);
+    }
+
+    if (typeof commitTextPromptInlineEditing === "function") {
+      commitTextPromptInlineEditing({ source });
+    }
+
+    if (textPromptFocusBoardId && typeof closeTextPromptFocusMode === "function") {
+      closeTextPromptFocusMode({ commit: true });
+    }
+
+    return true;
+    }
+  };
+
   Controller.prototype.init = function init() {
     with (this) {
     document.addEventListener("pointerdown", handleDocumentSpaceBoardSelectionPointerDown, true);
@@ -133,6 +192,9 @@ window.CBO = window.CBO || {};
   namespace.getArtboardConnectionBoards = function getArtboardConnectionBoards() {
     return controller.getArtboardConnectionBoards();
   };
+  namespace.restoreArtboardConnections = function restoreArtboardConnections(state, options = {}) {
+    return controller.restoreArtboardConnections(state, options);
+  };
   namespace.getArtboardConnectionBoardCollisionRects = function getArtboardConnectionBoardCollisionRects() {
     return controller.getArtboardConnectionBoardCollisionRects();
   };
@@ -145,6 +207,18 @@ window.CBO = window.CBO || {};
   namespace.clearArtboardConnections = function clearArtboardConnections() {
     return controller.clearArtboardConnections();
   };
+  namespace.prepareArtboardConnectionsForSave = function prepareArtboardConnectionsForSave(options = {}) {
+    return controller.prepareArtboardConnectionsForSave(options);
+  };
 
   controller.init();
+
+  if (namespace.pendingArtboardConnectionRestore) {
+    const pending = namespace.pendingArtboardConnectionRestore;
+
+    namespace.pendingArtboardConnectionRestore = null;
+    controller.restoreArtboardConnections(pending.state, {
+      source: pending.source || "pending-artboard-connections-restore",
+    });
+  }
 })(window.CBO);

@@ -524,10 +524,12 @@ window.CBO = window.CBO || {};
     }
 
     const excludeConnectionId = String(options.excludeConnectionId || "").trim();
+    const sourceIsTextPrompt = isTextPromptConnection(options.sourceConnection);
 
     return connections.some((connection) => (
       connection?.targetBoardId === normalizedBoardId &&
-      (!excludeConnectionId || connection.id !== excludeConnectionId)
+      (!excludeConnectionId || connection.id !== excludeConnectionId) &&
+      (!sourceIsTextPrompt || isTextPromptConnection(connection))
     ));
     }
   };
@@ -1055,7 +1057,9 @@ window.CBO = window.CBO || {};
           pointerType: event.pointerType || "",
         })
       : null;
-    const isBlockedTarget = Boolean(hitBoard && isConnectionTargetBoardOccupied(hitBoard));
+    const isBlockedTarget = Boolean(hitBoard && isConnectionTargetBoardOccupied(hitBoard, {
+      sourceConnection: connectionDrag,
+    }));
     const targetBoard = isBlockedTarget ? null : hitBoard;
     const blockedBoard = isBlockedTarget ? hitBoard : null;
     const targetAnchor = targetBoard
@@ -1125,6 +1129,8 @@ window.CBO = window.CBO || {};
       ? getConnectionDropTargetAtDocumentPoint({
           x: finalizedConnection.endDocX,
           y: finalizedConnection.endDocY,
+        }, {
+          sourceConnection: connection,
         })
       : null;
 

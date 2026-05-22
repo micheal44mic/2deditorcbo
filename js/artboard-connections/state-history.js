@@ -67,6 +67,32 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.normalizeConnectionsRestoreState = function normalizeConnectionsRestoreState(state) {
+    with (this) {
+
+    const sourceState = state && typeof state === "object" ? state : {};
+    const sourceBoards = Array.isArray(sourceState.spaceBoards)
+      ? sourceState.spaceBoards
+      : Array.isArray(sourceState.boards)
+        ? sourceState.boards
+        : [];
+
+    return {
+      connections: Array.isArray(sourceState.connections)
+        ? sourceState.connections.map(cloneConnection)
+        : [],
+      spaceBoards: sourceBoards.map(cloneSpaceBoard),
+    };
+    }
+  };
+
+  Controller.prototype.restoreArtboardConnectionState = function restoreArtboardConnectionState(state, source = "artboard-connections-restore") {
+    with (this) {
+
+    return restoreConnectionsHistoryState(normalizeConnectionsRestoreState(state), source);
+    }
+  };
+
   Controller.prototype.restoreConnectionsHistoryState = function restoreConnectionsHistoryState(state, source = "history-artboard-connections") {
     with (this) {
 

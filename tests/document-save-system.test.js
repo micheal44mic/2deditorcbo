@@ -39,6 +39,7 @@ test("document save system captures the document shape without brush or smudge p
   assert.match(source, /history\?\.flushLayerState\?\.\(layerModel\)/);
   assert.match(source, /entries: cloneValue\(entries\)/);
   assert.match(source, /activeLayerId: layerModel\.activeLayerId \|\| null/);
+  assert.match(source, /aiWorkspace: getCurrentAiWorkspace\(\)/);
   assert.match(source, /artboards: namespace\.getDocumentArtboards\?\.\(\) \|\| \[\]/);
   assert.match(source, /selectedArtboardId:/);
   assert.match(source, /view: getCurrentDocumentView\(\)/);
@@ -57,12 +58,35 @@ test("document save system prepares pending visible edits before snapshotting", 
   const source = readRepoFile("js", "document", "document-save-system.js");
 
   assert.match(source, /async function prepareDocumentForSave\(source = "manual-save"\)/);
+  assert.match(source, /prepareArtboardConnectionsForSave\?\.\(\{[\s\S]*source: `\$\{source\}-ai-workspace`/);
   assert.match(source, /brushEngine\?\.flushPendingBrushHistory/);
   assert.match(source, /transformTool\?\.hasPendingTransform\?\.\(\)/);
   assert.match(source, /transformTool\.commitTransform\?\.\(\)/);
   assert.match(source, /puppetTransformTool\?\.isActive\?\.\(\)/);
   assert.match(source, /puppetTransformTool\.rasterizeActivePuppetLayer\?\.\(\)/);
   assert.match(source, /await prepareDocumentForSave\(source\)/);
+});
+
+test("document save system captures and restores the AI workspace graph", () => {
+  const source = readRepoFile("js", "document", "document-save-system.js");
+  const connectionsSource = readRepoFile("js", "artboard-connections.js");
+  const historySource = readRepoFile("js", "artboard-connections", "state-history.js");
+
+  assert.match(source, /const AI_WORKSPACE_FORMAT_VERSION = 1/);
+  assert.match(source, /function getCurrentAiWorkspace\(\)/);
+  assert.match(source, /namespace\.getArtboardConnectionBoards\(\)/);
+  assert.match(source, /namespace\.getArtboardConnections\(\)/);
+  assert.match(source, /boards: cloneValue/);
+  assert.match(source, /connections: cloneValue/);
+  assert.match(source, /function restoreSessionAiWorkspace\(session, source = "document-save-restore-ai-workspace"\)/);
+  assert.match(source, /namespace\.restoreArtboardConnections\(state, \{ source \}\)/);
+  assert.match(source, /namespace\.pendingArtboardConnectionRestore = \{/);
+  assert.match(source, /restoreSessionAiWorkspace\(session\)/);
+  assert.match(connectionsSource, /namespace\.restoreArtboardConnections = function restoreArtboardConnections/);
+  assert.match(connectionsSource, /namespace\.prepareArtboardConnectionsForSave = function prepareArtboardConnectionsForSave/);
+  assert.match(connectionsSource, /namespace\.pendingArtboardConnectionRestore/);
+  assert.match(historySource, /function normalizeConnectionsRestoreState\(state\)/);
+  assert.match(historySource, /function restoreArtboardConnectionState\(state, source = "artboard-connections-restore"\)/);
 });
 
 test("document save system keeps multiple saved projects and updates the current one", () => {

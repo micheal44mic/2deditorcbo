@@ -188,6 +188,14 @@
   }
 }
 
+@media (max-width: 900px) {
+  .color-fill-threshold-toolbar {
+    top: calc(92px + var(--cbo-safe-top));
+    left: 50%;
+    max-width: calc(100vw - var(--cbo-mobile-edge-left) - var(--cbo-mobile-edge-right));
+  }
+}
+
 @keyframes color-drop-ripple {
   from {
     opacity: 0.22;

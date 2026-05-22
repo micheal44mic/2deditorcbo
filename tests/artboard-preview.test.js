@@ -272,6 +272,8 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /\[\.\.\.spaceBoards\]\.reverse\(\)\.find/);
   assert.match(connectionsSource, /function connectToExistingAiImageBoard\(connection, board\)/);
   assert.match(connectionsSource, /function isConnectionTargetBoardOccupied\(board, options = \{\}\)/);
+  assert.match(connectionsSource, /sourceIsTextPrompt = isTextPromptConnection\(options\.sourceConnection\)/);
+  assert.match(connectionsSource, /\(!sourceIsTextPrompt \|\| isTextPromptConnection\(connection\)\)/);
   assert.match(connectionsSource, /function setConnectionDropTargetBoard\(boardId = "", options = \{\}\)/);
   assert.match(connectionsSource, /function getConnectionDropTargetAtDocumentPoint\(point, options = \{\}\)/);
   assert.match(connectionsSource, /function getConnectionDropTargetMagnetRadius\(board, options = \{\}\)/);
@@ -283,6 +285,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /is-connection-drop-blocked/);
   assert.match(connectionsSource, /const includeOccupied = options\.includeOccupied === true/);
   assert.match(connectionsSource, /getConnectionDropTargetAtDocumentPoint\(point, \{[\s\S]*includeOccupied: true,[\s\S]*pointerType: event\.pointerType \|\| ""/);
+  assert.match(connectionsSource, /sourceConnection: connectionDrag/);
   assert.match(connectionsSource, /connectionDrag\.blockedTargetBoardId = blockedBoard\?\.id \|\| ""/);
   assert.match(connectionsSource, /connectionDrag\.targetBoardId = targetBoard\?\.id \|\| ""/);
   assert.match(connectionsSource, /connectionDrag\.targetHandle = targetBoard \? "image-input" : ""/);
@@ -291,7 +294,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /space-board-connect-existing-ai-image/);
   assert.match(connectionsSource, /function startTextPromptConnectionDrag\(event\)/);
   assert.match(connectionsSource, /classList\.add\("connection-dragging"\)/);
-  assert.match(connectionsSource, /classList\.remove\("connection-dragging"\)/);
+  assert.match(connectionsSource, /classList\.remove\("connection-dragging"(?:, "text-connection-dragging")?\)/);
   assert.match(connectionsSource, /classList\.add\("connection-dragging", "text-connection-dragging"\)/);
   assert.match(connectionsSource, /classList\.remove\("connection-dragging", "text-connection-dragging"\)/);
   assert.match(connectionsSource, /getAllArtboards\(\)\.map\(getDocumentArtboardRect\)/);
@@ -1003,15 +1006,22 @@ test("AI menu can create editable Text Prompt boards on the infinite canvas", ()
   const indexSource = readRepoFile("index.html");
   const connectionsSource = readArtboardConnectionSources();
   const cssSource = readRepoFile("css", "layout.css");
+  const focusToolbarStart = connectionsSource.indexOf('class="editor-text-prompt-focus-toolbar"');
+  const focusToolbarEnd = connectionsSource.indexOf('<div class="editor-text-prompt-focus-body">', focusToolbarStart);
+  const focusToolbarMarkup = focusToolbarStart >= 0 && focusToolbarEnd > focusToolbarStart
+    ? connectionsSource.slice(focusToolbarStart, focusToolbarEnd)
+    : "";
 
   assert.match(indexSource, /<script src="\.\/js\/artboard-connections\/space-board-text\.js(?:\?v=[^"]+)?"><\/script>/);
   assert.match(connectionsSource, /data-artboard-connection-action="text-prompt"/);
   assert.match(connectionsSource, />Text Prompt<\/span>/);
   assert.match(connectionsSource, /materializeTextPromptBoardFromMenu\(\)/);
-  assert.match(connectionsSource, /TEXT_PROMPT_BOARD_DEFAULT_WIDTH_DOC_PX = 687/);
+  assert.match(connectionsSource, /TEXT_PROMPT_BOARD_DEFAULT_WIDTH_DOC_PX = 920/);
+  assert.match(connectionsSource, /TEXT_PROMPT_BOARD_DEFAULT_HEIGHT_DOC_PX = 280/);
   assert.match(connectionsSource, /TEXT_PROMPT_BOARD_MIN_WIDTH_DOC_PX = 200/);
   assert.match(connectionsSource, /TEXT_PROMPT_BOARD_MIN_HEIGHT_DOC_PX = 120/);
-  assert.match(connectionsSource, /TEXT_PROMPT_FONT_SIZE_DOC_PX = 14/);
+  assert.match(connectionsSource, /TEXT_PROMPT_FONT_SIZE_DOC_PX = 32/);
+  assert.match(connectionsSource, /headingSizeDoc = fontSizeDoc \* \(42 \/ TEXT_PROMPT_FONT_SIZE_DOC_PX\)/);
   assert.match(connectionsSource, /TEXT_PROMPT_FONT_SIZE_MAX_DOC_PX = 72/);
   assert.match(connectionsSource, /TEXT_PROMPT_TEXT_COLOR = "#15171c"/);
   assert.match(connectionsSource, /TEXT_PROMPT_BACKGROUND_COLOR = "#ffffff"/);
@@ -1053,6 +1063,11 @@ test("AI menu can create editable Text Prompt boards on the infinite canvas", ()
   assert.match(connectionsSource, /startTextPromptResize/);
   assert.match(connectionsSource, /enterTextPromptInlineEditing\(board\.id, \{ select: false \}\)/);
   assert.match(connectionsSource, /data-text-prompt-focus-overlay/);
+  assert.match(connectionsSource, /removeProperty\("--text-prompt-focus-font-size"\)/);
+  assert.doesNotMatch(connectionsSource, /const focusFontSize = fontSizeDoc/);
+  assert.doesNotMatch(focusToolbarMarkup, /data-text-prompt-command="font-increase"/);
+  assert.doesNotMatch(focusToolbarMarkup, /data-text-prompt-command="font-decrease"/);
+  assert.doesNotMatch(focusToolbarMarkup, /data-text-prompt-font-size/);
   assert.match(connectionsSource, /renderTextPromptBoards\(\{ pane, viewScale, viewState \}\)/);
   assert.match(connectionsSource, /has-outgoing-connection/);
   assert.match(connectionsSource, /is-connection-source/);
@@ -1092,9 +1107,13 @@ test("AI menu can create editable Text Prompt boards on the infinite canvas", ()
   assert.match(cssSource, /\.editor-text-prompt-focus-shell[\s\S]*border-radius: 14px/);
   assert.match(cssSource, /\.editor-text-prompt-focus-header[\s\S]*height: 40px/);
   assert.match(cssSource, /\.editor-text-prompt-focus-header[\s\S]*background: rgba\(58, 58, 58, 0\.92\)/);
+  assert.match(cssSource, /@media \(max-width: 900px\)[\s\S]*\.editor-text-prompt-focus-header \{[\s\S]*flex-basis: calc\(104px \+ env\(safe-area-inset-top, 0px\)\)[\s\S]*height: calc\(104px \+ env\(safe-area-inset-top, 0px\)\)[\s\S]*min-height: calc\(104px \+ env\(safe-area-inset-top, 0px\)\)/);
   assert.match(cssSource, /\.editor-text-prompt-focus-overlay\.is-transparent-background \.editor-text-prompt-focus-body[\s\S]*background: rgba\(255, 255, 255, 0\.22\)/);
   assert.match(cssSource, /\.editor-text-prompt-focus-overlay\.is-transparent-background \.editor-text-prompt-focus-body[\s\S]*backdrop-filter: blur\(28px\) saturate\(1\.2\)/);
   assert.match(cssSource, /\.editor-text-prompt-focus-overlay\.is-transparent-background \.editor-text-prompt-focus-shell[\s\S]*background: rgba\(255, 255, 255, 0\.16\)/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-editor[\s\S]*font-size: var\(--text-prompt-focus-font-size, 24px\)/);
+  assert.match(cssSource, /\.editor-text-prompt-focus-editor[\s\S]*line-height: var\(--text-prompt-focus-line-height, 37\.2px\)/);
+  assert.match(cssSource, /@media \(max-width: 900px\)[\s\S]*\.editor-text-prompt-focus-editor \{[\s\S]*font-size: var\(--text-prompt-focus-mobile-font-size, 18px\)[\s\S]*line-height: var\(--text-prompt-focus-mobile-line-height, 27\.9px\)/);
 });
 
 test("AI image boards expose a responsive create with AI preview shell", () => {

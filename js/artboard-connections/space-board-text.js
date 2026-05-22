@@ -333,7 +333,7 @@ window.CBO = window.CBO || {};
 
     const safeScale = Math.max(0.0001, Number(scale) || 1);
     const fontSizeDoc = getTextPromptBoardFontSizeDoc(board);
-    const headingSizeDoc = fontSizeDoc * (30 / TEXT_PROMPT_FONT_SIZE_DOC_PX);
+    const headingSizeDoc = fontSizeDoc * (42 / TEXT_PROMPT_FONT_SIZE_DOC_PX);
 
     return {
       fontSize: fontSizeDoc * safeScale,
@@ -351,14 +351,10 @@ window.CBO = window.CBO || {};
       return false;
     }
 
-    const fontSizeDoc = getTextPromptBoardFontSizeDoc(board);
-    const focusFontSize = fontSizeDoc * (18 / TEXT_PROMPT_FONT_SIZE_DOC_PX);
-    const focusHeadingSize = focusFontSize * (38 / 18);
-
-    overlay.style.setProperty("--text-prompt-focus-font-size", `${focusFontSize}px`);
-    overlay.style.setProperty("--text-prompt-focus-line-height", `${focusFontSize * 1.55}px`);
-    overlay.style.setProperty("--text-prompt-focus-heading-size", `${focusHeadingSize}px`);
-    overlay.style.setProperty("--text-prompt-focus-heading-line-height", `${focusHeadingSize * (46 / 38)}px`);
+    overlay.style.removeProperty("--text-prompt-focus-font-size");
+    overlay.style.removeProperty("--text-prompt-focus-line-height");
+    overlay.style.removeProperty("--text-prompt-focus-heading-size");
+    overlay.style.removeProperty("--text-prompt-focus-heading-line-height");
     return true;
     }
   };
@@ -1757,10 +1753,6 @@ window.CBO = window.CBO || {};
             <button type="button" data-text-prompt-command="bold" aria-label="Bold"><strong>B</strong></button>
             <button type="button" data-text-prompt-command="italic" aria-label="Italic"><em>I</em></button>
             <button type="button" data-text-prompt-command="bullet-list" aria-label="Bulleted list">List</button>
-            <span class="editor-text-prompt-toolbar-separator" aria-hidden="true"></span>
-            <button type="button" data-text-prompt-command="font-decrease" aria-label="Decrease font size">A-</button>
-            <span class="editor-text-prompt-font-size" data-text-prompt-font-size aria-hidden="true">14</span>
-            <button type="button" data-text-prompt-command="font-increase" aria-label="Increase font size">A+</button>
           </div>
         </div>
         <div class="editor-text-prompt-focus-body">

@@ -1124,8 +1124,12 @@ test("color fill exposes a top-center threshold range styled like quick brush co
   assert.match(source, /setTolerance\(thresholdInput\.value\)/);
   assert.match(source, /thresholdInput\?\.addEventListener\("focus", showThresholdControl\)/);
   assert.match(source, /function isThresholdControlInteractive\(\)/);
+  assert.match(source, /window\.addEventListener\("cbo:tool-change", \(\) => \{\s*hideThresholdControl\(0\);/);
+  assert.match(source, /target\.closest\("\[data-tool\], \[data-toolset-option\]"\)/);
+  assert.match(source, /document\.addEventListener\("pointerdown", handleToolPointerDown, true\)/);
   assert.match(cssSource, /\.color-fill-threshold-toolbar/);
   assert.match(cssSource, /left: calc\(var\(--left-panel-width\) \+ \(\(100vw - var\(--left-panel-width\) - var\(--right-panel-width\)\) \/ 2\)\)/);
+  assert.match(cssSource, /top: calc\(92px \+ var\(--cbo-safe-top\)\)/);
   assert.match(cssSource, /--color-fill-threshold-progress/);
 });
 
