@@ -3495,6 +3495,31 @@
           y: cacheHeight - clippedBottom,
         };
       };
+      const getPreviewTileScissorForDocumentRect = (docRect) => {
+        if (!docRect) {
+          return null;
+        }
+
+        const left = (docRect.x - documentRect.x) * cacheScale;
+        const top = (docRect.y - documentRect.y) * cacheScale;
+        const right = (docRect.x + docRect.width - documentRect.x) * cacheScale;
+        const bottom = (docRect.y + docRect.height - documentRect.y) * cacheScale;
+        const clippedLeft = Math.max(0, Math.ceil(Math.min(left, right) - 0.5));
+        const clippedTop = Math.max(0, Math.ceil(Math.min(top, bottom) - 0.5));
+        const clippedRight = Math.min(cacheWidth, Math.ceil(Math.max(left, right) - 0.5));
+        const clippedBottom = Math.min(cacheHeight, Math.ceil(Math.max(top, bottom) - 0.5));
+
+        if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) {
+          return null;
+        }
+
+        return {
+          height: clippedBottom - clippedTop,
+          width: clippedRight - clippedLeft,
+          x: clippedLeft,
+          y: cacheHeight - clippedBottom,
+        };
+      };
       const intersectPreviewScissors = (first, second) => {
         if (!first || !second) {
           return first || second || null;
@@ -3630,6 +3655,89 @@
         previewCompositeState = this.swapLayerComposite(previewCompositeState);
         bindArtboardProgram();
       };
+      const drawSparsePreviewAdvancedBlendResults = (layerTarget, renderResults, opacity, blendModeId, clipBase = null) => {
+        if (
+          blendModeId === 0 ||
+          !previewCompositeState?.read?.texture ||
+          !previewCompositeState?.write?.framebuffer ||
+          !this.isSparseRasterTarget(layerTarget)
+        ) {
+          return false;
+        }
+
+        const entries = [];
+
+        for (const renderResult of renderResults) {
+          const layerTexture = renderResult?.texture;
+          const layerRect = renderResult?.rect || null;
+
+          if (!layerTexture) {
+            continue;
+          }
+
+          if (!layerRect) {
+            return false;
+          }
+
+          const tileScissor = getPreviewTileScissorForDocumentRect(layerRect);
+
+          if (!tileScissor) {
+            continue;
+          }
+
+          const scissor = intersectPreviewScissors(currentPreviewScissor, tileScissor);
+
+          if (scissor) {
+            entries.push({
+              rect: layerRect,
+              scissor,
+              texture: layerTexture,
+            });
+          }
+        }
+
+        if (entries.length === 0) {
+          return true;
+        }
+
+        const previousScissor = currentPreviewScissor;
+
+        try {
+          restorePreviewScissor(null);
+          this.drawScreenTexture(previewCompositeState.read.texture, {
+            blend: false,
+            framebuffer: previewCompositeState.write.framebuffer,
+            viewportHeight: cacheHeight,
+            viewportWidth: cacheWidth,
+          });
+
+          for (const entry of entries) {
+            restorePreviewScissor(entry.scissor);
+            this.drawLayerCompositeTexture({
+              backdropTexture: previewCompositeState.read.texture,
+              blendModeId,
+              camera: flatCamera,
+              clipBase,
+              documentHeight: baseDocumentHeight,
+              documentWidth: baseDocumentWidth,
+              framebuffer: previewCompositeState.write.framebuffer,
+              opacity,
+              rect: entry.rect,
+              scissor: entry.scissor,
+              texture: entry.texture,
+              viewportHeight: cacheHeight,
+              viewportWidth: cacheWidth,
+            });
+          }
+
+          previewCompositeState = this.swapLayerComposite(previewCompositeState);
+        } finally {
+          restorePreviewScissor(previousScissor);
+        }
+
+        bindArtboardProgram();
+        return true;
+      };
 
       const orderedPreviewLayers = this.getOrderedLayersBottomToTop();
       const previewNeedsLayerComposite = orderedPreviewLayers.some((layer) =>
@@ -3728,7 +3836,45 @@
             continue;
           }
 
-          for (const renderResult of this.getLayerRenderResults(layer, layerTarget)) {
+          const renderResults = this.getLayerRenderResults(layer, layerTarget);
+          const blendModeId = this.getLayerBlendModeId(layer);
+
+          if (
+            blendModeId !== 0 &&
+            previewCompositeState?.read?.texture &&
+            previewCompositeState?.write?.framebuffer &&
+            this.isSparseRasterTarget(layerTarget) &&
+            !this.hasPuppetLayerTransform(layer)
+          ) {
+            withLayerPreviewArtboardClip(layer, () => {
+              const didBatchSparseBlend = drawSparsePreviewAdvancedBlendResults(
+                layerTarget,
+                renderResults,
+                opacity,
+                blendModeId,
+                clipBase,
+              );
+
+              if (!didBatchSparseBlend) {
+                for (const renderResult of renderResults) {
+                  const layerTexture = renderResult?.texture;
+
+                  if (!layerTexture) {
+                    continue;
+                  }
+
+                  if (layerTexture !== layerTarget.texture) {
+                    bindArtboardProgram();
+                  }
+
+                  drawBlendTexture(layerTexture, opacity, blendModeId, renderResult.rect, clipBase);
+                }
+              }
+            });
+            continue;
+          }
+
+          for (const renderResult of renderResults) {
             const layerTexture = renderResult?.texture;
 
             if (!layerTexture) {
@@ -3742,7 +3888,7 @@
             if (this.hasPuppetLayerTransform(layer)) {
               withLayerPreviewArtboardClip(layer, () => {
                 if (isClippingLayer) {
-                  drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+                  drawBlendTexture(layerTexture, opacity, blendModeId, renderResult.rect, clipBase);
                 } else {
                   const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
                   const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
@@ -3755,13 +3901,13 @@
                   bindArtboardProgram();
 
                   if (!didDrawPuppet) {
-                    drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, null);
+                    drawBlendTexture(layerTexture, opacity, blendModeId, renderResult.rect, null);
                   }
                 }
               });
             } else {
               withLayerPreviewArtboardClip(layer, () => {
-                drawBlendTexture(layerTexture, opacity, this.getLayerBlendModeId(layer), renderResult.rect, clipBase);
+                drawBlendTexture(layerTexture, opacity, blendModeId, renderResult.rect, clipBase);
               });
             }
 

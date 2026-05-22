@@ -122,7 +122,7 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);
   assert.match(source, /drawBlendTexture\(\s*options\.activeStrokeTexture,\s*opacity,\s*activeStrokeRect,\s*clipBase,/);
   assert.match(source, /drawTexture\(texture, opacity, rect, clipBase\)/);
-  assert.match(source, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
+  assert.match(source, /drawBlendTexture\(layerTexture, opacity, (?:this\.getLayerBlendModeId\(layer\)|blendModeId), renderResult\.rect, clipBase\)/);
   assert.match(source, /currentClipBase = this\.createClipBaseForLayer\(layer, mergedTarget, layer\.visible !== false, \{[\s\S]*transformPreview: transformPreviewForClipBase/);
 });
 
@@ -151,7 +151,7 @@ test("document renderer samples transform preview clipping bases without scratch
   assert.match(source, /setClipBaseUniforms\(uniforms, clipBase = null, options = \{\}\)/);
   assert.match(source, /transformPreview: options\.transformPreview \|\| null/);
   assert.match(source, /transformPreview: transformPreviewForClipBase/);
-  assert.match(source, /drawRasterTransformPreview\(opacity, clipBase\)/);
+  assert.match(source, /drawRasterTransformPreview\(opacity, clipBase, (?:this\.getLayerBlendModeId\(layer\)|blendModeId)\)/);
   assert.match(source, /options\.clipBase/);
   assert.doesNotMatch(source, /visualClipBaseTarget/);
 });

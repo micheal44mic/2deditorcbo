@@ -179,6 +179,9 @@
       return {
         program,
         uniforms: {
+          backdropTexture: gl.getUniformLocation(program, "u_backdropTexture"),
+          blendMode: gl.getUniformLocation(program, "u_blendMode"),
+          blendModeEnabled: gl.getUniformLocation(program, "u_blendModeEnabled"),
           cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
           clipMode: gl.getUniformLocation(program, "u_clipMode"),
@@ -278,6 +281,9 @@
       return {
         program,
         uniforms: {
+          backdropTexture: gl.getUniformLocation(program, "u_backdropTexture"),
+          blendMode: gl.getUniformLocation(program, "u_blendMode"),
+          blendModeEnabled: gl.getUniformLocation(program, "u_blendModeEnabled"),
           cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
           cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
           clipMode: gl.getUniformLocation(program, "u_clipMode"),
@@ -1669,6 +1675,9 @@
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
       const edgeFeatherPixels = this.getRasterTransformEdgeFeatherPixels(options);
       const textureFilter = Number.isFinite(options.textureFilter) ? options.textureFilter : null;
+      const blendModeId = Math.max(0, Math.round(Number(options.blendModeId) || 0));
+      const backdropTexture = options.backdropTexture || null;
+      const useAdvancedBlend = Boolean(blendModeId !== 0 && backdropTexture);
       const sourceUvRect = this.normalizeTextureSourceUvRect(options.sourceUvRect);
       const matrix = this.computeAffineDestToSourceUvMatrix(quad);
       const edgeData = this.computeQuadEdgeUniformData(quad);
@@ -1687,9 +1696,13 @@
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
-      gl.enable(gl.BLEND);
-      gl.blendEquation(gl.FUNC_ADD);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      if (useAdvancedBlend) {
+        gl.disable(gl.BLEND);
+      } else {
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      }
       gl.useProgram(program);
       gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
       gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
@@ -1700,6 +1713,9 @@
       gl.uniform1f(uniforms.edgeFeatherPixels, edgeFeatherPixels);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1i(uniforms.backdropTexture, 2);
+      gl.uniform1f(uniforms.blendModeEnabled, useAdvancedBlend ? 1.0 : 0.0);
+      gl.uniform1i(uniforms.blendMode, useAdvancedBlend ? blendModeId : 0);
       const didBindClipTexture = this.setTransformClipUniforms(
         uniforms,
         options.clipBase,
@@ -1711,10 +1727,20 @@
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, vertices);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, texture);
+      if (useAdvancedBlend) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, backdropTexture);
+        gl.activeTexture(gl.TEXTURE0);
+      }
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
+      if (useAdvancedBlend) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.activeTexture(gl.TEXTURE0);
+      }
       gl.useProgram(null);
       this.clearTransformClipTexture(didBindClipTexture);
 
@@ -1750,6 +1776,9 @@
       const opacity = Number.isFinite(options.opacity) ? Math.min(1, Math.max(0, options.opacity)) : 1;
       const edgeFeatherPixels = this.getRasterTransformEdgeFeatherPixels(options);
       const textureFilter = Number.isFinite(options.textureFilter) ? options.textureFilter : null;
+      const blendModeId = Math.max(0, Math.round(Number(options.blendModeId) || 0));
+      const backdropTexture = options.backdropTexture || null;
+      const useAdvancedBlend = Boolean(blendModeId !== 0 && backdropTexture);
       const sourceUvRect = this.normalizeTextureSourceUvRect(options.sourceUvRect);
       const edgeData = this.computeQuadEdgeUniformData(quad);
       const vertices = this.createExpandedQuadDrawVertices(
@@ -1767,9 +1796,13 @@
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, options.framebuffer || null);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
-      gl.enable(gl.BLEND);
-      gl.blendEquation(gl.FUNC_ADD);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      if (useAdvancedBlend) {
+        gl.disable(gl.BLEND);
+      } else {
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      }
       gl.useProgram(program);
       gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
       gl.uniform2f(uniforms.cameraPosition, camera.x || 0, camera.y || 0);
@@ -1780,6 +1813,9 @@
       gl.uniform1f(uniforms.edgeFeatherPixels, edgeFeatherPixels);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1i(uniforms.backdropTexture, 2);
+      gl.uniform1f(uniforms.blendModeEnabled, useAdvancedBlend ? 1.0 : 0.0);
+      gl.uniform1i(uniforms.blendMode, useAdvancedBlend ? blendModeId : 0);
       const didBindClipTexture = this.setTransformClipUniforms(
         uniforms,
         options.clipBase,
@@ -1791,10 +1827,20 @@
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, vertices);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, texture);
+      if (useAdvancedBlend) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, backdropTexture);
+        gl.activeTexture(gl.TEXTURE0);
+      }
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
       gl.bindTexture(gl.TEXTURE_2D, null);
+      if (useAdvancedBlend) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.activeTexture(gl.TEXTURE0);
+      }
       gl.useProgram(null);
       this.clearTransformClipTexture(didBindClipTexture);
 

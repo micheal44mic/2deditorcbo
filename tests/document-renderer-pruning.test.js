@@ -4653,6 +4653,7 @@ test("document renderer composites supported layer blend modes in shader", () =>
   assert.match(source, /LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /LAYER_COMPOSITE_VERTEX_SHADER_SOURCE/);
   assert.match(source, /uniform sampler2D u_backdropTexture/);
+  assert.match(source, /uniform float u_blendModeEnabled/);
   assert.match(source, /vec3 applyBlendMode\(vec3 baseColor, vec3 sourceColor, int blendMode\)/);
   assert.match(source, /source\.rgb \/ sourceAlpha/);
   assert.match(source, /backdrop\.rgb \/ backdropAlpha/);
@@ -4668,9 +4669,23 @@ test("document renderer composites supported layer blend modes in shader", () =>
   assert.match(source, /const layerRect = options\.layerRect/);
   assert.match(source, /drawSource\(layerTexture, layerDrawWidth, layerDrawHeight, layerOriginX, layerOriginY\)/);
   assert.match(source, /layerRect: this\.getRasterTargetDocumentRect\(layerTarget\)/);
-  assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, this\.getLayerBlendModeId\(layer\), renderResult\.rect, clipBase\)/);
+  assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, (?:this\.getLayerBlendModeId\(layer\)|blendModeId), renderResult\.rect, clipBase\)/);
   assert.match(drawToCanvasBody, /activeStrokeNeedsFullStack/);
   assert.match(drawToCanvasBody, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);
+  assert.match(drawToCanvasBody, /activeStrokeMode === "eraser"[\s\S]*activeStrokeLayerHasBlendMode/);
+  assert.match(drawToCanvasBody, /drawRasterTransformPreview\(opacity, clipBase, this\.getLayerBlendModeId\(layer\)\)/);
+  assert.match(drawToCanvasBody, /backdropTexture: canBlendTransformPreview \? canvasCompositeState\.read\.texture : null/);
+  assert.match(drawToCanvasBody, /blendModeId: canBlendTransformPreview \? transformBlendModeId : 0/);
+});
+
+test("sparse blend transform preview is drawn before skipping the sparse branch", () => {
+  const source = readDocumentRendererSources();
+  const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
+
+  assert.match(
+    drawToCanvasBody,
+    /blendModeId !== 0[\s\S]*drawSparseAdvancedBlendResults[\s\S]*if \(isRasterTransformPreviewLayer\) \{\s*setPreviewCut\(null\);\s*drawRasterTransformPreview\(opacity, clipBase, blendModeId\);\s*\}\s*continue;/,
+  );
 });
 
 test("document renderer exposes non-destructive gaussian blur layer effect helpers", () => {
@@ -4784,7 +4799,8 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /this\.deleteNoiseResources\(\)/);
   assert.match(source, /this\.deleteThresholdResources\(\)/);
   assert.match(source, /this\.deleteCurvesResources\(\)/);
-  assert.match(previewCacheBody, /for \(const renderResult of this\.getLayerRenderResults\(layer, layerTarget\)\)/);
+  assert.match(previewCacheBody, /const renderResults = this\.getLayerRenderResults\(layer, layerTarget\)/);
+  assert.match(previewCacheBody, /for \(const renderResult of renderResults\)/);
   assert.match(previewCacheBody, /sourceTexture: layerTexture/);
   assert.doesNotMatch(previewCacheBody, /!hasLayerEffects/);
   assert.doesNotMatch(source, /rasterTargetsByLayerId\.set\([^)]*layerEffectScratch/);

@@ -271,6 +271,7 @@ uniform vec2 uCameraPosition;
 uniform float uCameraZoom;
 
 out vec2 v_destPixel;
+out vec2 v_backdropUv;
 
 void main() {
   vec2 viewportPixel = uCameraPosition + aDestPixel * uCameraZoom;
@@ -280,6 +281,7 @@ void main() {
   );
 
   v_destPixel = aDestPixel;
+  v_backdropUv = vec2(viewportPixel.x / uViewportSize.x, 1.0 - viewportPixel.y / uViewportSize.y);
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
 `;
@@ -289,11 +291,14 @@ precision highp float;
 
 uniform sampler2D u_texture;
 uniform sampler2D u_clipTexture;
+uniform sampler2D u_backdropTexture;
 uniform mat3 u_destToSourceUv;
 uniform vec4 u_sourceUvRect;
 uniform vec4 u_quadEdges[4];
 uniform float u_edgeFeatherPixels;
 uniform float u_opacity;
+uniform float u_blendModeEnabled;
+uniform int u_blendMode;
 uniform float u_clipMode;
 uniform float u_clipOpacity;
 uniform vec2 u_clipOrigin;
@@ -302,8 +307,48 @@ uniform mat3 u_clipDestToSourceUv;
 uniform vec4 u_clipSourceUvRect;
 
 in vec2 v_destPixel;
+in vec2 v_backdropUv;
 
 out vec4 outColor;
+
+vec3 blendOverlay(vec3 baseColor, vec3 sourceColor) {
+  vec3 dark = 2.0 * baseColor * sourceColor;
+  vec3 light = 1.0 - 2.0 * (1.0 - baseColor) * (1.0 - sourceColor);
+
+  return mix(dark, light, step(vec3(0.5), baseColor));
+}
+
+vec3 applyBlendMode(vec3 baseColor, vec3 sourceColor, int blendMode) {
+  if (blendMode == 1) {
+    return baseColor * sourceColor;
+  }
+
+  if (blendMode == 2) {
+    return 1.0 - (1.0 - baseColor) * (1.0 - sourceColor);
+  }
+
+  if (blendMode == 3) {
+    return blendOverlay(baseColor, sourceColor);
+  }
+
+  if (blendMode == 4) {
+    return min(baseColor, sourceColor);
+  }
+
+  if (blendMode == 5) {
+    return max(baseColor, sourceColor);
+  }
+
+  if (blendMode == 6) {
+    return abs(baseColor - sourceColor);
+  }
+
+  if (blendMode == 7) {
+    return baseColor + sourceColor - 2.0 * baseColor * sourceColor;
+  }
+
+  return sourceColor;
+}
 
 float signedDistanceToConvexQuad(vec2 point) {
   float d0 = dot(u_quadEdges[0].xy, point) + u_quadEdges[0].z;
@@ -386,8 +431,32 @@ void main() {
   vec2 sourceUnitUv = u_sourceUvRect.xy + clampedUnitUv * u_sourceUvRect.zw;
   vec2 uv = vec2(sourceUnitUv.x, 1.0 - sourceUnitUv.y);
   float clipAlpha = sampleClipAlpha(v_destPixel);
+  vec4 source = texture(u_texture, uv) * u_opacity * coverage * clipAlpha;
 
-  outColor = texture(u_texture, uv) * u_opacity * coverage * clipAlpha;
+  if (u_blendModeEnabled <= 0.5) {
+    outColor = source;
+    return;
+  }
+
+  vec4 backdrop = texture(u_backdropTexture, v_backdropUv);
+  float sourceAlpha = clamp(source.a, 0.0, 1.0);
+  float backdropAlpha = clamp(backdrop.a, 0.0, 1.0);
+
+  if (sourceAlpha <= 0.0) {
+    outColor = backdrop;
+    return;
+  }
+
+  vec3 sourceColor = sourceAlpha > 0.0 ? source.rgb / sourceAlpha : vec3(0.0);
+  vec3 backdropColor = backdropAlpha > 0.0 ? backdrop.rgb / backdropAlpha : vec3(0.0);
+  vec3 blendedColor = applyBlendMode(backdropColor, sourceColor, u_blendMode);
+  float outputAlpha = sourceAlpha + backdropAlpha * (1.0 - sourceAlpha);
+  vec3 outputRgb =
+    blendedColor * sourceAlpha * backdropAlpha +
+    sourceColor * sourceAlpha * (1.0 - backdropAlpha) +
+    backdropColor * backdropAlpha * (1.0 - sourceAlpha);
+
+  outColor = vec4(clamp(outputRgb, vec3(0.0), vec3(1.0)), outputAlpha);
 }
 `;
 
@@ -401,6 +470,7 @@ uniform vec2 uCameraPosition;
 uniform float uCameraZoom;
 
 out vec2 v_destPixel;
+out vec2 v_backdropUv;
 
 void main() {
   vec2 viewportPixel = uCameraPosition + aDestPixel * uCameraZoom;
@@ -410,6 +480,7 @@ void main() {
   );
 
   v_destPixel = aDestPixel;
+  v_backdropUv = vec2(viewportPixel.x / uViewportSize.x, 1.0 - viewportPixel.y / uViewportSize.y);
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
 `;
