@@ -721,6 +721,10 @@
       return layerId ? this.layerModel?.findEntryById?.(layerId) || null : null;
     }
 
+    isSelectionLayerActivationCurrent(layer) {
+      return Boolean(layer?.id && layer.id === this.activeLayerId);
+    }
+
     handleToolChange(event) {
       const detail = event.detail || {};
       const transformToolMode = getTransformToolMode(detail);
@@ -880,15 +884,20 @@
       this.render();
     }
 
-    handleDocumentChange() {
+    handleDocumentChange(event) {
       if (this.isSelectionActive()) {
         if (this.dragState || this.selectionMoveHoldState || this.isCommitting) {
           return;
         }
 
-        if (this.hasPendingTransform()) {
-          const activeLayer = this.getActiveLayer();
+        const activeLayer = this.getActiveLayer();
+        const isActiveLayerOnlyChange = event?.detail?.changeType === "active-layer";
 
+        if (isActiveLayerOnlyChange && this.isSelectionLayerActivationCurrent(activeLayer)) {
+          return;
+        }
+
+        if (this.hasPendingTransform()) {
           if (activeLayer?.id !== this.activeLayerId) {
             this.commitTransform();
             this.activateLayer(activeLayer, { selection: true });
@@ -897,7 +906,7 @@
           return;
         }
 
-        this.activateLayer(this.getActiveLayer(), { selection: true });
+        this.activateLayer(activeLayer, { selection: true });
         return;
       }
 
@@ -1215,10 +1224,19 @@
         : this.getPixelTightRasterContentBounds(layer);
     }
 
+    getLayerSelectionBounds(layer) {
+      if (this.isVectorTextLayer(layer)) {
+        return this.getVectorTextContentBounds(layer);
+      }
+
+      return this.getCoarseRasterContentBounds(layer);
+    }
+
     activateLayer(layer, options = {}) {
+      const selectionOnly = options.selection === true;
+
       this.cancelTransform({ keepGeometry: false });
 
-      const selectionOnly = options.selection === true;
       const canActivateLayer = selectionOnly
         ? this.isSelectableLayer(layer)
         : this.isTransformableLayer(layer);
@@ -1240,7 +1258,9 @@
         this.rasterizePuppetIfNeeded(layer);
       }
 
-      const bounds = this.getLayerContentBounds(layer);
+      const bounds = selectionOnly
+        ? this.getLayerSelectionBounds(layer)
+        : this.getLayerContentBounds(layer);
 
       this.activeLayerId = layer.id;
       this.contentRect = bounds || null;
@@ -2166,12 +2186,12 @@
         }
 
         if (hitLayer) {
-          if (this.layerModel?.activeLayerId !== hitLayer.id) {
-            this.layerModel?.setActiveLayer?.(hitLayer.id, { source: "selection-tool" });
+          if (!this.isSelectionLayerActivationCurrent(hitLayer)) {
+            this.activateLayer(hitLayer, { selection: true });
           }
 
-          if (!this.hasPendingTransform() || hitLayer.id !== this.activeLayerId) {
-            this.activateLayer(hitLayer, { selection: true });
+          if (this.layerModel?.activeLayerId !== hitLayer.id) {
+            this.layerModel?.setActiveLayer?.(hitLayer.id, { source: "selection-tool" });
           }
 
           this.beginSelectionMoveHold(event, hitLayer);
