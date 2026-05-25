@@ -127,14 +127,14 @@ test("document save system restores saved view state without requiring tool stat
 });
 
 test("start screen restores only explicit saved documents", () => {
-  const editorCanvasSource = readRepoFile("js", "editor-canvas.js");
+  const startScreenSource = readRepoFile("js", "document-start-screen.js");
 
-  assert.match(editorCanvasSource, /const saveSystem = window\.CBO\.documentSaveSystem/);
-  assert.match(editorCanvasSource, /saveSystem\.listSummaries\(\)/);
-  assert.match(editorCanvasSource, /saveSystem\.restore\(sessionId\)/);
-  assert.match(editorCanvasSource, /saveSystem\.delete\?\.\(sessionId\)/);
-  assert.match(editorCanvasSource, /clearCurrentDocument/);
-  assert.match(editorCanvasSource, /document-start-recovery-list/);
-  assert.doesNotMatch(editorCanvasSource, /const autosave = window\.CBO\.documentAutosave/);
-  assert.doesNotMatch(editorCanvasSource, /autosave\.restoreLatest\(\)/);
+  assert.match(startScreenSource, /const saveSystem = namespace\.documentSaveSystem/);
+  assert.match(startScreenSource, /saveSystem\.listSummaries\(\)/);
+  assert.match(startScreenSource, /saveSystem\.restore\(sessionId\)/);
+  assert.match(startScreenSource, /saveSystem\.delete\?\.\(sessionId\)/);
+  assert.match(startScreenSource, /clearCurrentDocument/);
+  assert.match(startScreenSource, /document-start-recovery-list/);
+  assert.doesNotMatch(startScreenSource, /const autosave = namespace\.documentAutosave/);
+  assert.doesNotMatch(startScreenSource, /autosave\.restoreLatest\(\)/);
 });

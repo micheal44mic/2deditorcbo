@@ -133,6 +133,7 @@ test("document save is manual-only and does not show autosaving text", () => {
 test("document autosave can restore sessions while the start screen restores saved documents", () => {
   const source = readRepoFile("js", "document", "document-autosave.js");
   const editorCanvasSource = readRepoFile("js", "editor-canvas.js");
+  const startScreenSource = readRepoFile("js", "document-start-screen.js");
 
   assert.match(source, /async function restoreLatest\(options = \{\}\)/);
   assert.match(source, /function getSessionArtboards\(session\)/);
@@ -150,9 +151,9 @@ test("document autosave can restore sessions while the start screen restores sav
   assert.match(source, /releaseSnapshotGpuAfterRestore: true/);
   assert.match(source, /renderer\.restoreRasterSnapshot\?\.\(layerId, snapshot/);
   assert.match(source, /namespace\.emitEditorCanvasReady\?\.\(\{ source: "autosave-restore" \}\)/);
-  assert.match(editorCanvasSource, /createDocumentRecoveryButton\(summary\)/);
-  assert.match(editorCanvasSource, /const projectName = String\(summary\?\.projectName \|\| ""\)\.trim\(\)/);
-  assert.match(editorCanvasSource, /saveSystem\.restore\(sessionId\)/);
+  assert.match(startScreenSource, /createDocumentRecoveryButton\(summary\)/);
+  assert.match(startScreenSource, /const projectName = String\(summary\?\.projectName \|\| ""\)\.trim\(\)/);
+  assert.match(startScreenSource, /saveSystem\.restore\(sessionId\)/);
   assert.match(editorCanvasSource, /window\.CBO\.emitEditorCanvasReady = function emitEditorCanvasReady/);
   assert.match(editorCanvasSource, /if \(options\.deferReadyEvent === true\)/);
 });
