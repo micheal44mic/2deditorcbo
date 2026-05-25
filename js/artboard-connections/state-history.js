@@ -97,6 +97,9 @@ window.CBO = window.CBO || {};
     with (this) {
 
     removeSpaceBoardDragListeners();
+    if (typeof cancelScheduledSpaceBoardDragRender === "function") {
+      cancelScheduledSpaceBoardDragRender();
+    }
     connections = Array.isArray(state?.connections)
       ? state.connections.map(cloneConnection)
       : [];

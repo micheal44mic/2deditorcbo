@@ -736,20 +736,22 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
   }
 
   const screen = document.createElement("div");
-  const panel = document.createElement("section");
-  const title = document.createElement("h1");
+  const layout = document.createElement("div");
+  const sidebarPanel = document.createElement("aside");
+  const contentPanel = document.createElement("section");
   const recoveryHost = document.createElement("div");
   const presetGrid = document.createElement("div");
 
   screen.className = "document-start-screen";
   screen.dataset.documentStart = "";
 
-  panel.className = "document-start-panel";
-  panel.setAttribute("aria-labelledby", "document-start-title");
+  layout.className = "document-start-layout";
 
-  title.className = "document-start-title";
-  title.id = "document-start-title";
-  title.textContent = "New document";
+  sidebarPanel.className = "document-start-sidebar";
+  sidebarPanel.setAttribute("aria-label", "Document start sidebar");
+
+  contentPanel.className = "document-start-main";
+  contentPanel.setAttribute("aria-label", "Document start content");
 
   recoveryHost.className = "document-start-recovery-host";
   recoveryHost.hidden = true;
@@ -778,8 +780,8 @@ window.CBO.initEditorDocumentStart = function initEditorDocumentStart() {
     });
   });
 
-  panel.append(title, recoveryHost, presetGrid);
-  screen.append(panel);
+  layout.append(sidebarPanel, contentPanel);
+  screen.append(layout);
   stage.dataset.documentStartReady = "true";
   stage.replaceChildren(screen);
 

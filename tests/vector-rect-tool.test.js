@@ -126,7 +126,8 @@ test("vector rectangle layers are lightweight, saved entries instead of raster t
   assert.match(layoutSource, /\.editor-vector-rect-move-button \{[\s\S]*width: 32px;[\s\S]*height: 32px;/);
   assert.match(layoutSource, /\.editor-vector-rect-move-button\.is-active \{[\s\S]*color: #d94116;/);
   assert.match(layoutSource, /\.editor-vector-rect-hit-area \{[\s\S]*pointer-events: none;/);
-  assert.match(layoutSource, /\.editor-artboard-connection-layer \{[\s\S]*z-index: 5;/);
+  const connectionLayerRule = layoutSource.match(/\.editor-artboard-connection-layer\s*\{[^}]*\}/)?.[0] || "";
+  assert.match(connectionLayerRule, /z-index:\s*1;/);
   assert.match(toolSource, /style: `fill: \$\{fill\};`/);
   assert.match(layoutSource, /\.editor-vector-rect-shape \{[\s\S]*stroke: #dbdbdb;/);
   assert.doesNotMatch(layoutSource.match(/\.editor-vector-rect-shape \{[\s\S]*?\}/)?.[0] || "", /fill:/);

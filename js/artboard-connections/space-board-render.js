@@ -27,9 +27,13 @@ window.CBO = window.CBO || {};
     const viewScale = getViewScale();
     const visibleViewportRect = getSpaceBoardVisibleDocumentRect(0);
     const nearViewportRect = getSpaceBoardVisibleDocumentRect(getSpaceBoardLazyMarginDocPx());
+    const retainedRuntimePreviewSrcs = collectRetainedAiImageRuntimePreviewSrcs(aiBoards, visibleViewportRect);
     const runtimePreviewCacheStats = getAiImageRuntimePreviewCacheStats();
+    const runtimePosterCacheStats = getAiVideoRuntimePosterCacheStats();
     const cameraMotionActive = isAiBoardCameraMotionActive();
+    const boardDragActive = Boolean(spaceBoardDrag);
     const metrics = createEmptyAiBoardMetrics({
+      boardDragging: boardDragActive,
       cameraMoving: cameraMotionActive,
       dpr: roundMetricValue(viewState.dpr, 2),
       generatingBoards: aiImageGeneratingBoardIds.size,
@@ -37,6 +41,8 @@ window.CBO = window.CBO || {};
       runtimePreviewCacheCount: runtimePreviewCacheStats.readyCount,
       runtimePreviewCacheMB: runtimePreviewCacheStats.decodedMB,
       runtimePreviewLoadingCount: runtimePreviewCacheStats.loadingCount,
+      runtimePosterCacheCount: runtimePosterCacheStats.readyCount,
+      runtimePosterLoadingCount: runtimePosterCacheStats.loadingCount,
       stateBoards: aiBoards.length,
       zoom: roundMetricValue(viewState.camera.zoom, 5),
     });
@@ -105,8 +111,10 @@ window.CBO = window.CBO || {};
       const mediaHost = element.querySelector("[data-ai-image-board-media]");
       const isSelected = selectedSpaceBoardId === board.id;
       const generationKind = getAiImageBoardGenerationKind(board);
-      const isFocusedOrSelected = isSelected || isSpaceBoardFocusedOrSelected(board, element);
-      const shouldDeferPreviewWork = cameraMotionActive && !isGenerating && !isFocusedOrSelected;
+      const isFocusedOrSelected = !boardDragActive && (isSelected || isSpaceBoardFocusedOrSelected(board, element));
+      const shouldDeferPreviewWork = boardDragActive
+        ? !isGenerating
+        : cameraMotionActive && !isGenerating && !isFocusedOrSelected;
       const shouldUnloadMedia = !shouldDeferPreviewWork && shouldUnloadAiBoardMedia(board, visibilityState, element);
       const shouldUpdatePreviewLod = visibilityState === "visible" && !shouldDeferPreviewWork;
       const handleMetrics = getActionBubbleMetrics(1, docWidth, docHeight);
@@ -261,7 +269,7 @@ window.CBO = window.CBO || {};
       }
       syncAiImageBoardVideoSelectionPlayback(mediaHost, board);
 
-      if (shouldUnloadMedia) {
+      if (shouldUnloadMedia && shouldEvictAiImageRuntimePreviewVariantsForSrc(board.generatedMedia?.src || "", retainedRuntimePreviewSrcs)) {
         const evictedCount = evictAiImageRuntimePreviewVariantsForSrc(board.generatedMedia?.src || "");
 
         if (evictedCount > 0) {
@@ -276,8 +284,8 @@ window.CBO = window.CBO || {};
 
       const activePreview = isAiBoardPreviewActive(mediaHost);
       const currentLod = getAiBoardCurrentLod(board, mediaHost);
-      const decodedMB = roundMetricValue(estimateAiBoardDecodedMB(board, currentLod, activePreview), 2);
-      const previewDebug = getAiBoardPreviewDebugSnapshot(element, mediaHost);
+      const decodedMB = roundMetricValue(estimateAiBoardDecodedMB(board, currentLod, activePreview, mediaHost), 2);
+      const previewDebug = boardDragActive ? null : getAiBoardPreviewDebugSnapshot(element, mediaHost);
 
       if (activePreview) {
         metrics.activePreviewCount += 1;
@@ -345,11 +353,14 @@ window.CBO = window.CBO || {};
     syncAiImageEditPreviewViewerFromBoard();
 
     const finalRuntimePreviewCacheStats = getAiImageRuntimePreviewCacheStats();
+    const finalRuntimePosterCacheStats = getAiVideoRuntimePosterCacheStats();
 
     metrics.renderedAiBoards = renderedIds.size;
     metrics.runtimePreviewCacheCount = finalRuntimePreviewCacheStats.readyCount;
     metrics.runtimePreviewCacheMB = finalRuntimePreviewCacheStats.decodedMB;
     metrics.runtimePreviewLoadingCount = finalRuntimePreviewCacheStats.loadingCount;
+    metrics.runtimePosterCacheCount = finalRuntimePosterCacheStats.readyCount;
+    metrics.runtimePosterLoadingCount = finalRuntimePosterCacheStats.loadingCount;
     metrics.previewDebugEvents = aiBoardPreviewDebugEvents.map((event) => ({ ...event }));
     metrics.estimatedDecodedMB = roundMetricValue(metrics.estimatedDecodedMB, 2);
     metrics.frameMs = roundMetricValue((performance.now?.() || Date.now()) - renderStartedAt, 2);

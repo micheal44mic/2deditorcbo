@@ -331,7 +331,7 @@
   position: absolute;
   left: 0;
   top: 0;
-  z-index: 5;
+  z-index: 1;
   display: block;
   width: 1px;
   height: 1px;
@@ -2972,10 +2972,18 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
 .editor-ai-image-board-video {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   background: #111318;
   object-fit: contain;
   pointer-events: auto;
+}
+
+.editor-ai-image-board-video-poster {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: #111318;
+  object-fit: contain;
 }
 
 .editor-ai-image-board-video-mute {
@@ -4316,13 +4324,30 @@ body.cbo-document-restore-active .editor-stage {
   display: grid;
   width: 100%;
   height: 100%;
-  place-items: center;
-  padding: 32px;
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    #262626;
-  background-size: 32px 32px;
+  min-width: 0;
+  min-height: 0;
+  padding: 5px;
+  overflow: hidden;
+  background: var(--editor-stage-bg, #08090b);
+}
+
+.document-start-layout {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  gap: 5px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.document-start-sidebar,
+.document-start-main {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 9px;
+  background: #181a1f;
 }
 
 .document-start-panel {
@@ -4515,7 +4540,7 @@ body.cbo-document-restore-active .editor-stage {
 
 @media (max-width: 900px) {
   .document-start-screen {
-    padding: 24px;
+    padding: 5px;
   }
 
   .document-start-presets {
@@ -4534,7 +4559,7 @@ body.cbo-document-restore-active .editor-stage {
 
 @media (max-width: 520px) {
   .document-start-screen {
-    padding: 18px;
+    padding: 5px;
   }
 
   .document-start-presets {

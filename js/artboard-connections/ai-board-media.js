@@ -188,13 +188,26 @@ window.CBO = window.CBO || {};
     const previewSrc = getAiVideoBoardFixedCanvasPreviewSrc(media);
     const videoSrc = previewSrc || originalSrc;
     const lod = previewSrc ? `video-${AI_VIDEO_CANVAS_PREVIEW_LOD}` : "video-full";
-    const posterSrc = getAiVideoBoardPosterSrc(media, AI_VIDEO_CANVAS_PREVIEW_LOD);
+    let posterSrc = getAiVideoBoardPosterSrc(media, AI_VIDEO_CANVAS_PREVIEW_LOD);
+    let posterSource = posterSrc ? "provided-poster" : "";
+
+    if (!posterSrc && videoSrc) {
+      const runtimePoster = requestAiVideoRuntimePoster(videoSrc, AI_VIDEO_CANVAS_PREVIEW_LOD);
+
+      if (runtimePoster?.status === "ready" && runtimePoster.objectUrl) {
+        posterSrc = runtimePoster.objectUrl;
+        posterSource = "runtime-poster";
+      } else if (runtimePoster?.status) {
+        posterSource = `runtime-poster-${runtimePoster.status}`;
+      }
+    }
 
     return {
       kind: "video",
       lod,
       posterSrc,
-      previewKey: `${videoSrc}::${posterSrc || "no-poster"}::${lod}`,
+      posterSource,
+      previewKey: `${videoSrc}::${posterSrc || posterSource || "no-poster"}::${lod}`,
       previewMode: "video",
       previewSource: previewSrc ? "fixed-video-preview" : "original-video-fallback",
       previewSrc: videoSrc,
@@ -333,6 +346,7 @@ window.CBO = window.CBO || {};
     delete mediaHost.dataset.mediaPreviewSrc;
     delete mediaHost.dataset.mediaPreviewSwapRequest;
     delete mediaHost.dataset.mediaSrc;
+    delete mediaHost.dataset.mediaVideoRenderMode;
     delete mediaHost.dataset.mediaVideoSrc;
     }
   };
@@ -379,7 +393,7 @@ window.CBO = window.CBO || {};
     releaseAiImageBoardVideoPreview(mediaHost);
     mediaHost.querySelectorAll("[data-ai-image-board-preview-layer]").forEach(clearAiImageBoardPreviewLayer);
     mediaHost.replaceChildren();
-    mediaHost.classList.remove("is-crossfading", "is-image-preview", "is-placeholder-preview", "is-video-preview");
+    mediaHost.classList.remove("is-crossfading", "is-image-preview", "is-placeholder-preview", "is-video-preview", "is-video-deferred");
     mediaHost.style.removeProperty("background-image");
     clearAiImageBoardMediaDataset(mediaHost);
     }
@@ -572,7 +586,7 @@ window.CBO = window.CBO || {};
 
     mediaHost.style.removeProperty("background-image");
     mediaHost.classList.add("is-image-preview");
-    mediaHost.classList.remove("is-crossfading", "is-placeholder-preview", "is-video-preview");
+    mediaHost.classList.remove("is-crossfading", "is-placeholder-preview", "is-video-preview", "is-video-deferred");
 
     if (previousLayer && previousLayer !== incomingLayer) {
       previousLayer.style.zIndex = "1";
@@ -672,6 +686,22 @@ window.CBO = window.CBO || {};
     video.setAttribute("aria-hidden", "true");
 
     return video;
+    }
+  };
+
+  Controller.prototype.createAiImageBoardVideoPosterElement = function createAiImageBoardVideoPosterElement() {
+    with (this) {
+
+    const image = document.createElement("img");
+
+    image.className = "editor-ai-image-board-media-item editor-ai-image-board-video-poster";
+    image.dataset.aiImageBoardVideoPoster = "";
+    image.alt = "";
+    image.decoding = "async";
+    image.draggable = false;
+    image.setAttribute("aria-hidden", "true");
+
+    return image;
     }
   };
 
@@ -837,6 +867,79 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.getAiImageBoardVideoPreviewIntentUntil = function getAiImageBoardVideoPreviewIntentUntil(mediaHost) {
+    with (this) {
+
+    return Math.max(0, Number(mediaHost?.dataset?.mediaVideoIntentUntil) || 0);
+    }
+  };
+
+  Controller.prototype.isAiImageBoardVideoPreviewIntentActive = function isAiImageBoardVideoPreviewIntentActive(mediaHost) {
+    with (this) {
+
+    return getAiImageBoardVideoPreviewIntentUntil(mediaHost) > (performance.now?.() || Date.now());
+    }
+  };
+
+  Controller.prototype.markAiImageBoardVideoPreviewIntent = function markAiImageBoardVideoPreviewIntent(mediaHost, durationMs = 2600) {
+    with (this) {
+
+    if (!mediaHost) {
+      return;
+    }
+
+    const intentDurationMs = Math.max(800, Number(durationMs) || 2600);
+    const expiresAt = (performance.now?.() || Date.now()) + intentDurationMs;
+
+    mediaHost.dataset.mediaVideoIntentUntil = String(Math.round(expiresAt));
+    window.setTimeout?.(() => {
+      if (
+        mediaHost.isConnected &&
+        !isAiImageBoardVideoSelected(mediaHost) &&
+        !isAiImageBoardMediaHovering(mediaHost) &&
+        !isAiImageBoardVideoPreviewIntentActive(mediaHost)
+      ) {
+        renderSpaceBoards();
+      }
+    }, intentDurationMs + 80);
+    }
+  };
+
+  Controller.prototype.clearAiImageBoardVideoPreviewIntent = function clearAiImageBoardVideoPreviewIntent(mediaHost) {
+    with (this) {
+
+    if (!mediaHost) {
+      return;
+    }
+
+    delete mediaHost.dataset.mediaVideoIntentUntil;
+    }
+  };
+
+  Controller.prototype.shouldMountAiImageBoardVideoPreviewElement = function shouldMountAiImageBoardVideoPreviewElement(mediaHost, board, preview) {
+    with (this) {
+
+    const previewSource = String(preview?.previewSource || "").trim();
+
+    if (previewSource !== "original-video-fallback") {
+      return true;
+    }
+
+    return Boolean(
+      isAiImageBoardVideoSelected(mediaHost, board) ||
+      isAiImageBoardMediaHovering(mediaHost) ||
+      isAiImageBoardVideoPreviewIntentActive(mediaHost)
+    );
+    }
+  };
+
+  Controller.prototype.getAiImageBoardVideoPreviewRenderMode = function getAiImageBoardVideoPreviewRenderMode(mediaHost, board, preview) {
+    with (this) {
+
+    return shouldMountAiImageBoardVideoPreviewElement(mediaHost, board, preview) ? "mounted" : "deferred";
+    }
+  };
+
   Controller.prototype.pauseAiImageBoardVideoPreview = function pauseAiImageBoardVideoPreview(video) {
     with (this) {
 
@@ -860,6 +963,24 @@ window.CBO = window.CBO || {};
     if (playResult?.catch) {
       playResult.catch(() => {});
     }
+    }
+  };
+
+  Controller.prototype.requestAiImageBoardVideoPreviewPlayback = function requestAiImageBoardVideoPreviewPlayback(mediaHost, durationMs = 2600) {
+    with (this) {
+
+    if (!mediaHost?.isConnected) {
+      return;
+    }
+
+    markAiImageBoardVideoPreviewIntent(mediaHost, durationMs);
+    renderSpaceBoards();
+
+    const scheduleFrame = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+
+    scheduleFrame(() => {
+      playAiImageBoardVideoPreview(mediaHost.querySelector?.("[data-ai-image-board-video]"));
+    });
     }
   };
 
@@ -894,7 +1015,15 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    playAiImageBoardVideoPreview(event.currentTarget?.querySelector?.("[data-ai-image-board-video]"));
+    const mediaHost = event.currentTarget;
+    const video = mediaHost?.querySelector?.("[data-ai-image-board-video]");
+
+    if (!video) {
+      requestAiImageBoardVideoPreviewPlayback(mediaHost);
+      return;
+    }
+
+    playAiImageBoardVideoPreview(video);
     }
   };
 
@@ -907,7 +1036,9 @@ window.CBO = window.CBO || {};
       return;
     }
 
+    clearAiImageBoardVideoPreviewIntent(mediaHost);
     pauseAiImageBoardVideoPreview(mediaHost?.querySelector?.("[data-ai-image-board-video]"));
+    renderSpaceBoards();
     }
   };
 
@@ -917,12 +1048,14 @@ window.CBO = window.CBO || {};
     const mediaHost = event.currentTarget;
     const video = mediaHost?.querySelector?.("[data-ai-image-board-video]");
 
+    event.preventDefault();
+    event.stopPropagation();
+
     if (!video) {
+      requestAiImageBoardVideoPreviewPlayback(mediaHost, 10000);
       return;
     }
 
-    event.preventDefault();
-    event.stopPropagation();
     playAiImageBoardVideoPreview(video);
     }
   };
@@ -956,14 +1089,44 @@ window.CBO = window.CBO || {};
     const videoSrc = String(preview?.previewSrc || src || "").trim();
     const posterSrc = String(preview?.posterSrc || "").trim();
     const posterSrcForDataset = summarizeAiBoardPreviewSrc(posterSrc);
+    const renderMode = getAiImageBoardVideoPreviewRenderMode(mediaHost, board, preview);
+    const shouldMountVideo = renderMode === "mounted";
 
     resetAiImageBoardMediaHost(mediaHost);
     mediaHost.classList.add("is-video-preview");
+    mediaHost.classList.toggle("is-video-deferred", !shouldMountVideo);
+    mediaHost.dataset.mediaVideoRenderMode = renderMode;
     mediaHost.dataset.mediaVideoSrc = videoSrc;
     mediaHost.dataset.mediaPosterSrc = posterSrcForDataset;
     setAiImageBoardMediaDataset(mediaHost, media, preview, previewKey, previewSrcForDataset, src, kind);
 
     if (!videoSrc) {
+      return;
+    }
+
+    mediaHost.addEventListener("pointerenter", handleAiImageBoardVideoPointerEnter);
+    mediaHost.addEventListener("pointerleave", handleAiImageBoardVideoPointerLeave);
+    mediaHost.addEventListener("click", handleAiImageBoardVideoManualPlayClick);
+
+    if (!shouldMountVideo) {
+      if (posterSrc) {
+        const poster = createAiImageBoardVideoPosterElement();
+
+        poster.src = posterSrc;
+        mediaHost.append(poster);
+      }
+
+      syncAiImageBoardVideoPreviewState(mediaHost, board);
+      recordAiBoardPreviewDebugEvent("video-preview-deferred", {
+        boardId: getAiBoardDebugBoardIdFromMediaHost(mediaHost),
+        lod: preview.lod,
+        posterSource: preview.posterSource || "",
+        posterSrc,
+        previewSource: preview.previewSource || "",
+        reason: "original-video-fallback",
+        src,
+        videoSrc,
+      });
       return;
     }
 
@@ -974,9 +1137,6 @@ window.CBO = window.CBO || {};
       video.poster = posterSrc;
     }
 
-    mediaHost.addEventListener("pointerenter", handleAiImageBoardVideoPointerEnter);
-    mediaHost.addEventListener("pointerleave", handleAiImageBoardVideoPointerLeave);
-    mediaHost.addEventListener("click", handleAiImageBoardVideoManualPlayClick);
     mediaHost.append(video);
     video.src = videoSrc;
     ensureAiImageBoardVideoMuteButton(mediaHost);
@@ -987,6 +1147,7 @@ window.CBO = window.CBO || {};
       lod: preview.lod,
       posterSrc,
       previewSource: preview.previewSource || "",
+      renderMode,
       src,
       videoSrc,
     });
@@ -1026,7 +1187,7 @@ window.CBO = window.CBO || {};
 
     if (isCurrent) {
       mediaHost.classList.add("is-image-preview");
-      mediaHost.classList.remove("is-placeholder-preview", "is-video-preview");
+      mediaHost.classList.remove("is-placeholder-preview", "is-video-preview", "is-video-deferred");
       mediaHost.style.removeProperty("background-image");
       return;
     }
@@ -1050,7 +1211,7 @@ window.CBO = window.CBO || {};
 
     mediaHost.style.removeProperty("background-image");
     mediaHost.classList.add("is-image-preview");
-    mediaHost.classList.remove("is-placeholder-preview", "is-video-preview");
+    mediaHost.classList.remove("is-placeholder-preview", "is-video-preview", "is-video-deferred");
     mediaHost.dataset.mediaPreviewSwapRequest = requestId;
     markAiImageBoardPreviewPending(mediaHost, src, kind, preview, previewKey);
     recordAiBoardPreviewDebugEvent("layer-swap-start", {
@@ -1485,6 +1646,9 @@ window.CBO = window.CBO || {};
     const previewSrcForDataset = summarizeAiBoardPreviewSrc(previewSrc);
     const previewPosterSrcForDataset = summarizeAiBoardPreviewSrc(preview.posterSrc || "");
     const previewKey = String(preview.previewKey || previewSrcForDataset || previewMode);
+    const videoPreviewRenderMode = kind === "video"
+      ? getAiImageBoardVideoPreviewRenderMode(mediaHost, board, preview)
+      : "";
 
     if (shouldHoldAiImageBoardPreviewForPendingLod(mediaHost, src, kind, preview)) {
       markAiImageBoardPreviewPending(mediaHost, src, kind, preview, previewKey);
@@ -1514,7 +1678,16 @@ window.CBO = window.CBO || {};
           kind === "video" &&
           mediaHost.classList.contains("is-video-preview") &&
           mediaHost.dataset.mediaVideoSrc === previewSrc &&
-          mediaHost.dataset.mediaPosterSrc === previewPosterSrcForDataset
+          mediaHost.dataset.mediaPosterSrc === previewPosterSrcForDataset &&
+          mediaHost.dataset.mediaVideoRenderMode === videoPreviewRenderMode &&
+          (
+            videoPreviewRenderMode !== "mounted" ||
+            Boolean(mediaHost.querySelector?.("[data-ai-image-board-video]"))
+          ) &&
+          (
+            videoPreviewRenderMode !== "deferred" ||
+            !mediaHost.querySelector?.("[data-ai-image-board-video]")
+          )
         ) ||
         (kind === "image" && activeImageLayer?.dataset?.previewKey === previewKey)
       )

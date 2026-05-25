@@ -127,6 +127,76 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.renderActiveSpaceBoardDragFrame = function renderActiveSpaceBoardDragFrame() {
+    with (this) {
+
+    const state = spaceBoardDrag;
+    const board = getSpaceBoardById(state?.boardId || "");
+    const layer = ensureSpaceBoardLayer();
+    const element = layer?.querySelector?.(`[data-ai-image-board][data-board-id="${board?.id || ""}"]`);
+
+    if (!state || !board || board.type !== "ai-image" || !element) {
+      renderConnectionOverlay();
+      return false;
+    }
+
+    const docWidth = Number(board.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const docHeight = Number(board.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const viewState = getCameraState();
+    const viewScale = getViewScale();
+    const plainArtboardMode = shouldUsePlainAiBoardArtboards();
+
+    if (plainArtboardMode) {
+      const point = documentPointToStagePoint({ x: board.x, y: board.y }, viewState);
+
+      setStylePropertyIfChanged(element, "left", `${point.x}px`);
+      setStylePropertyIfChanged(element, "top", `${point.y}px`);
+      setStylePropertyIfChanged(element, "width", `${Math.max(1, docWidth * viewScale)}px`);
+      setStylePropertyIfChanged(element, "height", `${Math.max(1, docHeight * viewScale)}px`);
+      setStylePropertyIfChanged(element, "transform", "none");
+    } else {
+      setStylePropertyIfChanged(element, "transform", `translate3d(${Number(board.x) || 0}px, ${Number(board.y) || 0}px, 0)`);
+    }
+
+    element.classList.add("is-preview-work-deferred");
+    renderConnections();
+    renderConnectionMenu();
+    return true;
+    }
+  };
+
+  Controller.prototype.cancelScheduledSpaceBoardDragRender = function cancelScheduledSpaceBoardDragRender() {
+    with (this) {
+
+    if (spaceBoardDragRenderFrame && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(spaceBoardDragRenderFrame);
+    }
+
+    spaceBoardDragRenderFrame = 0;
+    }
+  };
+
+  Controller.prototype.scheduleSpaceBoardDragRender = function scheduleSpaceBoardDragRender() {
+    with (this) {
+
+    if (spaceBoardDragRenderFrame) {
+      return;
+    }
+
+    const renderFrame = () => {
+      spaceBoardDragRenderFrame = 0;
+      renderActiveSpaceBoardDragFrame();
+    };
+
+    if (typeof window.requestAnimationFrame !== "function") {
+      renderFrame();
+      return;
+    }
+
+    spaceBoardDragRenderFrame = window.requestAnimationFrame(renderFrame);
+    }
+  };
+
   Controller.prototype.dismissConnectionMenu = function dismissConnectionMenu(options = {}) {
     with (this) {
 
@@ -715,7 +785,7 @@ window.CBO = window.CBO || {};
     }
   };
 
-  Controller.prototype.constrainSpaceBoardMove = function constrainSpaceBoardMove(boardId, dx, dy, startRect) {
+  Controller.prototype.constrainSpaceBoardMove = function constrainSpaceBoardMove(boardId, dx, dy, startRect, cachedBlockers = null, cachedStartFootprint = null) {
     with (this) {
 
     const normalizedBoardId = String(boardId || "").trim();
@@ -738,11 +808,13 @@ window.CBO = window.CBO || {};
       start.width,
       start.height,
     );
-    const blockers = getSpaceBoardPlacementBlockers({
-      excludeBoardId: normalizedBoardId,
-      gap: SPACE_BOARD_DRAG_GAP_DOC_PX,
-    });
-    const startFootprint = getAiImageBoardFootprintRect(start);
+    const blockers = Array.isArray(cachedBlockers)
+      ? cachedBlockers
+      : getSpaceBoardPlacementBlockers({
+        excludeBoardId: normalizedBoardId,
+        gap: SPACE_BOARD_DRAG_GAP_DOC_PX,
+      });
+    const startFootprint = cachedStartFootprint || getAiImageBoardFootprintRect(start);
 
     if (!doesRectOverlapAny(getAiImageBoardFootprintRect(candidate), blockers)) {
       return requested;
@@ -812,17 +884,24 @@ window.CBO = window.CBO || {};
     }
     syncAiImageBoardMobileActionToolbar("");
 
+    const startRect = getSpaceBoardRect(board);
+
     spaceBoardDrag = {
       boardId,
       beforeState: captureConnectionsHistoryState(),
       didMove: false,
       dx: 0,
       dy: 0,
+      placementBlockers: getSpaceBoardPlacementBlockers({
+        excludeBoardId: boardId,
+        gap: SPACE_BOARD_DRAG_GAP_DOC_PX,
+      }),
       pointerId: event.pointerId,
       sourceElement: event.currentTarget,
       startDocX: Number(point.docX) || 0,
       startDocY: Number(point.docY) || 0,
-      startRect: getSpaceBoardRect(board),
+      startFootprint: getAiImageBoardFootprintRect(startRect),
+      startRect,
       startX: Number(board.x) || 0,
       startY: Number(board.y) || 0,
     };
@@ -856,6 +935,7 @@ window.CBO = window.CBO || {};
       // Pointer capture may already be released when the browser promotes the touch gesture.
     }
 
+    cancelScheduledSpaceBoardDragRender();
     restoreConnectionsHistoryState(state.beforeState, source);
     return true;
     }
@@ -890,6 +970,8 @@ window.CBO = window.CBO || {};
       rawDx,
       rawDy,
       spaceBoardDrag.startRect,
+      spaceBoardDrag.placementBlockers,
+      spaceBoardDrag.startFootprint,
     );
     const dx = Number(constrained.dx) || 0;
     const dy = Number(constrained.dy) || 0;
@@ -899,7 +981,7 @@ window.CBO = window.CBO || {};
     spaceBoardDrag.dx = dx;
     spaceBoardDrag.dy = dy;
     spaceBoardDrag.didMove = spaceBoardDrag.didMove || Boolean(dx || dy);
-    renderConnectionOverlay();
+    scheduleSpaceBoardDragRender();
     event.preventDefault();
     event.stopPropagation();
     }
@@ -917,6 +999,7 @@ window.CBO = window.CBO || {};
     spaceBoardDrag = null;
     removeSpaceBoardDragListeners();
     getStage()?.classList.remove("artboard-dragging");
+    cancelScheduledSpaceBoardDragRender();
 
     try {
       state.sourceElement?.releasePointerCapture?.(event.pointerId);
@@ -932,6 +1015,7 @@ window.CBO = window.CBO || {};
         source: "space-board-label-drag",
         type: "space-board-move",
       });
+      renderConnectionOverlay();
     } else {
       renderConnectionOverlay();
     }

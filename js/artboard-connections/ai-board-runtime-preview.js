@@ -21,6 +21,7 @@ window.CBO = window.CBO || {};
 
     return {
       activePreviewCount: 0,
+      boardDragging: false,
       boards: [],
       cameraMoving: false,
       deferredPreviewBoards: 0,
@@ -36,6 +37,8 @@ window.CBO = window.CBO || {};
       runtimePreviewCacheCount: 0,
       runtimePreviewCacheMB: 0,
       runtimePreviewLoadingCount: 0,
+      runtimePosterCacheCount: 0,
+      runtimePosterLoadingCount: 0,
       stateBoards: 0,
       updatedAt: new Date().toISOString(),
       visibleAiBoards: 0,
@@ -261,12 +264,22 @@ window.CBO = window.CBO || {};
     }
   };
 
-  Controller.prototype.estimateAiBoardDecodedMB = function estimateAiBoardDecodedMB(board, currentLod, isActivePreview) {
+  Controller.prototype.estimateAiBoardDecodedMB = function estimateAiBoardDecodedMB(board, currentLod, isActivePreview, mediaHost = null) {
     with (this) {
 
     const media = board?.generatedMedia || null;
 
     if (!isActivePreview || !media || !media.src) {
+      return 0;
+    }
+
+    if (
+      media.kind === "video" &&
+      (
+        mediaHost?.dataset?.mediaVideoRenderMode === "deferred" ||
+        !mediaHost?.querySelector?.("[data-ai-image-board-video]")
+      )
+    ) {
       return 0;
     }
 
@@ -319,6 +332,53 @@ window.CBO = window.CBO || {};
       loadingCount,
       readyCount,
     };
+    }
+  };
+
+  Controller.prototype.getAiVideoRuntimePosterCacheKey = function getAiVideoRuntimePosterCacheKey(src, lod = AI_VIDEO_CANVAS_PREVIEW_LOD) {
+    with (this) {
+
+    return `${String(src || "").trim()}::poster::${String(lod || AI_VIDEO_CANVAS_PREVIEW_LOD).trim()}`;
+    }
+  };
+
+  Controller.prototype.getAiVideoRuntimePosterCacheStats = function getAiVideoRuntimePosterCacheStats() {
+    with (this) {
+
+    let readyCount = 0;
+    let loadingCount = 0;
+
+    aiVideoRuntimePosterCache.forEach((entry) => {
+      if (entry.status === "loading") {
+        loadingCount += 1;
+      } else if (entry.status === "ready") {
+        readyCount += 1;
+      }
+    });
+
+    return {
+      loadingCount,
+      readyCount,
+    };
+    }
+  };
+
+  Controller.prototype.pruneAiVideoRuntimePosterCache = function pruneAiVideoRuntimePosterCache() {
+    with (this) {
+
+    const entries = Array.from(aiVideoRuntimePosterCache.entries())
+      .filter(([, entry]) => entry.status !== "loading")
+      .sort(([, first], [, second]) => (Number(first.lastUsedAt) || 0) - (Number(second.lastUsedAt) || 0));
+
+    while (aiVideoRuntimePosterCache.size > AI_VIDEO_RUNTIME_POSTER_CACHE_MAX_ENTRIES && entries.length > 0) {
+      const [key, entry] = entries.shift();
+
+      if (String(entry.objectUrl || "").startsWith("blob:")) {
+        URL.revokeObjectURL(entry.objectUrl);
+      }
+
+      aiVideoRuntimePosterCache.delete(key);
+    }
     }
   };
 
@@ -378,12 +438,18 @@ window.CBO = window.CBO || {};
       AI_IMAGE_UNSTABLE_RUNTIME_LODS.has(Number(requestedLod)) &&
       !getAiImageBoardMediaVariantSrc(media, requestedLod)
     ) {
-      recordAiBoardPreviewDebugEvent("runtime-lod-skip", {
-        lod: requestedLod,
-        nextLod: "1024",
-        reason: "unstable-runtime-lod",
-        src: media?.src || "",
-      });
+      const skipKey = `${media?.src || ""}::${requestedLod}::1024`;
+
+      if (!aiRuntimeLodSkipDebugKeys.has(skipKey)) {
+        aiRuntimeLodSkipDebugKeys.add(skipKey);
+        recordAiBoardPreviewDebugEvent("runtime-lod-skip", {
+          lod: requestedLod,
+          nextLod: "1024",
+          reason: "unstable-runtime-lod",
+          src: media?.src || "",
+        });
+      }
+
       return "1024";
     }
 
@@ -687,6 +753,128 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.loadVideoElementForRuntimePoster = function loadVideoElementForRuntimePoster(src) {
+    with (this) {
+
+    return new Promise((resolve, reject) => {
+      const video = document.createElement("video");
+      let settled = false;
+      let timeoutId = 0;
+      const cleanup = () => {
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+          timeoutId = 0;
+        }
+
+        video.onloadedmetadata = null;
+        video.onloadeddata = null;
+        video.oncanplay = null;
+        video.onerror = null;
+      };
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+
+        if (Number(video.videoWidth) <= 0 || Number(video.videoHeight) <= 0 || Number(video.readyState) < 2) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        resolve(video);
+      };
+      const fail = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        reject(new Error(`Unable to load AI video poster source: ${src}`));
+      };
+
+      video.muted = true;
+      video.defaultMuted = true;
+      video.playsInline = true;
+      video.preload = "metadata";
+      video.disablePictureInPicture = true;
+      video.disableRemotePlayback = true;
+      video.setAttribute("muted", "");
+      video.setAttribute("playsinline", "");
+      video.setAttribute("webkit-playsinline", "");
+      video.setAttribute("preload", "metadata");
+      video.onloadedmetadata = finish;
+      video.onloadeddata = finish;
+      video.oncanplay = finish;
+      video.onerror = fail;
+      timeoutId = window.setTimeout(fail, 2600);
+      video.src = src;
+      video.load?.();
+    });
+    }
+  };
+
+  Controller.prototype.drawAiVideoRuntimePosterCanvas = async function drawAiVideoRuntimePosterCanvas(context, canvas, video, width, height, lod, src) {
+    with (this) {
+
+    await waitAiImageRuntimePreviewFrame(2);
+
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#111318";
+    context.fillRect(0, 0, width, height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = isAiImageBoardMobileLowQualityPreview() ? "low" : "medium";
+    context.drawImage(video, 0, 0, width, height);
+    context.restore();
+
+    return probeAiImageRuntimePreviewCanvas(canvas);
+    }
+  };
+
+  Controller.prototype.buildAiVideoRuntimePoster = async function buildAiVideoRuntimePoster(src, lod = AI_VIDEO_CANVAS_PREVIEW_LOD) {
+    with (this) {
+
+    const video = await loadVideoElementForRuntimePoster(src);
+    const sourceWidth = Math.max(1, Number(video.videoWidth || video.width) || 1);
+    const sourceHeight = Math.max(1, Number(video.videoHeight || video.height) || 1);
+    const targetMax = Math.max(1, Number(lod) || AI_VIDEO_CANVAS_PREVIEW_LOD);
+    const scale = Math.min(1, targetMax / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+
+    canvas.width = width;
+    canvas.height = height;
+
+    try {
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+
+      if (!context) {
+        throw new Error("Unable to create AI video poster canvas context.");
+      }
+
+      const probe = await drawAiVideoRuntimePosterCanvas(context, canvas, video, width, height, lod, src);
+      const previewUrl = await canvasToRuntimePreviewUrl(canvas);
+
+      return {
+        height,
+        objectUrl: previewUrl.url,
+        probe,
+        sourceType: previewUrl.sourceType,
+        width,
+      };
+    } finally {
+      canvas.width = 1;
+      canvas.height = 1;
+      video.removeAttribute("src");
+      video.load?.();
+    }
+    }
+  };
+
   Controller.prototype.probeAiImagePreviewDrawable = function probeAiImagePreviewDrawable(drawable) {
     with (this) {
 
@@ -799,6 +987,57 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.getAiImageBoardRuntimePreviewSrc = function getAiImageBoardRuntimePreviewSrc(board) {
+    with (this) {
+
+    const media = board?.generatedMedia || null;
+    const kind = media?.kind === "video" ? "video" : "image";
+    const src = String(media?.src || "").trim();
+
+    return kind === "image" ? src : "";
+    }
+  };
+
+  Controller.prototype.collectRetainedAiImageRuntimePreviewSrcs = function collectRetainedAiImageRuntimePreviewSrcs(aiBoards, visibleViewportRect) {
+    with (this) {
+
+    const retainedSrcs = new Set();
+
+    (Array.isArray(aiBoards) ? aiBoards : []).forEach((board) => {
+      const src = getAiImageBoardRuntimePreviewSrc(board);
+
+      if (!src) {
+        return;
+      }
+
+      if (String(board?.id || "") === selectedSpaceBoardId) {
+        retainedSrcs.add(src);
+        return;
+      }
+
+      const boardRect = getSpaceBoardRect(board);
+
+      if (boardRect && visibleViewportRect && rectsOverlap(boardRect, visibleViewportRect)) {
+        retainedSrcs.add(src);
+      }
+    });
+
+    return retainedSrcs;
+    }
+  };
+
+  Controller.prototype.shouldEvictAiImageRuntimePreviewVariantsForSrc = function shouldEvictAiImageRuntimePreviewVariantsForSrc(src, retainedRuntimePreviewSrcs = null) {
+    with (this) {
+
+    const normalizedSrc = String(src || "").trim();
+
+    return Boolean(
+      normalizedSrc &&
+      !(retainedRuntimePreviewSrcs instanceof Set && retainedRuntimePreviewSrcs.has(normalizedSrc))
+    );
+    }
+  };
+
   Controller.prototype.probeAiImageRuntimePreviewCanvas = function probeAiImageRuntimePreviewCanvas(canvas) {
     with (this) {
 
@@ -881,6 +1120,79 @@ window.CBO = window.CBO || {};
           status: "error",
         });
         console.warn("[CBO] Unable to create runtime AI preview variant.", error);
+        renderSpaceBoards();
+      });
+
+    return entry;
+    }
+  };
+
+  Controller.prototype.requestAiVideoRuntimePoster = function requestAiVideoRuntimePoster(src, lod = AI_VIDEO_CANVAS_PREVIEW_LOD) {
+    with (this) {
+
+    const normalizedSrc = String(src || "").trim();
+    const normalizedLod = String(lod || AI_VIDEO_CANVAS_PREVIEW_LOD).trim();
+
+    if (!normalizedSrc) {
+      return null;
+    }
+
+    const key = getAiVideoRuntimePosterCacheKey(normalizedSrc, normalizedLod);
+    const cached = aiVideoRuntimePosterCache.get(key);
+
+    if (cached) {
+      cached.lastUsedAt = performance.now?.() || Date.now();
+      return cached;
+    }
+
+    const entry = {
+      height: 0,
+      lastUsedAt: performance.now?.() || Date.now(),
+      lod: normalizedLod,
+      objectUrl: "",
+      probe: null,
+      sourceType: "",
+      src: normalizedSrc,
+      status: "loading",
+      width: 0,
+    };
+
+    aiVideoRuntimePosterCache.set(key, entry);
+    recordAiBoardPreviewDebugEvent("video-poster-request", {
+      lod: normalizedLod,
+      src: normalizedSrc,
+    });
+    buildAiVideoRuntimePoster(normalizedSrc, normalizedLod)
+      .then((result) => {
+        entry.height = result.height;
+        entry.objectUrl = result.objectUrl;
+        entry.probe = result.probe || null;
+        entry.sourceType = result.sourceType;
+        entry.status = "ready";
+        entry.width = result.width;
+        entry.lastUsedAt = performance.now?.() || Date.now();
+        recordAiBoardPreviewDebugEvent("video-poster-ready", {
+          height: result.height,
+          lod: normalizedLod,
+          probe: result.probe || null,
+          sourceType: result.sourceType,
+          src: normalizedSrc,
+          status: "ready",
+          width: result.width,
+        });
+        pruneAiVideoRuntimePosterCache();
+        renderSpaceBoards();
+      })
+      .catch((error) => {
+        entry.error = error?.message || String(error || "error");
+        entry.status = "error";
+        recordAiBoardPreviewDebugEvent("video-poster-error", {
+          lod: normalizedLod,
+          message: entry.error,
+          src: normalizedSrc,
+          status: "error",
+        });
+        console.warn("[CBO] Unable to create runtime AI video poster.", error);
         renderSpaceBoards();
       });
 
@@ -1092,7 +1404,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.traceAiBoardPreviewVisibility = function traceAiBoardPreviewVisibility(metrics) {
     with (this) {
 
-    if (!isAiImageBoardMobileLowQualityPreview() || !metrics?.boards?.length) {
+    if (metrics?.boardDragging || !isAiImageBoardMobileLowQualityPreview() || !metrics?.boards?.length) {
       return;
     }
 
@@ -1186,6 +1498,10 @@ window.CBO = window.CBO || {};
       const video = mediaHost.querySelector?.("[data-ai-image-board-video]");
 
       if (!video) {
+        if (mediaHost.dataset.mediaVideoRenderMode === "deferred") {
+          return "video-deferred";
+        }
+
         return "video-no-element";
       }
 
@@ -1258,6 +1574,7 @@ window.CBO = window.CBO || {};
         src: summarizeAiBoardPreviewSrc(mediaHost.dataset.mediaSrc || ""),
         swapRequest: mediaHost.dataset.mediaPreviewSwapRequest || "",
         visibility: hostStyle?.visibility || "",
+        videoRenderMode: mediaHost.dataset.mediaVideoRenderMode || "",
       } : null,
       lastEvent: lastEvent ? {
         at: lastEvent.at,
