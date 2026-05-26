@@ -463,6 +463,25 @@
     };
   }
 
+  async function prepareAiWorkspaceForStorage(workspace, sessionId, source = "autosave-ai-workspace-cache") {
+    if (typeof namespace.documentAssetCache?.prepareAiWorkspace !== "function") {
+      return workspace;
+    }
+
+    return namespace.documentAssetCache.prepareAiWorkspace(workspace, {
+      sessionId,
+      source,
+    });
+  }
+
+  async function hydrateAiWorkspaceForRestore(workspace) {
+    if (typeof namespace.documentAssetCache?.hydrateAiWorkspace !== "function") {
+      return workspace;
+    }
+
+    return namespace.documentAssetCache.hydrateAiWorkspace(workspace);
+  }
+
   function getSessionAiWorkspace(session) {
     const workspace = session?.document?.aiWorkspace || session?.aiWorkspace || {};
     const boards = Array.isArray(workspace?.boards)
@@ -479,8 +498,8 @@
     };
   }
 
-  function restoreSessionAiWorkspace(session, source = "autosave-restore-ai-workspace") {
-    const state = getSessionAiWorkspace(session);
+  async function restoreSessionAiWorkspace(session, source = "autosave-restore-ai-workspace") {
+    const state = await hydrateAiWorkspaceForRestore(getSessionAiWorkspace(session));
 
     if (typeof namespace.restoreArtboardConnections === "function") {
       return namespace.restoreArtboardConnections(state, { source });
@@ -877,6 +896,11 @@
     const rasterLayerIds = Array.from(collectRasterLayerIds(entries));
     const rasterLayers = [];
     const tileRecords = [];
+    const aiWorkspace = await prepareAiWorkspaceForStorage(
+      getCurrentAiWorkspace(),
+      sessionId,
+      "autosave-ai-workspace-cache",
+    );
 
     for (const layerId of rasterLayerIds) {
       const captured = await captureLayerTiles(sessionId, layerId, renderer);
@@ -895,7 +919,7 @@
       session: {
         activeLayerId: layerModel.activeLayerId || null,
         document: {
-          aiWorkspace: getCurrentAiWorkspace(),
+          aiWorkspace,
           artboards: namespace.getDocumentArtboards?.() || [],
           height: Math.max(1, Math.round(renderer.height || namespace.documentSettings?.height || 1)),
           presetId: namespace.documentSettings?.presetId || "",
@@ -1011,6 +1035,10 @@
     let payload = null;
 
     try {
+      await namespace.requestPersistentStorage?.({
+        source: `${source}-autosave`,
+      });
+
       payload = await buildCurrentSession();
 
       if (!payload) {
@@ -1307,7 +1335,7 @@
       }
 
       restoreSessionArtboards(session);
-      restoreSessionAiWorkspace(session);
+      await restoreSessionAiWorkspace(session);
       fitRestoreViewToArtboards(session);
       await restoreRasterLayers(session, tileRecords);
 

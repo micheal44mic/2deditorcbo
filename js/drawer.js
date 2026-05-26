@@ -652,6 +652,10 @@ window.CBO.initDrawer = function initDrawer() {
     const records = await Promise.all(imageFiles.map(createUploadRecord));
     let storedPersistently = true;
 
+    await window.CBO.requestPersistentStorage?.({
+      source: "upload-cache",
+    });
+
     for (const record of records) {
       try {
         await saveUploadedImage(record);

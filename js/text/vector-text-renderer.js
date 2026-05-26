@@ -9,6 +9,7 @@
     ".text-add-toolbar",
     ".mobile-text-panel",
     ".right-vertical-toolbar-dock",
+    ".editor-raster-transform-overlay",
     "[data-text-prompt-toolbar]",
     "[data-text-prompt-focus-overlay]",
     "[data-ai-image-board-action-toolbar]",

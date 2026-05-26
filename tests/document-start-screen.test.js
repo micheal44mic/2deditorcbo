@@ -45,6 +45,11 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(editorCanvasSource, /function dispatchEditorCanvasReady\(documentRenderer, documentSize = \{\}, options = \{\}\)/);
   assert.match(editorCanvasSource, /window\.CBO\.emitEditorCanvasReady = function emitEditorCanvasReady/);
   assert.match(editorCanvasSource, /if \(options\.deferReadyEvent === true\)/);
+  assert.match(editorCanvasSource, /function prepareEditorStageForCanvasInit\(stage, editorPage\)/);
+  assert.match(editorCanvasSource, /stage\.dataset\.editorStageTransitionSuppressed = "true"/);
+  assert.match(editorCanvasSource, /stage\.getBoundingClientRect\(\)/);
+  assert.match(editorCanvasSource, /function releaseEditorStageCanvasInitTransition\(stage\)/);
+  assert.match(editorCanvasSource, /delete stage\.dataset\.editorStageTransitionSuppressed/);
   assert.doesNotMatch(editorCanvasSource, /document-start-new-project/);
   assert.doesNotMatch(editorCanvasSource, /localStorage|sessionStorage/);
 
@@ -86,6 +91,13 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(startScreenSource, /createCard\.dataset\.documentProjectCreate = ""/);
   assert.match(startScreenSource, /createTitle\.textContent = "Create new canvas"/);
   assert.match(startScreenSource, /grid\.append\(createCard\)/);
+  assert.match(startScreenSource, /function getProjectThumbnailSrc\(summary\)/);
+  assert.match(startScreenSource, /src\.startsWith\("data:image\/"\)/);
+  assert.match(startScreenSource, /function createSavedProjectCard\(summary\)/);
+  assert.match(startScreenSource, /card\.className = "document-start-project-card document-start-project-card-saved"/);
+  assert.match(startScreenSource, /image\.className = "document-start-project-thumbnail"/);
+  assert.match(startScreenSource, /preview\.append\(createProjectFallbackPreview\(summary\)\)/);
+  assert.match(startScreenSource, /return \{[\s\S]*createCard,[\s\S]*grid,[\s\S]*section,[\s\S]*\}/);
   assert.doesNotMatch(startScreenSource, /Saved project example/);
   assert.match(startScreenSource, /startProjects\.createCard\.addEventListener\("click"/);
   assert.match(startScreenSource, /editorPage\?\.classList\.add\("document-start-active"\)/);
@@ -94,6 +106,8 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(startScreenSource, /button\.dataset\.documentPreset = preset\.id/);
   assert.match(startScreenSource, /namespace\.documentSaveSystem/);
   assert.match(startScreenSource, /saveSystem\.listSummaries\(\)/);
+  assert.match(startScreenSource, /renderSavedProjects\(stage, startProjects, saveSystem\)/);
+  assert.match(startScreenSource, /grid\.append\(projectCard\.card\)/);
   assert.match(startScreenSource, /saveSystem\.restore\(sessionId\)/);
   assert.match(startScreenSource, /saveSystem\.delete\?\.\(sessionId\)/);
   assert.match(startScreenSource, /clearCurrentDocument/);
@@ -128,7 +142,14 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(cssSource, /\.document-start-projects[\s\S]*padding: 20px 20px 28px/);
   assert.match(cssSource, /\.document-start-project-grid[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(220px, 280px\)\)/);
   assert.match(cssSource, /\.document-start-project-preview[\s\S]*aspect-ratio: 16 \/ 9/);
+  assert.match(cssSource, /\.document-start-project-card-saved[\s\S]*position: relative/);
+  assert.match(cssSource, /\.document-start-project-open[\s\S]*display: grid/);
+  assert.match(cssSource, /\.document-start-project-preview-saved/);
+  assert.match(cssSource, /\.document-start-project-thumbnail[\s\S]*object-fit: cover/);
+  assert.match(cssSource, /\.document-start-project-preview-fallback/);
   assert.match(cssSource, /\.document-start-project-card-title[\s\S]*font-size: 13px/);
+  assert.match(cssSource, /\.document-start-project-card-meta[\s\S]*font-size: 11px/);
+  assert.match(cssSource, /\.document-start-project-delete[\s\S]*position: absolute/);
   assert.doesNotMatch(cssSource, /document-start-project-saved-shape/);
   assert.match(cssSource, /\.document-start-sidebar[\s\S]*padding: 18px/);
   assert.match(cssSource, /\.document-start-brand/);
@@ -143,6 +164,7 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(cssSource, /\.editor-page\.document-start-active[\s\S]*--left-panel-width: 0px;[\s\S]*--right-panel-width: 0px/);
   assert.match(cssSource, /\.editor-page\.document-start-active > :not\(\.editor-stage\)[\s\S]*display: none !important/);
   assert.match(cssSource, /\.editor-page\.document-start-active \.editor-stage[\s\S]*margin: 0 !important/);
+  assert.match(layoutSource, /\.editor-stage\[data-editor-stage-transition-suppressed="true"\][\s\S]*transition: none !important/);
   assert.match(cssSource, /\.document-start-recovery/);
   assert.match(cssSource, /\.document-start-recovery-list/);
   assert.match(cssSource, /\.document-start-recovery-delete/);

@@ -258,6 +258,30 @@ function insertLayerAtTopOfArtboardEntries(entries, artboardId, layer, layerMode
   return false;
 }
 
+function prepareEditorStageForCanvasInit(stage, editorPage) {
+  if (!stage) {
+    return;
+  }
+
+  stage.dataset.editorStageTransitionSuppressed = "true";
+  editorPage?.classList.remove("document-start-active");
+  stage.getBoundingClientRect();
+}
+
+function releaseEditorStageCanvasInitTransition(stage) {
+  if (!stage) {
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (stage.dataset.canvasReady === "true") {
+        delete stage.dataset.editorStageTransitionSuppressed;
+      }
+    });
+  });
+}
+
 function removeLayerFromEntriesById(entries, layerId) {
   const normalizedLayerId = String(layerId || "").trim();
 
@@ -801,11 +825,12 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   canvas.className = "editor-webgl-canvas";
   canvas.setAttribute("aria-label", "Area di disegno WebGL");
 
-  editorPage?.classList.remove("document-start-active");
+  prepareEditorStageForCanvasInit(stage, editorPage);
   stage.dataset.canvasReady = "true";
   stage.dataset.documentStartReady = "false";
   stage.dataset.paintEngine = "webgl2";
   stage.replaceChildren(canvas, zoomIndicator);
+  stage.getBoundingClientRect();
 
   window.CBO.disposeEditorZoomIndicator?.();
   window.CBO.documentHistory?.dispose?.();
@@ -995,12 +1020,14 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
       documentSize,
       "editor-canvas-init-deferred",
     );
+    releaseEditorStageCanvasInitTransition(stage);
     return;
   }
 
   dispatchEditorCanvasReady(documentRenderer, documentSize, {
     source: "editor-canvas-init",
   });
+  releaseEditorStageCanvasInitTransition(stage);
 
   if (options.startWithNoActiveLayer === true) {
     layerModel.setActiveLayer(null, {

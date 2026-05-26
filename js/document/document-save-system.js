@@ -14,6 +14,10 @@
   const TILE_CODECS = Object.freeze(["zstd", "gzip", "deflate"]);
   const RAW_TILE_CODEC = "raw";
   const RASTER_LAYER_TYPES = new Set(["paint", "image"]);
+  const THUMBNAIL_WIDTH = 480;
+  const THUMBNAIL_HEIGHT = 270;
+  const THUMBNAIL_TYPE = "image/webp";
+  const THUMBNAIL_QUALITY = 0.82;
 
   namespace.documentProjectNameStorageKey = PROJECT_NAME_STORAGE_KEY;
 
@@ -364,9 +368,233 @@
     };
   }
 
+  function createCanvasBlob(canvas, type = THUMBNAIL_TYPE, quality = THUMBNAIL_QUALITY) {
+    return new Promise((resolve) => {
+      if (!canvas?.toBlob) {
+        resolve(null);
+        return;
+      }
+
+      canvas.toBlob((blob) => resolve(blob || null), type, quality);
+    });
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+      reader.onerror = () => reject(reader.error || new Error("Unable to read thumbnail blob"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function getThumbnailDocumentRect(renderer) {
+    const rect = namespace.getDocumentArtboardUnionRect?.() ||
+      renderer?.getDocumentBoundsRect?.() ||
+      null;
+    const width = Math.max(1, Math.round(Number(rect?.width) || renderer?.width || 1));
+    const height = Math.max(1, Math.round(Number(rect?.height) || renderer?.height || 1));
+
+    return {
+      height,
+      width,
+      x: Number.isFinite(Number(rect?.x)) ? Number(rect.x) : 0,
+      y: Number.isFinite(Number(rect?.y)) ? Number(rect.y) : 0,
+    };
+  }
+
+  function getThumbnailFitCamera(documentRect) {
+    const padding = 16;
+    const usableWidth = Math.max(1, THUMBNAIL_WIDTH - padding * 2);
+    const usableHeight = Math.max(1, THUMBNAIL_HEIGHT - padding * 2);
+    const zoom = Math.min(
+      usableWidth / Math.max(1, documentRect.width),
+      usableHeight / Math.max(1, documentRect.height),
+    );
+
+    return {
+      x: Math.round((THUMBNAIL_WIDTH - documentRect.width * zoom) * 0.5 - documentRect.x * zoom),
+      y: Math.round((THUMBNAIL_HEIGHT - documentRect.height * zoom) * 0.5 - documentRect.y * zoom),
+      zoom,
+    };
+  }
+
+  function createThumbnailRenderTarget(gl) {
+    const texture = gl.createTexture();
+    const framebuffer = gl.createFramebuffer();
+
+    if (!texture || !framebuffer) {
+      if (texture) {
+        gl.deleteTexture(texture);
+      }
+
+      if (framebuffer) {
+        gl.deleteFramebuffer(framebuffer);
+      }
+
+      return null;
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      THUMBNAIL_WIDTH,
+      THUMBNAIL_HEIGHT,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      null,
+    );
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+    const ready = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    if (!ready) {
+      gl.deleteFramebuffer(framebuffer);
+      gl.deleteTexture(texture);
+      return null;
+    }
+
+    return {
+      framebuffer,
+      height: THUMBNAIL_HEIGHT,
+      texture,
+      width: THUMBNAIL_WIDTH,
+    };
+  }
+
+  function destroyThumbnailRenderTarget(gl, target) {
+    if (!target) {
+      return;
+    }
+
+    if (target.framebuffer) {
+      gl.deleteFramebuffer(target.framebuffer);
+    }
+
+    if (target.texture) {
+      gl.deleteTexture(target.texture);
+    }
+  }
+
+  function createCanvasFromFramebuffer(gl, target) {
+    const width = Math.max(1, Math.round(target?.width || 1));
+    const height = Math.max(1, Math.round(target?.height || 1));
+    const pixels = new Uint8Array(width * height * 4);
+    const flippedPixels = new Uint8ClampedArray(width * height * 4);
+    const pixelsCanvas = document.createElement("canvas");
+    const pixelsContext = pixelsCanvas.getContext("2d");
+    const thumbnailCanvas = document.createElement("canvas");
+    const thumbnailContext = thumbnailCanvas.getContext("2d", { alpha: false });
+
+    if (!pixelsContext || !thumbnailContext) {
+      return null;
+    }
+
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, target.framebuffer);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+
+    for (let y = 0; y < height; y += 1) {
+      const sourceOffset = (height - y - 1) * width * 4;
+      const targetOffset = y * width * 4;
+
+      flippedPixels.set(pixels.subarray(sourceOffset, sourceOffset + width * 4), targetOffset);
+    }
+
+    pixelsCanvas.width = width;
+    pixelsCanvas.height = height;
+    thumbnailCanvas.width = width;
+    thumbnailCanvas.height = height;
+
+    const imageData = pixelsContext.createImageData(width, height);
+
+    imageData.data.set(flippedPixels);
+    pixelsContext.putImageData(imageData, 0, 0);
+
+    thumbnailContext.fillStyle = "#121419";
+    thumbnailContext.fillRect(0, 0, width, height);
+    thumbnailContext.drawImage(pixelsCanvas, 0, 0);
+
+    return thumbnailCanvas;
+  }
+
+  async function captureCurrentDocumentThumbnail() {
+    const renderer = namespace.documentRenderer;
+    const gl = renderer?.gl;
+
+    if (!renderer || !gl || typeof renderer.drawToCanvas !== "function") {
+      return null;
+    }
+
+    const target = createThumbnailRenderTarget(gl);
+
+    if (!target) {
+      return null;
+    }
+
+    try {
+      const documentRect = getThumbnailDocumentRect(renderer);
+      const camera = getThumbnailFitCamera(documentRect);
+
+      renderer.drawToCanvas({
+        allowPreviewCache: false,
+        camera,
+        framebuffer: target.framebuffer,
+        viewportHeight: THUMBNAIL_HEIGHT,
+        viewportWidth: THUMBNAIL_WIDTH,
+      });
+
+      const thumbnailCanvas = createCanvasFromFramebuffer(gl, target);
+
+      if (!thumbnailCanvas) {
+        return null;
+      }
+
+      const blob = await createCanvasBlob(thumbnailCanvas);
+      const dataUrl = blob
+        ? await blobToDataUrl(blob)
+        : thumbnailCanvas.toDataURL("image/png");
+
+      return dataUrl
+        ? {
+            capturedAt: new Date().toISOString(),
+            dataUrl,
+            height: THUMBNAIL_HEIGHT,
+            sourceHeight: documentRect.height,
+            sourceWidth: documentRect.width,
+            type: blob?.type || "image/png",
+            width: THUMBNAIL_WIDTH,
+          }
+        : null;
+    } catch (error) {
+      console.warn?.("Thumbnail progetto non creata.", error);
+      return null;
+    } finally {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      destroyThumbnailRenderTarget(gl, target);
+      namespace.brushEngine?.requestDraw?.();
+    }
+  }
+
   function createSummary(session) {
     const document = session?.document || {};
     const project = session?.project || {};
+    const thumbnail = session?.thumbnail || {};
 
     return {
       height: Math.max(0, Math.round(document.height || 0)),
@@ -374,6 +602,9 @@
       projectName: typeof project.name === "string" ? project.name : "",
       savedAt: session?.savedAt || "",
       sessionId: session?.id || "",
+      thumbnailDataUrl: typeof thumbnail.dataUrl === "string" ? thumbnail.dataUrl : "",
+      thumbnailHeight: Math.max(0, Math.round(thumbnail.height || 0)),
+      thumbnailWidth: Math.max(0, Math.round(thumbnail.width || 0)),
       tileCount: Math.max(0, Math.round(session?.tileCount || 0)),
       width: Math.max(0, Math.round(document.width || 0)),
     };
@@ -394,6 +625,9 @@
       projectName: typeof value.projectName === "string" ? value.projectName : "",
       savedAt: value.savedAt || "",
       sessionId: String(value.sessionId || ""),
+      thumbnailDataUrl: typeof value.thumbnailDataUrl === "string" ? value.thumbnailDataUrl : "",
+      thumbnailHeight: Math.max(0, Math.round(value.thumbnailHeight || 0)),
+      thumbnailWidth: Math.max(0, Math.round(value.thumbnailWidth || 0)),
       tileCount: Math.max(0, Math.round(value.tileCount || 0)),
       width: Math.max(0, Math.round(value.width || 0)),
     };
@@ -521,6 +755,25 @@
     };
   }
 
+  async function prepareAiWorkspaceForStorage(workspace, sessionId, source = "document-save-ai-workspace-cache") {
+    if (typeof namespace.documentAssetCache?.prepareAiWorkspace !== "function") {
+      return workspace;
+    }
+
+    return namespace.documentAssetCache.prepareAiWorkspace(workspace, {
+      sessionId,
+      source,
+    });
+  }
+
+  async function hydrateAiWorkspaceForRestore(workspace) {
+    if (typeof namespace.documentAssetCache?.hydrateAiWorkspace !== "function") {
+      return workspace;
+    }
+
+    return namespace.documentAssetCache.hydrateAiWorkspace(workspace);
+  }
+
   function getSessionAiWorkspace(session) {
     const workspace = session?.document?.aiWorkspace || session?.aiWorkspace || {};
     const boards = Array.isArray(workspace?.boards)
@@ -537,8 +790,8 @@
     };
   }
 
-  function restoreSessionAiWorkspace(session, source = "document-save-restore-ai-workspace") {
-    const state = getSessionAiWorkspace(session);
+  async function restoreSessionAiWorkspace(session, source = "document-save-restore-ai-workspace") {
+    const state = await hydrateAiWorkspaceForRestore(getSessionAiWorkspace(session));
 
     if (typeof namespace.restoreArtboardConnections === "function") {
       return namespace.restoreArtboardConnections(state, { source });
@@ -1022,6 +1275,12 @@
     const rasterLayerIds = Array.from(collectRasterLayerIds(entries));
     const rasterLayers = [];
     const tileRecords = [];
+    const thumbnail = await captureCurrentDocumentThumbnail();
+    const aiWorkspace = await prepareAiWorkspaceForStorage(
+      getCurrentAiWorkspace(),
+      sessionId,
+      "document-save-ai-workspace-cache",
+    );
 
     for (const layerId of rasterLayerIds) {
       const captured = await captureLayerTiles(sessionId, layerId, renderer);
@@ -1040,7 +1299,7 @@
       session: {
         activeLayerId: layerModel.activeLayerId || null,
         document: {
-          aiWorkspace: getCurrentAiWorkspace(),
+          aiWorkspace,
           artboards: namespace.getDocumentArtboards?.() || [],
           height: Math.max(1, Math.round(renderer.height || namespace.documentSettings?.height || 1)),
           presetId: namespace.documentSettings?.presetId || "",
@@ -1061,6 +1320,7 @@
         rasterStorage,
         referenceLayerId: history?.getReferenceLayerId?.() || null,
         savedAt: new Date().toISOString(),
+        thumbnail,
         tileCount: tileRecords.length,
         tileRawByteLength: rasterStorage.rawByteLength,
         tileStoredByteLength: rasterStorage.storedByteLength,
@@ -1133,6 +1393,10 @@
   }
 
   async function prepareDocumentForSave(source = "manual-save") {
+    await namespace.requestPersistentStorage?.({
+      source: `${source}-document-save`,
+    });
+
     namespace.prepareArtboardConnectionsForSave?.({
       source: `${source}-ai-workspace`,
     });
@@ -1453,7 +1717,7 @@
       }
 
       restoreSessionArtboards(session);
-      restoreSessionAiWorkspace(session);
+      await restoreSessionAiWorkspace(session);
       fitRestoreViewToArtboards(session);
       await restoreRasterLayers(session, tileRecords);
 

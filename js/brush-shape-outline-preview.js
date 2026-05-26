@@ -7,7 +7,8 @@ window.CBO = window.CBO || {};
   const maxPointerHistoryPoints = 8;
   const minDirectionalDistance = 5;
   const pointerAngleSmoothing = 0.35;
-  const outlineColor = [223, 227, 234, 255];
+  const previewOpacity = 0.68;
+  const outlineColor = [223, 227, 234, 220];
   let brushSettingsOverride = null;
 
   function isAndroidPerformanceMode() {
@@ -58,12 +59,6 @@ window.CBO = window.CBO || {};
     const size = Number(settings?.size);
 
     return Number.isFinite(size) && size > 0 ? size : 20;
-  }
-
-  function getBrushOpacity(settings) {
-    const opacity = Number(settings?.opacity);
-
-    return Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1;
   }
 
   function getShapeSource(settings) {
@@ -171,7 +166,7 @@ window.CBO = window.CBO || {};
     const useAlpha = maxAlpha - minAlpha > alphaThreshold && minAlpha < 255 - alphaThreshold;
     const output = context.createImageData(size, size);
     const outputData = output.data;
-    const outlineRadius = Math.max(1, Math.round(renderScale * 0.75));
+    const outlineRadius = Math.max(1, Math.round(renderScale * 0.38));
 
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
@@ -260,6 +255,7 @@ window.CBO = window.CBO || {};
     let currentFlipY = null;
     let renderRequestId = 0;
     let pointerInsideStage = false;
+    let activeStrokePointerId = null;
     const pointerHistory = [];
     let pointerAngle = 0;
     let hasStablePointerAngle = false;
@@ -277,6 +273,8 @@ window.CBO = window.CBO || {};
     function syncVisibility() {
       wrapper.hidden = !activeTool ||
         !pointerInsideStage ||
+        activeStrokePointerId != null ||
+        namespace.brushEngine?.isDrawing === true ||
         namespace.isTouchNavigationExclusive?.({ includeGuard: true }) === true;
     }
 
@@ -340,8 +338,42 @@ window.CBO = window.CBO || {};
       const settings = getBrushSettings();
       const rotation = getShapeBaseRotation(settings) + pointerAngle * getShapeRotation(settings);
 
-      canvas.style.opacity = String(getBrushOpacity(settings));
+      canvas.style.opacity = String(previewOpacity);
       canvas.style.transform = `rotate(${rotation}rad) scale(${getPreviewScale(settings, camera)})`;
+    }
+
+    function isPrimaryStrokePointer(event) {
+      return activeTool &&
+        (event.pointerType !== "mouse" || event.button === 0) &&
+        namespace.isTouchNavigationExclusive?.({ includeGuard: true }) !== true;
+    }
+
+    function beginStrokePreviewHide(event) {
+      resetPointerTracking();
+      updatePointerPosition(event);
+
+      if (isPrimaryStrokePointer(event) && pointerInsideStage) {
+        activeStrokePointerId = event.pointerId;
+        syncVisibility();
+      }
+    }
+
+    function finishStrokePreviewHide(event) {
+      if (activeStrokePointerId == null || event.pointerId !== activeStrokePointerId) {
+        return;
+      }
+
+      activeStrokePointerId = null;
+      resetPointerTracking();
+      updatePointerPosition(event);
+      window.requestAnimationFrame(syncVisibility);
+    }
+
+    function cancelStrokePreviewHide() {
+      pointerInsideStage = false;
+      activeStrokePointerId = null;
+      resetPointerTracking();
+      syncVisibility();
     }
 
     function renderIfNeeded() {
@@ -411,12 +443,14 @@ window.CBO = window.CBO || {};
 
     window.addEventListener("cbo:touch-navigation-start", () => {
       pointerInsideStage = false;
+      activeStrokePointerId = null;
       resetPointerTracking();
       syncVisibility();
     });
 
     window.addEventListener("cbo:touch-navigation-end", () => {
       pointerInsideStage = false;
+      activeStrokePointerId = null;
       resetPointerTracking();
       syncVisibility();
       window.setTimeout(syncVisibility, 430);
@@ -428,26 +462,23 @@ window.CBO = window.CBO || {};
       const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
 
       resetPointerTracking();
+      activeStrokePointerId = null;
       activeTool = isBrushPreviewTool(label, toolMode, syncGroup);
       renderIfNeeded();
       syncVisibility();
     });
 
-    stage.addEventListener("pointerdown", (event) => {
-      resetPointerTracking();
-      updatePointerPosition(event);
-    }, { passive: true });
+    stage.addEventListener("pointerdown", beginStrokePreviewHide, { passive: true });
     stage.addEventListener("pointermove", updatePointerPosition, { passive: true });
+    stage.addEventListener("pointerup", finishStrokePreviewHide, { passive: true });
     stage.addEventListener("pointerleave", () => {
       pointerInsideStage = false;
       resetPointerTracking();
       syncVisibility();
     });
-    stage.addEventListener("pointercancel", () => {
-      pointerInsideStage = false;
-      resetPointerTracking();
-      syncVisibility();
-    });
+    stage.addEventListener("pointercancel", cancelStrokePreviewHide, { passive: true });
+    window.addEventListener("pointerup", finishStrokePreviewHide, { passive: true });
+    window.addEventListener("pointercancel", cancelStrokePreviewHide, { passive: true });
 
     const activeButton = document.querySelector("[data-tool].active");
 

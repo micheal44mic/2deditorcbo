@@ -88,6 +88,81 @@
     return button;
   }
 
+  function getProjectThumbnailSrc(summary) {
+    const src = String(summary?.thumbnailDataUrl || "").trim();
+
+    return src.startsWith("data:image/") ? src : "";
+  }
+
+  function createProjectFallbackPreview(summary) {
+    const fallback = document.createElement("span");
+    const projectName = String(summary?.projectName || "").trim();
+    const label = projectName || "Untitled";
+
+    fallback.className = "document-start-project-preview-fallback";
+    fallback.textContent = label.slice(0, 1).toUpperCase();
+    fallback.setAttribute("aria-hidden", "true");
+
+    return fallback;
+  }
+
+  function createSavedProjectCard(summary) {
+    const card = document.createElement("div");
+    const openButton = document.createElement("button");
+    const preview = document.createElement("div");
+    const thumbnailSrc = getProjectThumbnailSrc(summary);
+    const title = document.createElement("span");
+    const meta = document.createElement("span");
+    const deleteButton = document.createElement("button");
+    const projectName = String(summary?.projectName || "").trim();
+    const savedAt = formatDocumentSaveDate(summary?.savedAt);
+    const sizeLabel = `${Math.max(1, Math.round(summary?.width || 1))} x ${Math.max(1, Math.round(summary?.height || 1))}`;
+
+    card.className = "document-start-project-card document-start-project-card-saved";
+    card.dataset.documentProjectSaved = summary?.sessionId || "";
+
+    openButton.className = "document-start-project-open";
+    openButton.type = "button";
+    openButton.dataset.documentRecovery = summary?.sessionId || "";
+    openButton.setAttribute("aria-label", projectName ? `Open saved project ${projectName}` : "Open saved project");
+
+    preview.className = "document-start-project-preview document-start-project-preview-saved";
+
+    if (thumbnailSrc) {
+      const image = document.createElement("img");
+
+      image.className = "document-start-project-thumbnail";
+      image.src = thumbnailSrc;
+      image.alt = "";
+      image.decoding = "async";
+      image.loading = "lazy";
+      preview.append(image);
+    } else {
+      preview.append(createProjectFallbackPreview(summary));
+    }
+
+    title.className = "document-start-project-card-title";
+    title.textContent = projectName || "Untitled project";
+
+    meta.className = "document-start-project-card-meta";
+    meta.textContent = [sizeLabel, savedAt].filter(Boolean).join(" | ");
+
+    deleteButton.className = "document-start-project-delete";
+    deleteButton.type = "button";
+    deleteButton.dataset.documentDelete = summary?.sessionId || "";
+    deleteButton.textContent = "DELETE";
+    deleteButton.setAttribute("aria-label", `Delete saved project ${projectName || "Untitled project"}`);
+
+    openButton.append(preview, title, meta);
+    card.append(openButton, deleteButton);
+
+    return {
+      card,
+      deleteButton,
+      openButton,
+    };
+  }
+
   function createDocumentRecoveryItem(summary) {
     const item = document.createElement("div");
     const openButton = createDocumentRecoveryButton(summary);
@@ -367,6 +442,7 @@
 
     return {
       createCard,
+      grid,
       section,
     };
   }
@@ -383,47 +459,54 @@
     });
   }
 
-  function renderSavedProjects(stage, recoveryHost, saveSystem) {
+  function clearSavedProjectCards(grid) {
+    grid.querySelectorAll("[data-document-project-saved]").forEach((card) => card.remove());
+  }
+
+  function renderSavedProjects(stage, projects, saveSystem) {
     void saveSystem.listSummaries().then((summaries) => {
       if (stage.dataset.canvasReady === "true") {
         return;
       }
 
-      if (!Array.isArray(summaries) || summaries.length === 0) {
-        recoveryHost.replaceChildren();
-        recoveryHost.hidden = true;
+      const grid = projects?.grid;
+
+      if (!grid) {
         return;
       }
 
-      const recoverySection = createDocumentRecoverySection();
-      const list = recoverySection.list;
+      clearSavedProjectCards(grid);
+
+      if (!Array.isArray(summaries) || summaries.length === 0) {
+        return;
+      }
 
       summaries.forEach((summary) => {
         const sessionId = String(summary?.sessionId || "").trim();
-        const recoveryItem = createDocumentRecoveryItem(summary);
+        const projectCard = createSavedProjectCard(summary);
 
-        recoveryItem.openButton.addEventListener("click", () => {
+        projectCard.openButton.addEventListener("click", () => {
           if (!sessionId) {
             return;
           }
 
-          recoveryItem.openButton.disabled = true;
-          recoveryItem.openButton.dataset.loading = "true";
+          projectCard.openButton.disabled = true;
+          projectCard.openButton.dataset.loading = "true";
           void saveSystem.restore(sessionId).then((didRestore) => {
             if (didRestore) {
               return;
             }
 
-            recoveryItem.openButton.disabled = false;
-            recoveryItem.openButton.dataset.loading = "false";
+            projectCard.openButton.disabled = false;
+            projectCard.openButton.dataset.loading = "false";
           }).catch((error) => {
             console.warn("Impossibile ripristinare il documento salvato.", error);
-            recoveryItem.openButton.disabled = false;
-            recoveryItem.openButton.dataset.loading = "false";
+            projectCard.openButton.disabled = false;
+            projectCard.openButton.dataset.loading = "false";
           });
         });
 
-        recoveryItem.deleteButton.addEventListener("click", () => {
+        projectCard.deleteButton.addEventListener("click", () => {
           if (!sessionId) {
             return;
           }
@@ -434,20 +517,17 @@
             return;
           }
 
-          recoveryItem.deleteButton.disabled = true;
+          projectCard.deleteButton.disabled = true;
           void saveSystem.delete?.(sessionId).then(() => {
-            renderSavedProjects(stage, recoveryHost, saveSystem);
+            renderSavedProjects(stage, projects, saveSystem);
           }).catch((error) => {
             console.warn("Impossibile eliminare il documento salvato.", error);
-            recoveryItem.deleteButton.disabled = false;
+            projectCard.deleteButton.disabled = false;
           });
         });
 
-        list.append(recoveryItem.item);
+        grid.append(projectCard.card);
       });
-
-      recoveryHost.replaceChildren(recoverySection.section);
-      recoveryHost.hidden = false;
     });
   }
 
@@ -570,7 +650,7 @@
     const saveSystem = namespace.documentSaveSystem;
 
     if (saveSystem?.listSummaries && saveSystem?.restore) {
-      renderSavedProjects(stage, recoveryHost, saveSystem);
+      renderSavedProjects(stage, startProjects, saveSystem);
     } else if (saveSystem?.getLatestSummary && saveSystem?.restoreLatest) {
       renderLatestRecoverableProject(stage, recoveryHost, saveSystem);
     }

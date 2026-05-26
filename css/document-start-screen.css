@@ -226,6 +226,21 @@
   text-align: left;
 }
 
+.document-start-project-card-saved {
+  position: relative;
+}
+
+.document-start-project-open {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
 .document-start-project-preview {
   position: relative;
   display: grid;
@@ -237,6 +252,33 @@
   border: 1px solid #222936;
   border-radius: 10px;
   background: #1b2533;
+}
+
+.document-start-project-preview-saved {
+  background:
+    linear-gradient(135deg, rgba(113, 208, 180, 0.08), transparent 42%),
+    #11141a;
+}
+
+.document-start-project-thumbnail {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.document-start-project-preview-fallback {
+  display: inline-grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid rgba(245, 247, 251, 0.16);
+  border-radius: 8px;
+  background: rgba(245, 247, 251, 0.08);
+  color: #f5f7fb;
+  font-size: 22px;
+  font-weight: 850;
+  line-height: 1;
 }
 
 .document-start-project-preview-create {
@@ -272,14 +314,67 @@
   white-space: nowrap;
 }
 
+.document-start-project-card-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: #aeb6c3;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-start-project-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  height: 24px;
+  min-width: 58px;
+  padding: 0 8px;
+  border: 1px solid rgba(245, 247, 251, 0.2);
+  border-radius: 6px;
+  background: rgba(18, 20, 25, 0.78);
+  color: #f5f7fb;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
 .document-start-project-card:hover .document-start-project-preview,
-.document-start-project-card:focus-visible .document-start-project-preview {
+.document-start-project-card:focus-visible .document-start-project-preview,
+.document-start-project-card:focus-within .document-start-project-preview {
   border-color: #3f4959;
   filter: brightness(1.08);
 }
 
+.document-start-project-card:hover .document-start-project-delete,
+.document-start-project-card:focus-within .document-start-project-delete {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.document-start-project-open:focus-visible,
+.document-start-project-delete:focus-visible,
 .document-start-project-card:focus-visible {
   outline: none;
+}
+
+.document-start-project-delete:hover,
+.document-start-project-delete:focus-visible {
+  border-color: #71d0b4;
+  background: rgba(37, 44, 53, 0.96);
+}
+
+.document-start-project-open:disabled,
+.document-start-project-delete:disabled {
+  cursor: wait;
+  opacity: 0.64;
 }
 
 .document-start-brand {

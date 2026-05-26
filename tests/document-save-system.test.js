@@ -37,9 +37,11 @@ test("document save system captures the document shape without brush or smudge p
   const source = readRepoFile("js", "document", "document-save-system.js");
 
   assert.match(source, /history\?\.flushLayerState\?\.\(layerModel\)/);
+  assert.match(source, /const thumbnail = await captureCurrentDocumentThumbnail\(\)/);
   assert.match(source, /entries: cloneValue\(entries\)/);
   assert.match(source, /activeLayerId: layerModel\.activeLayerId \|\| null/);
-  assert.match(source, /aiWorkspace: getCurrentAiWorkspace\(\)/);
+  assert.match(source, /const aiWorkspace = await prepareAiWorkspaceForStorage\(/);
+  assert.match(source, /aiWorkspace,/);
   assert.match(source, /artboards: namespace\.getDocumentArtboards\?\.\(\) \|\| \[\]/);
   assert.match(source, /selectedArtboardId:/);
   assert.match(source, /view: getCurrentDocumentView\(\)/);
@@ -52,6 +54,31 @@ test("document save system captures the document shape without brush or smudge p
   assert.doesNotMatch(source, /window\.addEventListener\("cbo:document-content-change"/);
   assert.doesNotMatch(source, /window\.addEventListener\("cbo:document-layers-change"/);
   assert.doesNotMatch(source, /scheduleSave/);
+});
+
+test("document save system stores a home screen thumbnail with each saved project", () => {
+  const source = readRepoFile("js", "document", "document-save-system.js");
+
+  assert.match(source, /const THUMBNAIL_WIDTH = 480/);
+  assert.match(source, /const THUMBNAIL_HEIGHT = 270/);
+  assert.match(source, /const THUMBNAIL_TYPE = "image\/webp"/);
+  assert.match(source, /function getThumbnailDocumentRect\(renderer\)/);
+  assert.match(source, /function getThumbnailFitCamera\(documentRect\)/);
+  assert.match(source, /function createThumbnailRenderTarget\(gl\)/);
+  assert.match(source, /function createCanvasFromFramebuffer\(gl, target\)/);
+  assert.match(source, /async function captureCurrentDocumentThumbnail\(\)/);
+  assert.match(source, /renderer\.drawToCanvas\(\{[\s\S]*framebuffer: target\.framebuffer,[\s\S]*viewportHeight: THUMBNAIL_HEIGHT,[\s\S]*viewportWidth: THUMBNAIL_WIDTH,[\s\S]*\}\)/);
+  assert.match(source, /gl\.readPixels\(0, 0, width, height, gl\.RGBA, gl\.UNSIGNED_BYTE, pixels\)/);
+  assert.match(source, /imageData\.data\.set\(flippedPixels\)/);
+  assert.match(source, /thumbnailContext\.drawImage\(pixelsCanvas, 0, 0\)/);
+  assert.match(source, /await createCanvasBlob\(thumbnailCanvas\)/);
+  assert.match(source, /await blobToDataUrl\(blob\)/);
+  assert.match(source, /destroyThumbnailRenderTarget\(gl, target\)/);
+  assert.match(source, /namespace\.brushEngine\?\.requestDraw\?\.\(\)/);
+  assert.match(source, /thumbnailDataUrl: typeof thumbnail\.dataUrl === "string" \? thumbnail\.dataUrl : ""/);
+  assert.match(source, /thumbnailHeight: Math\.max\(0, Math\.round\(thumbnail\.height \|\| 0\)\)/);
+  assert.match(source, /thumbnailWidth: Math\.max\(0, Math\.round\(thumbnail\.width \|\| 0\)\)/);
+  assert.match(source, /thumbnail,/);
 });
 
 test("document save system prepares pending visible edits before snapshotting", () => {

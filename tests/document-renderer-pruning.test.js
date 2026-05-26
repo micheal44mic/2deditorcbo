@@ -4516,6 +4516,16 @@ test("document renderer keeps viewport culling conservative for risky layer stat
   assert.doesNotMatch(previewCacheBody, /viewportLayerRenderOptions/);
 });
 
+test("document renderer can draw the document into a supplied framebuffer", () => {
+  const source = readDocumentRendererSources();
+  const drawToCanvasBody = source.match(/drawToCanvas\(options = \{\}\) \{([\s\S]*?)\n    dispose\(\)/)?.[1] || "";
+
+  assert.match(drawToCanvasBody, /const outputFramebuffer = options\.framebuffer \|\| null/);
+  assert.match(drawToCanvasBody, /gl\.bindFramebuffer\(gl\.FRAMEBUFFER, canvasCompositeState\?\.read\?\.framebuffer \|\| outputFramebuffer\)/);
+  assert.match(drawToCanvasBody, /gl\.bindFramebuffer\(gl\.FRAMEBUFFER, outputFramebuffer\)/);
+  assert.match(drawToCanvasBody, /framebuffer: outputFramebuffer/);
+});
+
 test("document renderer records viewport culling metrics and exposes last stats", () => {
   const { DocumentRenderer, window } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);

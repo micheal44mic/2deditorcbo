@@ -1087,6 +1087,7 @@
       }
 
       const gl = this.gl;
+      const outputFramebuffer = options.framebuffer || null;
       const target = this.getDocumentDrawTarget();
       const camera = options.camera || { x: 0, y: 0, zoom: 1 };
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
@@ -1768,7 +1769,7 @@
         return true;
       };
       const bindArtboardProgram = () => {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, canvasCompositeState?.read?.framebuffer || null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, canvasCompositeState?.read?.framebuffer || outputFramebuffer);
         gl.viewport(0, 0, viewportWidth, viewportHeight);
         gl.useProgram(program);
         gl.uniform2f(uniforms.viewportSize, viewportWidth, viewportHeight);
@@ -1867,7 +1868,7 @@
           edgeFeatherPixels: rasterTransformPreview.edgeFeatherPixels,
           framebuffer: canBlendTransformPreview
             ? canvasCompositeState.write.framebuffer
-            : canvasCompositeState?.read?.framebuffer || null,
+            : canvasCompositeState?.read?.framebuffer || outputFramebuffer,
           opacity: rasterTransformPreview.opacity * layerOpacity,
           sourceUvRect: rasterTransformPreview.sourceUvRect,
           textureFilter: gl.LINEAR,
@@ -1920,7 +1921,7 @@
         this.hasAdvancedLayerBlendMode(layer)
       );
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, outputFramebuffer);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
       if (this.options.transparentBackground) {
         gl.clearColor(0, 0, 0, 0);
@@ -2390,7 +2391,7 @@
       if (canvasCompositeState?.read?.texture) {
         this.drawScreenTexture(canvasCompositeState.read.texture, {
           blend: true,
-          framebuffer: null,
+          framebuffer: outputFramebuffer,
           viewportHeight,
           viewportWidth,
         });

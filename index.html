@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Editor 2D</title>
     <link rel="stylesheet" href="./css/base.css?v=mobile-performance-hotfix-v1" />
-    <link rel="stylesheet" href="./css/layout.css?v=ai-video-poster-drag-v1" />
+    <link rel="stylesheet" href="./css/layout.css?v=brush-preview-outline-v2" />
     <link rel="stylesheet" href="./css/document-start-screen.css?v=home-shell-v10" />
     <link rel="stylesheet" href="./css/left-sidebar.css?v=mobile-ios-gesture-lock" />
     <link rel="stylesheet" href="./css/right-sidebar.css?v=mobile-ios-gesture-lock" />
@@ -22,6 +22,16 @@
     <link rel="stylesheet" href="./css/tooltips.css" />
   </head>
   <body>
+    <div class="site-loader" role="status" aria-live="polite" data-site-loader>
+      <div class="site-loader-panel">
+        <div class="site-loader-brand" data-site-loader-label>M1M4.COM</div>
+        <div class="site-loader-track" role="progressbar" aria-label="Caricamento sito" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-site-loader-bar>
+          <div class="site-loader-fill" data-site-loader-fill></div>
+        </div>
+      </div>
+    </div>
+    <script src="./js/site-loader.js?v=m1m4-loading-v1"></script>
+
     <div id="android-device-indicator" class="android-device-indicator" hidden>android v4.5-no-fill-history-debug</div>
     <main class="editor-page left-panel-collapsed" aria-label="Editor 2D">
       <div class="panel-toggle-bg" aria-hidden="true"></div>
@@ -373,6 +383,7 @@
     <script src="./vendor/fonts/libre-baskerville-font.js"></script>
     <script src="./vendor/fonts/vector-fonts.js"></script>
     <script src="./js/icons.js"></script>
+    <script src="./js/storage-persistence.js?v=persistent-cache-v1"></script>
     <script src="./js/sidebar.js?v=android-v4.5-no-fill-history-debug"></script>
     <script src="./js/drawer.js?v=mockup-thumb-white-v2"></script>
     <script src="./js/blend-modes.js"></script>
@@ -406,7 +417,7 @@
     <script src="./js/tooltips.js?v=mobile-toolbar-tooltip-fix"></script>
     <script src="./js/right-sidebar.js?v=document-library-v2"></script>
     <script src="./js/brushes-panel.js?v=mobile-brush-v3"></script>
-    <script src="./js/brush-studio.js?v=adaptive-spacing-v1"></script>
+    <script src="./js/brush-studio.js?v=shape-alpha-padding-fix-v1"></script>
     <script src="./js/document/document-renderer-shaders.js?v=renderer-modules"></script>
     <script src="./js/document/document-renderer-raster-targets.js?v=clip-mask-fix-v1"></script>
     <script src="./js/document/document-renderer-history-snapshots.js?v=renderer-modules"></script>
@@ -426,7 +437,7 @@
     <script src="./js/brush-engine-sampler.js?v=adaptive-spacing-v3"></script>
     <script src="./js/brush-engine-stroke-input.js?v=adaptive-spacing-v3"></script>
     <script src="./js/brush-engine.js?v=adaptive-spacing-v2"></script>
-    <script src="./js/brush-shape-outline-preview.js?v=mobile-preview-dpr-v1"></script>
+    <script src="./js/brush-shape-outline-preview.js?v=brush-preview-outline-v2"></script>
     <script src="./js/smudge-engine.js?v=mobile-ios-gesture-lock"></script>
     <script src="./js/images/image-rasterizer.js?v=image-dirty-target-svg-fallback"></script>
     <script src="./js/pixel/pixel-worker-client.js?v=android-v4.5-no-fill-history-debug"></script>
@@ -435,6 +446,7 @@
     <script src="./js/color-fill-mask.js?v=color-fill-modules"></script>
     <script src="./js/color-fill-history.js?v=color-fill-modules"></script>
     <script src="./js/color-fill.js?v=android-v4.5-no-fill-history-debug"></script>
+    <script src="./js/document/document-asset-cache.js?v=persistent-cache-v1"></script>
     <script src="./js/document/document-autosave.js"></script>
     <script src="./js/document/document-save-system.js?v=document-library-v2"></script>
     <script src="./js/editor-canvas.js?v=mockup-full-artboard-v1"></script>

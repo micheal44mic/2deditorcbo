@@ -52,7 +52,8 @@ test("document autosave captures layer structure and sparse raster content only"
   assert.match(source, /const projectName = getCurrentProjectName\(\)/);
   assert.match(source, /entries: cloneValue\(entries\)/);
   assert.match(source, /activeLayerId: layerModel\.activeLayerId \|\| null/);
-  assert.match(source, /aiWorkspace: getCurrentAiWorkspace\(\)/);
+  assert.match(source, /const aiWorkspace = await prepareAiWorkspaceForStorage\(/);
+  assert.match(source, /aiWorkspace,/);
   assert.match(source, /project: \{[\s\S]*name: projectName,[\s\S]*\}/);
   assert.match(source, /referenceLayerId: history\?\.getReferenceLayerId\?\.\(\) \|\| null/);
   assert.match(source, /countEntries\(entries\)/);

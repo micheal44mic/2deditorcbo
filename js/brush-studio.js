@@ -1744,13 +1744,14 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     const output = outputContext.createImageData(shapeAlphaExportSize, shapeAlphaExportSize);
 
     for (let index = 0; index < imageData.data.length; index += 4) {
+      const sourceAlpha = imageData.data[index + 3];
       const mask = getMaskValue({
         red: imageData.data[index],
         green: imageData.data[index + 1],
         blue: imageData.data[index + 2],
         invert,
       });
-      const coverage = hasSourceAlpha ? imageData.data[index + 3] : mask;
+      const coverage = sourceAlpha <= 8 ? 0 : (hasSourceAlpha ? sourceAlpha : mask);
 
       output.data[index] = 255;
       output.data[index + 1] = 255;

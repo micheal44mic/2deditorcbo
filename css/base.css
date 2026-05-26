@@ -145,6 +145,64 @@ body {
     "Segoe UI", sans-serif;
 }
 
+.site-loader {
+  --site-loader-progress: 0%;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: grid;
+  place-items: center;
+  padding: max(24px, var(--cbo-safe-top)) max(24px, var(--cbo-safe-right)) max(24px, var(--cbo-safe-bottom)) max(24px, var(--cbo-safe-left));
+  background: #ffffff;
+  color: #151515;
+  transition:
+    opacity 360ms ease,
+    visibility 360ms ease;
+}
+
+.site-loader.is-complete {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.site-loader-panel {
+  width: min(420px, 100%);
+}
+
+.site-loader-brand {
+  margin-bottom: 14px;
+  color: #151515;
+  font-size: clamp(26px, 8vw, 52px);
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.site-loader-track {
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.site-loader-fill {
+  width: var(--site-loader-progress);
+  height: 100%;
+  border-radius: inherit;
+  background: #ff7a00;
+  transition: width 140ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-loader,
+  .site-loader-fill {
+    transition-duration: 1ms;
+  }
+}
+
 html.cbo-visual-keyboard-active,
 html.cbo-visual-keyboard-active body {
   background: #262626;

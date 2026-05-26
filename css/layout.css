@@ -29,6 +29,10 @@
   transition: margin 180ms ease;
 }
 
+.editor-stage[data-editor-stage-transition-suppressed="true"] {
+  transition: none !important;
+}
+
 .editor-canvas-grid-pattern-overlay {
   contain: strict;
   position: absolute;
@@ -4344,7 +4348,7 @@ body.cbo-document-restore-active .editor-stage {
   width: 200px;
   height: 200px;
   transform-origin: center center;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.24));
   will-change: transform, opacity;
 }
 

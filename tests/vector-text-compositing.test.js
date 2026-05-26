@@ -348,6 +348,7 @@ test("live vector text starts layer drag from selection or armed mobile move", (
   );
   assert.match(source, /const VECTOR_TEXT_MOVE_TYPE = "vector-text"/);
   assert.match(source, /const VECTOR_TEXT_KEEP_SELECTION_SELECTOR = \[/);
+  assert.match(source, /"\.editor-raster-transform-overlay"/);
   assert.match(source, /handleDocumentPointerDown\(event\)/);
   assert.match(source, /document\.addEventListener\("pointerdown", this\.handleDocumentPointerDown, true\)/);
   assert.match(source, /clearActiveTextSelection\(source = "vector-text-clear-selection"\)/);
