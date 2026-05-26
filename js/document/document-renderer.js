@@ -70,6 +70,8 @@
     NOISE_FRAGMENT_SHADER_SOURCE,
     THRESHOLD_FRAGMENT_SHADER_SOURCE,
     CURVES_FRAGMENT_SHADER_SOURCE,
+    COLOR_OVERLAY_FRAGMENT_SHADER_SOURCE,
+    LAYER_STROKE_FRAGMENT_SHADER_SOURCE,
     LAYER_COMPOSITE_VERTEX_SHADER_SOURCE,
     LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE,
   } = namespace.DocumentRendererShaders || {};
@@ -89,6 +91,7 @@
   const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
+  const MAX_LAYER_STROKE_SIZE = 64;
   const PREVIEW_CACHE_ZOOM_THRESHOLD = 1.0;
   const PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD = 10.01;
   const PREVIEW_CACHE_MAX_SIZE = 2048;
@@ -545,6 +548,7 @@
       this.thresholdProgramInfo = null;
       this.curvesProgramInfo = null;
       this.curvesLutTexture = null;
+      this.layerStrokeProgramInfo = null;
       this.layerCompositeProgramInfo = null;
       this.layerCompositeScratchA = null;
       this.layerCompositeScratchB = null;
@@ -1533,6 +1537,8 @@
       this.deleteNoiseResources();
       this.deleteThresholdResources();
       this.deleteCurvesResources();
+      this.deleteColorOverlayResources();
+      this.deleteLayerStrokeResources();
       this.deleteActiveStrokeScratchTarget();
       this.deleteActiveStrokeSelectionClipTexture();
       this.deleteLayerCompositeResources();
@@ -1615,6 +1621,7 @@
     GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE,
     GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE,
     GRAIN_FRAGMENT_SHADER_SOURCE,
+    LAYER_STROKE_FRAGMENT_SHADER_SOURCE,
     LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE,
     LAYER_COMPOSITE_VERTEX_SHADER_SOURCE,
     LOW_MEMORY_ANDROID_RENDER_DPR_CAP,
@@ -1629,6 +1636,7 @@
     MAX_NOISE_SCALE,
     MAX_RADIAL_BLUR_AMOUNT,
     MAX_THRESHOLD_VALUE,
+    MAX_LAYER_STROKE_SIZE,
     MOBILE_PREVIEW_CACHE_MAX_SIZE,
     MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX,
     MOBILE_RENDER_DPR_CAP,
@@ -1668,6 +1676,7 @@
     TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE,
     TEXTURED_QUAD_VERTEX_SHADER_SOURCE,
     THRESHOLD_FRAGMENT_SHADER_SOURCE,
+    COLOR_OVERLAY_FRAGMENT_SHADER_SOURCE,
     VIEWPORT_CULLING_DEBUG_EVENT,
     VIEWPORT_LAYER_CULL_SAFE_TYPES,
     VIEWPORT_RENDER_OVERSCAN_CSS_PX,

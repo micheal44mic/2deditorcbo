@@ -11,6 +11,48 @@
     }
   }
 
+  function normalizeHexColor(value, fallback = "#FFFFFF") {
+    const raw = String(value || "").trim();
+    const hex = raw.startsWith("#") ? raw.slice(1) : raw;
+
+    if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+      return `#${hex
+        .split("")
+        .map((char) => `${char}${char}`)
+        .join("")
+        .toUpperCase()}`;
+    }
+
+    if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+      return `#${hex.toUpperCase()}`;
+    }
+
+    return fallback;
+  }
+
+  function normalizeColorOverlayOpacity(value, fallback = 1) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : fallback;
+  }
+
+  function normalizeLayerStrokeSize(value, maxSize = 64) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(maxSize, number)) : 0;
+  }
+
+  function colorToRgbUnit(color) {
+    const normalized = normalizeHexColor(color);
+    const hex = normalized.slice(1);
+
+    return {
+      r: parseInt(hex.slice(0, 2), 16) / 255,
+      g: parseInt(hex.slice(2, 4), 16) / 255,
+      b: parseInt(hex.slice(4, 6), 16) / 255,
+    };
+  }
+
   namespace.DocumentRendererMixins.layerEffects = function installRegisterLayerEffects(DocumentRenderer, internals) {
     const {
       ANDROID_PREVIEW_CACHE_MAX_SIZE,
@@ -54,6 +96,7 @@
       MAX_NOISE_SCALE,
       MAX_RADIAL_BLUR_AMOUNT,
       MAX_THRESHOLD_VALUE,
+      MAX_LAYER_STROKE_SIZE,
       MOBILE_PREVIEW_CACHE_MAX_SIZE,
       MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX,
       MOBILE_RENDER_DPR_CAP,
@@ -338,6 +381,53 @@
     }
 ,
 
+    getColorOverlay(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "color-overlay" && item.enabled !== false)
+        : effects?.colorOverlay;
+      const opacity = normalizeColorOverlayOpacity(effect?.opacity);
+
+      return {
+        color: normalizeHexColor(effect?.color || effect?.hex),
+        enabled: Boolean(effect && effect.enabled !== false && opacity > 0),
+        opacity,
+      };
+    }
+,
+
+    getLayerColorOverlay(layer) {
+      const colorOverlay = this.getColorOverlay(layer);
+
+      return colorOverlay.enabled ? colorOverlay : null;
+    }
+,
+
+    getStroke(layer) {
+      const effects = layer?.effects;
+      const effect = Array.isArray(effects)
+        ? effects.find((item) => item && item.type === "stroke" && item.enabled !== false)
+        : effects?.stroke;
+      const opacity = normalizeColorOverlayOpacity(effect?.opacity);
+      const size = normalizeLayerStrokeSize(effect?.size ?? effect?.width, MAX_LAYER_STROKE_SIZE);
+
+      return {
+        color: normalizeHexColor(effect?.color || effect?.hex),
+        enabled: Boolean(effect && effect.enabled !== false && opacity > 0 && size > 0),
+        opacity,
+        position: "outside",
+        size,
+      };
+    }
+,
+
+    getLayerStroke(layer) {
+      const stroke = this.getStroke(layer);
+
+      return stroke.enabled ? stroke : null;
+    }
+,
+
     hasEnabledLayerEffects(layer) {
       return (
         this.getGaussianBlurRadius(layer) > 0 ||
@@ -347,7 +437,9 @@
         this.getGrain(layer).amount > 0 ||
         this.getNoise(layer).amount > 0 ||
         Boolean(this.getLayerThreshold(layer)) ||
-        Boolean(this.getLayerCurves(layer))
+        Boolean(this.getLayerCurves(layer)) ||
+        Boolean(this.getLayerColorOverlay(layer)) ||
+        Boolean(this.getLayerStroke(layer))
       );
     }
 ,
@@ -552,6 +644,24 @@
         gl.deleteTexture(this.curvesLutTexture);
         this.curvesLutTexture = null;
       }
+    }
+,
+
+    deleteColorOverlayResources() {
+      if (this.colorOverlayProgramInfo?.program) {
+        this.gl.deleteProgram(this.colorOverlayProgramInfo.program);
+      }
+
+      this.colorOverlayProgramInfo = null;
+    }
+,
+
+    deleteLayerStrokeResources() {
+      if (this.layerStrokeProgramInfo?.program) {
+        this.gl.deleteProgram(this.layerStrokeProgramInfo.program);
+      }
+
+      this.layerStrokeProgramInfo = null;
     }
 ,
 
@@ -1027,6 +1137,68 @@
     }
 ,
 
+    runColorOverlayPass({ color, opacity, sourceTexture, target }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureColorOverlayProgramInfo();
+      const rgb = colorToRgbUnit(color);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, target.width, target.height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform3f(uniforms.color, rgb.r, rgb.g, rgb.b);
+      gl.uniform1f(uniforms.opacity, normalizeColorOverlayOpacity(opacity));
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+,
+
+    runLayerStrokePass({ color, opacity, size, sourceTexture, target }) {
+      if (!sourceTexture || !target?.framebuffer || !this.quad?.vao) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const { program, uniforms } = this.ensureLayerStrokeProgramInfo();
+      const rgb = colorToRgbUnit(color);
+      const width = Math.max(1, target.width || 1);
+      const height = Math.max(1, target.height || 1);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, width, height);
+      gl.disable(gl.BLEND);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.uniform3f(uniforms.color, rgb.r, rgb.g, rgb.b);
+      gl.uniform1f(uniforms.opacity, normalizeColorOverlayOpacity(opacity));
+      gl.uniform1f(uniforms.size, normalizeLayerStrokeSize(size, MAX_LAYER_STROKE_SIZE));
+      gl.uniform2f(uniforms.texelSize, 1 / width, 1 / height);
+      gl.bindVertexArray(this.quad.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+,
+
     ensureCurvesLutTexture() {
       if (this.curvesLutTexture) {
         this.markRasterResourceUsed(this.curvesLutTexture);
@@ -1351,6 +1523,58 @@
     }
 ,
 
+    applyColorOverlayTexture(sourceTexture, colorOverlay, options = {}) {
+      if (!sourceTexture || !colorOverlay || colorOverlay.enabled === false) {
+        return sourceTexture || null;
+      }
+
+      const opacity = normalizeColorOverlayOpacity(colorOverlay.opacity);
+
+      if (opacity <= 0) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const didColorOverlayPass = this.runColorOverlayPass({
+        color: colorOverlay.color,
+        opacity,
+        sourceTexture,
+        target,
+      });
+
+      return didColorOverlayPass ? target.texture : sourceTexture;
+    }
+,
+
+    applyLayerStrokeTexture(sourceTexture, stroke, options = {}) {
+      if (!sourceTexture || !stroke || stroke.enabled === false) {
+        return sourceTexture || null;
+      }
+
+      const size = normalizeLayerStrokeSize(stroke.size, MAX_LAYER_STROKE_SIZE);
+      const opacity = normalizeColorOverlayOpacity(stroke.opacity);
+
+      if (size <= 0 || opacity <= 0) {
+        return sourceTexture || null;
+      }
+
+      const width = Math.max(1, Math.round(options.width || this.width || 1));
+      const height = Math.max(1, Math.round(options.height || this.height || 1));
+      const target = this.getLayerEffectWriteTarget(sourceTexture, width, height);
+      const didLayerStrokePass = this.runLayerStrokePass({
+        color: stroke.color,
+        opacity,
+        size,
+        sourceTexture,
+        target,
+      });
+
+      return didLayerStrokePass ? target.texture : sourceTexture;
+    }
+,
+
     resolveRadialBlurCenter(centerX, centerY, options = {}) {
       const outputRect = options.outputRect;
       const sourceRect = options.sourceRect || outputRect;
@@ -1565,11 +1789,18 @@
                 ...fieldBlur.pins.map((pin) => Number.isFinite(pin.blur) ? pin.blur : 0),
               );
             }
+          } else if (effect.type === "stroke") {
+            const stroke = this.getLayerStroke({ effects: [effect] });
+
+            if (stroke) {
+              padding = Math.max(padding, stroke.size);
+            }
           }
         }
       } else {
         const motionBlur = this.getLayerMotionBlur(layer);
         const fieldBlur = this.getLayerFieldBlur(layer);
+        const stroke = this.getLayerStroke(layer);
 
         padding = Math.max(padding, this.getGaussianBlurRadius(layer));
 
@@ -1582,6 +1813,10 @@
             padding,
             ...fieldBlur.pins.map((pin) => Number.isFinite(pin.blur) ? pin.blur : 0),
           );
+        }
+
+        if (stroke) {
+          padding = Math.max(padding, stroke.size);
         }
       }
 
@@ -1734,6 +1969,18 @@
             if (curves) {
               texture = this.applyCurvesTexture(texture, curves, effectOptions);
             }
+          } else if (effect.type === "color-overlay") {
+            const colorOverlay = this.getLayerColorOverlay({ effects: [effect] });
+
+            if (colorOverlay) {
+              texture = this.applyColorOverlayTexture(texture, colorOverlay, effectOptions);
+            }
+          } else if (effect.type === "stroke") {
+            const stroke = this.getLayerStroke({ effects: [effect] });
+
+            if (stroke) {
+              texture = this.applyLayerStrokeTexture(texture, stroke, effectOptions);
+            }
           }
         }
 
@@ -1748,6 +1995,8 @@
       const noise = this.getLayerNoise(layer);
       const threshold = this.getLayerThreshold(layer);
       const curves = this.getLayerCurves(layer);
+      const colorOverlay = this.getLayerColorOverlay(layer);
+      const stroke = this.getLayerStroke(layer);
 
       if (radius > 0) {
         texture = this.applyGaussianBlurTexture(texture, radius, effectOptions);
@@ -1786,6 +2035,14 @@
 
       if (curves) {
         texture = this.applyCurvesTexture(texture, curves, effectOptions);
+      }
+
+      if (colorOverlay) {
+        texture = this.applyColorOverlayTexture(texture, colorOverlay, effectOptions);
+      }
+
+      if (stroke) {
+        texture = this.applyLayerStrokeTexture(texture, stroke, effectOptions);
       }
 
       return texture;

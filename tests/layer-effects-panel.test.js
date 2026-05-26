@@ -72,10 +72,17 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /\{ implemented: true, icon: "grain", label: "Grain", type: "grain" \}/);
   assert.match(source, /\{ implemented: true, icon: "threshold", label: "Threshold", type: "threshold" \}/);
   assert.match(source, /\{ implemented: true, icon: "curves", label: "Curves", mobile: false, type: "curves" \}/);
+  assert.match(source, /\{ implemented: true, icon: "color", label: "Color Overlay", mobile: false, type: "color-overlay" \}/);
+  assert.match(source, /\{ implemented: true, icon: "stroke", label: "Stroke", mobile: false, type: "stroke" \}/);
   assert.match(source, /RASTERIZABLE_EFFECT_TYPES[\s\S]*"noise"/);
   assert.match(source, /RASTERIZABLE_EFFECT_TYPES[\s\S]*"grain"/);
   assert.match(source, /RASTERIZABLE_EFFECT_TYPES[\s\S]*"threshold"/);
   assert.match(source, /RASTERIZABLE_EFFECT_TYPES[\s\S]*"curves"/);
+  assert.match(source, /RASTERIZABLE_EFFECT_TYPES[\s\S]*"color-overlay"/);
+  assert.match(source, /RASTERIZABLE_EFFECT_TYPES[\s\S]*"stroke"/);
+  assert.match(source, /function getAdjustmentEffectGroups\(\)/);
+  assert.match(source, /group\.label !== "Style"/);
+  assert.match(source, /function getStyleEffectGroups\(\)/);
   assert.match(source, /radius: nextRadius/);
   assert.match(source, /distance: nextDistance/);
   assert.match(source, /angle: nextAngle/);
@@ -100,6 +107,8 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /historyGroup: options\.historyGroup \|\| `grain-\$\{layerId\}`/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `threshold-\$\{layerId\}`/);
   assert.match(source, /historyGroup: options\.historyGroup \|\| `curves-\$\{layerId\}`/);
+  assert.match(source, /historyGroup: options\.historyGroup \|\| `color-overlay-\$\{layerId\}`/);
+  assert.match(source, /historyGroup: options\.historyGroup \|\| `stroke-\$\{layerId\}`/);
   assert.match(source, /namespace\.documentRenderer\?\.requestDraw\?\.\(\)/);
   assert.match(source, /layer\.type !== "background"/);
   assert.match(source, /EFFECT_GROUPS/);
@@ -114,6 +123,13 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /data-layer-noise-monochrome-input/);
   assert.match(source, /data-layer-effects-editor="threshold"/);
   assert.match(source, /data-layer-threshold-input/);
+  assert.match(source, /data-layer-effects-editor="color-overlay"/);
+  assert.match(source, /data-layer-color-overlay-input/);
+  assert.match(source, /data-layer-color-overlay-opacity-input/);
+  assert.match(source, /data-layer-effects-editor="stroke"/);
+  assert.match(source, /data-layer-stroke-size-input/);
+  assert.match(source, /data-layer-stroke-color-input/);
+  assert.match(source, /data-layer-stroke-opacity-input/);
   assert.match(source, /data-curves-channel="rgb"/);
   assert.match(source, /data-curves-line/);
   assert.match(source, /data-curves-input/);
@@ -135,6 +151,8 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /data-layer-effects-editor="\$\{effect\.type\}"/);
   assert.match(source, /const isEnabled = Boolean\(definition && isEligible\)/);
   assert.match(source, /!isImplementedEffect\(activeEffectType\)/);
+  assert.match(source, /commitPreviewSessionMetadata\(\)/);
+  assert.match(source, /isRasterizableEffectType\(activeEffectType\)/);
   assert.match(source, /data-layer-effects-accept/);
   assert.match(source, /data-layer-effects-back/);
   assert.match(source, /data-layer-motion-distance-input/);
@@ -196,7 +214,7 @@ test("layer effects panel writes gaussian blur as layer-state metadata", () => {
   assert.match(source, /namespace\.setLayerThreshold/);
   assert.match(source, /namespace\.setLayerCurves/);
   assert.match(source, /namespace\.rasterizeActiveLayerEffects/);
-  assert.match(source, /renderer\.rasterizeLayerEffects\(layer,/);
+  assert.match(source, /renderer\.rasterizeLayerEffects\(layerForRasterize,/);
   assert.match(source, /rects: snapshots\.previewDirtyRects \|\| null/);
   assert.match(source, /preserveDirtyRects: Array\.isArray\(snapshots\.previewDirtyRects\)/);
   assert.match(source, /renderer\.commitVisualDirtyChange\(\{/);
@@ -323,6 +341,8 @@ test("layer effects slider previews coalesce model updates to animation frames",
   assert.match(source, /queueLayerEffectPreview\(\s*"gaussian-blur"[\s\S]*namespace\.setLayerGaussianBlurRadius/);
   assert.match(source, /queueLayerEffectPreview\(\s*"noise"[\s\S]*namespace\.setLayerNoise/);
   assert.match(source, /queueLayerEffectPreview\(\s*"threshold"[\s\S]*namespace\.setLayerThreshold/);
+  assert.match(source, /queueLayerEffectPreview\(\s*"color-overlay"[\s\S]*namespace\.setLayerColorOverlay/);
+  assert.match(source, /queueLayerEffectPreview\(\s*"stroke"[\s\S]*namespace\.setLayerStroke/);
 });
 
 test("motion blur preview writes bypass document history", () => {
@@ -645,6 +665,98 @@ test("curves preview writes normalized point metadata and removes identity curve
   assert.equal(JSON.stringify(layer.effects), JSON.stringify([]));
 });
 
+test("color overlay preview writes layer style metadata that can rasterize", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const calls = [];
+  const layer = {
+    id: "paint-main",
+    type: "paint",
+  };
+
+  namespace.documentLayerModel = {
+    findEntryById(id) {
+      return id === layer.id ? layer : null;
+    },
+    updateLayer(id, patch, options = {}) {
+      calls.push(`update:${id}:${options.source}:${options.history}:${options.historyGroup}`);
+      layer.effects = patch.effects;
+      return true;
+    },
+  };
+  namespace.documentRenderer = {
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  assert.equal(namespace.setLayerColorOverlay(layer.id, "#f3a", 0.4, {
+    history: false,
+    source: "layer-style-preview",
+  }), true);
+  assert.equal(
+    JSON.stringify(layer.effects),
+    JSON.stringify([{ type: "color-overlay", enabled: true, color: "#FF33AA", opacity: 0.4 }]),
+  );
+  assert.equal(namespace.hasRasterizableLayerEffects(layer), true);
+  assert.deepEqual(calls, [
+    "update:paint-main:layer-style-preview:false:color-overlay-paint-main",
+    "draw",
+  ]);
+
+  assert.equal(namespace.setLayerColorOverlay(layer.id, "#ffffff", 0, {
+    enabled: false,
+    history: false,
+    source: "layer-style-preview",
+  }), true);
+  assert.equal(JSON.stringify(layer.effects), JSON.stringify([]));
+});
+
+test("stroke preview writes layer style metadata that can rasterize", () => {
+  const namespace = loadLayerEffectsNamespace();
+  const calls = [];
+  const layer = {
+    id: "paint-main",
+    type: "paint",
+  };
+
+  namespace.documentLayerModel = {
+    findEntryById(id) {
+      return id === layer.id ? layer : null;
+    },
+    updateLayer(id, patch, options = {}) {
+      calls.push(`update:${id}:${options.source}:${options.history}:${options.historyGroup}`);
+      layer.effects = patch.effects;
+      return true;
+    },
+  };
+  namespace.documentRenderer = {
+    requestDraw() {
+      calls.push("draw");
+    },
+  };
+
+  assert.equal(namespace.setLayerStroke(layer.id, 12, "#0f8", 0.5, {
+    history: false,
+    source: "layer-style-preview",
+  }), true);
+  assert.equal(
+    JSON.stringify(layer.effects),
+    JSON.stringify([{ type: "stroke", enabled: true, color: "#00FF88", opacity: 0.5, position: "outside", size: 12 }]),
+  );
+  assert.equal(namespace.hasRasterizableLayerEffects(layer), true);
+  assert.deepEqual(calls, [
+    "update:paint-main:layer-style-preview:false:stroke-paint-main",
+    "draw",
+  ]);
+
+  assert.equal(namespace.setLayerStroke(layer.id, 0, "#ffffff", 0, {
+    enabled: false,
+    history: false,
+    source: "layer-style-preview",
+  }), true);
+  assert.equal(JSON.stringify(layer.effects), JSON.stringify([]));
+});
+
 test("blur effect defaults use active layer content center", () => {
   const namespace = loadLayerEffectsNamespace();
   const calls = [];
@@ -716,6 +828,8 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
       { type: "grain", amount: 18, scale: 42, monochrome: true, seed: 12.5, enabled: true },
       { type: "threshold", threshold: 128, enabled: true },
       { type: "curves", points: { rgb: [{ id: "black", x: 0, y: 20 }, { id: "white", x: 255, y: 240 }] }, enabled: true },
+      { type: "color-overlay", color: "#FF33AA", opacity: 0.5, enabled: true },
+      { type: "stroke", color: "#00FF88", opacity: 0.75, position: "outside", size: 12, enabled: true },
       { strength: 0.5, type: "future-effect" },
     ],
     id: "paint-main",
@@ -771,13 +885,15 @@ test("layer effects rasterizer bakes blur and clears rasterizable metadata", () 
   namespace.documentRenderer = renderer;
 
   assert.equal(namespace.rasterizeActiveLayerEffects({ beforeState }), true);
-  assert.deepEqual(layer.effects, [{ strength: 0.5, type: "future-effect" }]);
+  assert.deepEqual(layer.effects, [
+    { strength: 0.5, type: "future-effect" },
+  ]);
   assert.equal(history.entry.beforeSnapshot, beforeSnapshot);
   assert.equal("afterSnapshot" in history.entry, false);
   assert.deepEqual(history.entry.beforeEntries, beforeState.entries);
   assert.deepEqual(calls, [
     "flush:true",
-    "bake:paint-main:gaussian-blur,motion-blur,field-blur,radial-blur,noise,grain,threshold,curves,future-effect:false:false",
+    "bake:paint-main:gaussian-blur,motion-blur,field-blur,radial-blur,noise,grain,threshold,curves,color-overlay,stroke:false:false",
     "update:paint-main:1:layer-effects-rasterize:false",
     "snapshot:1",
     "push:layer-effects-rasterize",

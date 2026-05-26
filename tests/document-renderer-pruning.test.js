@@ -4795,6 +4795,7 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /NOISE_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /THRESHOLD_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /CURVES_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /LAYER_STROKE_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /createGaussianBlurProgramInfo\(\)/);
   assert.match(source, /createMotionBlurProgramInfo\(\)/);
   assert.match(source, /createFieldBlurProgramInfo\(\)/);
@@ -4803,6 +4804,8 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /createNoiseProgramInfo\(\)/);
   assert.match(source, /createThresholdProgramInfo\(\)/);
   assert.match(source, /createCurvesProgramInfo\(\)/);
+  assert.match(source, /createColorOverlayProgramInfo\(\)/);
+  assert.match(source, /createLayerStrokeProgramInfo\(\)/);
   assert.match(source, /ensureMotionBlurProgramInfo\(\)/);
   assert.match(source, /ensureFieldBlurProgramInfo\(\)/);
   assert.match(source, /ensureRadialBlurProgramInfo\(\)/);
@@ -4810,6 +4813,8 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /ensureNoiseProgramInfo\(\)/);
   assert.match(source, /ensureThresholdProgramInfo\(\)/);
   assert.match(source, /ensureCurvesProgramInfo\(\)/);
+  assert.match(source, /ensureColorOverlayProgramInfo\(\)/);
+  assert.match(source, /ensureLayerStrokeProgramInfo\(\)/);
   assert.match(source, /ensureLayerEffectScratchTargets\(/);
   assert.match(source, /runGaussianBlurPass\(/);
   assert.match(source, /runMotionBlurPass\(/);
@@ -4819,6 +4824,8 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /runNoisePass\(/);
   assert.match(source, /runThresholdPass\(/);
   assert.match(source, /runCurvesPass\(/);
+  assert.match(source, /runColorOverlayPass\(/);
+  assert.match(source, /runLayerStrokePass\(/);
   assert.match(source, /applyGaussianBlurTexture\(sourceTexture, radius, options = \{\}\)/);
   assert.match(source, /applyMotionBlurTexture\(sourceTexture, distance, angle, options = \{\}\)/);
   assert.match(source, /applyFieldBlurTexture\(sourceTexture, pins, options = \{\}\)/);
@@ -4827,6 +4834,8 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /applyNoiseTexture\(sourceTexture, noise, options = \{\}\)/);
   assert.match(source, /applyThresholdTexture\(sourceTexture, threshold, options = \{\}\)/);
   assert.match(source, /applyCurvesTexture\(sourceTexture, curves, options = \{\}\)/);
+  assert.match(source, /applyColorOverlayTexture\(sourceTexture, colorOverlay, options = \{\}\)/);
+  assert.match(source, /applyLayerStrokeTexture\(sourceTexture, stroke, options = \{\}\)/);
   assert.match(source, /getLayerEffectOutputRect\(layer, targetRect\)/);
   assert.match(source, /getRadialBlurOutputRect\(radialBlur, outputRect, targetRect\)/);
   assert.match(source, /sourceRect: targetRect/);
@@ -4837,6 +4846,8 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /getLayerNoise\(layer\)/);
   assert.match(source, /getLayerThreshold\(layer\)/);
   assert.match(source, /getLayerCurves\(layer\)/);
+  assert.match(source, /getLayerColorOverlay\(layer\)/);
+  assert.match(source, /getLayerStroke\(layer\)/);
   assert.match(source, /getLayerRenderTexture\(layer, layerTarget, options = \{\}\)/);
   assert.match(source, /for \(const effect of layer\.effects\)/);
   assert.match(source, /u_directionTexelStep/);
@@ -4865,6 +4876,13 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /thresholdLuminance\(color\) \* 255\.0 >= level/);
   assert.match(source, /effect\.type === "threshold"/);
   assert.match(source, /effect\.type === "curves"/);
+  assert.match(source, /effect\.type === "color-overlay"/);
+  assert.match(source, /COLOR_OVERLAY_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /mix\(color, overlay, opacity\)/);
+  assert.match(source, /effect\.type === "stroke"/);
+  assert.match(source, /sampleStrokeDirection/);
+  assert.match(source, /MAX_LAYER_STROKE_RADIUS = 64/);
+  assert.match(source, /padding = Math\.max\(padding, stroke\.size\)/);
   assert.match(source, /copyTextureToRasterTarget\(sourceTexture, target, options = \{\}\)/);
   assert.match(source, /rasterizeLayerEffects\(layer, options = \{\}\)/);
   assert.match(source, /layer-effects-rasterize-before/);
@@ -4894,6 +4912,8 @@ test("document renderer exposes non-destructive gaussian blur layer effect helpe
   assert.match(source, /this\.deleteNoiseResources\(\)/);
   assert.match(source, /this\.deleteThresholdResources\(\)/);
   assert.match(source, /this\.deleteCurvesResources\(\)/);
+  assert.match(source, /this\.deleteColorOverlayResources\(\)/);
+  assert.match(source, /this\.deleteLayerStrokeResources\(\)/);
   assert.match(previewCacheBody, /const renderResults = this\.getLayerRenderResults\(layer, layerTarget\)/);
   assert.match(previewCacheBody, /for \(const renderResult of renderResults\)/);
   assert.match(previewCacheBody, /sourceTexture: layerTexture/);

@@ -253,6 +253,8 @@ test("layer effects are normalized and preserved through layer state history", a
       { type: "noise", amount: 140, scale: -20, monochrome: false, seed: 0.5, enabled: true },
       { type: "threshold", threshold: 300, enabled: true },
       { type: "curves", points: { rgb: [{ id: "black", x: 0, y: 16 }, { id: "white", x: 255, y: 240 }] }, enabled: true },
+      { type: "color-overlay", color: "#f3a", opacity: 1.4, enabled: true },
+      { type: "stroke", color: "#0f8", opacity: 1.2, size: 200, enabled: true },
       { type: "future-effect", strength: 0.5 },
     ],
   }, {
@@ -283,7 +285,15 @@ test("layer effects are normalized and preserved through layer state history", a
   assert.equal(model.findEntryById("paint-main").effects[6].threshold, 255);
   assert.equal(model.findEntryById("paint-main").effects[7].type, "curves");
   assert.equal(model.findEntryById("paint-main").effects[7].points.rgb[0].y, 16);
-  assert.equal(model.findEntryById("paint-main").effects[8].type, "future-effect");
+  assert.equal(model.findEntryById("paint-main").effects[8].type, "color-overlay");
+  assert.equal(model.findEntryById("paint-main").effects[8].color, "#FF33AA");
+  assert.equal(model.findEntryById("paint-main").effects[8].opacity, 1);
+  assert.equal(model.findEntryById("paint-main").effects[9].type, "stroke");
+  assert.equal(model.findEntryById("paint-main").effects[9].color, "#00FF88");
+  assert.equal(model.findEntryById("paint-main").effects[9].opacity, 1);
+  assert.equal(model.findEntryById("paint-main").effects[9].position, "outside");
+  assert.equal(model.findEntryById("paint-main").effects[9].size, 64);
+  assert.equal(model.findEntryById("paint-main").effects[10].type, "future-effect");
 
   model.updateLayer("paint-main", {
     effects: [{ type: "gaussian-blur", radius: 12, enabled: true }],
@@ -362,6 +372,22 @@ test("layer effects are normalized and preserved through layer state history", a
     effects: [{ type: "curves", points: { rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }] }, enabled: true }],
   }, {
     source: "curves-clear",
+  });
+
+  assert.equal(model.findEntryById("paint-main").effects, undefined);
+
+  model.updateLayer("paint-main", {
+    effects: [{ type: "color-overlay", color: "#ffffff", opacity: 0, enabled: true }],
+  }, {
+    source: "color-overlay-clear",
+  });
+
+  assert.equal(model.findEntryById("paint-main").effects, undefined);
+
+  model.updateLayer("paint-main", {
+    effects: [{ type: "stroke", color: "#ffffff", opacity: 1, size: 0, enabled: true }],
+  }, {
+    source: "stroke-clear",
   });
 
   assert.equal(model.findEntryById("paint-main").effects, undefined);

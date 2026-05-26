@@ -14,6 +14,7 @@
   const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
   const DEFAULT_THRESHOLD_VALUE = 128;
+  const MAX_LAYER_STROKE_SIZE = 64;
   const ARTBOARD_LAYER_GROUP_PREFIX = "artboard-group-";
   const CURVE_CHANNELS = Object.freeze(["rgb", "r", "g", "b"]);
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
@@ -78,6 +79,37 @@
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.max(0, Math.min(MAX_THRESHOLD_VALUE, number)) : DEFAULT_THRESHOLD_VALUE;
+  }
+
+  function normalizeUnitOpacity(value, fallback = 1) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : fallback;
+  }
+
+  function normalizeLayerStrokeSize(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_LAYER_STROKE_SIZE, number)) : 0;
+  }
+
+  function normalizeHexColor(value, fallback = "#FFFFFF") {
+    const raw = String(value || "").trim();
+    const hex = raw.startsWith("#") ? raw.slice(1) : raw;
+
+    if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+      return `#${hex
+        .split("")
+        .map((char) => `${char}${char}`)
+        .join("")
+        .toUpperCase()}`;
+    }
+
+    if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+      return `#${hex.toUpperCase()}`;
+    }
+
+    return fallback;
   }
 
   function getCurvesEngine() {
@@ -431,6 +463,26 @@
             };
           }
 
+          if (effect.type === "color-overlay") {
+            return {
+              type: "color-overlay",
+              enabled: effect.enabled !== false,
+              color: normalizeHexColor(effect.color || effect.hex),
+              opacity: normalizeUnitOpacity(effect.opacity),
+            };
+          }
+
+          if (effect.type === "stroke") {
+            return {
+              type: "stroke",
+              enabled: effect.enabled !== false,
+              color: normalizeHexColor(effect.color || effect.hex),
+              opacity: normalizeUnitOpacity(effect.opacity),
+              position: "outside",
+              size: normalizeLayerStrokeSize(effect.size ?? effect.width),
+            };
+          }
+
           return this.cloneValue(effect);
         })
         .filter((effect) =>
@@ -441,7 +493,9 @@
           (effect.type !== "grain" || effect.amount > 0) &&
           (effect.type !== "noise" || effect.amount > 0) &&
           (effect.type !== "threshold" || effect.enabled !== false) &&
-          (effect.type !== "curves" || (effect.enabled !== false && hasMeaningfulCurves(effect.points))),
+          (effect.type !== "curves" || (effect.enabled !== false && hasMeaningfulCurves(effect.points))) &&
+          (effect.type !== "color-overlay" || (effect.enabled !== false && effect.opacity > 0)) &&
+          (effect.type !== "stroke" || (effect.enabled !== false && effect.opacity > 0 && effect.size > 0)),
         );
     }
 

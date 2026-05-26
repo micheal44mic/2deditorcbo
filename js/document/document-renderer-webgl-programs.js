@@ -28,7 +28,9 @@
       CLIP_IDENTITY_UV_MATRIX,
       CROPPED_TARGET_EDGE_PADDING,
       CROPPED_TARGET_EFFECT_PADDING,
+      COLOR_OVERLAY_FRAGMENT_SHADER_SOURCE,
       CURVES_FRAGMENT_SHADER_SOURCE,
+      LAYER_STROKE_FRAGMENT_SHADER_SOURCE,
       DEFAULT_GRAIN_SCALE,
       DEFAULT_NOISE_SCALE,
       DEFAULT_PUPPET_GRID_COLS,
@@ -654,6 +656,80 @@
     }
 ,
 
+    createColorOverlayProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, COLOR_OVERLAY_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma color overlay WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma color overlay.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          color: gl.getUniformLocation(program, "u_color"),
+          opacity: gl.getUniformLocation(program, "u_opacity"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+,
+
+    createLayerStrokeProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, LAYER_STROKE_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma stroke layer WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma stroke layer.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          color: gl.getUniformLocation(program, "u_color"),
+          opacity: gl.getUniformLocation(program, "u_opacity"),
+          size: gl.getUniformLocation(program, "u_size"),
+          texelSize: gl.getUniformLocation(program, "u_texelSize"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+        },
+      };
+    }
+,
+
     createLayerCompositeProgramInfo() {
       const gl = this.gl;
       const vertexShader = this.compileShader(gl.VERTEX_SHADER, LAYER_COMPOSITE_VERTEX_SHADER_SOURCE);
@@ -808,6 +884,24 @@
       }
 
       return this.curvesProgramInfo;
+    }
+,
+
+    ensureColorOverlayProgramInfo() {
+      if (!this.colorOverlayProgramInfo) {
+        this.colorOverlayProgramInfo = this.createColorOverlayProgramInfo();
+      }
+
+      return this.colorOverlayProgramInfo;
+    }
+,
+
+    ensureLayerStrokeProgramInfo() {
+      if (!this.layerStrokeProgramInfo) {
+        this.layerStrokeProgramInfo = this.createLayerStrokeProgramInfo();
+      }
+
+      return this.layerStrokeProgramInfo;
     }
 ,
 

@@ -1032,6 +1032,99 @@ void main() {
 }
 `;
 
+  const COLOR_OVERLAY_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform vec3 u_color;
+uniform float u_opacity;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+void main() {
+  vec4 base = texture(u_texture, v_uv);
+  float alpha = clamp(base.a, 0.0, 1.0);
+
+  if (alpha <= 0.0) {
+    outColor = vec4(0.0);
+    return;
+  }
+
+  vec3 color = clamp(base.rgb / max(alpha, 0.0001), vec3(0.0), vec3(1.0));
+  vec3 overlay = clamp(u_color, vec3(0.0), vec3(1.0));
+  float opacity = clamp(u_opacity, 0.0, 1.0);
+  vec3 mapped = mix(color, overlay, opacity);
+
+  outColor = vec4(mapped * alpha, alpha);
+}
+`;
+
+  const LAYER_STROKE_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform vec3 u_color;
+uniform float u_opacity;
+uniform float u_size;
+uniform vec2 u_texelSize;
+
+in vec2 v_uv;
+
+out vec4 outColor;
+
+const int MAX_LAYER_STROKE_RADIUS = 64;
+
+float sampleStrokeDirection(vec2 direction, float size) {
+  float alpha = 0.0;
+
+  for (int i = 1; i <= MAX_LAYER_STROKE_RADIUS; i++) {
+    if (float(i) > size) {
+      break;
+    }
+
+    alpha = max(alpha, texture(u_texture, v_uv + direction * u_texelSize * float(i)).a);
+  }
+
+  return alpha;
+}
+
+void main() {
+  vec4 base = texture(u_texture, v_uv);
+  float size = clamp(u_size, 0.0, float(MAX_LAYER_STROKE_RADIUS));
+
+  if (size <= 0.0) {
+    outColor = base;
+    return;
+  }
+
+  float neighborAlpha = 0.0;
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(1.0, 0.0), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(-1.0, 0.0), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(0.0, 1.0), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(0.0, -1.0), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(0.70710678, 0.70710678), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(-0.70710678, 0.70710678), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(0.70710678, -0.70710678), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(-0.70710678, -0.70710678), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(0.92387953, 0.38268343), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(-0.92387953, 0.38268343), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(0.92387953, -0.38268343), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(-0.92387953, -0.38268343), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(0.38268343, 0.92387953), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(-0.38268343, 0.92387953), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(0.38268343, -0.92387953), size));
+  neighborAlpha = max(neighborAlpha, sampleStrokeDirection(vec2(-0.38268343, -0.92387953), size));
+
+  float baseAlpha = clamp(base.a, 0.0, 1.0);
+  float strokeAlpha = clamp(neighborAlpha, 0.0, 1.0) * clamp(u_opacity, 0.0, 1.0);
+  vec4 stroke = vec4(clamp(u_color, vec3(0.0), vec3(1.0)) * strokeAlpha, strokeAlpha);
+
+  outColor = base + stroke * (1.0 - baseAlpha);
+}
+`;
+
   const LAYER_COMPOSITE_VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
@@ -1276,6 +1369,8 @@ void main() {
     NOISE_FRAGMENT_SHADER_SOURCE,
     THRESHOLD_FRAGMENT_SHADER_SOURCE,
     CURVES_FRAGMENT_SHADER_SOURCE,
+    COLOR_OVERLAY_FRAGMENT_SHADER_SOURCE,
+    LAYER_STROKE_FRAGMENT_SHADER_SOURCE,
     LAYER_COMPOSITE_VERTEX_SHADER_SOURCE,
     LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE,
   });

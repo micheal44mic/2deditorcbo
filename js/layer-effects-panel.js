@@ -16,6 +16,9 @@ window.CBO = window.CBO || {};
   const MAX_NOISE_SCALE = 100;
   const DEFAULT_NOISE_SCALE = 1;
   const MAX_THRESHOLD_VALUE = 255;
+  const DEFAULT_COLOR_OVERLAY_COLOR = "#FFFFFF";
+  const MAX_LAYER_STROKE_SIZE = 64;
+  const DEFAULT_LAYER_STROKE_SIZE = 8;
   const MOBILE_LAYER_EFFECTS_BACK_ICON = `
     <svg class="lucide lucide-arrow-left-icon lucide-arrow-left" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M19 12H5" />
@@ -32,8 +35,17 @@ window.CBO = window.CBO || {};
     "noise",
     "grain",
     "threshold",
+    "color-overlay",
+    "stroke",
   ]);
   const EFFECT_GROUPS = Object.freeze([
+    {
+      label: "Style",
+      items: Object.freeze([
+        { implemented: true, icon: "color", label: "Color Overlay", mobile: false, type: "color-overlay" },
+        { implemented: true, icon: "stroke", label: "Stroke", mobile: false, type: "stroke" },
+      ]),
+    },
     {
       label: "Blur",
       items: Object.freeze([
@@ -101,6 +113,41 @@ window.CBO = window.CBO || {};
     const number = Number(value);
 
     return Number.isFinite(number) ? Math.max(0, Math.min(MAX_THRESHOLD_VALUE, number)) : DEFAULT_THRESHOLD_VALUE;
+  }
+
+  function normalizeUnitOpacity(value, fallback = 1) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : fallback;
+  }
+
+  function normalizeLayerStrokeSize(value) {
+    const number = Number(value);
+
+    return Number.isFinite(number) ? Math.max(0, Math.min(MAX_LAYER_STROKE_SIZE, number)) : 0;
+  }
+
+  function normalizeHexColor(value, fallback = DEFAULT_COLOR_OVERLAY_COLOR) {
+    const raw = String(value || "").trim();
+    const hex = raw.startsWith("#") ? raw.slice(1) : raw;
+
+    if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+      return `#${hex
+        .split("")
+        .map((char) => `${char}${char}`)
+        .join("")
+        .toUpperCase()}`;
+    }
+
+    if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+      return `#${hex.toUpperCase()}`;
+    }
+
+    return fallback;
+  }
+
+  function getSelectedOverlayColor() {
+    return normalizeHexColor(namespace.selectedColor || namespace.brushSettings?.color || DEFAULT_COLOR_OVERLAY_COLOR);
   }
 
   function getCurvesEngine() {
@@ -228,6 +275,7 @@ window.CBO = window.CBO || {};
     const pathsByIcon = {
       bloom: '<circle cx="12" cy="12" r="3" /><path d="M12 2v3" /><path d="M12 19v3" /><path d="M2 12h3" /><path d="M19 12h3" /><path d="m4.9 4.9 2.1 2.1" /><path d="m17 17 2.1 2.1" /><path d="m19.1 4.9-2.1 2.1" /><path d="m7 17-2.1 2.1" />',
       blur: '<circle cx="12" cy="12" r="1" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="9" />',
+      color: '<path d="M12 22a10 10 0 1 1 10-10c0 1.66-1.34 3-3 3h-1.6a1.4 1.4 0 0 0-1.1 2.27l.25.32A2.75 2.75 0 0 1 14.37 22H12Z" /><circle cx="7.5" cy="10.5" r="1" /><circle cx="10.5" cy="6.5" r="1" /><circle cx="15.5" cy="7.5" r="1" /><circle cx="17.5" cy="12" r="1" />',
       curves: '<path d="M4 19c5 0 4-14 9-14 4 0 3 14 7 14" /><path d="M4 19h16" /><path d="M4 5v14" />',
       field: '<circle cx="12" cy="12" r="2" /><circle cx="12" cy="12" r="6" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="M2 12h2" /><path d="M20 12h2" />',
       glow: '<path d="M12 3v4" /><path d="M12 17v4" /><path d="M3 12h4" /><path d="M17 12h4" /><circle cx="12" cy="12" r="4" />',
@@ -239,6 +287,7 @@ window.CBO = window.CBO || {};
       noise: '<path d="M4 7h1" /><path d="M9 7h1" /><path d="M14 7h1" /><path d="M19 7h1" /><path d="M6 12h1" /><path d="M11 12h1" /><path d="M16 12h1" /><path d="M4 17h1" /><path d="M9 17h1" /><path d="M14 17h1" /><path d="M19 17h1" />',
       pixelate: '<path d="M4 4h6v6H4z" /><path d="M14 4h6v6h-6z" /><path d="M4 14h6v6H4z" /><path d="M14 14h6v6h-6z" />',
       radial: '<circle cx="12" cy="12" r="8" /><path d="M12 4v4" /><path d="M12 16v4" /><path d="M4 12h4" /><path d="M16 12h4" />',
+      stroke: '<rect x="5" y="5" width="14" height="14" rx="2" /><path d="M9 9h6v6H9z" />',
       threshold: '<path d="M4 19h16" /><path d="M4 5h16" /><path d="M12 5v14" /><path d="M8 9h8" /><path d="M8 15h8" />',
       vignette: '<rect x="4" y="5" width="16" height="14" rx="2" /><circle cx="12" cy="12" r="4" />',
     };
@@ -349,8 +398,16 @@ window.CBO = window.CBO || {};
     `;
   }
 
-  function getEffectPickerMarkup() {
-    return EFFECT_GROUPS.map((group) => `
+  function getAdjustmentEffectGroups() {
+    return EFFECT_GROUPS.filter((group) => group.label !== "Style");
+  }
+
+  function getStyleEffectGroups() {
+    return EFFECT_GROUPS.filter((group) => group.label === "Style");
+  }
+
+  function getEffectPickerMarkup(effectGroups = getAdjustmentEffectGroups()) {
+    return effectGroups.map((group) => `
       <section class="layer-effects-menu-group" data-layer-effects-menu-group>
         <div class="layer-effects-menu-title">${group.label}</div>
         <div class="layer-effects-menu-options">
@@ -445,7 +502,9 @@ window.CBO = window.CBO || {};
       effect.type === "radial-blur" ||
       effect.type === "grain" ||
       effect.type === "noise" ||
-      effect.type === "threshold"
+      effect.type === "threshold" ||
+      effect.type === "color-overlay" ||
+      effect.type === "stroke"
     ) {
       return "";
     }
@@ -635,6 +694,31 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function getColorOverlay(layer) {
+    const effect = findLayerEffect(layer, "color-overlay", "colorOverlay");
+    const opacity = normalizeUnitOpacity(effect?.opacity);
+
+    return {
+      color: normalizeHexColor(effect?.color || effect?.hex || getSelectedOverlayColor()),
+      enabled: Boolean(effect && effect.enabled !== false && opacity > 0),
+      opacity,
+    };
+  }
+
+  function getStroke(layer) {
+    const effect = findLayerEffect(layer, "stroke", "stroke");
+    const opacity = normalizeUnitOpacity(effect?.opacity);
+    const size = normalizeLayerStrokeSize(effect?.size ?? effect?.width);
+
+    return {
+      color: normalizeHexColor(effect?.color || effect?.hex || getSelectedOverlayColor()),
+      enabled: Boolean(effect && effect.enabled !== false && opacity > 0 && size > 0),
+      opacity,
+      position: "outside",
+      size,
+    };
+  }
+
   function createEffectSeed(type, layerId) {
     const text = `${type}:${layerId || ""}`;
     let hash = 2166136261;
@@ -816,6 +900,49 @@ window.CBO = window.CBO || {};
     return effects;
   }
 
+  function getNextColorOverlayEffects(layer, color, opacity, enabled = true) {
+    const nextColor = normalizeHexColor(color);
+    const nextOpacity = normalizeUnitOpacity(opacity);
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "color-overlay")
+      .map((effect) => cloneValue(effect));
+
+    if (enabled !== false && nextOpacity > 0) {
+      effects.push({
+        type: "color-overlay",
+        enabled: true,
+        color: nextColor,
+        opacity: nextOpacity,
+      });
+    }
+
+    return effects;
+  }
+
+  function getNextStrokeEffects(layer, size, color, opacity, enabled = true) {
+    const nextSize = normalizeLayerStrokeSize(size);
+    const nextColor = normalizeHexColor(color);
+    const nextOpacity = normalizeUnitOpacity(opacity);
+    const existingEffects = Array.isArray(layer?.effects) ? layer.effects : [];
+    const effects = existingEffects
+      .filter((effect) => effect && effect.type !== "stroke")
+      .map((effect) => cloneValue(effect));
+
+    if (enabled !== false && nextSize > 0 && nextOpacity > 0) {
+      effects.push({
+        type: "stroke",
+        enabled: true,
+        color: nextColor,
+        opacity: nextOpacity,
+        position: "outside",
+        size: nextSize,
+      });
+    }
+
+    return effects;
+  }
+
   function isRenderableEffect(effect) {
     if (!effect || effect.enabled === false || !RASTERIZABLE_EFFECT_TYPES.includes(effect.type)) {
       return false;
@@ -851,6 +978,14 @@ window.CBO = window.CBO || {};
 
     if (effect.type === "curves") {
       return hasMeaningfulCurves(getCurves({ effects: [effect] }).points);
+    }
+
+    if (effect.type === "color-overlay") {
+      return getColorOverlay({ effects: [effect] }).enabled;
+    }
+
+    if (effect.type === "stroke") {
+      return getStroke({ effects: [effect] }).enabled;
     }
 
     return false;
@@ -901,6 +1036,8 @@ window.CBO = window.CBO || {};
   namespace.getLayerNoise = getNoise;
   namespace.getLayerThreshold = getThreshold;
   namespace.getLayerCurves = getCurves;
+  namespace.getLayerColorOverlay = getColorOverlay;
+  namespace.getLayerStroke = getStroke;
 
   namespace.hasRasterizableLayerEffects = function hasRasterizableLayerEffects(layerOrId) {
     const layer = typeof layerOrId === "string"
@@ -1250,6 +1387,91 @@ window.CBO = window.CBO || {};
     return didUpdate;
   };
 
+  namespace.setLayerColorOverlay = function setLayerColorOverlay(layerId, color, opacity = 1, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const nextColor = normalizeHexColor(color);
+    const nextOpacity = normalizeUnitOpacity(opacity);
+    const updateOptions = {
+      historyGroup: options.historyGroup || `color-overlay-${layerId}`,
+      source: options.source || "layer-style-color-overlay",
+    };
+
+    if (options.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextColorOverlayEffects(layer, nextColor, nextOpacity, options.enabled),
+      },
+      updateOptions,
+      {
+        color: nextColor,
+        effect: "color-overlay",
+        enabled: options.enabled !== false && nextOpacity > 0,
+        opacity: nextOpacity,
+      },
+    );
+
+    if (didUpdate) {
+      requestLayerEffectsDraw("color-overlay", layerId, updateOptions.source);
+    }
+
+    return didUpdate;
+  };
+
+  namespace.setLayerStroke = function setLayerStroke(layerId, size, color, opacity = 1, options = {}) {
+    const layerModel = namespace.documentLayerModel;
+    const layer = layerModel?.findEntryById?.(layerId);
+
+    if (!isBlurEligibleLayer(layer) || !layerModel?.updateLayer) {
+      return false;
+    }
+
+    const nextSize = normalizeLayerStrokeSize(size);
+    const nextColor = normalizeHexColor(color);
+    const nextOpacity = normalizeUnitOpacity(opacity);
+    const updateOptions = {
+      historyGroup: options.historyGroup || `stroke-${layerId}`,
+      source: options.source || "layer-style-stroke",
+    };
+
+    if (options.history === false) {
+      updateOptions.history = false;
+    }
+
+    const didUpdate = updateLayerEffectsPatch(
+      layerModel,
+      layerId,
+      {
+        effects: getNextStrokeEffects(layer, nextSize, nextColor, nextOpacity, options.enabled),
+      },
+      updateOptions,
+      {
+        color: nextColor,
+        effect: "stroke",
+        enabled: options.enabled !== false && nextSize > 0 && nextOpacity > 0,
+        opacity: nextOpacity,
+        position: "outside",
+        size: nextSize,
+      },
+    );
+
+    if (didUpdate) {
+      requestLayerEffectsDraw("stroke", layerId, updateOptions.source);
+    }
+
+    return didUpdate;
+  };
+
   function createLayerEffectsRasterizeHistoryEntry(options = {}) {
     const {
       afterPreferSparse = false,
@@ -1389,7 +1611,12 @@ window.CBO = window.CBO || {};
     const beforeState = options.beforeState
       ? cloneValue(options.beforeState)
       : history?.getLayerSnapshot?.(layerModel) || null;
-    const snapshots = renderer.rasterizeLayerEffects(layer, {
+    const rasterizeEffects = getRenderableEffects(layer);
+    const layerForRasterize = {
+      ...layer,
+      effects: cloneValue(rasterizeEffects),
+    };
+    const snapshots = renderer.rasterizeLayerEffects(layerForRasterize, {
       captureAfterSnapshot: false,
       emit: false,
       source: "layer-effects-rasterize",
@@ -1400,7 +1627,7 @@ window.CBO = window.CBO || {};
     }
 
     const rasterizedImageLayer = layer.type === "image";
-    const rasterizeEffects = cloneValue(layer.effects);
+    const redoRasterizeEffects = cloneValue(rasterizeEffects);
     const rasterizedLayerPatch = {
       effects: getEffectsAfterRasterize(layer),
     };
@@ -1446,7 +1673,7 @@ window.CBO = window.CBO || {};
       layerId: layer.id,
       layerModel,
       renderer,
-      rasterizeEffects,
+      rasterizeEffects: redoRasterizeEffects,
     });
 
     if (historyEntry) {
@@ -1489,7 +1716,9 @@ window.CBO = window.CBO || {};
   namespace.rasterizeActiveLayerEffects = (options = {}) => namespace.rasterizeLayerEffects(null, options);
 
   namespace.initLayerEffectsPanel = function initLayerEffectsPanel() {
-    const button = document.querySelector(".vertical-adjustment-layer-button");
+    const adjustmentButton = document.querySelector(".vertical-adjustment-layer-button");
+    const layerStyleButton = document.querySelector(".vertical-layer-style-button");
+    const button = adjustmentButton || layerStyleButton;
     const mobileLauncherButton = document.querySelector(".mobile-adjustment-layer-button");
 
     if ((!button && !mobileLauncherButton) || document.querySelector("[data-layer-effects-panel]")) {
@@ -1548,6 +1777,61 @@ window.CBO = window.CBO || {};
           </div>
         </div>
         <div class="layer-effects-detail-body">
+          <section class="layer-effects-section" aria-label="Color overlay" data-layer-effects-editor="color-overlay" hidden>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Color Overlay</span>
+              <output class="layer-effects-value layer-effects-color-value" data-layer-color-overlay-hex>#FFFFFF</output>
+            </div>
+            <label class="layer-effects-color-row">
+              <span class="layer-effects-color-swatch" data-layer-color-overlay-swatch>
+                <input class="layer-effects-color-input" type="color" value="#FFFFFF" aria-label="Color overlay color" data-layer-color-overlay-input />
+              </span>
+              <span class="layer-effects-label">Color</span>
+            </label>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Opacity</span>
+              <output class="layer-effects-value" data-layer-color-overlay-opacity-value>100%</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="100" step="1" value="100" aria-label="Color overlay opacity" data-layer-color-overlay-opacity-input />
+            <div class="layer-effects-actions">
+              <button class="layer-effects-icon-button" type="button" aria-label="Reset color overlay" data-layer-color-overlay-reset>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+            </div>
+          </section>
+          <section class="layer-effects-section" aria-label="Stroke" data-layer-effects-editor="stroke" hidden>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Size</span>
+              <output class="layer-effects-value" data-layer-stroke-size-value>8 px</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="64" step="1" value="8" aria-label="Stroke size" data-layer-stroke-size-input />
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Stroke</span>
+              <output class="layer-effects-value layer-effects-color-value" data-layer-stroke-hex>#FFFFFF</output>
+            </div>
+            <label class="layer-effects-color-row">
+              <span class="layer-effects-color-swatch" data-layer-stroke-swatch>
+                <input class="layer-effects-color-input" type="color" value="#FFFFFF" aria-label="Stroke color" data-layer-stroke-color-input />
+              </span>
+              <span class="layer-effects-label">Color</span>
+            </label>
+            <div class="layer-effects-control-header">
+              <span class="layer-effects-label">Opacity</span>
+              <output class="layer-effects-value" data-layer-stroke-opacity-value>100%</output>
+            </div>
+            <input class="layer-effects-range" type="range" min="0" max="100" step="1" value="100" aria-label="Stroke opacity" data-layer-stroke-opacity-input />
+            <div class="layer-effects-actions">
+              <button class="layer-effects-icon-button" type="button" aria-label="Reset stroke" data-layer-stroke-reset>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+            </div>
+          </section>
           <section class="layer-effects-section" aria-label="Gaussian blur" data-layer-effects-editor="gaussian-blur" hidden>
             <div class="layer-effects-control-header">
               <span class="layer-effects-label">Gaussian Blur</span>
@@ -1723,6 +2007,18 @@ window.CBO = window.CBO || {};
     const searchInput = panel.querySelector("[data-layer-effects-search]");
     const effectEditors = panel.querySelectorAll("[data-layer-effects-editor]");
     const backButton = panel.querySelector("[data-layer-effects-back]");
+    const colorOverlayInput = panel.querySelector("[data-layer-color-overlay-input]");
+    const colorOverlaySwatch = panel.querySelector("[data-layer-color-overlay-swatch]");
+    const colorOverlayHex = panel.querySelector("[data-layer-color-overlay-hex]");
+    const colorOverlayOpacityInput = panel.querySelector("[data-layer-color-overlay-opacity-input]");
+    const colorOverlayOpacityValue = panel.querySelector("[data-layer-color-overlay-opacity-value]");
+    const strokeSizeInput = panel.querySelector("[data-layer-stroke-size-input]");
+    const strokeSizeValue = panel.querySelector("[data-layer-stroke-size-value]");
+    const strokeColorInput = panel.querySelector("[data-layer-stroke-color-input]");
+    const strokeSwatch = panel.querySelector("[data-layer-stroke-swatch]");
+    const strokeHex = panel.querySelector("[data-layer-stroke-hex]");
+    const strokeOpacityInput = panel.querySelector("[data-layer-stroke-opacity-input]");
+    const strokeOpacityValue = panel.querySelector("[data-layer-stroke-opacity-value]");
     const blurInput = panel.querySelector("[data-layer-blur-input]");
     const blurValue = panel.querySelector("[data-layer-blur-value]");
     const motionDistanceInput = panel.querySelector("[data-layer-motion-distance-input]");
@@ -1760,6 +2056,8 @@ window.CBO = window.CBO || {};
     const curvesResetChannelButton = panel.querySelector("[data-curves-reset-channel]");
     const curvesResetAllButton = panel.querySelector("[data-curves-reset-all]");
     const acceptButton = panel.querySelector("[data-layer-effects-accept]");
+    const colorOverlayResetButton = panel.querySelector("[data-layer-color-overlay-reset]");
+    const strokeResetButton = panel.querySelector("[data-layer-stroke-reset]");
     const resetButton = panel.querySelector("[data-layer-blur-reset]");
     const motionResetButton = panel.querySelector("[data-layer-motion-reset]");
     const radialResetButton = panel.querySelector("[data-layer-radial-reset]");
@@ -1795,6 +2093,7 @@ window.CBO = window.CBO || {};
     let pendingLayerEffectPreview = null;
     let pendingLayerEffectPreviewFrame = 0;
     let previewSession = null;
+    let activeDesktopButton = button;
 
     document.body.append(panel);
 
@@ -3362,6 +3661,37 @@ window.CBO = window.CBO || {};
       return didRestore;
     }
 
+    function commitPreviewSessionMetadata() {
+      const session = previewSession;
+      const layerModel = getLayerModel();
+      const history = namespace.documentHistory;
+
+      previewSession = null;
+
+      if (!session?.beforeState || !layerModel) {
+        requestLayerEffectsDraw();
+        return true;
+      }
+
+      if (!history?.recordLayerStateChange) {
+        requestLayerEffectsDraw();
+        return true;
+      }
+
+      const didRecord = history.recordLayerStateChange(layerModel, session.beforeState, {
+        historyGroup: `${session.effectType || "layer-style"}-${session.layerId}`,
+        source: "layer-effects-metadata-commit",
+      });
+
+      history.flushLayerState?.(layerModel);
+      requestLayerEffectsDraw();
+      return didRecord !== false;
+    }
+
+    function isRasterizableEffectType(effectType) {
+      return RASTERIZABLE_EFFECT_TYPES.includes(effectType);
+    }
+
     function setEffectView(effectType = "") {
       const definition = getEffectDefinition(effectType);
       const isEditor = Boolean(definition);
@@ -3442,6 +3772,30 @@ window.CBO = window.CBO || {};
       } else if (effectType === "curves") {
         renderCurvesEditor();
         curvesInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "color-overlay") {
+        const colorOverlay = getColorOverlay(getActiveLayer());
+        const nextColor = colorOverlay.enabled ? colorOverlay.color : getSelectedOverlayColor();
+        const nextOpacity = colorOverlay.enabled ? Math.round(colorOverlay.opacity * 100) : 100;
+
+        colorOverlayInput.value = nextColor;
+        colorOverlayOpacityInput.value = String(nextOpacity);
+        if (!colorOverlay.enabled) {
+          applyColorOverlay(nextColor, nextOpacity);
+        }
+        colorOverlayInput?.focus?.({ preventScroll: true });
+      } else if (effectType === "stroke") {
+        const stroke = getStroke(getActiveLayer());
+        const nextSize = stroke.enabled ? stroke.size : DEFAULT_LAYER_STROKE_SIZE;
+        const nextColor = stroke.enabled ? stroke.color : getSelectedOverlayColor();
+        const nextOpacity = stroke.enabled ? Math.round(stroke.opacity * 100) : 100;
+
+        strokeSizeInput.value = String(nextSize);
+        strokeColorInput.value = nextColor;
+        strokeOpacityInput.value = String(nextOpacity);
+        if (!stroke.enabled) {
+          applyStroke(nextSize, nextColor, nextOpacity);
+        }
+        strokeSizeInput?.focus?.({ preventScroll: true });
       }
     }
 
@@ -3457,21 +3811,28 @@ window.CBO = window.CBO || {};
 
       setEffectView("");
       panel.hidden = true;
-      button.classList.remove("active");
-      button.setAttribute("aria-pressed", "false");
+      [adjustmentButton, layerStyleButton].forEach((panelButton) => {
+        panelButton?.classList.remove("active");
+        panelButton?.setAttribute("aria-pressed", "false");
+      });
     }
 
-    function setOpen(isOpen) {
+    function setOpen(isOpen, options = {}) {
       if (!isOpen) {
         closePanel({ cancel: true });
         return;
       }
 
+      activeDesktopButton = options.trigger || activeDesktopButton || button;
       previewSession = null;
       setEffectView("");
       panel.hidden = false;
-      button.classList.add("active");
-      button.setAttribute("aria-pressed", "true");
+      [adjustmentButton, layerStyleButton].forEach((panelButton) => {
+        const isActiveButton = panelButton === activeDesktopButton;
+
+        panelButton?.classList.toggle("active", isActiveButton);
+        panelButton?.setAttribute("aria-pressed", String(isActiveButton));
+      });
 
       syncControls();
       positionPanel();
@@ -3482,7 +3843,13 @@ window.CBO = window.CBO || {};
         return;
       }
 
-      const buttonRect = button.getBoundingClientRect();
+      const anchorButton = activeDesktopButton || button;
+
+      if (!anchorButton) {
+        return;
+      }
+
+      const buttonRect = anchorButton.getBoundingClientRect();
       const panelRect = panel.getBoundingClientRect();
       const gap = 12;
       const left = Math.max(12, buttonRect.left - panelRect.width - gap);
@@ -3516,6 +3883,12 @@ window.CBO = window.CBO || {};
       const curves = isEligible
         ? getCurves(layer)
         : { enabled: false, points: createDefaultCurvesPoints() };
+      const colorOverlay = isEligible
+        ? getColorOverlay(layer)
+        : { color: DEFAULT_COLOR_OVERLAY_COLOR, enabled: false, opacity: 1 };
+      const stroke = isEligible
+        ? getStroke(layer)
+        : { color: DEFAULT_COLOR_OVERLAY_COLOR, enabled: false, opacity: 1, position: "outside", size: 0 };
       const hasActiveFieldBlur = hasFieldBlurAmount(
         activeEffectType === "field-blur" ? fieldBlurPins : fieldBlur.pins,
       );
@@ -3533,6 +3906,11 @@ window.CBO = window.CBO || {};
         option.setAttribute("aria-disabled", isEnabled ? "false" : "true");
       });
       blurInput.disabled = !isEligible;
+      colorOverlayInput.disabled = !isEligible;
+      colorOverlayOpacityInput.disabled = !isEligible;
+      strokeSizeInput.disabled = !isEligible;
+      strokeColorInput.disabled = !isEligible;
+      strokeOpacityInput.disabled = !isEligible;
       motionDistanceInput.disabled = !isEligible;
       motionAngleInput.disabled = !isEligible;
       radialAmountInput.disabled = !isEligible;
@@ -3566,7 +3944,11 @@ window.CBO = window.CBO || {};
         (activeEffectType === "grain" && grain.amount <= 0) ||
         (activeEffectType === "noise" && noise.amount <= 0) ||
         (activeEffectType === "threshold" && !threshold.enabled) ||
-        (activeEffectType === "curves" && !hasActiveCurves);
+        (activeEffectType === "curves" && !hasActiveCurves) ||
+        (activeEffectType === "color-overlay" && !colorOverlay.enabled) ||
+        (activeEffectType === "stroke" && !stroke.enabled);
+      colorOverlayResetButton.disabled = !isEligible || !colorOverlay.enabled;
+      strokeResetButton.disabled = !isEligible || !stroke.enabled;
       resetButton.disabled = !isEligible || radius <= 0;
       motionResetButton.disabled = !isEligible || motionBlur.distance <= 0;
       radialResetButton.disabled = !isEligible || radialBlur.amount <= 0;
@@ -3598,9 +3980,134 @@ window.CBO = window.CBO || {};
       noiseMonochromeInput.checked = noise.monochrome;
       thresholdInput.value = String(threshold.threshold);
       thresholdValue.textContent = String(Math.round(threshold.threshold));
+      colorOverlayInput.value = colorOverlay.color;
+      colorOverlayHex.textContent = colorOverlay.color;
+      colorOverlaySwatch.style.setProperty("--layer-effect-color", colorOverlay.color);
+      colorOverlayOpacityInput.value = String(Math.round(colorOverlay.opacity * 100));
+      colorOverlayOpacityValue.textContent = `${Math.round(colorOverlay.opacity * 100)}%`;
+      strokeSizeInput.value = String(stroke.size);
+      strokeSizeValue.textContent = `${Math.round(stroke.size)} px`;
+      strokeColorInput.value = stroke.color;
+      strokeHex.textContent = stroke.color;
+      strokeSwatch.style.setProperty("--layer-effect-color", stroke.color);
+      strokeOpacityInput.value = String(Math.round(stroke.opacity * 100));
+      strokeOpacityValue.textContent = `${Math.round(stroke.opacity * 100)}%`;
       syncFieldBlurUi();
       renderCurvesEditor();
       panel.classList.toggle("disabled", !isEligible);
+    }
+
+    function applyColorOverlay(color = colorOverlayInput?.value, opacityPercent = colorOverlayOpacityInput?.value) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextColor = normalizeHexColor(color);
+      const nextOpacityPercent = clamp(opacityPercent, 0, 100);
+      const nextOpacity = normalizeUnitOpacity(nextOpacityPercent / 100);
+
+      colorOverlayInput.value = nextColor;
+      colorOverlayHex.textContent = nextColor;
+      colorOverlaySwatch.style.setProperty("--layer-effect-color", nextColor);
+      colorOverlayOpacityValue.textContent = `${Math.round(nextOpacityPercent)}%`;
+      queueLayerEffectPreview(
+        "color-overlay",
+        layer.id,
+        () => namespace.setLayerColorOverlay(layer.id, nextColor, nextOpacity, {
+          history: false,
+          source: "layer-style-preview",
+        }),
+      );
+    }
+
+    function clearColorOverlay() {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextColor = getSelectedOverlayColor();
+
+      colorOverlayInput.value = nextColor;
+      colorOverlayHex.textContent = nextColor;
+      colorOverlaySwatch.style.setProperty("--layer-effect-color", nextColor);
+      colorOverlayOpacityInput.value = "100";
+      colorOverlayOpacityValue.textContent = "100%";
+      queueLayerEffectPreview(
+        "color-overlay",
+        layer.id,
+        () => namespace.setLayerColorOverlay(layer.id, nextColor, 0, {
+          enabled: false,
+          history: false,
+          source: "layer-style-preview",
+        }),
+      );
+    }
+
+    function applyStroke(
+      size = strokeSizeInput?.value,
+      color = strokeColorInput?.value,
+      opacityPercent = strokeOpacityInput?.value,
+    ) {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextSize = normalizeLayerStrokeSize(size);
+      const nextColor = normalizeHexColor(color);
+      const nextOpacityPercent = clamp(opacityPercent, 0, 100);
+      const nextOpacity = normalizeUnitOpacity(nextOpacityPercent / 100);
+
+      strokeSizeInput.value = String(nextSize);
+      strokeSizeValue.textContent = `${Math.round(nextSize)} px`;
+      strokeColorInput.value = nextColor;
+      strokeHex.textContent = nextColor;
+      strokeSwatch.style.setProperty("--layer-effect-color", nextColor);
+      strokeOpacityValue.textContent = `${Math.round(nextOpacityPercent)}%`;
+      queueLayerEffectPreview(
+        "stroke",
+        layer.id,
+        () => namespace.setLayerStroke(layer.id, nextSize, nextColor, nextOpacity, {
+          history: false,
+          source: "layer-style-preview",
+        }),
+      );
+    }
+
+    function clearStroke() {
+      const layer = getActiveLayer();
+
+      if (!isBlurEligibleLayer(layer)) {
+        syncControls();
+        return;
+      }
+
+      const nextColor = getSelectedOverlayColor();
+
+      strokeSizeInput.value = String(DEFAULT_LAYER_STROKE_SIZE);
+      strokeSizeValue.textContent = `${DEFAULT_LAYER_STROKE_SIZE} px`;
+      strokeColorInput.value = nextColor;
+      strokeHex.textContent = nextColor;
+      strokeSwatch.style.setProperty("--layer-effect-color", nextColor);
+      strokeOpacityInput.value = "100";
+      strokeOpacityValue.textContent = "100%";
+      queueLayerEffectPreview(
+        "stroke",
+        layer.id,
+        () => namespace.setLayerStroke(layer.id, 0, nextColor, 0, {
+          enabled: false,
+          history: false,
+          source: "layer-style-preview",
+        }),
+      );
     }
 
     function applyRadius(radius) {
@@ -3815,6 +4322,12 @@ window.CBO = window.CBO || {};
       });
     }
 
+    function renderEffectMenu(effectGroups = getAdjustmentEffectGroups()) {
+      menu.innerHTML = getEffectPickerMarkup(effectGroups);
+      filterEffectMenu();
+      syncControls();
+    }
+
     function handleLayerChange(event) {
       const layer = getActiveLayer();
 
@@ -3912,15 +4425,25 @@ window.CBO = window.CBO || {};
       });
     });
 
-    button.addEventListener("click", (event) => {
+    adjustmentButton?.addEventListener("click", (event) => {
       event.preventDefault();
-      if (panel.hidden) {
-        if (searchInput) {
-          searchInput.value = "";
-          filterEffectMenu();
-        }
+      activeDesktopButton = adjustmentButton;
+      if (searchInput) {
+        searchInput.value = "";
       }
-      setOpen(panel.hidden);
+      renderEffectMenu(getAdjustmentEffectGroups());
+      setOpen(panel.hidden, { trigger: adjustmentButton });
+    });
+
+    layerStyleButton?.addEventListener("click", (event) => {
+      event.preventDefault();
+      activeDesktopButton = layerStyleButton;
+      if (searchInput) {
+        searchInput.value = "";
+      }
+      renderEffectMenu(getStyleEffectGroups());
+      setOpen(true, { trigger: layerStyleButton });
+      positionPanel();
     });
 
     backButton.addEventListener("click", () => {
@@ -3938,6 +4461,34 @@ window.CBO = window.CBO || {};
     });
 
     searchInput?.addEventListener("input", filterEffectMenu);
+
+    colorOverlayInput.addEventListener("input", () => {
+      applyColorOverlay(colorOverlayInput.value, colorOverlayOpacityInput.value);
+    });
+
+    colorOverlayOpacityInput.addEventListener("input", () => {
+      applyColorOverlay(colorOverlayInput.value, colorOverlayOpacityInput.value);
+    });
+
+    colorOverlayResetButton.addEventListener("click", () => {
+      clearColorOverlay();
+    });
+
+    strokeSizeInput.addEventListener("input", () => {
+      applyStroke(strokeSizeInput.value, strokeColorInput.value, strokeOpacityInput.value);
+    });
+
+    strokeColorInput.addEventListener("input", () => {
+      applyStroke(strokeSizeInput.value, strokeColorInput.value, strokeOpacityInput.value);
+    });
+
+    strokeOpacityInput.addEventListener("input", () => {
+      applyStroke(strokeSizeInput.value, strokeColorInput.value, strokeOpacityInput.value);
+    });
+
+    strokeResetButton.addEventListener("click", () => {
+      clearStroke();
+    });
 
     blurInput.addEventListener("input", () => {
       applyRadius(blurInput.value);
@@ -4223,11 +4774,13 @@ window.CBO = window.CBO || {};
         flushPendingLayerEffectPreview();
       }
 
-      const didRasterize = namespace.rasterizeActiveLayerEffects?.({
-        beforeState: previewSession?.beforeState || null,
-      }) === true;
+      const didCommit = isRasterizableEffectType(activeEffectType)
+        ? namespace.rasterizeActiveLayerEffects?.({
+            beforeState: previewSession?.beforeState || null,
+          }) === true
+        : commitPreviewSessionMetadata();
 
-      if (didRasterize) {
+      if (didCommit) {
         closePanel({ cancel: false });
       } else {
         syncControls();
@@ -4247,7 +4800,8 @@ window.CBO = window.CBO || {};
         panel.hidden ||
         event.target instanceof Node && (
           panel.contains(event.target) ||
-          button.contains(event.target) ||
+          adjustmentButton?.contains(event.target) ||
+          layerStyleButton?.contains(event.target) ||
           (activeEffectType === "field-blur" && event.target.closest?.(".editor-stage"))
         )
       ) {
