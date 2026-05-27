@@ -16,6 +16,9 @@ layout(location = 8) in float aInstanceGrainTravel;
 layout(location = 9) in float aInstanceGrainRotation;
 layout(location = 10) in float aInstanceGrainDepthScale;
 layout(location = 11) in float aInstanceMirrorX;
+layout(location = 12) in float aInstanceFlowScale;
+layout(location = 13) in float aInstanceBleedScale;
+layout(location = 14) in float aInstanceSizeCompressionScale;
 
 uniform vec2 u_docResolution;
 uniform vec2 u_targetOrigin;
@@ -34,6 +37,9 @@ out float v_grainDepthScale;
 out float v_stampPixelSize;
 out float v_pressure;
 out float v_alpha;
+out float v_flowScale;
+out float v_bleedScale;
+out float v_sizeCompressionScale;
 out vec3 v_color;
 
 void main() {
@@ -67,6 +73,9 @@ void main() {
   v_stampPixelSize = stampPixelSize;
   v_pressure = pressure;
   v_alpha = clamp(aInstanceAlpha, 0.0, 1.0);
+  v_flowScale = max(aInstanceFlowScale, 0.0);
+  v_bleedScale = clamp(aInstanceBleedScale, 0.0, 1.0);
+  v_sizeCompressionScale = max(aInstanceSizeCompressionScale, 1.0);
   v_color = aInstanceColor;
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
@@ -109,6 +118,9 @@ in float v_grainDepthScale;
 in float v_stampPixelSize;
 in float v_pressure;
 in float v_alpha;
+in float v_flowScale;
+in float v_bleedScale;
+in float v_sizeCompressionScale;
 in vec3 v_color;
 
 out vec4 outColor;
@@ -243,7 +255,7 @@ vec2 getMovingGrainUv(vec2 safeTextureSize) {
   float zoom = clamp(u_grainZoom, 0.0, 1.0);
   float movement = clamp(u_grainMovement, 0.0, 1.0);
   vec2 followSizePosition = v_localPosition * safeTextureSize;
-  vec2 croppedPosition = v_localPosition * max(v_stampPixelSize, 1.0);
+  vec2 croppedPosition = v_localPosition * max(v_stampPixelSize / max(v_sizeCompressionScale, 1.0), 1.0);
   vec2 grainPosition = mix(followSizePosition, croppedPosition, zoom);
 
   grainPosition += vec2(v_grainTravel * movement, 0.0);
@@ -277,19 +289,21 @@ void applyGrainSample(vec2 grainUv, float depth, inout vec3 brushColor, inout fl
 
 void main() {
   float shape = 1.0;
+  float effectiveWetEdges = clamp(u_wetEdges + v_bleedScale * (1.0 - u_wetEdges), 0.0, 1.0);
+  float effectiveBurntEdges = clamp(u_burntEdges + v_bleedScale * 0.5, 0.0, 1.0);
 
   if (u_useShapeTexture > 0.5) {
     float coreShape = texture(u_shapeTexture, v_uv).a;
 
-    if (u_wetEdges > 0.0) {
-      float offset = 0.05 * u_wetEdges;
+    if (effectiveWetEdges > 0.0) {
+      float offset = 0.05 * effectiveWetEdges;
       float rightShape = texture(u_shapeTexture, v_uv + vec2(offset, 0.0)).a;
       float leftShape = texture(u_shapeTexture, v_uv + vec2(-offset, 0.0)).a;
       float topShape = texture(u_shapeTexture, v_uv + vec2(0.0, offset)).a;
       float bottomShape = texture(u_shapeTexture, v_uv + vec2(0.0, -offset)).a;
       float blurredShape = (coreShape * 2.0 + rightShape + leftShape + topShape + bottomShape) / 6.0;
 
-      shape = mix(coreShape, blurredShape, u_wetEdges);
+      shape = mix(coreShape, blurredShape, effectiveWetEdges);
     } else {
       shape = coreShape;
     }
@@ -302,7 +316,7 @@ void main() {
 
     // Hardness=1: bordo nitido (fade in 1 px AA). Hardness=0: gradiente radiale dal centro.
     float fw = max(fwidth(distanceFromCenter), 0.001);
-    float effectiveHardness = clamp(u_hardness * (1.0 - u_wetEdges * 0.8), 0.0, 1.0);
+    float effectiveHardness = clamp(u_hardness * (1.0 - effectiveWetEdges * 0.8), 0.0, 1.0);
     float edgeStart = mix(0.0, 0.5 - fw, effectiveHardness);
     shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
   }
@@ -311,14 +325,14 @@ void main() {
     discard;
   }
 
-  if (u_wetEdges > 0.0) {
-    float phase = mix(1.0, 1.5, u_wetEdges);
+  if (effectiveWetEdges > 0.0) {
+    float phase = mix(1.0, 1.5, effectiveWetEdges);
     float pooledShape = sin(clamp(shape, 0.0, 1.0) * 1.570796 * phase);
 
-    shape = mix(shape, pooledShape, u_wetEdges);
+    shape = mix(shape, pooledShape, effectiveWetEdges);
   }
 
-  float burntEdgeMask = getBurntEdgeMask(shape, u_burntEdges);
+  float burntEdgeMask = getBurntEdgeMask(shape, effectiveBurntEdges);
   vec3 brushColor = v_color;
   float grainCoverage = 1.0;
 
@@ -342,7 +356,7 @@ void main() {
     brushColor = applyBurntEdgesMode(brushColor, burntEdgeMask, u_burntEdgesMode);
   }
 
-  float flow = clamp(u_flow, 0.0, 2.0);
+  float flow = clamp(u_flow * v_flowScale, 0.0, 2.0);
   float coverage = shape * grainCoverage;
   if (burntEdgeMask > 0.0) {
     coverage = clamp(coverage + burntEdgeMask * 0.22, 0.0, 1.0);
@@ -391,6 +405,7 @@ uniform float u_useShapeTexture;
 in vec2 v_uv;
 in vec3 v_color;
 in float v_alpha;
+in float v_flowScale;
 
 out vec4 outColor;
 
@@ -423,7 +438,7 @@ void main() {
     discard;
   }
 
-  float flow = clamp(u_flow, 0.0, 2.0);
+  float flow = clamp(u_flow * v_flowScale, 0.0, 2.0);
   float coverage = shape;
 
   if (flow < 1.0) {
@@ -649,6 +664,18 @@ void main() {
     }
 ,
 
+    getPencilBleedPotential() {
+      const settings = this.brushState || {};
+
+      return Math.max(
+        this.clamp01(settings.pencilPressureBleed ?? 0),
+        this.clamp01(settings.pencilTiltBleed ?? 0),
+        this.clamp01(settings.pencilTiltGradation ?? 0) * 0.72,
+        this.clamp01(settings.pencilBarrelBleed ?? 0),
+      );
+    }
+,
+
     shouldUseSimpleBrushProgram(useGrainTexture = this.isGrainEnabled()) {
       return (
         namespace.mobileLargeBlendSimpleShader !== false &&
@@ -657,6 +684,7 @@ void main() {
         useGrainTexture !== true &&
         this.getWetEdges() <= 0 &&
         this.getBurntEdges() <= 0 &&
+        this.getPencilBleedPotential() <= 0 &&
         this.isAlphaThresholdEnabled() !== true
       );
     }
@@ -801,40 +829,49 @@ void main() {
 
       gl.bindBuffer(gl.ARRAY_BUFFER, instanceVBO);
       gl.bufferData(gl.ARRAY_BUFFER, 0, gl.DYNAMIC_DRAW);
-      // Instance stride 60 byte: pos, pressure, alpha, size, rotation, color, grain moving data, mirror flag.
+      // Instance stride 72 byte: base dab, colore, dati grain Moving, mirror flag, flow, bleed, size compression.
       gl.enableVertexAttribArray(1);
-      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 60, 0);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 72, 0);
       gl.vertexAttribDivisor(1, 1);
       gl.enableVertexAttribArray(2);
-      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 60, 8);
+      gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 72, 8);
       gl.vertexAttribDivisor(2, 1);
       gl.enableVertexAttribArray(3);
-      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 60, 12);
+      gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 72, 12);
       gl.vertexAttribDivisor(3, 1);
       gl.enableVertexAttribArray(4);
-      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 60, 16);
+      gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 72, 16);
       gl.vertexAttribDivisor(4, 1);
       gl.enableVertexAttribArray(5);
-      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 60, 20);
+      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 72, 20);
       gl.vertexAttribDivisor(5, 1);
       gl.enableVertexAttribArray(6);
-      gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 60, 24);
+      gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 72, 24);
       gl.vertexAttribDivisor(6, 1);
       gl.enableVertexAttribArray(7);
-      gl.vertexAttribPointer(7, 2, gl.FLOAT, false, 60, 36);
+      gl.vertexAttribPointer(7, 2, gl.FLOAT, false, 72, 36);
       gl.vertexAttribDivisor(7, 1);
       gl.enableVertexAttribArray(8);
-      gl.vertexAttribPointer(8, 1, gl.FLOAT, false, 60, 44);
+      gl.vertexAttribPointer(8, 1, gl.FLOAT, false, 72, 44);
       gl.vertexAttribDivisor(8, 1);
       gl.enableVertexAttribArray(9);
-      gl.vertexAttribPointer(9, 1, gl.FLOAT, false, 60, 48);
+      gl.vertexAttribPointer(9, 1, gl.FLOAT, false, 72, 48);
       gl.vertexAttribDivisor(9, 1);
       gl.enableVertexAttribArray(10);
-      gl.vertexAttribPointer(10, 1, gl.FLOAT, false, 60, 52);
+      gl.vertexAttribPointer(10, 1, gl.FLOAT, false, 72, 52);
       gl.vertexAttribDivisor(10, 1);
       gl.enableVertexAttribArray(11);
-      gl.vertexAttribPointer(11, 1, gl.FLOAT, false, 60, 56);
+      gl.vertexAttribPointer(11, 1, gl.FLOAT, false, 72, 56);
       gl.vertexAttribDivisor(11, 1);
+      gl.enableVertexAttribArray(12);
+      gl.vertexAttribPointer(12, 1, gl.FLOAT, false, 72, 60);
+      gl.vertexAttribDivisor(12, 1);
+      gl.enableVertexAttribArray(13);
+      gl.vertexAttribPointer(13, 1, gl.FLOAT, false, 72, 64);
+      gl.vertexAttribDivisor(13, 1);
+      gl.enableVertexAttribArray(14);
+      gl.vertexAttribPointer(14, 1, gl.FLOAT, false, 72, 68);
+      gl.vertexAttribDivisor(14, 1);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindVertexArray(null);
@@ -1518,7 +1555,7 @@ void main() {
           return;
         }
 
-        const nextRotation = directionalRotation + (stamp.shapeScatterRotation ?? 0);
+        const nextRotation = directionalRotation + (stamp.penTiltRotation ?? 0) + (stamp.shapeScatterRotation ?? 0);
 
         stamp.rotation = Number(stamp.mirrorX) < 0 ? -nextRotation : nextRotation;
         stamp.needsShapeRotationTangent = false;
@@ -1580,11 +1617,11 @@ void main() {
 ,
 
     getStampInstanceData(stampCount) {
-      const requiredFloats = Math.max(15, Math.round(Number(stampCount) || 0) * 15);
+      const requiredFloats = Math.max(18, Math.round(Number(stampCount) || 0) * 18);
 
       if (!this.stampInstanceData || this.stampInstanceCapacity < requiredFloats) {
         const previousCapacity = Math.max(0, Math.round(Number(this.stampInstanceCapacity) || 0));
-        const nextCapacity = Math.max(requiredFloats, Math.ceil(previousCapacity * 1.5), 15 * 256);
+        const nextCapacity = Math.max(requiredFloats, Math.ceil(previousCapacity * 1.5), 18 * 256);
 
         this.stampInstanceData = new Float32Array(nextCapacity);
         this.stampInstanceCapacity = nextCapacity;

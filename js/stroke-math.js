@@ -12,11 +12,11 @@ window.CBO = window.CBO || {};
   function normalizePressure(pressure) {
     const nextPressure = Number(pressure);
 
-    if (!Number.isFinite(nextPressure) || nextPressure <= 0) {
+    if (!Number.isFinite(nextPressure)) {
       return 1;
     }
 
-    return clamp(nextPressure, 0.2, 2);
+    return clamp(nextPressure, 0, 2);
   }
 
   function getEffectiveRadius(settings, pressure) {
@@ -94,6 +94,95 @@ window.CBO = window.CBO || {};
     };
   }
 
+  function getMotionCornerPreserve(points) {
+    if (!Array.isArray(points) || points.length < 5) {
+      return 0;
+    }
+
+    const start = points[0];
+    const middle = points[Math.floor(points.length * 0.5)];
+    const end = points[points.length - 1];
+    const firstX = middle.x - start.x;
+    const firstY = middle.y - start.y;
+    const secondX = end.x - middle.x;
+    const secondY = end.y - middle.y;
+    const firstLength = Math.hypot(firstX, firstY);
+    const secondLength = Math.hypot(secondX, secondY);
+    const pathLength = points.reduce((total, nextPoint, index) => {
+      if (index === 0) {
+        return 0;
+      }
+
+      const previous = points[index - 1];
+
+      return total + Math.hypot(nextPoint.x - previous.x, nextPoint.y - previous.y);
+    }, 0);
+    const directness = pathLength > 0
+      ? clamp(Math.hypot(end.x - start.x, end.y - start.y) / pathLength, 0, 1)
+      : 0;
+
+    if (firstLength <= 0.5 || secondLength <= 0.5) {
+      return 0;
+    }
+
+    const dot = clamp((firstX * secondX + firstY * secondY) / (firstLength * secondLength), -1, 1);
+
+    return clamp((1 - dot) * 0.68 * directness, 0, 0.85);
+  }
+
+  function getMotionFilteredPoint(point, state, settings) {
+    const amount = clamp01(settings?.motionFilteringAmount);
+
+    if (amount <= 0 || !state?.inputPoints || state.inputPoints.length < 4) {
+      return point;
+    }
+
+    const expression = clamp01(settings?.motionFilteringExpression);
+    const windowSize = Math.min(state.inputPoints.length, 4 + Math.round(amount * 20));
+    const points = state.inputPoints.slice(-windowSize);
+    const lastIndex = points.length - 1;
+    const meanIndex = lastIndex * 0.5;
+    const mean = points.reduce(
+      (result, nextPoint) => ({
+        x: result.x + nextPoint.x / points.length,
+        y: result.y + nextPoint.y / points.length,
+      }),
+      { x: 0, y: 0 },
+    );
+    const trend = points.reduce(
+      (result, nextPoint, index) => {
+        const indexOffset = index - meanIndex;
+
+        result.denominator += indexOffset * indexOffset;
+        result.x += indexOffset * (nextPoint.x - mean.x);
+        result.y += indexOffset * (nextPoint.y - mean.y);
+        return result;
+      },
+      { denominator: 0, x: 0, y: 0 },
+    );
+
+    if (trend.denominator <= 0) {
+      return point;
+    }
+
+    const slopeX = trend.x / trend.denominator;
+    const slopeY = trend.y / trend.denominator;
+    const projected = {
+      x: mean.x + slopeX * (lastIndex - meanIndex),
+      y: mean.y + slopeY * (lastIndex - meanIndex),
+    };
+    const lateralX = point.x - projected.x;
+    const lateralY = point.y - projected.y;
+    const cornerPreserve = getMotionCornerPreserve(points);
+    const removal = amount * (1 - expression * 0.85) * (1 - cornerPreserve);
+    const lateralKeep = clamp(1 - removal, 0, 1);
+
+    return {
+      x: projected.x + lateralX * lateralKeep,
+      y: projected.y + lateralY * lateralKeep,
+    };
+  }
+
   function getSmoothedPressure(pressure, state, settings) {
     const streamLinePressure = clamp01(settings?.streamLinePressure);
     const nextPressure = normalizePressure(pressure);
@@ -119,13 +208,14 @@ window.CBO = window.CBO || {};
     }
 
     const stabilizedPoint = getStabilizedPoint(point, state, settings);
+    const motionFilteredPoint = getMotionFilteredPoint(stabilizedPoint, state, settings);
     const streamLineAmount = getStreamLineAmount(settings);
     const nextPressure = getSmoothedPressure(pressure, state, settings);
 
     if (streamLineAmount <= 0) {
-      state.smoothedPoint = { ...stabilizedPoint };
+      state.smoothedPoint = { ...motionFilteredPoint };
       return {
-        point: stabilizedPoint,
+        point: motionFilteredPoint,
         pressure: nextPressure,
       };
     }
@@ -133,8 +223,8 @@ window.CBO = window.CBO || {};
     const follow = clamp(1 - streamLineAmount * 0.88, 0.08, 1);
 
     state.smoothedPoint = {
-      x: state.smoothedPoint.x + (stabilizedPoint.x - state.smoothedPoint.x) * follow,
-      y: state.smoothedPoint.y + (stabilizedPoint.y - state.smoothedPoint.y) * follow,
+      x: state.smoothedPoint.x + (motionFilteredPoint.x - state.smoothedPoint.x) * follow,
+      y: state.smoothedPoint.y + (motionFilteredPoint.y - state.smoothedPoint.y) * follow,
     };
 
     return {
@@ -318,6 +408,7 @@ window.CBO = window.CBO || {};
     normalizePressure,
     getEffectiveRadius,
     getStreamLineAmount,
+    getMotionFilteredPoint,
     createStrokeState,
     processStrokeInput,
     getNextStampStep,

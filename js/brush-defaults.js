@@ -47,11 +47,36 @@ window.CBO = window.CBO || {};
     streamLineAmount: 0,
     streamLinePressure: 0,
     stabilizationAmount: 0,
+    motionFilteringAmount: 0,
+    motionFilteringExpression: 0,
     spacingJitter: 0,
     jitterLateral: 0,
     jitterLinear: 0,
     fallOff: 0,
     velocityPressureEnabled: false,
+    pencilInputVersion: 2,
+    penPressureSize: 0,
+    penPressureOpacity: 0,
+    penTiltSize: 0,
+    penTiltRotation: 0,
+    pencilPressureCurveLow: 0,
+    pencilPressureCurveMid: 0.5,
+    pencilPressureCurveHigh: 1,
+    pencilPressureSize: 0,
+    pencilPressureOpacity: 0,
+    pencilPressureFlow: 0,
+    pencilPressureBleed: 0,
+    pencilTiltTrigger: 45,
+    pencilTiltOpacity: 0,
+    pencilTiltGradation: 0,
+    pencilTiltBleed: 0,
+    pencilTiltSize: 0,
+    pencilTiltSizeCompression: false,
+    pencilTiltRotation: 0,
+    pencilBarrelSize: 0,
+    pencilBarrelOpacity: 0,
+    pencilBarrelBleed: 0,
+    pencilBarrelRelativeToStroke: true,
     taperStart: 0,
     taperEnd: 0,
     taperLinkSizes: false,
@@ -187,6 +212,35 @@ window.CBO = window.CBO || {};
 
     nextSettings.streamLineAmount =
       nextOverrides.streamLineAmount ?? nextOverrides.smoothing ?? nextSettings.streamLineAmount;
+    if (!hasOwn(nextOverrides, "pencilPressureSize") && hasOwn(nextOverrides, "penPressureSize")) {
+      nextSettings.pencilPressureSize = nextOverrides.penPressureSize;
+    }
+    if (!hasOwn(nextOverrides, "pencilPressureOpacity") && hasOwn(nextOverrides, "penPressureOpacity")) {
+      nextSettings.pencilPressureOpacity = nextOverrides.penPressureOpacity;
+    }
+    if (!hasOwn(nextOverrides, "pencilTiltSize") && hasOwn(nextOverrides, "penTiltSize")) {
+      nextSettings.pencilTiltSize = nextOverrides.penTiltSize;
+    }
+    if (!hasOwn(nextOverrides, "pencilTiltRotation") && hasOwn(nextOverrides, "penTiltRotation")) {
+      nextSettings.pencilTiltRotation = nextOverrides.penTiltRotation;
+    }
+    if (
+      !hasOwn(nextOverrides, "pencilInputVersion") &&
+      Number(nextSettings.pencilPressureSize) === 1 &&
+      normalize01(nextSettings.pencilPressureOpacity, 0) === 0 &&
+      normalize01(nextSettings.pencilPressureFlow, 0) === 0 &&
+      normalize01(nextSettings.pencilPressureBleed, 0) === 0 &&
+      normalize01(nextSettings.pencilTiltSize, 0) === 0 &&
+      normalize01(nextSettings.pencilTiltOpacity, 0) === 0 &&
+      normalize01(nextSettings.pencilTiltGradation, 0) === 0 &&
+      normalize01(nextSettings.pencilTiltBleed, 0) === 0 &&
+      normalizeSigned(nextSettings.pencilBarrelSize, 0) === 0 &&
+      normalize01(nextSettings.pencilBarrelOpacity, 0) === 0 &&
+      normalize01(nextSettings.pencilBarrelBleed, 0) === 0
+    ) {
+      nextSettings.pencilPressureSize = 0;
+    }
+    nextSettings.pencilInputVersion = settings.pencilInputVersion;
     nextSettings.shapeAlphaSrc = nextSettings.shapeAlphaSrc || defaultShapeAlphaSrc;
     nextSettings.shapeAlphaName = nextSettings.shapeAlphaName || defaultShapeAlphaName;
     nextSettings.grainEnabled = nextSettings.grainEnabled !== false;
@@ -199,6 +253,17 @@ window.CBO = window.CBO || {};
     nextSettings.renderingMode = normalizeRenderingMode(nextSettings.renderingMode);
     nextSettings.flow = normalize01(nextSettings.flow, settings.flow);
     nextSettings.radius = normalizeRange(nextSettings.radius, settings.radius, 1, brushSizeMax);
+    nextSettings.streamLineAmount = normalize01(nextSettings.streamLineAmount, settings.streamLineAmount);
+    nextSettings.streamLinePressure = normalize01(nextSettings.streamLinePressure, settings.streamLinePressure);
+    nextSettings.stabilizationAmount = normalize01(nextSettings.stabilizationAmount, settings.stabilizationAmount);
+    nextSettings.motionFilteringAmount = normalize01(
+      nextSettings.motionFilteringAmount,
+      settings.motionFilteringAmount,
+    );
+    nextSettings.motionFilteringExpression = normalize01(
+      nextSettings.motionFilteringExpression,
+      settings.motionFilteringExpression,
+    );
     nextSettings.spacing = normalizeRange(nextSettings.spacing, settings.spacing, minimumSpacing, 1);
     nextSettings.spacingJitter = normalize01(nextSettings.spacingJitter, settings.spacingJitter);
     nextSettings.jitterLateral = normalizeRange(nextSettings.jitterLateral, settings.jitterLateral, 0, 2);
@@ -210,6 +275,45 @@ window.CBO = window.CBO || {};
     nextSettings.alphaThresholdEnabled = nextSettings.alphaThresholdEnabled === true;
     nextSettings.alphaThreshold = normalize01(nextSettings.alphaThreshold, settings.alphaThreshold);
     nextSettings.velocityPressureEnabled = nextSettings.velocityPressureEnabled === true;
+    nextSettings.pencilPressureCurveLow = normalize01(
+      nextSettings.pencilPressureCurveLow,
+      settings.pencilPressureCurveLow,
+    );
+    nextSettings.pencilPressureCurveMid = normalize01(
+      nextSettings.pencilPressureCurveMid,
+      settings.pencilPressureCurveMid,
+    );
+    nextSettings.pencilPressureCurveHigh = normalize01(
+      nextSettings.pencilPressureCurveHigh,
+      settings.pencilPressureCurveHigh,
+    );
+    nextSettings.pencilPressureSize = normalize01(nextSettings.pencilPressureSize, settings.pencilPressureSize);
+    nextSettings.pencilPressureOpacity = normalize01(
+      nextSettings.pencilPressureOpacity,
+      settings.pencilPressureOpacity,
+    );
+    nextSettings.pencilPressureFlow = normalize01(nextSettings.pencilPressureFlow, settings.pencilPressureFlow);
+    nextSettings.pencilPressureBleed = normalize01(nextSettings.pencilPressureBleed, settings.pencilPressureBleed);
+    nextSettings.pencilTiltTrigger = normalizeRange(
+      nextSettings.pencilTiltTrigger,
+      settings.pencilTiltTrigger,
+      15,
+      90,
+    );
+    nextSettings.pencilTiltOpacity = normalize01(nextSettings.pencilTiltOpacity, settings.pencilTiltOpacity);
+    nextSettings.pencilTiltGradation = normalize01(nextSettings.pencilTiltGradation, settings.pencilTiltGradation);
+    nextSettings.pencilTiltBleed = normalize01(nextSettings.pencilTiltBleed, settings.pencilTiltBleed);
+    nextSettings.pencilTiltSize = normalize01(nextSettings.pencilTiltSize, settings.pencilTiltSize);
+    nextSettings.pencilTiltSizeCompression = nextSettings.pencilTiltSizeCompression === true;
+    nextSettings.pencilTiltRotation = normalize01(nextSettings.pencilTiltRotation, settings.pencilTiltRotation);
+    nextSettings.pencilBarrelSize = normalizeSigned(nextSettings.pencilBarrelSize, settings.pencilBarrelSize);
+    nextSettings.pencilBarrelOpacity = normalize01(nextSettings.pencilBarrelOpacity, settings.pencilBarrelOpacity);
+    nextSettings.pencilBarrelBleed = normalize01(nextSettings.pencilBarrelBleed, settings.pencilBarrelBleed);
+    nextSettings.pencilBarrelRelativeToStroke = nextSettings.pencilBarrelRelativeToStroke !== false;
+    nextSettings.penPressureSize = nextSettings.pencilPressureSize;
+    nextSettings.penPressureOpacity = nextSettings.pencilPressureOpacity;
+    nextSettings.penTiltSize = nextSettings.pencilTiltSize;
+    nextSettings.penTiltRotation = nextSettings.pencilTiltRotation;
     nextSettings.shapeRotation = normalizeSigned(nextSettings.shapeRotation, settings.shapeRotation);
     nextSettings.shapeScatter = normalizeRange(nextSettings.shapeScatter, settings.shapeScatter, 0, 2);
     nextSettings.shapeCount = normalizeRange(Math.round(Number(nextSettings.shapeCount) || settings.shapeCount), settings.shapeCount, 1, 16);

@@ -118,6 +118,7 @@ test("selection tool touch drag on empty stage starts camera pan before overlays
   assert.match(source, /document\.querySelector\("\[data-tool\]\.active"\)/);
   assert.match(source, /toolMode === "selection" \|\| label === "selection"/);
   assert.match(source, /isTouchCanvasPanInteractiveTarget\(target\)/);
+  assert.match(source, /\[data-artboard-drag-handle\]/);
   assert.match(source, /\[data-ai-image-board\]/);
   assert.match(source, /\[data-space-text-board\]/);
   assert.match(source, /\.editor-vector-text-layer/);

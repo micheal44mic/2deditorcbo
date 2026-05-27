@@ -661,6 +661,7 @@
         "select",
         "[contenteditable='true']",
         "[role='button']",
+        "[data-artboard-drag-handle]",
         "[data-ai-image-board]",
         "[data-space-text-board]",
         ".editor-vector-text-layer",
@@ -1003,19 +1004,97 @@
     }
 ,
 
+    normalizePointerPressure(event, isMouse = false) {
+      if (isMouse) {
+        return 1.0;
+      }
+
+      const pointerType = String(event?.pointerType || "").toLowerCase();
+
+      if (pointerType !== "pen") {
+        return 1.0;
+      }
+
+      const pressure = Number(event?.pressure);
+
+      return Number.isFinite(pressure) ? this.clamp(pressure, 0, 1) : 1.0;
+    }
+,
+
+    normalizePointerTiltValue(value) {
+      const tilt = Number(value);
+
+      return Number.isFinite(tilt) ? this.clamp(tilt, -90, 90) : 0;
+    }
+,
+
+    createPointerTiltFromAngles(altitudeAngle, azimuthAngle) {
+      const altitude = Number(altitudeAngle);
+      const azimuth = Number(azimuthAngle);
+
+      if (!Number.isFinite(altitude) || !Number.isFinite(azimuth)) {
+        return { tiltX: 0, tiltY: 0 };
+      }
+
+      if (altitude <= 0) {
+        return {
+          tiltX: Math.round(Math.cos(azimuth) * 90),
+          tiltY: Math.round(Math.sin(azimuth) * 90),
+        };
+      }
+
+      const tanAltitude = Math.tan(altitude);
+
+      if (!Number.isFinite(tanAltitude) || tanAltitude === 0) {
+        return { tiltX: 0, tiltY: 0 };
+      }
+
+      return {
+        tiltX: this.normalizePointerTiltValue(Math.atan(Math.cos(azimuth) / tanAltitude) * 180 / Math.PI),
+        tiltY: this.normalizePointerTiltValue(Math.atan(Math.sin(azimuth) / tanAltitude) * 180 / Math.PI),
+      };
+    }
+,
+
+    getPointerTilt(event, isMouse = false) {
+      if (isMouse) {
+        return { tiltX: 0, tiltY: 0 };
+      }
+
+      const rawTiltX = Number(event?.tiltX);
+      const rawTiltY = Number(event?.tiltY);
+
+      if (Number.isFinite(rawTiltX) || Number.isFinite(rawTiltY)) {
+        return {
+          tiltX: this.normalizePointerTiltValue(rawTiltX),
+          tiltY: this.normalizePointerTiltValue(rawTiltY),
+        };
+      }
+
+      return this.createPointerTiltFromAngles(event?.altitudeAngle, event?.azimuthAngle);
+    }
+,
+
     createPointerSample(event) {
       const { docX, docY } = this.screenToDocumentSpace(event.clientX, event.clientY);
       const isMouse = event.pointerType === "mouse";
       const point = this.clampStrokeSamplePoint(docX, docY);
       const eventTime = Number(event.timeStamp);
+      const tilt = this.getPointerTilt(event, isMouse);
+      const altitudeAngle = Number(event.altitudeAngle);
+      const azimuthAngle = Number(event.azimuthAngle);
+      const twist = Number(event.twist);
 
       return {
         x: point.x,
         y: point.y,
-        pressure: isMouse ? 1.0 : event.pressure,
+        pressure: this.normalizePointerPressure(event, isMouse),
         pointerType: event.pointerType || "",
-        tiltX: isMouse ? 0 : event.tiltX,
-        tiltY: isMouse ? 0 : event.tiltY,
+        tiltX: tilt.tiltX,
+        tiltY: tilt.tiltY,
+        altitudeAngle: Number.isFinite(altitudeAngle) ? altitudeAngle : null,
+        azimuthAngle: Number.isFinite(azimuthAngle) ? azimuthAngle : null,
+        twist: Number.isFinite(twist) ? twist : 0,
         time: Number.isFinite(eventTime) && eventTime > 0 ? eventTime : performance.now(),
       };
     }
@@ -1447,6 +1526,9 @@
         this.roundReplayCacheNumber(sample?.time, 10),
         this.roundReplayCacheNumber(sample?.tiltX, 1000),
         this.roundReplayCacheNumber(sample?.tiltY, 1000),
+        this.roundReplayCacheNumber(sample?.altitudeAngle, 1000),
+        this.roundReplayCacheNumber(sample?.azimuthAngle, 1000),
+        this.roundReplayCacheNumber(sample?.twist, 1000),
         sample?.strokeSeed ?? "",
         sample?.pointerType || "",
       ].join(",");
@@ -1469,6 +1551,8 @@
         this.roundReplayCacheNumber(settings.streamLineAmount ?? settings.smoothing, 10000),
         this.roundReplayCacheNumber(settings.streamLinePressure, 10000),
         this.roundReplayCacheNumber(settings.stabilizationAmount, 10000),
+        this.roundReplayCacheNumber(settings.motionFilteringAmount, 10000),
+        this.roundReplayCacheNumber(settings.motionFilteringExpression, 10000),
         settings.velocityPressureEnabled === true ? 1 : 0,
       ].join("|");
     }
@@ -1490,6 +1574,23 @@
         this.roundReplayCacheNumber(settings.wetCharge, 10000),
         this.roundReplayCacheNumber(settings.wetAttack, 10000),
         this.roundReplayCacheNumber(settings.wetnessJitter, 10000),
+        this.roundReplayCacheNumber(settings.pencilPressureCurveLow, 10000),
+        this.roundReplayCacheNumber(settings.pencilPressureCurveMid, 10000),
+        this.roundReplayCacheNumber(settings.pencilPressureCurveHigh, 10000),
+        this.roundReplayCacheNumber(settings.pencilPressureSize ?? settings.penPressureSize, 10000),
+        this.roundReplayCacheNumber(settings.pencilPressureOpacity ?? settings.penPressureOpacity, 10000),
+        this.roundReplayCacheNumber(settings.pencilPressureFlow, 10000),
+        this.roundReplayCacheNumber(settings.pencilPressureBleed, 10000),
+        this.roundReplayCacheNumber(settings.pencilTiltTrigger, 10000),
+        this.roundReplayCacheNumber(settings.pencilTiltOpacity, 10000),
+        this.roundReplayCacheNumber(settings.pencilTiltGradation, 10000),
+        this.roundReplayCacheNumber(settings.pencilTiltBleed, 10000),
+        this.roundReplayCacheNumber(settings.pencilTiltSize ?? settings.penTiltSize, 10000),
+        settings.pencilTiltSizeCompression === true ? 1 : 0,
+        this.roundReplayCacheNumber(settings.pencilBarrelSize, 10000),
+        this.roundReplayCacheNumber(settings.pencilBarrelOpacity, 10000),
+        this.roundReplayCacheNumber(settings.pencilBarrelBleed, 10000),
+        settings.pencilBarrelRelativeToStroke !== false ? 1 : 0,
       ];
 
       if (!taperActive) {
@@ -1559,6 +1660,7 @@
         this.roundReplayCacheNumber(settings.shapeScatter, 10000),
         this.roundReplayCacheNumber(settings.shapeCount, 10000),
         this.roundReplayCacheNumber(settings.shapeCountJitter, 10000),
+        this.roundReplayCacheNumber(settings.pencilTiltRotation ?? settings.penTiltRotation, 10000),
         this.getGrainMode(),
         settings.grainMovingOffsetJitter !== false ? 1 : 0,
         this.roundReplayCacheNumber(settings.grainMovingRotation, 10000),
@@ -1687,10 +1789,19 @@
           y: stamp.y,
           pressure: stamp.pressure,
           alphaScale: stamp.alphaScale ?? 1,
+          flowScale: stamp.flowScale ?? 1,
+          bleedScale: stamp.bleedScale ?? 0,
+          sizeCompressionScale: stamp.sizeCompressionScale ?? 1,
           sizeScale: stamp.sizeScale ?? 1,
           rotation: stamp.rotation ?? 0,
+          pointerType: stamp.pointerType || "",
           tiltX: stamp.tiltX,
           tiltY: stamp.tiltY,
+          altitudeAngle: stamp.altitudeAngle,
+          azimuthAngle: stamp.azimuthAngle,
+          twist: stamp.twist,
+          pencilInputApplied: stamp.pencilInputApplied === true,
+          penInputApplied: stamp.penInputApplied === true,
         },
         tangent: tangent ? { x: tangent.x, y: tangent.y } : null,
       });
@@ -1719,9 +1830,10 @@
 
         startStamp.alphaScale = this.getStampAlphaScale();
         startStamp.sizeScale = 1;
+        this.applyPencilInputToStamp(startStamp, null);
         this.applyTaperToStamp(startStamp);
         this.captureReplayBaseStamp(baseStamps, startStamp, null);
-        this.nextStampDistance = this.getStampSpacing(startStamp.sizeScale);
+        this.nextStampDistance = this.getStampSpacing(startStamp);
 
         this.forEachReplayStrokeSegment(processedSamples, (p0, p1, p2, p3) => {
           const segmentDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -1757,10 +1869,11 @@
                 this.strokeDistance += stampDistance;
                 stamp.alphaScale = this.getStampAlphaScale();
                 stamp.sizeScale = 1;
+                this.applyPencilInputToStamp(stamp, tangent);
                 this.applyTaperToStamp(stamp);
                 this.captureReplayBaseStamp(baseStamps, stamp, tangent);
                 this.leftoverDistance -= stampDistance;
-                this.nextStampDistance = this.getStampSpacing(stamp.sizeScale);
+                this.nextStampDistance = this.getStampSpacing(stamp);
               }
             }
 
@@ -1775,6 +1888,7 @@
           this.strokeDistance = this.clamp(taperTotalLength, 0, taperTotalLength);
           finalStamp.alphaScale = this.getStampAlphaScale();
           finalStamp.sizeScale = 1;
+          this.applyPencilInputToStamp(finalStamp, this.lastStrokeTangent);
           this.applyTaperToStamp(finalStamp);
           this.captureReplayBaseStamp(baseStamps, finalStamp, this.lastStrokeTangent);
         }
@@ -1941,6 +2055,7 @@
 
       stamp.alphaScale = this.getStampAlphaScale();
       stamp.sizeScale = 1;
+      this.applyPencilInputToStamp(stamp, this.lastStrokeTangent);
       this.applyTaperToStamp(stamp);
       this.pushShapeStamps(stamp, this.lastStrokeTangent);
     }
@@ -1991,9 +2106,10 @@
 
       startStamp.alphaScale = this.getStampAlphaScale();
       startStamp.sizeScale = 1;
+      this.applyPencilInputToStamp(startStamp, null);
       this.applyTaperToStamp(startStamp);
       this.pushShapeStamps(startStamp, null);
-      this.nextStampDistance = this.getStampSpacing(startStamp.sizeScale);
+      this.nextStampDistance = this.getStampSpacing(startStamp);
       this.currentStroke = [startPoint, startPoint, startPoint];
 
       for (let index = 1; index < rawSamples.length - 1; index += 1) {
@@ -2641,6 +2757,9 @@
       const pressure = Number(sample?.pressure);
       const tiltX = Number(sample?.tiltX);
       const tiltY = Number(sample?.tiltY);
+      const altitudeAngle = Number(sample?.altitudeAngle);
+      const azimuthAngle = Number(sample?.azimuthAngle);
+      const twist = Number(sample?.twist);
       const time = Number(sample?.time);
       const strokeSeed = Number(sample?.strokeSeed);
       const clone = {
@@ -2650,6 +2769,9 @@
         pointerType: sample?.pointerType || "",
         tiltX: Number.isFinite(tiltX) ? tiltX : 0,
         tiltY: Number.isFinite(tiltY) ? tiltY : 0,
+        altitudeAngle: Number.isFinite(altitudeAngle) ? altitudeAngle : null,
+        azimuthAngle: Number.isFinite(azimuthAngle) ? azimuthAngle : null,
+        twist: Number.isFinite(twist) ? twist : 0,
         time: Number.isFinite(time) ? time : this.getNow(),
       };
 
@@ -3814,8 +3936,9 @@
 
       startStamp.alphaScale = this.getStampAlphaScale();
       startStamp.sizeScale = 1;
+      this.applyPencilInputToStamp(startStamp, null);
       this.pushShapeStamps(startStamp, null);
-      this.nextStampDistance = this.getStampSpacing();
+      this.nextStampDistance = this.getStampSpacing(startStamp);
       this.currentStroke = [point, point, point];
       this.canvas.setPointerCapture(event.pointerId);
       this.scheduleQuickLineHold();

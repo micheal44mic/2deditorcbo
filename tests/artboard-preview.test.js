@@ -689,7 +689,7 @@ test("artboard connections live in their own module", () => {
   assert.match(cssSource, /\.editor-artboard-paper-layer[\s\S]*z-index: 2/);
   const connectionLayerRule = cssSource.match(/\.editor-artboard-connection-layer\s*\{[^}]*\}/)?.[0] || "";
   const paneConnectionLayerRule = cssSource.match(/\.editor-space-board-pane > \.editor-artboard-connection-layer\s*\{[^}]*\}/)?.[0] || "";
-  assert.match(connectionLayerRule, /z-index:\s*1;/);
+  assert.match(connectionLayerRule, /z-index:\s*3;/);
   assert.match(connectionLayerRule, /width:\s*1px;/);
   assert.match(paneConnectionLayerRule, /z-index:\s*0;/);
   assert.match(cssSource, /\.editor-vector-overlay[\s\S]*z-index: 4/);
@@ -1339,6 +1339,19 @@ test("selection tool highlights the clicked artboard and its layer group only", 
   assert.match(layerCssSource, /\.layer-artboard-row\.artboard-active/);
 });
 
+test("new artboard creation focuses the created artboard instead of stale layer selection", () => {
+  const previewSource = readRepoFile("js", "artboard-preview.js");
+  const createBody = previewSource.match(/function submitArtboardCreatePopover\(\) \{[\s\S]*?\n  \}/)?.[0] || "";
+
+  assert.match(previewSource, /function clearLayerSelectionForArtboardFocus/);
+  assert.match(previewSource, /namespace\.documentLayerModel\?\.setActiveLayer\?\.?\(null, \{/);
+  assert.match(previewSource, /namespace\.rasterTransformTool\?\.activateLayer\?\.?\(null, \{/);
+  assert.match(createBody, /selectArtboard\(artboard\.id, \{[\s\S]*source: "artboard-preview-create"/);
+  assert.match(createBody, /clearLayerSelectionForArtboardFocus\("artboard-preview-create-clear-layer-selection"\)/);
+  assert.match(createBody, /fitPreviewArtboard\(artboard\.id\)/);
+  assert.doesNotMatch(createBody, /fitPreviewArtboards\(\)/);
+});
+
 test("preview artboards can be dragged from their title labels", () => {
   const previewSource = readRepoFile("js", "artboard-preview.js");
   const connectionsSource = readArtboardConnectionSources();
@@ -1347,7 +1360,10 @@ test("preview artboards can be dragged from their title labels", () => {
   assert.match(previewSource, /let artboardDragState = null/);
   assert.match(previewSource, /function getArtboardLabelAtClientPoint\(clientX, clientY\)/);
   assert.match(previewSource, /function startArtboardDrag\(event, artboard\)/);
+  assert.match(previewSource, /label\.dataset\.artboardDragHandle = ""/);
   assert.match(previewSource, /artboard\.isPrimary === true/);
+  assert.doesNotMatch(previewSource, /source: "artboard-preview-body-drag-select"/);
+  assert.doesNotMatch(previewSource, /shouldStartArtboardBodyDrag/);
   assert.match(previewSource, /ARTBOARD_LABEL_FONT_RATIO = 0\.036/);
   assert.match(previewSource, /ARTBOARD_LABEL_HEIGHT_RATIO = 1\.35/);
   assert.match(previewSource, /ARTBOARD_LABEL_TOP_GAP_RATIO = 0\.32/);
@@ -1371,6 +1387,10 @@ test("preview artboards can be dragged from their title labels", () => {
   assert.match(connectionsSource, /function getArtboardLabelMetrics\(width, height, scale = 1\)/);
   assert.match(connectionsSource, /--editor-artboard-label-font-size/);
   assert.match(layoutSource, /\.editor-artboard-frame-label[\s\S]*font-size: var\(--editor-artboard-label-font-size, 10px\)/);
+  assert.match(layoutSource, /\.editor-artboard-frame-label[\s\S]*cursor: grab/);
+  assert.match(layoutSource, /\.editor-artboard-frame-label[\s\S]*pointer-events: auto/);
+  assert.match(layoutSource, /\.editor-artboard-frame-label[\s\S]*touch-action: none/);
+  assert.match(layoutSource, /\.editor-artboard-frame-label:active[\s\S]*cursor: grabbing/);
   assert.match(layoutSource, /\.editor-artboard-frame-label[\s\S]*transform: none/);
   assert.match(layoutSource, /\.editor-artboard-frame \{[\s\S]*border: var\(--editor-artboard-frame-border-width, 2px\) solid/);
   assert.match(layoutSource, /\.editor-artboard-frame\.is-active \{[\s\S]*border-width: var\(--editor-artboard-frame-active-border-width, 1px\)/);

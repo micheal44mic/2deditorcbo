@@ -1116,7 +1116,7 @@
         nextCapacity = Math.max(
           requiredBytes,
           Math.ceil(previousCapacity * 1.5),
-          60 * 256,
+          72 * 256,
         );
         gl.bufferData(gl.ARRAY_BUFFER, nextCapacity, gl.DYNAMIC_DRAW);
         this.brush.instanceVBOCapacityBytes = nextCapacity;
@@ -1168,7 +1168,7 @@
           Math.max(0, Math.round(flushScissor?.height || 0)),
         stampCount,
       });
-      // 15 float per istanza: base dab + colore + dati grain Moving + mirror flag.
+      // 18 float per istanza: base dab + colore + dati grain Moving + mirror, flow, bleed, size compression.
       const instanceData = this.getStampInstanceData(stampCount);
       const brushSize = this.getBrushSize();
       const fallbackColor = this.getCurrentStrokeColorRgb();
@@ -1180,7 +1180,7 @@
 
       for (let index = 0; index < stampCount; index += 1) {
         const stamp = this.stampsBuffer[index];
-        const offset = index * 15;
+        const offset = index * 18;
         const color = stamp.colorRgb || fallbackColor;
 
         instanceData[offset] = stamp.x;
@@ -1198,6 +1198,9 @@
         instanceData[offset + 12] = stamp.grainRotation ?? 0;
         instanceData[offset + 13] = stamp.grainDepthScale ?? 1;
         instanceData[offset + 14] = Number(stamp.mirrorX) < 0 ? -1 : 1;
+        instanceData[offset + 15] = stamp.flowScale ?? 1;
+        instanceData[offset + 16] = stamp.bleedScale ?? 0;
+        instanceData[offset + 17] = stamp.sizeCompressionScale ?? 1;
       }
       instanceTrace?.end({
         floatCount: instanceData.length,

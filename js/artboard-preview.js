@@ -364,8 +364,9 @@ window.CBO = window.CBO || {};
     selectArtboard(artboard.id, {
       source: "artboard-preview-create",
     });
+    clearLayerSelectionForArtboardFocus("artboard-preview-create-clear-layer-selection");
     closeArtboardCreatePopover();
-    fitPreviewArtboards();
+    fitPreviewArtboard(artboard.id);
   }
 
   function handleArtboardPopoverClick(event) {
@@ -1345,6 +1346,16 @@ window.CBO = window.CBO || {};
     return cloneArtboard(artboard);
   }
 
+  function clearLayerSelectionForArtboardFocus(source = "artboard-preview-focus-clear-layer-selection") {
+    namespace.documentLayerModel?.setActiveLayer?.(null, {
+      history: false,
+      source,
+    });
+    namespace.rasterTransformTool?.activateLayer?.(null, {
+      selection: true,
+    });
+  }
+
   function clearArtboardSelection(options = {}) {
     const currentSelection = namespace.getSelectedDocumentArtboardId?.() || selectedArtboardId || "";
 
@@ -1674,6 +1685,9 @@ window.CBO = window.CBO || {};
     const labelArtboard = getArtboardLabelAtClientPoint(event.clientX, event.clientY);
 
     if (startArtboardDrag(event, labelArtboard)) {
+      selectArtboard(labelArtboard.id, {
+        source: "artboard-preview-label-drag-select",
+      });
       return;
     }
 
@@ -1798,6 +1812,7 @@ window.CBO = window.CBO || {};
       frame.style.setProperty("--editor-artboard-label-top", `${labelMetrics.top}px`);
 
       label.className = "editor-artboard-frame-label";
+      label.dataset.artboardDragHandle = "";
       label.textContent = `${artboard.name} ${artboard.width} x ${artboard.height}`;
 
       frame.append(label);

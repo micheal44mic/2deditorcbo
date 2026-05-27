@@ -64,6 +64,29 @@ window.CBO = window.CBO || {};
     "jitterLinear",
     "fallOff",
     "velocityPressureEnabled",
+    "pencilInputVersion",
+    "penPressureSize",
+    "penPressureOpacity",
+    "penTiltSize",
+    "penTiltRotation",
+    "pencilPressureCurveLow",
+    "pencilPressureCurveMid",
+    "pencilPressureCurveHigh",
+    "pencilPressureSize",
+    "pencilPressureOpacity",
+    "pencilPressureFlow",
+    "pencilPressureBleed",
+    "pencilTiltTrigger",
+    "pencilTiltOpacity",
+    "pencilTiltGradation",
+    "pencilTiltBleed",
+    "pencilTiltSize",
+    "pencilTiltSizeCompression",
+    "pencilTiltRotation",
+    "pencilBarrelSize",
+    "pencilBarrelOpacity",
+    "pencilBarrelBleed",
+    "pencilBarrelRelativeToStroke",
     "taperStart",
     "taperEnd",
     "taperSize",
@@ -107,6 +130,8 @@ window.CBO = window.CBO || {};
     "streamLineAmount",
     "streamLinePressure",
     "stabilizationAmount",
+    "motionFilteringAmount",
+    "motionFilteringExpression",
     "smoothing",
     "stampColorHueJitter",
     "stampColorSaturationJitter",
@@ -414,13 +439,20 @@ window.CBO = window.CBO || {};
         height * 0.56 -
         Math.sin(t * Math.PI) * height * 0.12 +
         Math.sin(t * Math.PI * 2.1) * height * 0.035;
+      const tiltAmount = getPreviewTiltAmount(t, settings);
+      const altitudeAngle = (1 - tiltAmount) * (Math.PI * 0.5);
+      const azimuthAngle = -0.2 + t * 0.8;
 
       samples.push({
         x,
         y,
-        pressure: 1,
-        tiltX: 0,
-        tiltY: 0,
+        pressure: getPressure(t, settings),
+        pointerType: "pen",
+        tiltX: Math.round(Math.cos(azimuthAngle) * tiltAmount * 60),
+        tiltY: Math.round(Math.sin(azimuthAngle) * tiltAmount * 60),
+        altitudeAngle,
+        azimuthAngle,
+        twist: Math.round(t * 270),
         time: index * 16,
         strokeSeed: 0x2dcb05,
       });
@@ -495,8 +527,48 @@ window.CBO = window.CBO || {};
     return { x, y };
   }
 
-  function getPressure(t) {
-    return 1;
+  function getPressure(t, settings = null) {
+    const usesPenPressure = settings && (
+      clamp01(settings.pencilPressureSize ?? settings.penPressureSize ?? 0) > 0 ||
+      clamp01(settings.pencilPressureOpacity ?? settings.penPressureOpacity) > 0 ||
+      clamp01(settings.pencilPressureFlow) > 0 ||
+      clamp01(settings.pencilPressureBleed) > 0
+    );
+
+    if (!usesPenPressure) {
+      return 1;
+    }
+
+    const wave = Math.sin(clamp01(t) * Math.PI);
+
+    return clamp(0.18 + wave * 0.82, 0.18, 1);
+  }
+
+  function getPencilPressureCurveValue(pressure, settings = null) {
+    const low = clamp01(settings?.pencilPressureCurveLow ?? 0);
+    const mid = clamp01(settings?.pencilPressureCurveMid ?? 0.5);
+    const high = clamp01(settings?.pencilPressureCurveHigh ?? 1);
+    const nextPressure = clamp01(pressure);
+
+    return nextPressure <= 0.5
+      ? lerp(low, mid, nextPressure * 2)
+      : lerp(mid, high, (nextPressure - 0.5) * 2);
+  }
+
+  function getPreviewTiltAmount(t, settings = null) {
+    const usesTilt = settings && (
+      clamp01(settings.pencilTiltSize ?? settings.penTiltSize) > 0 ||
+      clamp01(settings.pencilTiltOpacity) > 0 ||
+      clamp01(settings.pencilTiltGradation) > 0 ||
+      clamp01(settings.pencilTiltBleed) > 0 ||
+      clamp01(settings.pencilTiltRotation ?? settings.penTiltRotation) > 0
+    );
+
+    if (!usesTilt) {
+      return 0;
+    }
+
+    return clamp01(Math.sin(clamp01(t) * Math.PI) * 0.85);
   }
 
   function getPathLength(width, height) {
@@ -597,8 +669,46 @@ window.CBO = window.CBO || {};
     const opacityScale = lerp(1 - taperOpacity, 1, taperFactor);
     const pressureScale = lerp(1 - taperPressure, 1, taperFactor);
     const minSizeRatio = clamp(settings.minSizeRatio ?? 0.15, 0, 1);
-    const pressureSize = lerp(minSizeRatio, 1, clamp01(pressure * pressureScale));
-    const baseAlpha = getStampAlpha(settings, alphaScale * opacityScale);
+    const pressureValue = getPencilPressureCurveValue(clamp01(pressure), settings);
+    const taperedPressureValue = clamp01(pressureValue * pressureScale);
+    const penPressureSize = clamp01(settings.pencilPressureSize ?? settings.penPressureSize ?? 0);
+    const penPressureOpacity = clamp01(settings.pencilPressureOpacity ?? settings.penPressureOpacity);
+    const penPressureFlow = clamp01(settings.pencilPressureFlow);
+    const penPressureBleed = clamp01(settings.pencilPressureBleed);
+    const penTiltSize = clamp01(settings.pencilTiltSize ?? settings.penTiltSize);
+    const penTiltOpacity = clamp01(settings.pencilTiltOpacity);
+    const penTiltGradation = clamp01(settings.pencilTiltGradation);
+    const penTiltBleed = clamp01(settings.pencilTiltBleed);
+    const barrelSize = clamp(settings.pencilBarrelSize, -1, 1);
+    const barrelOpacity = clamp01(settings.pencilBarrelOpacity);
+    const barrelBleed = clamp01(settings.pencilBarrelBleed);
+    const previewT = totalLength > 0 ? clamp01(strokeState.distance / totalLength) : 0;
+    const tiltAmount = getPreviewTiltAmount(previewT, settings);
+    const barrelRoll = Math.abs(Math.sin(previewT * Math.PI * 2));
+    const pressureSize = lerp(minSizeRatio, 1, lerp(1, taperedPressureValue, penPressureSize));
+    const pressureOpacityScale = lerp(1, pressureValue, penPressureOpacity);
+    const pressureFlowScale = lerp(1, pressureValue, penPressureFlow);
+    const tiltSizeScale = lerp(1, 1 + tiltAmount * 1.8, penTiltSize);
+    const tiltOpacityScale = lerp(1, Math.max(0.04, 1 - penTiltOpacity * 0.92), tiltAmount);
+    const tiltFlowScale = lerp(1, Math.max(0.18, 1 - penTiltGradation * 0.58), tiltAmount);
+    const barrelSizeScale = clamp(1 + barrelRoll * barrelSize, 0.18, 2.35);
+    const barrelOpacityScale = lerp(1, Math.max(0.04, 1 - barrelOpacity), barrelRoll);
+    const localBleed = Math.max(
+      pressureValue * penPressureBleed,
+      tiltAmount * Math.max(penTiltBleed, penTiltGradation * 0.72),
+      barrelRoll * barrelBleed,
+    );
+    const localSettings = localBleed > 0
+      ? {
+          ...settings,
+          burntEdges: clamp01(clamp01(settings.burntEdges) + localBleed * 0.5),
+          wetEdges: clamp01(clamp01(settings.wetEdges) + localBleed * (1 - clamp01(settings.wetEdges))),
+        }
+      : settings;
+    const baseAlpha = getStampAlpha(
+      localSettings,
+      alphaScale * opacityScale * pressureOpacityScale * pressureFlowScale * tiltOpacityScale * tiltFlowScale * barrelOpacityScale,
+    );
     const shapeCount = getEffectiveShapeCount(settings, randomState);
     const scatter = clamp(settings.shapeScatter, 0, 2);
 
@@ -610,7 +720,14 @@ window.CBO = window.CBO || {};
       };
       const countAlpha = baseAlpha / Math.sqrt(shapeCount);
 
-      drawDab(context, nextPoint, radius * pressureSize * sizeScale, countAlpha, settings, randomState);
+      drawDab(
+        context,
+        nextPoint,
+        radius * pressureSize * sizeScale * tiltSizeScale * barrelSizeScale,
+        countAlpha,
+        localSettings,
+        randomState,
+      );
     }
   }
 
@@ -703,13 +820,13 @@ window.CBO = window.CBO || {};
     };
     const startPoint = getPathPoint(0, size.width, size.height);
     const strokeState = StrokeMath.createStrokeState(startPoint, {
-      pressure: getPressure(0),
+      pressure: getPressure(0, previewSettings),
       seed: 0x2dcb05,
       tool: "brush",
     });
     const randomState = { seed: 0x7f4a7c15 };
 
-    drawPreviewStamp(context, startPoint, getPressure(0), 1, previewSettings, radius, totalLength, strokeState, randomState);
+    drawPreviewStamp(context, startPoint, getPressure(0, previewSettings), 1, previewSettings, radius, totalLength, strokeState, randomState);
 
     for (let index = 1; index <= 56; index += 1) {
       const t = index / 56;
@@ -720,7 +837,7 @@ window.CBO = window.CBO || {};
         state: strokeState,
         settings: previewSettings,
         radius,
-        pressure: getPressure(t),
+        pressure: getPressure(t, previewSettings),
         bounds: {
           minX: 0,
           minY: 0,

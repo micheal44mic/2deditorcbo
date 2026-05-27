@@ -258,9 +258,12 @@ test("brush vertical symmetry sends mirror flags through GPU instance data", () 
 
   assert.match(source, /layout\(location = 11\) in float aInstanceMirrorX/);
   assert.match(source, /localPosition = a_position \* u_shapeFlip \* vec2\(aInstanceMirrorX, 1\.0\)/);
-  assert.match(source, /gl\.vertexAttribPointer\(11, 1, gl\.FLOAT, false, 60, 56\)/);
-  assert.match(source, /const requiredFloats = Math\.max\(15, Math\.round\(Number\(stampCount\) \|\| 0\) \* 15\)/);
-  assert.match(source, /const offset = index \* 15/);
+  assert.match(source, /gl\.vertexAttribPointer\(11, 1, gl\.FLOAT, false, 72, 56\)/);
+  assert.match(source, /gl\.vertexAttribPointer\(12, 1, gl\.FLOAT, false, 72, 60\)/);
+  assert.match(source, /gl\.vertexAttribPointer\(13, 1, gl\.FLOAT, false, 72, 64\)/);
+  assert.match(source, /gl\.vertexAttribPointer\(14, 1, gl\.FLOAT, false, 72, 68\)/);
+  assert.match(source, /const requiredFloats = Math\.max\(18, Math\.round\(Number\(stampCount\) \|\| 0\) \* 18\)/);
+  assert.match(source, /const offset = index \* 18/);
   assert.match(source, /instanceData\[offset \+ 14\] = Number\(stamp\.mirrorX\) < 0 \? -1 : 1/);
   assert.match(source, /this\.activeStrokeSymmetry = this\.resolveActiveStrokeSymmetry\?\.\(\{[\s\S]*tool: strokeTool/);
   assert.match(source, /tool !== "brush" && tool !== "eraser"/);

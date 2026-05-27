@@ -183,9 +183,16 @@
   font-weight: 800;
   letter-spacing: 0;
   line-height: 1;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
   transform: none;
   transform-origin: 0 0;
   white-space: nowrap;
+}
+
+.editor-artboard-frame-label:active {
+  cursor: grabbing;
 }
 
 .editor-artboard-frame.is-active .editor-artboard-frame-label {
@@ -335,7 +342,7 @@
   position: absolute;
   left: 0;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   display: block;
   width: 1px;
   height: 1px;

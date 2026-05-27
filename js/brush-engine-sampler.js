@@ -968,8 +968,18 @@
             (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
             (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
         pressure: this.lerp(p1.pressure, p2.pressure, t),
+        pointerType: p2.pointerType || p1.pointerType || "",
         tiltX: this.lerp(p1.tiltX, p2.tiltX, t),
         tiltY: this.lerp(p1.tiltY, p2.tiltY, t),
+        altitudeAngle: Number.isFinite(Number(p1.altitudeAngle)) && Number.isFinite(Number(p2.altitudeAngle))
+          ? this.lerp(Number(p1.altitudeAngle), Number(p2.altitudeAngle), t)
+          : p2.altitudeAngle ?? p1.altitudeAngle,
+        azimuthAngle: Number.isFinite(Number(p1.azimuthAngle)) && Number.isFinite(Number(p2.azimuthAngle))
+          ? this.lerp(Number(p1.azimuthAngle), Number(p2.azimuthAngle), t)
+          : p2.azimuthAngle ?? p1.azimuthAngle,
+        twist: Number.isFinite(Number(p1.twist)) && Number.isFinite(Number(p2.twist))
+          ? this.lerp(Number(p1.twist), Number(p2.twist), t)
+          : p2.twist ?? p1.twist,
       };
     }
 ,
@@ -980,10 +990,17 @@
         y: point.y,
         pressure: point.pressure,
         alphaScale,
+        flowScale: 1,
+        bleedScale: 0,
+        sizeCompressionScale: 1,
         sizeScale: 1,
         rotation: 0,
+        pointerType: point.pointerType || "",
         tiltX: point.tiltX,
         tiltY: point.tiltY,
+        altitudeAngle: point.altitudeAngle,
+        azimuthAngle: point.azimuthAngle,
+        twist: point.twist,
       };
     }
 ,
@@ -994,10 +1011,23 @@
         y: this.lerp(from.y, to.y, t),
         pressure: this.lerp(from.pressure, to.pressure, t),
         alphaScale: this.lerp(from.alphaScale ?? 1, to.alphaScale ?? 1, t),
+        flowScale: this.lerp(from.flowScale ?? 1, to.flowScale ?? 1, t),
+        bleedScale: this.lerp(from.bleedScale ?? 0, to.bleedScale ?? 0, t),
+        sizeCompressionScale: this.lerp(from.sizeCompressionScale ?? 1, to.sizeCompressionScale ?? 1, t),
         sizeScale: this.lerp(from.sizeScale ?? 1, to.sizeScale ?? 1, t),
         rotation: this.lerp(from.rotation ?? 0, to.rotation ?? 0, t),
+        pointerType: to.pointerType || from.pointerType || "",
         tiltX: this.lerp(from.tiltX, to.tiltX, t),
         tiltY: this.lerp(from.tiltY, to.tiltY, t),
+        altitudeAngle: Number.isFinite(Number(from.altitudeAngle)) && Number.isFinite(Number(to.altitudeAngle))
+          ? this.lerp(Number(from.altitudeAngle), Number(to.altitudeAngle), t)
+          : to.altitudeAngle ?? from.altitudeAngle,
+        azimuthAngle: Number.isFinite(Number(from.azimuthAngle)) && Number.isFinite(Number(to.azimuthAngle))
+          ? this.lerp(Number(from.azimuthAngle), Number(to.azimuthAngle), t)
+          : to.azimuthAngle ?? from.azimuthAngle,
+        twist: Number.isFinite(Number(from.twist)) && Number.isFinite(Number(to.twist))
+          ? this.lerp(Number(from.twist), Number(to.twist), t)
+          : to.twist ?? from.twist,
       };
     }
 ,
@@ -1139,15 +1169,21 @@
     }
 ,
 
-    getStampSpacing(sizeScale = 1) {
+    getStampSpacing(sizeScaleOrStamp = 1) {
       const brushSize = this.getBrushSize();
+      const stamp = typeof sizeScaleOrStamp === "object" && sizeScaleOrStamp !== null
+        ? sizeScaleOrStamp
+        : null;
+      const sizeScale = stamp ? stamp.sizeScale ?? 1 : sizeScaleOrStamp;
+      const pressure = stamp ? this.clamp(stamp.pressure ?? 1, 0, 1) : 1;
+      const pressureSizeFactor = stamp ? this.lerp(this.getMinSizeRatio(), 1, pressure) : 1;
       const spacingFraction = Number(this.brushState.spacing);
       const safeSpacing = Number.isFinite(spacingFraction)
         ? this.clamp(spacingFraction, ADAPTIVE_SPACING_MIN_FRACTION, 1)
         : Math.max(ADAPTIVE_SPACING_MIN_FRACTION, 0.1);
       const effectiveSpacing = this.getMobileLargeBlendSpacingFraction(safeSpacing, brushSize);
       const spacingJitter = this.clamp01(this.brushState.spacingJitter);
-      const effectiveSizeScale = this.clamp(sizeScale, 0.05, 1);
+      const effectiveSizeScale = this.clamp((Number(sizeScale) || 1) * pressureSizeFactor, 0.05, 1);
       const adaptiveSpacingMultiplier = this.getActiveAdaptiveSpacingMultiplier();
       const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * effectiveSpacing * adaptiveSpacingMultiplier);
       const jitterAmount = baseSpacing * spacingJitter * 0.85;
@@ -1240,6 +1276,212 @@
 
     getStampAlphaScale() {
       return this.getFallOffScale() * this.getWetMixAlphaScale();
+    }
+,
+
+    isPencilPointerSample(sample) {
+      return String(sample?.pointerType || "").toLowerCase() === "pen";
+    }
+,
+
+    isPenPointerSample(sample) {
+      return this.isPencilPointerSample(sample);
+    }
+,
+
+    getPencilPressureInput(sample) {
+      if (!this.isPencilPointerSample(sample)) {
+        return 1;
+      }
+
+      const pressure = Number(sample?.pressure);
+
+      return Number.isFinite(pressure)
+        ? this.clamp(pressure, 0, 1)
+        : 1;
+    }
+,
+
+    getPenPressureInput(sample) {
+      return this.getPencilPressureInput(sample);
+    }
+,
+
+    getPencilPressureCurveValue(sample) {
+      const pressure = this.getPencilPressureInput(sample);
+      const low = this.clamp01(this.brushState.pencilPressureCurveLow ?? 0);
+      const mid = this.clamp01(this.brushState.pencilPressureCurveMid ?? 0.5);
+      const high = this.clamp01(this.brushState.pencilPressureCurveHigh ?? 1);
+
+      return pressure <= 0.5
+        ? this.lerp(low, mid, pressure * 2)
+        : this.lerp(mid, high, (pressure - 0.5) * 2);
+    }
+,
+
+    getPencilAltitudeDegrees(sample) {
+      if (!this.isPencilPointerSample(sample)) {
+        return 90;
+      }
+
+      const rawAltitudeAngle = sample?.altitudeAngle;
+      const altitudeAngle = Number(rawAltitudeAngle);
+
+      if (rawAltitudeAngle != null && Number.isFinite(altitudeAngle) && altitudeAngle >= 0) {
+        return this.clamp(altitudeAngle * 180 / Math.PI, 0, 90);
+      }
+
+      const tiltX = Number(sample?.tiltX);
+      const tiltY = Number(sample?.tiltY);
+
+      if (!Number.isFinite(tiltX) && !Number.isFinite(tiltY)) {
+        return 90;
+      }
+
+      const tiltMagnitude = Math.hypot(
+        Number.isFinite(tiltX) ? tiltX : 0,
+        Number.isFinite(tiltY) ? tiltY : 0,
+      );
+
+      return this.clamp(90 - tiltMagnitude, 0, 90);
+    }
+,
+
+    getPencilTiltAmount(sample) {
+      if (!this.isPencilPointerSample(sample)) {
+        return 0;
+      }
+
+      const trigger = this.clamp(Number(this.brushState.pencilTiltTrigger ?? 45), 15, 90);
+      const altitudeDegrees = this.getPencilAltitudeDegrees(sample);
+
+      if (altitudeDegrees > trigger) {
+        return 0;
+      }
+
+      return this.clamp((trigger - altitudeDegrees) / Math.max(1, trigger - 15), 0, 1);
+    }
+,
+
+    getPenTiltAmount(sample) {
+      return this.getPencilTiltAmount(sample);
+    }
+,
+
+    getPencilTiltRotation(stamp) {
+      const amount = this.clamp01(this.brushState.pencilTiltRotation ?? this.brushState.penTiltRotation ?? 0);
+
+      if (amount <= 0 || !this.isPencilPointerSample(stamp)) {
+        return 0;
+      }
+
+      const rawAzimuthAngle = stamp?.azimuthAngle;
+      const azimuthAngle = Number(rawAzimuthAngle);
+
+      if (rawAzimuthAngle != null && Number.isFinite(azimuthAngle)) {
+        return azimuthAngle * amount;
+      }
+
+      const tiltX = Number(stamp?.tiltX);
+      const tiltY = Number(stamp?.tiltY);
+
+      if (!Number.isFinite(tiltX) || !Number.isFinite(tiltY) || (tiltX === 0 && tiltY === 0)) {
+        return 0;
+      }
+
+      return Math.atan2(tiltY, tiltX) * amount;
+    }
+,
+
+    getPenTiltRotation(stamp) {
+      return this.getPencilTiltRotation(stamp);
+    }
+,
+
+    getPencilBarrelRollAmount(stamp, tangent = null) {
+      if (!this.isPencilPointerSample(stamp)) {
+        return 0;
+      }
+
+      const twist = Number(stamp?.twist);
+
+      if (!Number.isFinite(twist)) {
+        return 0;
+      }
+
+      let angle = twist * Math.PI / 180;
+
+      if (
+        this.brushState.pencilBarrelRelativeToStroke !== false &&
+        tangent &&
+        Number.isFinite(tangent.x) &&
+        Number.isFinite(tangent.y) &&
+        (tangent.x !== 0 || tangent.y !== 0)
+      ) {
+        angle -= Math.atan2(tangent.y, tangent.x);
+      }
+
+      return this.clamp01(Math.abs(Math.sin(angle)));
+    }
+,
+
+    applyPencilInputToStamp(stamp, tangent = null) {
+      if (!stamp || stamp.pencilInputApplied === true || stamp.penInputApplied === true || !this.isPencilPointerSample(stamp)) {
+        return stamp;
+      }
+
+      const pressure = this.getPencilPressureCurveValue(stamp);
+      const pressureSize = this.clamp01(this.brushState.pencilPressureSize ?? this.brushState.penPressureSize ?? 0);
+      const pressureOpacity = this.clamp01(this.brushState.pencilPressureOpacity ?? this.brushState.penPressureOpacity ?? 0);
+      const pressureFlow = this.clamp01(this.brushState.pencilPressureFlow ?? 0);
+      const pressureBleed = this.clamp01(this.brushState.pencilPressureBleed ?? 0);
+      const tiltAmount = this.getPencilTiltAmount(stamp);
+      const tiltSize = this.clamp01(this.brushState.pencilTiltSize ?? this.brushState.penTiltSize ?? 0);
+      const tiltOpacity = this.clamp01(this.brushState.pencilTiltOpacity ?? 0);
+      const tiltGradation = this.clamp01(this.brushState.pencilTiltGradation ?? 0);
+      const tiltBleed = this.clamp01(this.brushState.pencilTiltBleed ?? 0);
+      const barrelRoll = this.getPencilBarrelRollAmount(stamp, tangent);
+      const barrelSize = this.clamp(Number(this.brushState.pencilBarrelSize) || 0, -1, 1);
+      const barrelOpacity = this.clamp01(this.brushState.pencilBarrelOpacity ?? 0);
+      const barrelBleed = this.clamp01(this.brushState.pencilBarrelBleed ?? 0);
+
+      stamp.pressure = this.lerp(1, pressure, pressureSize);
+      stamp.alphaScale = (stamp.alphaScale ?? 1) * this.lerp(1, pressure, pressureOpacity);
+      stamp.flowScale = (stamp.flowScale ?? 1) * this.lerp(1, pressure, pressureFlow);
+      stamp.bleedScale = Math.max(stamp.bleedScale ?? 0, pressure * pressureBleed);
+
+      if (tiltAmount > 0) {
+        const tiltSizeScale = this.lerp(1, 1 + tiltAmount * 1.8, tiltSize);
+        const tiltOpacityScale = this.lerp(1, Math.max(0.04, 1 - tiltOpacity * 0.92), tiltAmount);
+        const tiltFlowScale = this.lerp(1, Math.max(0.18, 1 - tiltGradation * 0.58), tiltAmount);
+        const tiltBleedScale = tiltAmount * Math.max(tiltBleed, tiltGradation * 0.72);
+
+        stamp.sizeScale = (stamp.sizeScale ?? 1) * tiltSizeScale;
+        stamp.alphaScale *= tiltOpacityScale;
+        stamp.flowScale *= tiltFlowScale;
+        stamp.bleedScale = Math.max(stamp.bleedScale ?? 0, tiltBleedScale);
+
+        if (this.brushState.pencilTiltSizeCompression === true && tiltSizeScale > 1) {
+          stamp.sizeCompressionScale = Math.max(stamp.sizeCompressionScale ?? 1, tiltSizeScale);
+        }
+      }
+
+      if (barrelRoll > 0) {
+        const barrelSizeScale = this.clamp(1 + barrelRoll * barrelSize, 0.18, 2.35);
+
+        stamp.sizeScale = (stamp.sizeScale ?? 1) * barrelSizeScale;
+        stamp.alphaScale *= this.lerp(1, Math.max(0.04, 1 - barrelOpacity), barrelRoll);
+        stamp.bleedScale = Math.max(stamp.bleedScale ?? 0, barrelRoll * barrelBleed);
+      }
+
+      stamp.pencilInputApplied = true;
+      stamp.penInputApplied = true;
+      return stamp;
+    }
+,
+
+    applyPenInputToStamp(stamp, tangent = null) {
+      return this.applyPencilInputToStamp(stamp, tangent);
     }
 ,
 
@@ -2161,6 +2403,7 @@
 ,
 
     pushShapeStamps(baseStamp, tangent, options = {}) {
+      this.applyPencilInputToStamp(baseStamp, tangent);
       const isFirstStrokeShape = this.strokeStampCount === 0 && this.stampsBuffer.length === 0 && this.strokeDistance === 0;
       const effectiveCount = this.getEffectiveShapeCount(
         isFirstStrokeShape ? () => this.createStableStrokeUnit(0x51f15eed) : null,
@@ -2168,6 +2411,7 @@
       const hasDirectionalTangent = this.hasUsableShapeTangent(tangent);
       const shouldUpdateWhenTangentArrives = this.getShapeRotation() !== 0 && !hasDirectionalTangent;
       const directionalRotation = this.getShapeDirectionalRotation(tangent);
+      const penTiltRotation = this.getPencilTiltRotation(baseStamp);
       const getScatterRotation = (index) => {
         if (!isFirstStrokeShape) {
           return this.getShapeScatterRotation();
@@ -2182,6 +2426,8 @@
         const scatterRotation = getScatterRotation(0);
 
         baseStamp.rotation = directionalRotation + scatterRotation;
+        baseStamp.penTiltRotation = penTiltRotation;
+        baseStamp.rotation += penTiltRotation;
         if (shouldUpdateWhenTangentArrives) {
           baseStamp.needsShapeRotationTangent = true;
           baseStamp.shapeScatterRotation = scatterRotation;
@@ -2195,7 +2441,8 @@
         const scatterRotation = getScatterRotation(index);
         const stamp = {
           ...baseStamp,
-          rotation: directionalRotation + scatterRotation,
+          penTiltRotation,
+          rotation: directionalRotation + penTiltRotation + scatterRotation,
         };
 
         if (shouldUpdateWhenTangentArrives) {
@@ -2261,13 +2508,14 @@
             this.strokeDistance += stampDistance;
             stamp.alphaScale = this.getStampAlphaScale();
             stamp.sizeScale = 1;
+            this.applyPencilInputToStamp(stamp, tangent);
             this.applyTaperToStamp(stamp);
             this.pushShapeStamps(stamp, tangent);
             if (this.stampsBuffer.length >= this.getMaxStampsPerFlush()) {
               this.flushStamps({ requestDraw: !deferFlush });
             }
             this.leftoverDistance -= stampDistance;
-            this.nextStampDistance = this.getStampSpacing(stamp.sizeScale);
+            this.nextStampDistance = this.getStampSpacing(stamp);
           }
         }
 

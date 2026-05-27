@@ -14,7 +14,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   const grainTextureExportSize = BrushDefaults.grainTextureExportSize;
   const brushSizeMax = BrushDefaults.brushSizeMax || 500;
   const minimumSpacingPercent = Math.max(1, Math.round((BrushDefaults.minimumSpacing || 0.01) * 100));
-  const studioCategories = ["STROKE", "SHAPE", "GRAIN", "RENDERING", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
+  const studioCategories = ["STROKE", "PENCIL", "SHAPE", "GRAIN", "RENDERING", "COLOR DYNAMICS", "WET MIX", "STABILIZATION", "TAPER", "BASIC"];
   const defaultTaperMinDistance = BrushDefaults.defaultTaperMinDistance;
   const taperTipRealMin = BrushDefaults.taperTipRealMin;
   const implementedGrainBlendModes = new Set([
@@ -2060,6 +2060,224 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     );
   }
 
+  function renderPencilSettings() {
+    if (!settingsPanel) {
+      return;
+    }
+
+    const selectedName = document.createElement("div");
+    const pressureGraphLabel = createSectionLabel("PRESSURE GRAPH");
+    const pressureLabel = createSectionLabel("PRESSURE");
+    const tiltLabel = createSectionLabel("TILT");
+    const barrelLabel = createSectionLabel("BARREL ROLL");
+    const curveLowSetting = createRangeSetting({
+      key: "pencilPressureCurveLow",
+      label: "LOW",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilPressureCurveLow) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const curveMidSetting = createRangeSetting({
+      key: "pencilPressureCurveMid",
+      label: "MID",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilPressureCurveMid ?? 0.5) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const curveHighSetting = createRangeSetting({
+      key: "pencilPressureCurveHigh",
+      label: "HIGH",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilPressureCurveHigh ?? 1) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const pressureSizeSetting = createRangeSetting({
+      key: "pencilPressureSize",
+      label: "SIZE",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilPressureSize ?? draftBrushSettings.penPressureSize ?? 0) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const pressureOpacitySetting = createRangeSetting({
+      key: "pencilPressureOpacity",
+      label: "OPACITY",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilPressureOpacity ?? draftBrushSettings.penPressureOpacity) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const pressureFlowSetting = createRangeSetting({
+      key: "pencilPressureFlow",
+      label: "FLOW",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilPressureFlow) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const pressureBleedSetting = createRangeSetting({
+      key: "pencilPressureBleed",
+      label: "BLEED",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilPressureBleed) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tiltTriggerSetting = createRangeSetting({
+      key: "pencilTiltTrigger",
+      label: "TRIGGER",
+      min: 15,
+      max: 90,
+      step: 1,
+      value: Math.round(clamp(Number(draftBrushSettings.pencilTiltTrigger ?? 45), 15, 90)),
+      unit: "deg",
+      toSetting: (displayValue) => Math.round(displayValue),
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tiltOpacitySetting = createRangeSetting({
+      key: "pencilTiltOpacity",
+      label: "OPACITY",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilTiltOpacity) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tiltGradationSetting = createRangeSetting({
+      key: "pencilTiltGradation",
+      label: "GRADATION",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilTiltGradation) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tiltBleedSetting = createRangeSetting({
+      key: "pencilTiltBleed",
+      label: "BLEED",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilTiltBleed) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tiltSizeSetting = createRangeSetting({
+      key: "pencilTiltSize",
+      label: "SIZE",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilTiltSize ?? draftBrushSettings.penTiltSize) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tiltRotationSetting = createRangeSetting({
+      key: "pencilTiltRotation",
+      label: "DIRECTION",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilTiltRotation ?? draftBrushSettings.penTiltRotation) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const tiltCompressionToggle = createToggleSetting({
+      key: "pencilTiltSizeCompression",
+      label: "SIZE COMPRESSION",
+    });
+    const barrelSizeSetting = createGrainSignedPercentSetting({
+      key: "pencilBarrelSize",
+      label: "SIZE",
+      value: clamp(draftBrushSettings.pencilBarrelSize, -1, 1) * 100,
+    });
+    const barrelOpacitySetting = createRangeSetting({
+      key: "pencilBarrelOpacity",
+      label: "OPACITY",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilBarrelOpacity) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const barrelBleedSetting = createRangeSetting({
+      key: "pencilBarrelBleed",
+      label: "BLEED",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.pencilBarrelBleed) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const barrelRelativeToggle = createToggleSetting({
+      key: "pencilBarrelRelativeToStroke",
+      label: "RELATIVE TO STROKE",
+    });
+
+    selectedName.className = "brush-studio-selected-name";
+    selectedName.textContent = "PENCIL";
+    settingsPanel.replaceChildren(
+      selectedName,
+      pressureGraphLabel,
+      curveLowSetting,
+      curveMidSetting,
+      curveHighSetting,
+      pressureLabel,
+      pressureSizeSetting,
+      pressureOpacitySetting,
+      pressureFlowSetting,
+      pressureBleedSetting,
+      tiltLabel,
+      tiltTriggerSetting,
+      tiltOpacitySetting,
+      tiltGradationSetting,
+      tiltBleedSetting,
+      tiltSizeSetting,
+      tiltRotationSetting,
+      tiltCompressionToggle,
+      barrelLabel,
+      barrelSizeSetting,
+      barrelOpacitySetting,
+      barrelBleedSetting,
+      barrelRelativeToggle,
+    );
+  }
+
   function renderColorDynamicsSettings() {
     if (!settingsPanel) {
       return;
@@ -2203,6 +2421,28 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       toSetting: (displayValue) => displayValue / 100,
       toDisplay: (displayValue) => Math.round(displayValue),
     });
+    const motionFilteringAmountSetting = createRangeSetting({
+      key: "motionFilteringAmount",
+      label: "MOTION FILTERING",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.motionFilteringAmount) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
+    const motionFilteringExpressionSetting = createRangeSetting({
+      key: "motionFilteringExpression",
+      label: "EXPRESSION",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: Math.round(clamp01(draftBrushSettings.motionFilteringExpression) * 100),
+      unit: "%",
+      toSetting: (displayValue) => displayValue / 100,
+      toDisplay: (displayValue) => Math.round(displayValue),
+    });
 
     selectedName.className = "brush-studio-selected-name";
     selectedName.textContent = selectedCategory;
@@ -2211,6 +2451,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       streamLineAmountSetting,
       streamLinePressureSetting,
       stabilizationAmountSetting,
+      motionFilteringAmountSetting,
+      motionFilteringExpressionSetting,
     );
   }
 
@@ -2624,6 +2866,15 @@ window.CBO.initBrushStudio = function initBrushStudio() {
 
     if (selectedCategory === "BASIC") {
       renderBasicSettings();
+      traceBrushDebug("brush-studio.render-content.end", {
+        durationMs: getDebugDuration(startMs),
+        selectedCategory,
+      });
+      return;
+    }
+
+    if (selectedCategory === "PENCIL" || selectedCategory === "PEN INPUT") {
+      renderPencilSettings();
       traceBrushDebug("brush-studio.render-content.end", {
         durationMs: getDebugDuration(startMs),
         selectedCategory,
