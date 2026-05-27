@@ -83,7 +83,7 @@ test("brush previews use lighter mobile caps", () => {
   assert.match(studioSource, /const previewDocumentSizeCap =[\s\S]*isMobileLikeEnvironment\?\.\(\) === true \? 512 : 2048/);
   assert.match(studioSource, /documentSizeCap: previewDocumentSizeCap/);
   assert.match(studioSource, /const mobileGrainCap =[\s\S]*isMobileLikeEnvironment\?\.\(\) === true \? 1024 : grainTextureExportSize/);
-  assert.match(studioSource, /const exportSize = Math\.max\(1, mobileGrainCap \|\| 2048\)/);
+  assert.match(studioSource, /const exportSize = Math\.max\(1, mobileGrainCap \|\| 4096\)/);
 });
 
 test("brush preview cache hashing avoids full data URL scans before lazy draw", () => {

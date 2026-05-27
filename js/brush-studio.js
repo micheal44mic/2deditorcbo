@@ -1810,7 +1810,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   function createGrainDataUrlFromImage(image, { invert = false } = {}) {
     const mobileGrainCap =
       window.CBO.DocumentRenderer?.isMobileLikeEnvironment?.() === true ? 1024 : grainTextureExportSize;
-    const exportSize = Math.max(1, mobileGrainCap || 2048);
+    const exportSize = Math.max(1, mobileGrainCap || 4096);
     const sourceWidth = Math.max(1, image.naturalWidth || image.width || exportSize);
     const sourceHeight = Math.max(1, image.naturalHeight || image.height || exportSize);
     const tempCanvas = document.createElement("canvas");

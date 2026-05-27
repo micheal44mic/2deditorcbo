@@ -354,7 +354,7 @@ window.CBO = window.CBO || {};
     grainBlendModeValues,
     renderingModeValues,
     grainTexturizedMinTextureScale,
-    grainTextureExportSize: 2048,
+    grainTextureExportSize: 4096,
     shapeAlphaExportSize: 512,
     brushSizeMax,
     minimumSpacing,
