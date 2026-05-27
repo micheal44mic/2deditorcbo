@@ -143,7 +143,9 @@ window.CBO = window.CBO || {};
   Controller.prototype.getAiBoardRecommendedLod = function getAiBoardRecommendedLod(board, screenWidth = 0, screenHeight = 0, dpr = 1) {
     with (this) {
 
-    const media = board?.generatedMedia || null;
+    const media = typeof resolveAiImageBoardMediaForRender === "function"
+      ? resolveAiImageBoardMediaForRender(board?.generatedMedia || null)
+      : board?.generatedMedia || null;
     const kind = media?.kind === "video" ? "video" : "image";
     const src = String(media?.src || "").trim();
 
@@ -184,7 +186,11 @@ window.CBO = window.CBO || {};
     const rawNumericLod = getAiBoardNumericLod(rawLod);
     const currentNumericLod = getAiBoardNumericLod(mediaHost?.dataset?.mediaLod || "");
 
-    if (board?.generatedMedia?.kind !== "video" && isAiImageBoardMobileLowQualityPreview()) {
+    const media = typeof resolveAiImageBoardMediaForRender === "function"
+      ? resolveAiImageBoardMediaForRender(board?.generatedMedia || null)
+      : board?.generatedMedia || null;
+
+    if (media?.kind !== "video" && isAiImageBoardMobileLowQualityPreview()) {
       return rawLod;
     }
 
@@ -233,7 +239,9 @@ window.CBO = window.CBO || {};
   Controller.prototype.getAiBoardCurrentLod = function getAiBoardCurrentLod(board, mediaHost) {
     with (this) {
 
-    const media = board?.generatedMedia || null;
+    const media = typeof resolveAiImageBoardMediaForRender === "function"
+      ? resolveAiImageBoardMediaForRender(board?.generatedMedia || null)
+      : board?.generatedMedia || null;
     const src = String(media?.src || "").trim();
     const previewMode = String(mediaHost?.dataset?.mediaPreview || "");
 
@@ -267,7 +275,9 @@ window.CBO = window.CBO || {};
   Controller.prototype.estimateAiBoardDecodedMB = function estimateAiBoardDecodedMB(board, currentLod, isActivePreview, mediaHost = null) {
     with (this) {
 
-    const media = board?.generatedMedia || null;
+    const media = typeof resolveAiImageBoardMediaForRender === "function"
+      ? resolveAiImageBoardMediaForRender(board?.generatedMedia || null)
+      : board?.generatedMedia || null;
 
     if (!isActivePreview || !media || !media.src) {
       return 0;
@@ -990,7 +1000,9 @@ window.CBO = window.CBO || {};
   Controller.prototype.getAiImageBoardRuntimePreviewSrc = function getAiImageBoardRuntimePreviewSrc(board) {
     with (this) {
 
-    const media = board?.generatedMedia || null;
+    const media = typeof resolveAiImageBoardMediaForRender === "function"
+      ? resolveAiImageBoardMediaForRender(board?.generatedMedia || null)
+      : board?.generatedMedia || null;
     const kind = media?.kind === "video" ? "video" : "image";
     const src = String(media?.src || "").trim();
 

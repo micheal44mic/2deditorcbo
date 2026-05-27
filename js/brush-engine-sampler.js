@@ -152,6 +152,7 @@
         ? StrokeMath.createStrokeState(point, {
             pressure: inputPressure,
             seed,
+            time: sample.time,
             tool,
           })
         : null;
@@ -185,6 +186,7 @@
         this.strokeDynamicsState,
         this.brushState,
         rawSample.pressure,
+        rawSample,
       );
 
       return {

@@ -86,6 +86,69 @@ test("motion filtering removes lateral wobble while expression restores some mot
   assert.ok(Math.abs(expressivePoint.y) > Math.abs(filteredPoint.y));
 });
 
+test("motion filtering adapts to pen mouse and touch input", () => {
+  const StrokeMath = loadStrokeMath();
+  const points = [
+    { x: 1, y: 9, time: 16 },
+    { x: 2, y: -8, time: 32 },
+    { x: 3, y: 10, time: 48 },
+    { x: 4, y: -9, time: 64 },
+    { x: 5, y: 8, time: 80 },
+    { x: 6, y: -10, time: 96 },
+    { x: 7, y: 9, time: 112 },
+    { x: 8, y: -8, time: 128 },
+  ];
+  const runStroke = (pointerType) => {
+    const state = StrokeMath.createStrokeState({ x: 0, y: 0 }, { pressure: 1, seed: 1 });
+    let result = points[0];
+
+    points.forEach((point) => {
+      result = StrokeMath.processStrokeInput(
+        point,
+        state,
+        { motionFilteringAmount: 1 },
+        1,
+        { pointerType, time: point.time },
+      ).point;
+    });
+
+    return result;
+  };
+  const penPoint = runStroke("pen");
+  const mousePoint = runStroke("mouse");
+  const touchPoint = runStroke("touch");
+
+  assert.ok(Math.abs(touchPoint.y) < Math.abs(mousePoint.y));
+  assert.ok(Math.abs(mousePoint.y) < Math.abs(penPoint.y));
+});
+
+test("stabilization keeps pen corners attached instead of rounding the turn away", () => {
+  const StrokeMath = loadStrokeMath();
+  const points = [
+    { x: 4, y: 0, time: 16 },
+    { x: 8, y: 0, time: 32 },
+    { x: 12, y: 0, time: 48 },
+    { x: 12, y: 4, time: 64 },
+    { x: 12, y: 8, time: 80 },
+    { x: 12, y: 12, time: 96 },
+  ];
+  const state = StrokeMath.createStrokeState({ x: 0, y: 0 }, { pressure: 1, seed: 1 });
+  let result = points[0];
+
+  points.forEach((point) => {
+    result = StrokeMath.processStrokeInput(
+      point,
+      state,
+      { stabilizationAmount: 1, motionFilteringAmount: 1 },
+      1,
+      { pointerType: "pen", time: point.time },
+    ).point;
+  });
+
+  assert.ok(Math.abs(result.x - 12) < 1);
+  assert.ok(result.y > 10.5);
+});
+
 test("stylus release pressure and missing tilt do not inflate the final dab", () => {
   const StrokeMath = loadStrokeMath();
   const samplerSource = readSource("js", "brush-engine-sampler.js");

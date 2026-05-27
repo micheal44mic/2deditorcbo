@@ -2090,6 +2090,7 @@
         ? StrokeMath.createStrokeState(point, {
             pressure: inputPressure,
             seed: this.strokeInitialSeed,
+            time: firstSample.time,
             tool: "brush",
           })
         : null;

@@ -28,8 +28,8 @@ window.CBO = window.CBO || {};
   const LABEL_HIT_HEIGHT_CSS_PX = 30;
   const SELECTION_TOOL_MODE = "selection";
   const MOCKUP_BODY_ASSET_ID = "hoodie-body-1";
-  const MOCKUP_SLOT_CENTER_OFFSET_Y = 500;
   const MOCKUP_SLOT_FALLBACK_SIZE_DOC = 120;
+  const MOCKUP_SLOT_FALLBACK_GAP_DOC = 24;
   const MOCKUP_SLOT_FALLBACK_ICON_DOC = 76;
   const MOCKUP_SLOT_FALLBACK_BORDER_DOC = 3;
 
@@ -515,9 +515,8 @@ window.CBO = window.CBO || {};
 
     const entries = getFlatDocumentLayerEntries();
     const hasBodyLayer = entries.some((entry) => isMockupBodyLayerEntry(entry, artboard.id));
-    const hasAddonLayer = entries.some((entry) => isMockupAddonLayerEntry(entry, artboard.id, addonLibrary));
 
-    return hasBodyLayer && !hasAddonLayer;
+    return hasBodyLayer;
   }
 
   function getMockupSlotMetrics(scale, artboardWidth, artboardHeight) {
@@ -530,11 +529,13 @@ window.CBO = window.CBO || {};
     if (
       metrics &&
       Number.isFinite(Number(metrics.size)) &&
+      Number.isFinite(Number(metrics.gap)) &&
       Number.isFinite(Number(metrics.iconSize)) &&
       Number.isFinite(Number(metrics.borderWidth))
     ) {
       return {
         borderWidth: Math.max(0.5, Number(metrics.borderWidth)),
+        gap: Math.max(1, Number(metrics.gap)),
         iconSize: Math.max(1, Number(metrics.iconSize)),
         size: Math.max(1, Number(metrics.size)),
       };
@@ -544,64 +545,80 @@ window.CBO = window.CBO || {};
 
     return {
       borderWidth: Math.max(0.5, MOCKUP_SLOT_FALLBACK_BORDER_DOC * safeScale),
+      gap: Math.max(1, MOCKUP_SLOT_FALLBACK_GAP_DOC * safeScale),
       iconSize: Math.max(1, MOCKUP_SLOT_FALLBACK_ICON_DOC * safeScale),
       size: Math.max(1, MOCKUP_SLOT_FALLBACK_SIZE_DOC * safeScale),
     };
   }
 
-  function getMockupSlotGeometry(artboard, frameWidth, frameHeight) {
-    const artboardWidth = Math.max(1, Number(artboard?.width) || 1);
-    const artboardHeight = Math.max(1, Number(artboard?.height) || 1);
-    const scaleX = Math.max(0.0001, Number(frameWidth) || 1) / artboardWidth;
-    const scaleY = Math.max(0.0001, Number(frameHeight) || 1) / artboardHeight;
-    const metrics = getMockupSlotMetrics(Math.min(scaleX, scaleY), artboardWidth, artboardHeight);
-    const docX = artboardWidth * 0.5;
-    const docY = artboardHeight * 0.5 - MOCKUP_SLOT_CENTER_OFFSET_Y;
-    const size = metrics.size;
-
-    return {
-      borderWidth: metrics.borderWidth,
-      docX: Math.round(docX),
-      docY: Math.round(docY),
-      iconSize: metrics.iconSize,
-      left: (docX * scaleX) - size * 0.5,
-      size,
-      top: (docY * scaleY) - size * 0.5,
-    };
-  }
-
-  function createMockupSlotButton(artboard, frameWidth, frameHeight) {
-    if (!shouldRenderMockupSlot(artboard)) {
-      return null;
+  function getMockupActionButtonIconMarkup(icon = "plus") {
+    if (icon === "notebook") {
+      return `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-notebook-icon lucide-notebook" aria-hidden="true">
+          <path d="M2 6h4"></path>
+          <path d="M2 10h4"></path>
+          <path d="M2 14h4"></path>
+          <path d="M2 18h4"></path>
+          <rect width="16" height="20" x="4" y="2" rx="2"></rect>
+          <path d="M16 2v20"></path>
+        </svg>
+      `;
     }
 
-    const geometry = getMockupSlotGeometry(artboard, frameWidth, frameHeight);
+    return `<span class="editor-mockup-action-plus" aria-hidden="true">+</span>`;
+  }
+
+  function createMockupActionButton(view, metrics, index, options = {}) {
     const button = document.createElement("button");
-    const plus = document.createElement("span");
+    const top = view.top + metrics.gap + ((metrics.size + metrics.gap) * (index + 1));
 
-    button.className = "editor-mockup-slot-button";
+    button.className = "editor-artboard-action-bubble editor-mockup-action-button is-visible";
     button.type = "button";
-    button.dataset.mockupSlot = "true";
-    button.dataset.artboardId = artboard.id;
-    button.dataset.mockupSlotX = String(geometry.docX);
-    button.dataset.mockupSlotY = String(geometry.docY);
-    button.setAttribute("aria-label", "Add mockup");
-    button.setAttribute("aria-haspopup", "dialog");
-    button.setAttribute("aria-expanded", "false");
-    button.style.left = `${geometry.left}px`;
-    button.style.top = `${geometry.top}px`;
-    button.style.setProperty("--mockup-slot-size", `${geometry.size}px`);
-    button.style.setProperty("--mockup-slot-border-width", `${geometry.borderWidth}px`);
-    button.style.setProperty("--mockup-slot-icon-size", `${geometry.iconSize}px`);
-    button.addEventListener("pointerdown", handleMockupSlotPointerDown, true);
-    button.addEventListener("click", handleMockupSlotClick);
+    button.dataset.artboardId = view.artboard.id;
+    button.dataset.mockupAction = options.action || "mockup";
+    button.setAttribute("aria-label", options.label || "Mockup images");
+    button.style.left = `${view.left + view.width + metrics.gap}px`;
+    button.style.top = `${top}px`;
+    button.style.width = `${metrics.size}px`;
+    button.style.height = `${metrics.size}px`;
+    button.style.borderWidth = `${metrics.borderWidth}px`;
+    button.style.setProperty("--artboard-action-icon-size", `${metrics.iconSize}px`);
 
-    plus.className = "editor-mockup-slot-plus";
-    plus.textContent = "+";
-    plus.setAttribute("aria-hidden", "true");
-    button.append(plus);
+    if (options.opensMenu) {
+      button.dataset.mockupSlot = "true";
+      button.setAttribute("aria-haspopup", "dialog");
+      button.setAttribute("aria-expanded", "false");
+    } else {
+      button.dataset.mockupSlotPlaceholder = "true";
+    }
+
+    button.innerHTML = getMockupActionButtonIconMarkup(options.icon);
 
     return button;
+  }
+
+  function createMockupActionButtons(view, viewScale) {
+    const artboard = view?.artboard;
+
+    if (!shouldRenderMockupSlot(artboard)) {
+      return [];
+    }
+
+    const metrics = getMockupSlotMetrics(viewScale, artboard.width, artboard.height);
+
+    return [
+      createMockupActionButton(view, metrics, 0, {
+        action: "hoodie-details",
+        icon: "plus",
+        label: "Hoodie details",
+        opensMenu: true,
+      }),
+      createMockupActionButton(view, metrics, 1, {
+        action: "extra-images",
+        icon: "notebook",
+        label: "Extra images",
+      }),
+    ];
   }
 
   function handleMockupSlotPointerDown(event) {
@@ -609,7 +626,7 @@ window.CBO = window.CBO || {};
 
     if (
       target instanceof Element &&
-      target.closest("[data-mockup-slot], [data-mockup-slot-popover]")
+      target.closest("[data-mockup-slot], [data-mockup-slot-placeholder], [data-mockup-slot-popover]")
     ) {
       event.stopPropagation();
       event.stopImmediatePropagation?.();
@@ -646,11 +663,19 @@ window.CBO = window.CBO || {};
       mockupSlotPopover.hidden = true;
     }
 
-    document.querySelectorAll("[data-mockup-slot]").forEach((button) => {
-      button.setAttribute("aria-expanded", "false");
-      button.classList.remove("is-open");
-    });
     activeMockupSlotArtboardId = "";
+    syncMockupSlotButtonState();
+  }
+
+  function syncMockupSlotButtonState() {
+    const isPopoverOpen = Boolean(mockupSlotPopover && !mockupSlotPopover.hidden && activeMockupSlotArtboardId);
+
+    document.querySelectorAll("[data-mockup-slot]").forEach((button) => {
+      const isActive = isPopoverOpen && button.dataset.artboardId === activeMockupSlotArtboardId;
+
+      button.setAttribute("aria-expanded", String(isActive));
+      button.classList.toggle("is-open", isActive);
+    });
   }
 
   function createMockupSlotChoice(item) {
@@ -738,12 +763,7 @@ window.CBO = window.CBO || {};
     activeMockupSlotArtboardId = normalizedArtboardId;
     renderMockupSlotChoices(popover);
     popover.hidden = false;
-    document.querySelectorAll("[data-mockup-slot]").forEach((slotButton) => {
-      const isActive = slotButton === button;
-
-      slotButton.setAttribute("aria-expanded", String(isActive));
-      slotButton.classList.toggle("is-open", isActive);
-    });
+    syncMockupSlotButtonState();
     positionMockupSlotPopover();
   }
 
@@ -768,10 +788,8 @@ window.CBO = window.CBO || {};
       artboardId,
       placement: item.placement || null,
     };
-    const slotButton = getActiveMockupSlotButton();
 
     closeMockupSlotPopover();
-    slotButton?.remove();
 
     if (typeof namespace.addMockupAssetToArtboard === "function") {
       const didAdd = await namespace.addMockupAssetToArtboard(detail, { artboardId });
@@ -808,7 +826,7 @@ window.CBO = window.CBO || {};
       mockupSlotPopover.hidden ||
       !(target instanceof Element) ||
       mockupSlotPopover.contains(target) ||
-      target.closest("[data-mockup-slot]")
+      target.closest("[data-mockup-slot], [data-mockup-slot-placeholder]")
     ) {
       return;
     }
@@ -825,7 +843,16 @@ window.CBO = window.CBO || {};
 
   function handleMockupSlotClick(event) {
     const target = event.target;
+    const placeholderButton = target instanceof Element ? target.closest("[data-mockup-slot-placeholder]") : null;
     const button = target instanceof Element ? target.closest("[data-mockup-slot]") : null;
+
+    if (placeholderButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      closeMockupSlotPopover();
+      return;
+    }
 
     if (!button) {
       return;
@@ -1670,7 +1697,7 @@ window.CBO = window.CBO || {};
   }
 
   function handleStagePointerDown(event) {
-    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-symmetry-button], [data-artboard-connection-menu], [data-ai-image-board], [data-mockup-slot], [data-mockup-slot-popover]")) {
+    if (event.target?.closest?.("[data-artboard-action-bubble], [data-artboard-symmetry-button], [data-artboard-connection-menu], [data-ai-image-board], [data-mockup-slot], [data-mockup-slot-placeholder], [data-mockup-slot-popover]")) {
       return;
     }
 
@@ -1783,7 +1810,7 @@ window.CBO = window.CBO || {};
       return paper;
     }));
 
-    layer.replaceChildren(...artboardViews.map(({ artboard, height, left, top, width }) => {
+    const frameElements = artboardViews.map(({ artboard, height, left, top, width }) => {
       const frame = document.createElement("div");
       const label = document.createElement("span");
       const isSelected = isArtboardSelectionEnabled() && selectedArtboardId === artboard.id;
@@ -1816,14 +1843,13 @@ window.CBO = window.CBO || {};
       label.textContent = `${artboard.name} ${artboard.width} x ${artboard.height}`;
 
       frame.append(label);
-      const mockupSlotButton = createMockupSlotButton(artboard, width, height);
-
-      if (mockupSlotButton) {
-        frame.append(mockupSlotButton);
-      }
 
       return frame;
-    }));
+    });
+    const mockupActionButtons = artboardViews.flatMap((view) => createMockupActionButtons(view, zoom / dpr));
+
+    layer.replaceChildren(...frameElements, ...mockupActionButtons);
+    syncMockupSlotButtonState();
 
     namespace.renderArtboardConnectionOverlay?.({
       artboardViews,

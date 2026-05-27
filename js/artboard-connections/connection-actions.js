@@ -731,6 +731,136 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.getImportedAiImageBoardSize = function getImportedAiImageBoardSize(width, height) {
+    with (this) {
+
+    const sourceWidth = Math.max(1, Math.round(Number(width) || AI_IMAGE_BOARD_SIZE_DOC_PX));
+    const sourceHeight = Math.max(1, Math.round(Number(height) || AI_IMAGE_BOARD_SIZE_DOC_PX));
+    const maxSide = AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const minSide = Math.min(360, maxSide);
+    const longestSide = Math.max(sourceWidth, sourceHeight);
+    let scale = Math.min(1, maxSide / longestSide);
+
+    if (longestSide * scale < minSide) {
+      scale = minSide / longestSide;
+    }
+
+    return {
+      height: Math.max(1, Math.round(sourceHeight * scale)),
+      width: Math.max(1, Math.round(sourceWidth * scale)),
+    };
+    }
+  };
+
+  Controller.prototype.getAiImageBoardPlacementForClientPoint = function getAiImageBoardPlacementForClientPoint(options = {}) {
+    with (this) {
+
+    const width = Number(options.width) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const height = Number(options.height) || AI_IMAGE_BOARD_SIZE_DOC_PX;
+    const clientX = Number(options.clientX);
+    const clientY = Number(options.clientY);
+    const stage = getStage();
+    const stageRect = stage?.getBoundingClientRect?.();
+
+    if (
+      !stageRect ||
+      !Number.isFinite(clientX) ||
+      !Number.isFinite(clientY) ||
+      clientX < stageRect.left ||
+      clientX > stageRect.right ||
+      clientY < stageRect.top ||
+      clientY > stageRect.bottom
+    ) {
+      return getCurrentViewportAiImageBoardPlacement({ height, width });
+    }
+
+    const center = stagePointToDocumentPoint({
+      x: clientX - stageRect.left,
+      y: clientY - stageRect.top,
+    });
+    const preferredRect = createRect(
+      Math.round((Number(center.x) || 0) - width * 0.5),
+      Math.round((Number(center.y) || 0) - height * 0.5),
+      width,
+      height,
+    );
+
+    return resolveFreeSpaceBoardPlacement(preferredRect, {
+      gap: SPACE_BOARD_DRAG_GAP_DOC_PX,
+      includeSurroundingCandidates: true,
+    });
+    }
+  };
+
+  Controller.prototype.createAiImageBoardFromUpload = function createAiImageBoardFromUpload(options = {}) {
+    with (this) {
+
+    const uploadId = String(options.uploadId || "").trim();
+    const src = String(options.src || "").trim();
+
+    if (!uploadId || !src) {
+      return null;
+    }
+
+    const mediaKind = options.kind === "video" ? "video" : "image";
+    const originalWidth = Math.max(1, Math.round(Number(options.width) || AI_IMAGE_BOARD_SIZE_DOC_PX));
+    const originalHeight = Math.max(1, Math.round(Number(options.height) || AI_IMAGE_BOARD_SIZE_DOC_PX));
+    const size = getImportedAiImageBoardSize(originalWidth, originalHeight);
+    const placement = getAiImageBoardPlacementForClientPoint({
+      clientX: options.clientX,
+      clientY: options.clientY,
+      height: size.height,
+      width: size.width,
+    }) || createRect(0, 0, size.width, size.height);
+    const boardCount = spaceBoards.filter((entry) => (
+      entry.type === "ai-image" &&
+      getAiImageBoardGenerationKind(entry) === mediaKind
+    )).length + 1;
+    const defaultName = mediaKind === "video"
+      ? `Imported video #${boardCount}`
+      : `Imported image #${boardCount}`;
+    const name = String(options.name || defaultName).trim() || defaultName;
+    const beforeState = captureConnectionsHistoryState();
+    const board = {
+      height: size.height,
+      id: createBoardId(),
+      captionText: "",
+      generatedMedia: {
+        duration: Number(options.duration) || 0,
+        height: size.height,
+        kind: mediaKind,
+        name,
+        originalHeight,
+        originalWidth,
+        src,
+        uploadId,
+        uploadSource: "cbo-editor-uploads",
+        width: size.width,
+      },
+      generationKind: mediaKind,
+      name,
+      promptParts: [],
+      promptText: "",
+      type: "ai-image",
+      width: size.width,
+      x: placement.x,
+      y: placement.y,
+    };
+
+    spaceBoards.push(board);
+    selectedSpaceBoardId = board.id;
+    pushConnectionsHistoryEntry(beforeState, captureConnectionsHistoryState(), {
+      historyGroup: `space-board-import-upload-${board.id}`,
+      source: "space-board-import-upload",
+      type: "space-board-import-upload",
+    });
+    renderConnectionOverlay();
+    emitConnectionsChange("space-board-import-upload");
+
+    return board;
+    }
+  };
+
   Controller.prototype.getAllowedSpaceBoardMove = function getAllowedSpaceBoardMove(startFootprint, dx, dy, blockers = []) {
     with (this) {
 

@@ -38,6 +38,68 @@ window.CBO = window.CBO || {};
     }
   };
 
+  Controller.prototype.resolveAiImageBoardUploadMediaSrc = function resolveAiImageBoardUploadMediaSrc(media) {
+    with (this) {
+
+    const rawSrc = String(media?.src || "").trim();
+    const uploadId = String(
+      media?.uploadId ||
+      namespace.getUploadIdFromUri?.(rawSrc) ||
+      "",
+    ).trim();
+    const isUploadUri = namespace.isUploadUri?.(rawSrc) === true;
+
+    if (!isUploadUri && !uploadId) {
+      return rawSrc;
+    }
+
+    const resolvedSrc = namespace.getUploadedImageObjectUrl?.(uploadId) || "";
+
+    if (resolvedSrc) {
+      return resolvedSrc;
+    }
+
+    if (uploadId && !aiImageUploadResolveRequests.has(uploadId)) {
+      aiImageUploadResolveRequests.add(uploadId);
+      Promise.resolve(namespace.resolveUploadedImageObjectUrl?.(uploadId))
+        .then((objectUrl) => {
+          aiImageUploadResolveRequests.delete(uploadId);
+          if (objectUrl) {
+            renderSpaceBoards();
+          }
+        })
+        .catch((error) => {
+          aiImageUploadResolveRequests.delete(uploadId);
+          console.warn("[CBO] Unable to resolve uploaded AI board media.", error);
+        });
+    }
+
+    return "";
+    }
+  };
+
+  Controller.prototype.resolveAiImageBoardMediaForRender = function resolveAiImageBoardMediaForRender(media) {
+    with (this) {
+
+    if (!media || typeof media !== "object") {
+      return media || null;
+    }
+
+    const resolvedSrc = resolveAiImageBoardUploadMediaSrc(media);
+    const rawSrc = String(media.src || "").trim();
+
+    if (resolvedSrc === rawSrc) {
+      return media;
+    }
+
+    return {
+      ...media,
+      src: resolvedSrc,
+      storageSrc: rawSrc,
+    };
+    }
+  };
+
   Controller.prototype.getAiImageBoardMediaVariantSrc = function getAiImageBoardMediaVariantSrc(media, lod) {
     with (this) {
 
@@ -920,8 +982,13 @@ window.CBO = window.CBO || {};
     with (this) {
 
     const previewSource = String(preview?.previewSource || "").trim();
+    const posterSrc = String(preview?.posterSrc || "").trim();
 
     if (previewSource !== "original-video-fallback") {
+      return true;
+    }
+
+    if (!posterSrc) {
       return true;
     }
 
@@ -937,6 +1004,28 @@ window.CBO = window.CBO || {};
     with (this) {
 
     return shouldMountAiImageBoardVideoPreviewElement(mediaHost, board, preview) ? "mounted" : "deferred";
+    }
+  };
+
+  Controller.prototype.shouldAutoplayAiImageBoardVideoPreview = function shouldAutoplayAiImageBoardVideoPreview(mediaHost, board = null) {
+    with (this) {
+
+    return Boolean(
+      isAiImageBoardVideoSelected(mediaHost, board) ||
+      isAiImageBoardMediaHovering(mediaHost) ||
+      isAiImageBoardVideoPreviewIntentActive(mediaHost)
+    );
+    }
+  };
+
+  Controller.prototype.pauseAiImageBoardVideoPreviewIfInactive = function pauseAiImageBoardVideoPreviewIfInactive(video, mediaHost, board = null) {
+    with (this) {
+
+    if (shouldAutoplayAiImageBoardVideoPreview(mediaHost, board)) {
+      return;
+    }
+
+    pauseAiImageBoardVideoPreview(video);
     }
   };
 
@@ -1131,8 +1220,25 @@ window.CBO = window.CBO || {};
     }
 
     const video = createAiImageBoardVideoPreviewElement();
+    const shouldAutoplayVideo = shouldAutoplayAiImageBoardVideoPreview(mediaHost, board);
 
     video.dataset.videoSrc = videoSrc;
+
+    if (!shouldAutoplayVideo) {
+      video.autoplay = false;
+      video.removeAttribute("autoplay");
+      video.addEventListener(
+        "loadeddata",
+        () => pauseAiImageBoardVideoPreviewIfInactive(video, mediaHost, board),
+        { once: true },
+      );
+      video.addEventListener(
+        "canplay",
+        () => pauseAiImageBoardVideoPreviewIfInactive(video, mediaHost, board),
+        { once: true },
+      );
+    }
+
     if (posterSrc) {
       video.poster = posterSrc;
     }
@@ -1589,7 +1695,7 @@ window.CBO = window.CBO || {};
     with (this) {
 
     const mediaHost = element?.querySelector?.("[data-ai-image-board-media]");
-    const media = board?.generatedMedia || null;
+    const media = resolveAiImageBoardMediaForRender(board?.generatedMedia || null);
     const src = String(media?.src || "").trim();
     let preview = resolveAiImageBoardPreview(media, options.recommendedLod);
     const kind = preview.kind;

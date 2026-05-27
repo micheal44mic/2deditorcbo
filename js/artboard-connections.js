@@ -204,6 +204,9 @@ window.CBO = window.CBO || {};
   namespace.openAiBoardConnectionMenu = function openAiBoardConnectionMenu(options = {}) {
     return controller.openAiBoardConnectionMenu(options);
   };
+  namespace.createAiImageBoardFromUpload = function createAiImageBoardFromUpload(options = {}) {
+    return controller.createAiImageBoardFromUpload(options);
+  };
   namespace.clearArtboardConnections = function clearArtboardConnections() {
     return controller.clearArtboardConnections();
   };

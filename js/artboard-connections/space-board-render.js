@@ -111,6 +111,10 @@ window.CBO = window.CBO || {};
       const mediaHost = element.querySelector("[data-ai-image-board-media]");
       const isSelected = selectedSpaceBoardId === board.id;
       const generationKind = getAiImageBoardGenerationKind(board);
+      const generatedMedia = typeof resolveAiImageBoardMediaForRender === "function"
+        ? resolveAiImageBoardMediaForRender(board.generatedMedia || null)
+        : board.generatedMedia;
+      const hasGeneratedMedia = Boolean(board.generatedMedia?.src);
       const isFocusedOrSelected = !boardDragActive && (isSelected || isSpaceBoardFocusedOrSelected(board, element));
       const shouldDeferPreviewWork = boardDragActive
         ? !isGenerating
@@ -218,7 +222,7 @@ window.CBO = window.CBO || {};
       element.classList.toggle("is-connection-drop-target", connectionDropTargetBoardId === board.id);
       element.classList.toggle("is-connection-drop-blocked", connectionBlockedTargetBoardId === board.id);
       element.classList.remove("is-control-lod-hidden", "is-control-lod-compact");
-      element.classList.toggle("has-generated-media", Boolean(board.generatedMedia?.src));
+      element.classList.toggle("has-generated-media", hasGeneratedMedia);
       element.classList.toggle("is-preview-work-deferred", shouldDeferPreviewWork);
       updateAiImageBoardActionToolbarState(element.querySelector("[data-ai-image-board-action-toolbar]"), board);
       updateAiImageBoardActionToolbarPlacement(element, isSelected);
@@ -236,10 +240,10 @@ window.CBO = window.CBO || {};
 
       const currentMediaLod = getAiBoardCurrentLod(board, mediaHost);
       const hasActivePreviewBeforeRender = isAiBoardPreviewActive(mediaHost);
-      const shouldAllowInitialPreviewPaint = Boolean(board.generatedMedia?.src) &&
+      const shouldAllowInitialPreviewPaint = hasGeneratedMedia &&
         visibilityState === "visible" &&
         !hasActivePreviewBeforeRender;
-      const shouldRenderEmptyPreviewState = !board.generatedMedia?.src && (isGenerating || !shouldDeferPreviewWork);
+      const shouldRenderEmptyPreviewState = !hasGeneratedMedia && (isGenerating || !shouldDeferPreviewWork);
       const rawRecommendedLod = shouldUnloadMedia
         ? "unloaded"
         : shouldUpdatePreviewLod
@@ -250,11 +254,11 @@ window.CBO = window.CBO || {};
         : getStableAiBoardRecommendedLod(board, width, height, viewState.dpr, mediaHost);
       const heldLodForCameraMotion = shouldUnloadMedia || !shouldUpdatePreviewLod
         ? ""
-        : getAiBoardHeldLodDuringCameraMotion(mediaHost, board.generatedMedia);
+        : getAiBoardHeldLodDuringCameraMotion(mediaHost, generatedMedia);
       const recommendedLod = heldLodForCameraMotion || stableRecommendedLod;
 
       if (shouldUpdatePreviewLod && rawRecommendedLod !== recommendedLod) {
-        preloadAiImageBoardRuntimeLod(board.generatedMedia, rawRecommendedLod);
+        preloadAiImageBoardRuntimeLod(generatedMedia, rawRecommendedLod);
       }
 
       if (shouldDeferPreviewWork) {
@@ -269,14 +273,14 @@ window.CBO = window.CBO || {};
       }
       syncAiImageBoardVideoSelectionPlayback(mediaHost, board);
 
-      if (shouldUnloadMedia && shouldEvictAiImageRuntimePreviewVariantsForSrc(board.generatedMedia?.src || "", retainedRuntimePreviewSrcs)) {
-        const evictedCount = evictAiImageRuntimePreviewVariantsForSrc(board.generatedMedia?.src || "");
+      if (shouldUnloadMedia && shouldEvictAiImageRuntimePreviewVariantsForSrc(generatedMedia?.src || "", retainedRuntimePreviewSrcs)) {
+        const evictedCount = evictAiImageRuntimePreviewVariantsForSrc(generatedMedia?.src || "");
 
         if (evictedCount > 0) {
           recordAiBoardPreviewDebugEvent("runtime-preview-evict-offscreen", {
             boardId: board.id,
             count: evictedCount,
-            src: board.generatedMedia?.src || "",
+            src: generatedMedia?.src || "",
             visibility: visibilityState,
           });
         }
@@ -300,7 +304,7 @@ window.CBO = window.CBO || {};
         generationSampleKind: generationStatus?.sampleKind || "",
         generationSampleName: generationStatus?.sampleName || "",
         generationStatus: generationStatus?.status || "",
-        generated: Boolean(board.generatedMedia?.src),
+        generated: hasGeneratedMedia,
         id: board.id,
         isGenerating,
         mediaKind: board.generatedMedia?.kind || "",

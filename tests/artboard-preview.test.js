@@ -429,8 +429,13 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /image\.dataset\.aiImageBoardVideoPoster = ""/);
   assert.match(connectionsSource, /function shouldMountAiImageBoardVideoPreviewElement\(mediaHost, board, preview\)/);
   assert.match(connectionsSource, /previewSource !== "original-video-fallback"/);
+  assert.match(connectionsSource, /if \(!posterSrc\) \{\s*return true;/);
+  assert.match(connectionsSource, /function shouldAutoplayAiImageBoardVideoPreview\(mediaHost, board = null\)/);
+  assert.match(connectionsSource, /video\.removeAttribute\("autoplay"\)/);
+  assert.match(connectionsSource, /pauseAiImageBoardVideoPreviewIfInactive\(video, mediaHost, board\)/);
   assert.match(connectionsSource, /function getAiImageBoardVideoPreviewRenderMode\(mediaHost, board, preview\)/);
   assert.match(connectionsSource, /mediaHost\.dataset\.mediaVideoRenderMode = renderMode/);
+  assert.match(indexSource, /ai-board-media\.js\?v=ai-video-still-frame-v1/);
   assert.match(connectionsSource, /recordAiBoardPreviewDebugEvent\("video-preview-deferred"/);
   assert.match(connectionsSource, /video\.preload = "auto"/);
   assert.match(connectionsSource, /video\.setAttribute\("webkit-playsinline", ""\)/);
@@ -525,11 +530,11 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /const shouldUpdatePreviewLod = visibilityState === "visible" && !shouldDeferPreviewWork/);
   assert.match(connectionsSource, /const rawRecommendedLod = shouldUnloadMedia\s*\?\s*"unloaded"\s*:\s*shouldUpdatePreviewLod\s*\?\s*getAiBoardRecommendedLod/);
   assert.match(connectionsSource, /if \(shouldUpdatePreviewLod && rawRecommendedLod !== recommendedLod\) \{/);
-  assert.match(connectionsSource, /const shouldAllowInitialPreviewPaint = Boolean\(board\.generatedMedia\?\.src\) &&\s*visibilityState === "visible" &&\s*!hasActivePreviewBeforeRender/);
+  assert.match(connectionsSource, /const shouldAllowInitialPreviewPaint = hasGeneratedMedia &&\s*visibilityState === "visible" &&\s*!hasActivePreviewBeforeRender/);
   assert.match(connectionsSource, /!forceLowQualityCanvasPreview &&\s*!hasAiImageBoardPaintedImagePreview\(mediaHost, src, kind\)/);
   assert.match(connectionsSource, /metrics\.deferredPreviewBoards \+= 1/);
-  assert.match(connectionsSource, /shouldEvictAiImageRuntimePreviewVariantsForSrc\(board\.generatedMedia\?\.src \|\| "", retainedRuntimePreviewSrcs\)/);
-  assert.match(connectionsSource, /evictAiImageRuntimePreviewVariantsForSrc\(board\.generatedMedia\?\.src \|\| ""\)/);
+  assert.match(connectionsSource, /shouldEvictAiImageRuntimePreviewVariantsForSrc\(generatedMedia\?\.src \|\| "", retainedRuntimePreviewSrcs\)/);
+  assert.match(connectionsSource, /evictAiImageRuntimePreviewVariantsForSrc\(generatedMedia\?\.src \|\| ""\)/);
   assert.match(connectionsSource, /recordAiBoardPreviewDebugEvent\("runtime-preview-evict-offscreen"/);
   assert.match(connectionsSource, /previewSource: safeRecommendedLod === "unloaded" \? "unloaded" : "none"/);
   assert.match(connectionsSource, /function summarizeAiBoardPreviewSrc\(src\)/);
@@ -600,7 +605,7 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /generationStatus: generationStatus\?\.status \|\| ""/);
   assert.match(connectionsSource, /metrics\.estimatedDecodedMB/);
   assert.match(connectionsSource, /getStableAiBoardRecommendedLod\(board, width, height, viewState\.dpr, mediaHost\)/);
-  assert.match(connectionsSource, /preloadAiImageBoardRuntimeLod\(board\.generatedMedia, rawRecommendedLod\)/);
+  assert.match(connectionsSource, /preloadAiImageBoardRuntimeLod\(generatedMedia, rawRecommendedLod\)/);
   assert.match(connectionsSource, /function handleDocumentSpaceBoardSelectionPointerDown\(event\)/);
   assert.match(connectionsSource, /document\.addEventListener\("pointerdown", handleDocumentSpaceBoardSelectionPointerDown, true\)/);
   assert.match(connectionsSource, /function shouldStartSpaceBoardDragFromEvent\(event\)/);

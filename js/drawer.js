@@ -29,12 +29,15 @@ window.CBO.initDrawer = function initDrawer() {
   let uploadUsageFill = null;
   let uploadStatus = null;
   let uploadPointerActivation = null;
+  let uploadDragDepth = 0;
   let lastUploadPlaceActivation = {
     at: 0,
     id: "",
   };
   const uploadTouchActivationMoveTolerance = 10;
   const uploadActivationDedupeMs = 650;
+  const uploadUriPrefix = "cbo-upload://";
+  let uploadExternalImportBusy = false;
 
   const existingScrollbar = drawerPanel.querySelector(".drawer-custom-scrollbar");
 
@@ -178,12 +181,12 @@ window.CBO.initDrawer = function initDrawer() {
   function createUploadPanel() {
     const panel = document.createElement("section");
     panel.className = "drawer-upload-panel";
-    panel.setAttribute("aria-label", "Uploaded images");
+    panel.setAttribute("aria-label", "Uploaded media");
 
     const input = document.createElement("input");
     input.className = "drawer-upload-input";
     input.type = "file";
-    input.accept = "image/*";
+    input.accept = "image/*,video/*";
     input.multiple = true;
     input.dataset.uploadInput = "";
 
@@ -297,6 +300,34 @@ window.CBO.initDrawer = function initDrawer() {
     );
   }
 
+  function getStoredUploadedImageById(id) {
+    const normalizedId = String(id || "").trim();
+
+    if (!normalizedId) {
+      return Promise.resolve(null);
+    }
+
+    return openUploadDb().then(
+      (db) =>
+        new Promise((resolve, reject) => {
+          const transaction = db.transaction(uploadStoreName, "readonly");
+          const request = transaction.objectStore(uploadStoreName).get(normalizedId);
+
+          request.onsuccess = () => {
+            resolve(request.result || null);
+          };
+
+          request.onerror = () => {
+            reject(request.error || new Error("Unable to read upload"));
+          };
+
+          transaction.onerror = () => {
+            reject(transaction.error || new Error("Unable to read upload"));
+          };
+        }),
+    );
+  }
+
   function saveUploadedImage(record) {
     return openUploadDb().then(
       (db) =>
@@ -338,6 +369,27 @@ window.CBO.initDrawer = function initDrawer() {
     );
   }
 
+  function isVideoFile(file) {
+    return (
+      file?.type?.startsWith("video/") ||
+      /\.(m4v|mov|mp4|ogv|webm)$/i.test(file?.name || "")
+    );
+  }
+
+  function isUploadMediaFile(file) {
+    return isImageFile(file) || isVideoFile(file);
+  }
+
+  function getUploadMediaKind(fileOrRecord) {
+    return (
+      isVideoFile(fileOrRecord) ||
+      isVideoFile(fileOrRecord?.blob) ||
+      fileOrRecord?.kind === "video"
+    )
+      ? "video"
+      : "image";
+  }
+
   function createUploadId() {
     if (window.crypto?.randomUUID) {
       return window.crypto.randomUUID();
@@ -370,13 +422,49 @@ window.CBO.initDrawer = function initDrawer() {
     });
   }
 
+  function getVideoDimensions(file) {
+    return new Promise((resolve) => {
+      const objectUrl = URL.createObjectURL(file);
+      const video = document.createElement("video");
+
+      video.preload = "metadata";
+      video.muted = true;
+      video.playsInline = true;
+      video.onloadedmetadata = () => {
+        const dimensions = {
+          duration: Number.isFinite(video.duration) ? video.duration : 0,
+          height: video.videoHeight || 0,
+          width: video.videoWidth || 0,
+        };
+
+        URL.revokeObjectURL(objectUrl);
+        resolve(dimensions);
+      };
+      video.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve({ duration: 0, height: 0, width: 0 });
+      };
+      video.src = objectUrl;
+    });
+  }
+
+  function getUploadMediaDimensions(fileOrRecord) {
+    const mediaSource = fileOrRecord?.blob || fileOrRecord;
+
+    return getUploadMediaKind(fileOrRecord) === "video"
+      ? getVideoDimensions(mediaSource)
+      : getImageDimensions(mediaSource);
+  }
+
   async function createUploadRecord(file) {
-    const dimensions = await getImageDimensions(file);
+    const kind = getUploadMediaKind(file);
+    const dimensions = await getUploadMediaDimensions(file);
 
     return {
       id: createUploadId(),
-      name: file.name || "Uploaded image",
-      type: file.type || "image/*",
+      kind,
+      name: file.name || (kind === "video" ? "Uploaded video" : "Uploaded image"),
+      type: file.type || (kind === "video" ? "video/*" : "image/*"),
       size: file.size || 0,
       createdAt: Date.now(),
       blob: file,
@@ -465,6 +553,85 @@ window.CBO.initDrawer = function initDrawer() {
     return url;
   }
 
+  function createUploadUri(id) {
+    const normalizedId = String(id || "").trim();
+
+    return normalizedId ? `${uploadUriPrefix}${encodeURIComponent(normalizedId)}` : "";
+  }
+
+  function getUploadIdFromUri(value) {
+    const src = String(value || "").trim();
+
+    if (!src.startsWith(uploadUriPrefix)) {
+      return "";
+    }
+
+    try {
+      return decodeURIComponent(src.slice(uploadUriPrefix.length));
+    } catch (_error) {
+      return src.slice(uploadUriPrefix.length);
+    }
+  }
+
+  function getUploadedImageRecordById(id) {
+    const normalizedId = String(id || "").trim();
+
+    return normalizedId
+      ? uploadedImages.find((record) => record.id === normalizedId) || null
+      : null;
+  }
+
+  function upsertUploadedImageRecord(record) {
+    if (!record?.id) {
+      return null;
+    }
+
+    const existingIndex = uploadedImages.findIndex((uploadedImage) => uploadedImage.id === record.id);
+
+    if (existingIndex >= 0) {
+      uploadedImages.splice(existingIndex, 1, record);
+      return record;
+    }
+
+    uploadedImages.unshift(record);
+    return record;
+  }
+
+  async function resolveUploadedImageRecord(id) {
+    let record = getUploadedImageRecordById(id);
+
+    if (record) {
+      return record;
+    }
+
+    record = await getStoredUploadedImageById(id);
+
+    if (!record) {
+      return null;
+    }
+
+    if (!record.width || !record.height) {
+      Object.assign(record, await getUploadMediaDimensions(record));
+    }
+
+    upsertUploadedImageRecord(record);
+    renderUploadedImages();
+
+    return record;
+  }
+
+  function getUploadedImageObjectUrl(id) {
+    const record = getUploadedImageRecordById(id);
+
+    return record ? getUploadPreviewUrl(record) : "";
+  }
+
+  async function resolveUploadedImageObjectUrl(id) {
+    const record = await resolveUploadedImageRecord(id);
+
+    return record ? getUploadPreviewUrl(record) : "";
+  }
+
   function revokeUploadPreviewUrl(id) {
     const previewUrl = uploadPreviewUrls.get(id);
 
@@ -476,24 +643,39 @@ window.CBO.initDrawer = function initDrawer() {
 
   function createUploadedImageCard(record) {
     const card = document.createElement("div");
+    const kind = getUploadMediaKind(record);
     card.className = "drawer-upload-card";
     card.title = record.name;
     card.tabIndex = 0;
     card.dataset.uploadPlace = record.id;
     card.setAttribute("role", "button");
-    card.setAttribute("aria-label", `Place ${record.name || "uploaded image"} on canvas`);
+    card.setAttribute(
+      "aria-label",
+      kind === "video"
+        ? `Create video board from ${record.name || "uploaded video"}`
+        : `Place ${record.name || "uploaded image"} on canvas`,
+    );
 
-    const image = document.createElement("img");
-    image.className = "drawer-upload-thumb";
-    image.src = getUploadPreviewUrl(record);
-    image.alt = record.name || "Uploaded image";
-    image.loading = "lazy";
+    const media = document.createElement(kind === "video" ? "video" : "img");
+
+    media.className = "drawer-upload-thumb";
+    media.src = getUploadPreviewUrl(record);
+
+    if (kind === "video") {
+      media.muted = true;
+      media.playsInline = true;
+      media.preload = "metadata";
+      media.setAttribute("aria-label", record.name || "Uploaded video");
+    } else {
+      media.alt = record.name || "Uploaded image";
+      media.loading = "lazy";
+    }
 
     const removeButton = document.createElement("button");
     removeButton.className = "drawer-upload-remove";
     removeButton.type = "button";
     removeButton.dataset.uploadRemove = record.id;
-    removeButton.setAttribute("aria-label", `Remove ${record.name || "uploaded image"}`);
+    removeButton.setAttribute("aria-label", `Remove ${record.name || "uploaded media"}`);
     removeButton.innerHTML = `
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M18 6 6 18" />
@@ -501,7 +683,7 @@ window.CBO.initDrawer = function initDrawer() {
       </svg>
     `;
 
-    card.append(image, removeButton);
+    card.append(media, removeButton);
 
     return card;
   }
@@ -522,6 +704,22 @@ window.CBO.initDrawer = function initDrawer() {
     const record = uploadedImages.find((uploadedImage) => uploadedImage.id === id);
 
     if (!record) {
+      return;
+    }
+
+    if (getUploadMediaKind(record) === "video") {
+      window.CBO.createAiImageBoardFromUpload?.({
+        clientX: window.innerWidth * 0.5,
+        clientY: window.innerHeight * 0.5,
+        duration: record.duration,
+        height: record.height,
+        kind: "video",
+        name: record.name || "Uploaded video",
+        src: createUploadUri(record.id),
+        uploadId: record.id,
+        width: record.width,
+      });
+      setUploadStatus("VIDEO BOARD");
       return;
     }
 
@@ -622,7 +820,7 @@ window.CBO.initDrawer = function initDrawer() {
 
       for (const record of records) {
         if (!record.width || !record.height) {
-          Object.assign(record, await getImageDimensions(record.blob));
+          Object.assign(record, await getUploadMediaDimensions(record));
         }
       }
 
@@ -633,23 +831,172 @@ window.CBO.initDrawer = function initDrawer() {
     }
   }
 
-  async function handleUploadFiles() {
-    const files = Array.from(uploadInput?.files || []);
+  function getImageFileExtension(type) {
+    const normalizedType = String(type || "").toLowerCase();
 
-    if (!files.length) {
-      return;
+    if (normalizedType.includes("jpeg") || normalizedType.includes("jpg")) {
+      return "jpg";
     }
 
-    const imageFiles = files.filter(isImageFile);
-
-    uploadInput.value = "";
-
-    if (!imageFiles.length) {
-      setUploadStatus("IMAGES ONLY");
-      return;
+    if (normalizedType.includes("webp")) {
+      return "webp";
     }
 
-    const records = await Promise.all(imageFiles.map(createUploadRecord));
+    if (normalizedType.includes("gif")) {
+      return "gif";
+    }
+
+    if (normalizedType.includes("svg")) {
+      return "svg";
+    }
+
+    if (normalizedType.includes("avif")) {
+      return "avif";
+    }
+
+    return "png";
+  }
+
+  function getVideoFileExtension(type) {
+    const normalizedType = String(type || "").toLowerCase();
+
+    if (normalizedType.includes("webm")) {
+      return "webm";
+    }
+
+    if (normalizedType.includes("ogg") || normalizedType.includes("ogv")) {
+      return "ogv";
+    }
+
+    if (normalizedType.includes("quicktime") || normalizedType.includes("mov")) {
+      return "mov";
+    }
+
+    if (normalizedType.includes("x-m4v") || normalizedType.includes("m4v")) {
+      return "m4v";
+    }
+
+    return "mp4";
+  }
+
+  function getUploadMediaFileExtension(type, kind) {
+    return kind === "video" ? getVideoFileExtension(type) : getImageFileExtension(type);
+  }
+
+  function createNamedUploadMediaFile(blob, namePrefix = "media") {
+    if (blob instanceof File && blob.name) {
+      return blob;
+    }
+
+    const kind = getUploadMediaKind(blob);
+    const type = blob?.type || (kind === "video" ? "video/mp4" : "image/png");
+    const extension = getUploadMediaFileExtension(type, kind);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const name = `${namePrefix}-${stamp}.${extension}`;
+
+    try {
+      return new File([blob], name, {
+        lastModified: Date.now(),
+        type,
+      });
+    } catch (_error) {
+      blob.name = name;
+      blob.lastModified = Date.now();
+      return blob;
+    }
+  }
+
+  function getUploadMediaFilesFromDataTransfer(dataTransfer, namePrefix = "media") {
+    if (!dataTransfer) {
+      return [];
+    }
+
+    const fileList = Array.from(dataTransfer.files || [])
+      .filter(isUploadMediaFile)
+      .map((file) => createNamedUploadMediaFile(file, namePrefix));
+
+    if (fileList.length > 0) {
+      return fileList;
+    }
+
+    return Array.from(dataTransfer.items || [])
+      .filter((item) => (
+        item?.kind === "file" &&
+        (
+          String(item.type || "").startsWith("image/") ||
+          String(item.type || "").startsWith("video/")
+        )
+      ))
+      .map((item) => item.getAsFile?.())
+      .filter(isUploadMediaFile)
+      .map((file) => createNamedUploadMediaFile(file, namePrefix));
+  }
+
+  function dataTransferHasUploadMedia(dataTransfer) {
+    if (!dataTransfer) {
+      return false;
+    }
+
+    if (Array.from(dataTransfer.items || []).some((item) => (
+      item?.kind === "file" &&
+      (
+        String(item.type || "").startsWith("image/") ||
+        String(item.type || "").startsWith("video/")
+      )
+    ))) {
+      return true;
+    }
+
+    return Array.from(dataTransfer.files || []).some(isUploadMediaFile);
+  }
+
+  function isEditablePasteTarget(target) {
+    const element = target instanceof Element ? target : target?.parentElement;
+
+    return Boolean(element?.closest?.(
+      "input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='textbox']",
+    ));
+  }
+
+  function createAiBoardsForUploadedMedia(records, options = {}) {
+    if (typeof window.CBO.createAiImageBoardFromUpload !== "function") {
+      return [];
+    }
+
+    return records
+      .map((record, index) => {
+        const kind = getUploadMediaKind(record);
+
+        return window.CBO.createAiImageBoardFromUpload({
+          clientX: Number(options.clientX) + index * 18,
+          clientY: Number(options.clientY) + index * 18,
+          duration: record.duration,
+          height: record.height,
+          kind,
+          name: record.name || (kind === "video" ? "Uploaded video" : "Uploaded image"),
+          src: createUploadUri(record.id),
+          uploadId: record.id,
+          width: record.width,
+        });
+      })
+      .filter(Boolean);
+  }
+
+  async function importUploadedImageFiles(files, options = {}) {
+    const mediaFiles = Array.from(files || [])
+      .filter(isUploadMediaFile)
+      .map((file) => createNamedUploadMediaFile(file, options.namePrefix || "uploaded-media"));
+
+    if (!mediaFiles.length) {
+      setUploadStatus("MEDIA ONLY");
+      return {
+        boards: [],
+        records: [],
+        storedPersistently: false,
+      };
+    }
+
+    const records = await Promise.all(mediaFiles.map(createUploadRecord));
     let storedPersistently = true;
 
     await window.CBO.requestPersistentStorage?.({
@@ -665,9 +1012,68 @@ window.CBO.initDrawer = function initDrawer() {
       }
     }
 
-    uploadedImages.unshift(...records);
+    records.slice().reverse().forEach(upsertUploadedImageRecord);
     renderUploadedImages();
-    setUploadStatus(storedPersistently ? "SAVED" : "SESSION ONLY");
+
+    const boards = options.createAiBoard
+      ? createAiBoardsForUploadedMedia(records, options)
+      : [];
+
+    if (options.openUploadPanel) {
+      window.CBO.openDrawerPanel?.("upload");
+    }
+
+    setUploadStatus(
+      storedPersistently
+        ? boards.length
+          ? "SAVED + BOARD"
+          : "SAVED"
+        : boards.length
+          ? "SESSION + BOARD"
+          : "SESSION ONLY",
+    );
+
+    return {
+      boards,
+      records,
+      storedPersistently,
+    };
+  }
+
+  async function handleExternalMediaImport(files, options = {}) {
+    if (uploadExternalImportBusy) {
+      return null;
+    }
+
+    uploadExternalImportBusy = true;
+
+    try {
+      return await importUploadedImageFiles(files, {
+        createAiBoard: true,
+        namePrefix: options.namePrefix || "imported-media",
+        openUploadPanel: true,
+        ...options,
+      });
+    } finally {
+      uploadExternalImportBusy = false;
+    }
+  }
+
+  async function handleUploadFiles() {
+    const files = Array.from(uploadInput?.files || []);
+
+    uploadInput.value = "";
+
+    if (!files.length) {
+      return;
+    }
+
+    await importUploadedImageFiles(files, {
+      createAiBoard: false,
+      namePrefix: "uploaded-media",
+      openUploadPanel: false,
+      source: "file-picker",
+    });
   }
 
   async function removeUploadedImage(id) {
@@ -786,6 +1192,95 @@ window.CBO.initDrawer = function initDrawer() {
         event.preventDefault();
         placeUploadedImage(uploadCard.dataset.uploadPlace);
       }
+    });
+  }
+
+  function setUploadDropActive(isActive) {
+    document.body?.classList.toggle("cbo-upload-drop-active", Boolean(isActive));
+  }
+
+  function clearUploadDropActive() {
+    uploadDragDepth = 0;
+    setUploadDropActive(false);
+  }
+
+  function bindExternalMediaImport() {
+    document.addEventListener("dragenter", (event) => {
+      if (!dataTransferHasUploadMedia(event.dataTransfer)) {
+        return;
+      }
+
+      uploadDragDepth += 1;
+      setUploadDropActive(true);
+      event.preventDefault();
+    });
+
+    document.addEventListener("dragover", (event) => {
+      if (!dataTransferHasUploadMedia(event.dataTransfer)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      setUploadDropActive(true);
+    });
+
+    document.addEventListener("dragleave", (event) => {
+      if (!dataTransferHasUploadMedia(event.dataTransfer) && uploadDragDepth === 0) {
+        return;
+      }
+
+      uploadDragDepth = Math.max(0, uploadDragDepth - 1);
+
+      if (uploadDragDepth === 0) {
+        setUploadDropActive(false);
+      }
+    });
+
+    document.addEventListener("dragend", clearUploadDropActive);
+
+    document.addEventListener("drop", (event) => {
+      if (!dataTransferHasUploadMedia(event.dataTransfer)) {
+        clearUploadDropActive();
+        return;
+      }
+
+      const files = getUploadMediaFilesFromDataTransfer(event.dataTransfer, "dropped-media");
+
+      event.preventDefault();
+      clearUploadDropActive();
+
+      if (!files.length) {
+        setUploadStatus("MEDIA ONLY");
+        return;
+      }
+
+      void handleExternalMediaImport(files, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        namePrefix: "dropped-media",
+        source: "drop",
+      });
+    });
+
+    document.addEventListener("paste", (event) => {
+      if (isEditablePasteTarget(event.target)) {
+        return;
+      }
+
+      const files = getUploadMediaFilesFromDataTransfer(event.clipboardData, "pasted-media");
+
+      if (!files.length) {
+        return;
+      }
+
+      event.preventDefault();
+      void handleExternalMediaImport(files, {
+        clientX: window.innerWidth * 0.5,
+        clientY: window.innerHeight * 0.5,
+        namePrefix: "pasted-media",
+        source: "paste",
+      });
     });
   }
 
@@ -1062,8 +1557,19 @@ window.CBO.initDrawer = function initDrawer() {
     updateDrawerPanel();
   };
 
+  window.CBO.createUploadUri = createUploadUri;
+  window.CBO.getUploadIdFromUri = getUploadIdFromUri;
+  window.CBO.getUploadedImageObjectUrl = getUploadedImageObjectUrl;
+  window.CBO.importUploadedImageFiles = importUploadedImageFiles;
+  window.CBO.importUploadedMediaFiles = importUploadedImageFiles;
+  window.CBO.isUploadUri = function isUploadUri(value) {
+    return String(value || "").trim().startsWith(uploadUriPrefix);
+  };
+  window.CBO.resolveUploadedImageObjectUrl = resolveUploadedImageObjectUrl;
+
   renderDrawer();
   bindUploadPanel();
+  bindExternalMediaImport();
   void loadUploadedImages();
   updateDrawerPanel();
 

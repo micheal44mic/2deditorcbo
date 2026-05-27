@@ -49,7 +49,7 @@ window.CBO = window.CBO || {};
 
     return {
       distance: 0,
-      inputPoints: [{ ...point }],
+      inputPoints: [createInputPoint(point, options)],
       lastStampPoint: { ...point },
       pressure: normalizePressure(options.pressure),
       seed: (seed || 1) >>> 0,
@@ -58,35 +58,176 @@ window.CBO = window.CBO || {};
     };
   }
 
-  function getStabilizedPoint(point, state, settings) {
-    const stabilization = clamp01(settings?.stabilizationAmount);
+  function normalizePointerType(input) {
+    return String(input?.pointerType || "").toLowerCase();
+  }
 
-    state.inputPoints.push({ ...point });
+  function getInputProfile(input = {}) {
+    const pointerType = normalizePointerType(input);
+
+    if (pointerType === "pen") {
+      return {
+        motionScale: 0.82,
+        stabilizationScale: 0.72,
+        streamLineScale: 0.86,
+        tipAttachmentSamples: 5,
+      };
+    }
+
+    if (pointerType === "touch") {
+      return {
+        motionScale: 1.28,
+        stabilizationScale: 1.12,
+        streamLineScale: 1.05,
+        tipAttachmentSamples: 8,
+      };
+    }
+
+    if (pointerType === "mouse") {
+      return {
+        motionScale: 1.08,
+        stabilizationScale: 0.96,
+        streamLineScale: 1,
+        tipAttachmentSamples: 6,
+      };
+    }
+
+    return {
+      motionScale: 1,
+      stabilizationScale: 1,
+      streamLineScale: 1,
+      tipAttachmentSamples: 6,
+    };
+  }
+
+  function createInputPoint(point, input = {}) {
+    const time = Number(input?.time);
+
+    return {
+      x: point.x,
+      y: point.y,
+      time: Number.isFinite(time) ? time : null,
+    };
+  }
+
+  function pushInputPoint(point, state, input) {
+    state.inputPoints.push(createInputPoint(point, input));
 
     if (state.inputPoints.length > 28) {
       state.inputPoints.shift();
     }
+  }
+
+  function distanceBetween(a, b) {
+    if (!a || !b) {
+      return 0;
+    }
+
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function getPathDistance(points) {
+    if (!Array.isArray(points) || points.length < 2) {
+      return 0;
+    }
+
+    return points.reduce((total, nextPoint, index) => {
+      if (index === 0) {
+        return 0;
+      }
+
+      return total + distanceBetween(nextPoint, points[index - 1]);
+    }, 0);
+  }
+
+  function getPathDirectness(points) {
+    if (!Array.isArray(points) || points.length < 2) {
+      return 0;
+    }
+
+    const start = points[0];
+    const end = points[points.length - 1];
+    const pathLength = getPathDistance(points);
+
+    return pathLength > 0 ? clamp(distanceBetween(start, end) / pathLength, 0, 1) : 0;
+  }
+
+  function getTipAttachmentFactor(state, profile) {
+    const samples = Math.max(1, Number(profile?.tipAttachmentSamples) || 1);
+    const count = Math.max(0, (state?.inputPoints?.length || 1) - 1);
+
+    return clamp(count / samples, 0.18, 1);
+  }
+
+  function getSampleSpeedFactor(points) {
+    if (!Array.isArray(points) || points.length < 2) {
+      return 0;
+    }
+
+    const point = points[points.length - 1];
+    const previousPoint = points[points.length - 2];
+    const distance = distanceBetween(point, previousPoint);
+    const time = Number(point.time);
+    const previousTime = Number(previousPoint.time);
+
+    if (Number.isFinite(time) && Number.isFinite(previousTime) && time > previousTime) {
+      const frameDistance = distance * (16.667 / Math.max(1, time - previousTime));
+
+      return clamp(frameDistance / 26, 0, 1);
+    }
+
+    return clamp(distance / 28, 0, 1);
+  }
+
+  function getWeightedAverage(points, amount) {
+    const lastIndex = points.length - 1;
+    const recencyPower = 1.15 + (1 - amount) * 1.65;
+    let weightTotal = 0;
+    let x = 0;
+    let y = 0;
+
+    points.forEach((nextPoint, index) => {
+      const recency = lastIndex <= 0 ? 1 : index / lastIndex;
+      const weight = Math.max(0.05, Math.pow(recency, recencyPower));
+
+      weightTotal += weight;
+      x += nextPoint.x * weight;
+      y += nextPoint.y * weight;
+    });
+
+    return weightTotal > 0
+      ? { x: x / weightTotal, y: y / weightTotal }
+      : points[lastIndex];
+  }
+
+  function getStabilizedPoint(point, state, settings, input = {}) {
+    const profile = getInputProfile(input);
+    const stabilization = clamp01(settings?.stabilizationAmount) * profile.stabilizationScale;
 
     if (stabilization <= 0 || state.inputPoints.length < 2) {
       return point;
     }
 
-    const previousPoint = state.inputPoints[state.inputPoints.length - 2];
-    const speed = Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y);
-    const speedFactor = clamp(speed / 28, 0, 1);
-    const effectiveStabilization = stabilization * (0.35 + speedFactor * 0.65);
+    const speedFactor = getSampleSpeedFactor(state.inputPoints);
+    const cornerPreserve = getMotionCornerPreserve(state.inputPoints);
+    const tipAttachment = getTipAttachmentFactor(state, profile);
+    const effectiveStabilization = clamp01(
+      stabilization *
+      (0.25 + speedFactor * 0.75) *
+      (1 - cornerPreserve * 0.82) *
+      tipAttachment,
+    );
+
+    if (effectiveStabilization <= 0.001) {
+      return point;
+    }
+
     const windowSize = Math.min(
       state.inputPoints.length,
       2 + Math.round(effectiveStabilization * 16),
     );
     const points = state.inputPoints.slice(-windowSize);
-    const average = points.reduce(
-      (result, nextPoint) => ({
-        x: result.x + nextPoint.x / points.length,
-        y: result.y + nextPoint.y / points.length,
-      }),
-      { x: 0, y: 0 },
-    );
+    const average = getWeightedAverage(points, effectiveStabilization);
 
     return {
       x: point.x + (average.x - point.x) * effectiveStabilization,
@@ -108,18 +249,7 @@ window.CBO = window.CBO || {};
     const secondY = end.y - middle.y;
     const firstLength = Math.hypot(firstX, firstY);
     const secondLength = Math.hypot(secondX, secondY);
-    const pathLength = points.reduce((total, nextPoint, index) => {
-      if (index === 0) {
-        return 0;
-      }
-
-      const previous = points[index - 1];
-
-      return total + Math.hypot(nextPoint.x - previous.x, nextPoint.y - previous.y);
-    }, 0);
-    const directness = pathLength > 0
-      ? clamp(Math.hypot(end.x - start.x, end.y - start.y) / pathLength, 0, 1)
-      : 0;
+    const directness = getPathDirectness(points);
 
     if (firstLength <= 0.5 || secondLength <= 0.5) {
       return 0;
@@ -130,14 +260,16 @@ window.CBO = window.CBO || {};
     return clamp((1 - dot) * 0.68 * directness, 0, 0.85);
   }
 
-  function getMotionFilteredPoint(point, state, settings) {
-    const amount = clamp01(settings?.motionFilteringAmount);
+  function getMotionFilteredPoint(point, state, settings, input = {}) {
+    const profile = getInputProfile(input);
+    const amount = clamp01(settings?.motionFilteringAmount) * profile.motionScale;
 
     if (amount <= 0 || !state?.inputPoints || state.inputPoints.length < 4) {
       return point;
     }
 
     const expression = clamp01(settings?.motionFilteringExpression);
+    const tipAttachment = getTipAttachmentFactor(state, profile);
     const windowSize = Math.min(state.inputPoints.length, 4 + Math.round(amount * 20));
     const points = state.inputPoints.slice(-windowSize);
     const lastIndex = points.length - 1;
@@ -167,19 +299,60 @@ window.CBO = window.CBO || {};
 
     const slopeX = trend.x / trend.denominator;
     const slopeY = trend.y / trend.denominator;
+    const slopeLength = Math.hypot(slopeX, slopeY);
+
+    if (slopeLength <= 0.0001) {
+      return point;
+    }
+
+    const tangent = {
+      x: slopeX / slopeLength,
+      y: slopeY / slopeLength,
+    };
+    const normal = {
+      x: -tangent.y,
+      y: tangent.x,
+    };
+    const linePointAt = (index) => ({
+      x: mean.x + slopeX * (index - meanIndex),
+      y: mean.y + slopeY * (index - meanIndex),
+    });
     const projected = {
       x: mean.x + slopeX * (lastIndex - meanIndex),
       y: mean.y + slopeY * (lastIndex - meanIndex),
     };
     const lateralX = point.x - projected.x;
     const lateralY = point.y - projected.y;
+    const lateralDistance = lateralX * normal.x + lateralY * normal.y;
+    const deviationSamples = points
+      .map((nextPoint, index) => {
+        const linePoint = linePointAt(index);
+
+        return Math.abs((nextPoint.x - linePoint.x) * normal.x + (nextPoint.y - linePoint.y) * normal.y);
+      })
+      .sort((a, b) => a - b);
+    const medianDeviation = deviationSamples[Math.floor(deviationSamples.length * 0.5)] || 0;
     const cornerPreserve = getMotionCornerPreserve(points);
-    const removal = amount * (1 - expression * 0.85) * (1 - cornerPreserve);
-    const lateralKeep = clamp(1 - removal, 0, 1);
+    const directness = getPathDirectness(points);
+    const effectiveAmount = clamp01(
+      amount *
+      tipAttachment *
+      (0.78 + directness * 0.22) *
+      (1 - expression * 0.55) *
+      (1 - cornerPreserve * 0.92),
+    );
+    const rawDeviation = Math.abs(lateralDistance);
+    const expressiveBand = medianDeviation * (0.12 + expression * 0.9);
+    const allowedDeviation = rawDeviation * (1 - effectiveAmount) + expressiveBand * effectiveAmount;
+    const clippedDistance = Math.sign(lateralDistance) * Math.min(rawDeviation, allowedDeviation);
+    const clipped = {
+      x: projected.x + normal.x * clippedDistance,
+      y: projected.y + normal.y * clippedDistance,
+    };
 
     return {
-      x: projected.x + lateralX * lateralKeep,
-      y: projected.y + lateralY * lateralKeep,
+      x: point.x + (clipped.x - point.x) * effectiveAmount,
+      y: point.y + (clipped.y - point.y) * effectiveAmount,
     };
   }
 
@@ -199,7 +372,7 @@ window.CBO = window.CBO || {};
     return state.pressure;
   }
 
-  function processStrokeInput(point, state, settings, pressure = 1) {
+  function processStrokeInput(point, state, settings, pressure = 1, input = {}) {
     if (!state) {
       return {
         point,
@@ -207,9 +380,12 @@ window.CBO = window.CBO || {};
       };
     }
 
-    const stabilizedPoint = getStabilizedPoint(point, state, settings);
-    const motionFilteredPoint = getMotionFilteredPoint(stabilizedPoint, state, settings);
-    const streamLineAmount = getStreamLineAmount(settings);
+    const profile = getInputProfile(input);
+    pushInputPoint(point, state, input);
+
+    const stabilizedPoint = getStabilizedPoint(point, state, settings, input);
+    const motionFilteredPoint = getMotionFilteredPoint(stabilizedPoint, state, settings, input);
+    const streamLineAmount = clamp01(getStreamLineAmount(settings) * profile.streamLineScale);
     const nextPressure = getSmoothedPressure(pressure, state, settings);
 
     if (streamLineAmount <= 0) {

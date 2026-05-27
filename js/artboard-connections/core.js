@@ -174,6 +174,7 @@ window.CBO = window.CBO || {};
       this.aiImageLastGenerateActivation = { at: 0, boardId: "" };
       this.aiImageRuntimePreviewCache = new Map();
       this.aiVideoRuntimePosterCache = new Map();
+      this.aiImageUploadResolveRequests = new Set();
       this.aiRuntimeLodSkipDebugKeys = new Set();
       this.aiImagePreviewSwapSeed = 1;
       this.aiBoardPreviewDebugEventId = 1;

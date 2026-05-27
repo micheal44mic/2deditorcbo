@@ -70,6 +70,26 @@ const HOODIE_DETAIL_1_MOCKUP = {
   tags: ["mockup", "hoodie", "detail", "hoodie-detail-1"],
 };
 
+const HOODIE_DETAIL_2_MOCKUP = {
+  id: "hoodie-detail-2",
+  name: "hoodie detail 2",
+  alt: "hoodie detail 2",
+  src: "./assets/mockups/hoodie-detail-2.png?v=hoodie-detail-2-2048-full-v4",
+  type: "mockup-addon",
+  fit: "contain",
+  tags: ["mockup", "hoodie", "detail", "hoodie-detail-2"],
+};
+
+const HOODIE_DETAIL_5_MOCKUP = {
+  id: "hoodie-detail-5",
+  name: "hoodie detail 5",
+  alt: "hoodie detail 5",
+  src: "./assets/mockups/hoodie-detail-5.png?v=hoodie-detail-5-2048-full-v4",
+  type: "mockup-addon",
+  fit: "contain",
+  tags: ["mockup", "hoodie", "detail", "hoodie-detail-5"],
+};
+
 const TEMP_HAT_MOCKUPS_TO_REMOVE = [
   HOODIE_BODY_1_MOCKUP,
   { tags: ["temporary", "mockup", "hats"] },
@@ -97,6 +117,8 @@ window.CBO_MOCKUP_CATEGORIES = [
 
 window.CBO_MOCKUP_ADDON_LIBRARY = [
   HOODIE_DETAIL_1_MOCKUP,
+  HOODIE_DETAIL_2_MOCKUP,
+  HOODIE_DETAIL_5_MOCKUP,
 ];
 
 window.CBO_CATEGORIES = [

@@ -417,6 +417,25 @@
   display: none;
 }
 
+body.cbo-upload-drop-active::after {
+  position: fixed;
+  inset: 14px;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  border: 2px dashed rgba(240, 80, 35, 0.88);
+  border-radius: 8px;
+  background: rgba(17, 17, 17, 0.26);
+  color: #ffffff;
+  content: "DROP MEDIA";
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.38);
+}
+
 .drawer-section {
   width: 100%;
 }
@@ -590,7 +609,7 @@ button.drawer-image-placeholder:focus-visible {
 
 .drawer-image-contain {
   padding: 7px;
-  background: #050506;
+  background: #ffffff;
   object-fit: contain;
 }
 

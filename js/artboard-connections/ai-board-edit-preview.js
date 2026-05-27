@@ -46,13 +46,17 @@ window.CBO = window.CBO || {};
   Controller.prototype.getAiImageBoardEnlargeMedia = function getAiImageBoardEnlargeMedia(board) {
     with (this) {
 
-    const media = board?.generatedMedia || null;
-    const originalSrc = String(media?.src || "").trim();
+    const sourceMedia = board?.generatedMedia || null;
+    const media = typeof resolveAiImageBoardMediaForRender === "function"
+      ? resolveAiImageBoardMediaForRender(sourceMedia)
+      : sourceMedia;
+    const originalSrc = String(sourceMedia?.src || media?.src || "").trim();
+    const resolvedSrc = String(media?.src || "").trim();
     const kind = media?.kind === "video" ? "video" : "image";
     const boardKind = getAiImageBoardGenerationKind(board);
     const src = kind === "video"
       ? getAiImageBoardEnlargeVideoSrc(media)
-      : originalSrc;
+      : resolvedSrc;
 
     if (!originalSrc || !src || kind !== boardKind) {
       return null;
@@ -78,9 +82,12 @@ window.CBO = window.CBO || {};
     }
 
     const boardKind = getAiImageBoardGenerationKind(board);
-    const generatedMedia = board?.generatedMedia || null;
+    const sourceGeneratedMedia = board?.generatedMedia || null;
+    const generatedMedia = typeof resolveAiImageBoardMediaForRender === "function"
+      ? resolveAiImageBoardMediaForRender(sourceGeneratedMedia)
+      : sourceGeneratedMedia;
     const generatedMediaKind = generatedMedia?.kind === "video" ? "video" : "image";
-    const hasMatchingGeneratedMedia = Boolean(generatedMedia?.src) && generatedMediaKind === boardKind;
+    const hasMatchingGeneratedMedia = Boolean(sourceGeneratedMedia?.src && generatedMedia?.src) && generatedMediaKind === boardKind;
     const fallbackHeight = Math.max(1, Math.round(Number(board?.height) || AI_IMAGE_BOARD_SIZE_DOC_PX));
     const fallbackWidth = Math.max(1, Math.round(Number(board?.width) || AI_IMAGE_BOARD_SIZE_DOC_PX));
 
