@@ -1,5 +1,74 @@
 (function registerCompositing(namespace) {
   namespace.DocumentRendererMixins = namespace.DocumentRendererMixins || {};
+  namespace.activeStrokeBlendDebugHistory = Array.isArray(namespace.activeStrokeBlendDebugHistory)
+    ? namespace.activeStrokeBlendDebugHistory
+    : [];
+
+  namespace.startActiveStrokeBlendDebug = function startActiveStrokeBlendDebug(options = {}) {
+    namespace.debugActiveStrokeBlend = true;
+    namespace.debugActiveStrokeBlendLog = options.log !== false;
+    namespace.activeStrokeBlendDebugHistory = [];
+    namespace.lastActiveStrokeBlendDebug = null;
+
+    return {
+      enabled: true,
+      log: namespace.debugActiveStrokeBlendLog === true,
+      message: "Draw the brush stroke now, then inspect window.CBO.lastActiveStrokeBlendDebug.",
+    };
+  };
+
+  namespace.stopActiveStrokeBlendDebug = function stopActiveStrokeBlendDebug() {
+    namespace.debugActiveStrokeBlend = false;
+    namespace.debugActiveStrokeBlendLog = false;
+
+    return {
+      enabled: false,
+      historyCount: namespace.activeStrokeBlendDebugHistory?.length || 0,
+      last: namespace.lastActiveStrokeBlendDebug || null,
+    };
+  };
+
+  namespace.getActiveStrokeBlendDebugSummary = function getActiveStrokeBlendDebugSummary(limit = 20) {
+    const count = Number.isFinite(Number(limit)) ? Math.max(1, Math.round(Number(limit))) : 20;
+
+    return (namespace.activeStrokeBlendDebugHistory || []).slice(-count).map((entry) => ({
+      anomaly: entry.anomaly === true,
+      anomalyReasons: (entry.anomalyReasons || []).join(","),
+      artboardId: entry.artboardId || "",
+      blendMode: entry.blendMode || "",
+      branch: entry.layer?.branch || "",
+      deferHydration: entry.deferInteractiveResidencyHydration === true,
+      didDraw: entry.outcome?.didDrawActiveStroke === true,
+      drawReason: entry.outcome?.drawReason || "",
+      frame: entry.frame,
+      flushedComposite: entry.outcome?.flushedCanvasComposite === true,
+      mergeAttempted: entry.layer?.mergeAttempted === true,
+      mergeSucceeded: entry.layer?.mergeSucceeded === true,
+      residencyHydrated: entry.artboardResidencyHydrated || 0,
+      targetAfterState: entry.targetAfterResidencyHydration?.state || "",
+      targetAfterTiles: entry.targetAfterResidencyHydration?.tileCount || 0,
+      targetAfterTexture: entry.targetAfterResidencyHydration?.texture === true,
+      targetAfterTextureTiles: entry.targetAfterResidencyHydration?.textureTileCount || 0,
+      targetEndState: entry.targetAtEnd?.state || "",
+      targetEndTiles: entry.targetAtEnd?.tileCount || 0,
+      targetEndTexture: entry.targetAtEnd?.texture === true,
+      targetEndTextureTiles: entry.targetAtEnd?.textureTileCount || 0,
+      warnings: (entry.warnings || []).join(","),
+    }));
+  };
+
+  namespace.copyActiveStrokeBlendDebugSummary = function copyActiveStrokeBlendDebugSummary(limit = 20) {
+    const summary = namespace.getActiveStrokeBlendDebugSummary(limit);
+    const text = JSON.stringify(summary, null, 2);
+
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text);
+    } else if (typeof copy === "function") {
+      copy(text);
+    }
+
+    return summary;
+  };
 
   function defineDocumentRendererMethods(DocumentRenderer, methods) {
     for (const [name, value] of Object.entries(methods)) {
@@ -421,6 +490,101 @@
 
     hasAnyAdvancedLayerBlendModes(layers = this.getOrderedLayersBottomToTop()) {
       return Array.isArray(layers) && layers.some((layer) => this.hasAdvancedLayerBlendMode(layer));
+    }
+,
+
+    createActiveStrokeBlendDebugTargetSummary(target) {
+      if (!target) {
+        return null;
+      }
+
+      if (this.isSparseRasterTarget(target)) {
+        let hotTileCount = 0;
+        let coldTileCount = 0;
+        let textureTileCount = 0;
+
+        target.tiles?.forEach?.((tile) => {
+          if (tile?.texture) {
+            textureTileCount += 1;
+          }
+          if (tile?.state === "CPU_COLD") {
+            coldTileCount += 1;
+          } else {
+            hotTileCount += 1;
+          }
+        });
+
+        return {
+          coldTileCount,
+          height: Math.round(Number(target.height) || 0),
+          hotTileCount,
+          sparse: true,
+          state: target.state || "",
+          texture: Boolean(target.texture),
+          textureTileCount,
+          tileCount: target.tiles?.size || 0,
+          tileSize: Math.round(Number(target.tileSize) || 0),
+          width: Math.round(Number(target.width) || 0),
+        };
+      }
+
+      return {
+        cropped: Boolean(target.cropped),
+        framebuffer: Boolean(target.framebuffer),
+        height: Math.round(Number(target.height) || 0),
+        layerId: target.layerId || "",
+        sparse: false,
+        state: target.state || "",
+        texture: Boolean(target.texture),
+        width: Math.round(Number(target.width) || 0),
+        x: Math.round(Number(target.x) || 0),
+        y: Math.round(Number(target.y) || 0),
+      };
+    }
+,
+
+    publishActiveStrokeBlendDebug(detail = {}) {
+      const snapshot = {
+        frame: (namespace.activeStrokeBlendDebugFrame || 0) + 1,
+        source: "active-stroke-blend",
+        time: Date.now(),
+        ...detail,
+      };
+      const history = Array.isArray(namespace.activeStrokeBlendDebugHistory)
+        ? namespace.activeStrokeBlendDebugHistory
+        : [];
+
+      namespace.activeStrokeBlendDebugFrame = snapshot.frame;
+      namespace.lastActiveStrokeBlendDebug = snapshot;
+      history.push(snapshot);
+      while (history.length > 80) {
+        history.shift();
+      }
+      namespace.activeStrokeBlendDebugHistory = history;
+
+      if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+        try {
+          window.dispatchEvent(new CustomEvent("cbo:active-stroke-blend-debug", { detail: snapshot }));
+        } catch (error) {
+          // Debug only: event listeners must never affect rendering.
+        }
+      }
+
+      if (
+        typeof console !== "undefined" &&
+        (
+          namespace.debugActiveStrokeBlendLog === true ||
+          snapshot.anomaly === true
+        )
+      ) {
+        const logger = snapshot.anomaly === true && typeof console.warn === "function"
+          ? console.warn
+          : console.debug;
+
+        logger?.call?.(console, "[CBO] active stroke blend debug", snapshot);
+      }
+
+      return snapshot;
     }
 ,
 
@@ -1158,18 +1322,6 @@
       const artboardFlatPreviewFallbackIds = this.getArtboardFlatPreviewFallbackIds(artboardResidency, orderedLayers, {
         activeStrokeTexture: Boolean(options.activeStrokeTexture),
       });
-      const deferInteractiveResidencyHydration = Boolean(
-        options.activeStrokeTexture ||
-        options.deferPreviewCacheUpdate === true ||
-        interactionDefersPreviewCacheUpdate
-      );
-      const artboardResidencyHydrated = deferInteractiveResidencyHydration
-        ? 0
-        : this.hydrateHotArtboardTargets(artboardResidency, orderedLayers, {
-            renderRect: viewportRenderRect,
-            reason: "draw-to-canvas-artboard-residency",
-            skipArtboardIds: artboardFlatPreviewFallbackIds,
-          });
       const artboardResidencyMetrics = this.collectArtboardResidencyMetrics(artboardResidency, orderedLayers, {
         camera,
         dpr: options.dpr,
@@ -1263,6 +1415,31 @@
       if (!activeStrokeNeedsScratchMerge && this.activeStrokeScratchTarget) {
         this.deleteActiveStrokeScratchTarget();
       }
+      const activeStrokeTargetBeforeResidencyHydration = activeStrokeLayer?.id
+        ? this.createActiveStrokeBlendDebugTargetSummary(this.rasterTargetsByLayerId.get(activeStrokeLayer.id))
+        : null;
+      const activeStrokeRequiresResidencyHydration = Boolean(
+        options.activeStrokeTexture &&
+        activeStrokeNeedsFullStack
+      );
+      const deferInteractiveResidencyHydration = Boolean(
+        !activeStrokeRequiresResidencyHydration &&
+        (
+          options.activeStrokeTexture ||
+          options.deferPreviewCacheUpdate === true ||
+          interactionDefersPreviewCacheUpdate
+        )
+      );
+      const artboardResidencyHydrated = deferInteractiveResidencyHydration
+        ? 0
+        : this.hydrateHotArtboardTargets(artboardResidency, orderedLayers, {
+            renderRect: viewportRenderRect,
+            reason: "draw-to-canvas-artboard-residency",
+            skipArtboardIds: artboardFlatPreviewFallbackIds,
+          });
+      const activeStrokeTargetAfterResidencyHydration = activeStrokeLayer?.id
+        ? this.createActiveStrokeBlendDebugTargetSummary(this.rasterTargetsByLayerId.get(activeStrokeLayer.id))
+        : null;
       const activeStrokeCanOverlayPreview = !options.activeStrokeTexture ||
         (
           activeStrokeLayerIndex >= 0 &&
@@ -1920,6 +2097,71 @@
         !(activeStrokeDefersLayerBlend && layer?.id === activeStrokeLayerId) &&
         this.hasAdvancedLayerBlendMode(layer)
       );
+      const activeStrokeBlendDebug = options.activeStrokeTexture && (
+        activeStrokeNeedsFullStack ||
+        activeStrokeLayerHasBlendMode ||
+        namespace.debugActiveStrokeBlend === true
+      )
+        ? {
+            activeStrokeCanOverlayPreview,
+            activeStrokeClipRect: activeStrokeClipRect ? { ...activeStrokeClipRect } : null,
+            activeStrokeClipRectCount: activeStrokeScratchClipRects.length,
+            activeStrokeDefersLayerBlend,
+            activeStrokeDefersLayerEffects,
+            activeStrokeLayerHasBlendMode,
+            activeStrokeLayerHasEffects,
+            activeStrokeLayerId,
+            activeStrokeMode,
+            activeStrokeNeedsFullStack,
+            activeStrokeNeedsScratchMerge,
+            activeStrokeRect: activeStrokeRect ? { ...activeStrokeRect } : null,
+            activeStrokeRequiresResidencyHydration,
+            activeStrokeUsesClippingMask,
+            artboardId: this.getLayerArtboardId(activeStrokeLayer) || "",
+            artboardResidencyHydrated,
+            blendMode: activeStrokeLayer?.blendMode || "normal",
+            blendModeId: activeStrokeLayer ? this.getLayerBlendModeId(activeStrokeLayer) : 0,
+            canvasNeedsLayerComposite,
+            deferInteractiveResidencyHydration,
+            didUpdatePreviewCache,
+            layer: null,
+            outcome: {
+              didDrawActiveStroke: false,
+              drawReason: "",
+              flushedCanvasComposite: false,
+            },
+            previewCache: {
+              canUsePreviewCache,
+              dirty: this.previewCacheDirty === true,
+              ready: this.previewCacheReady === true,
+              usePreviewCache,
+            },
+            residency: artboardResidency
+              ? {
+                  activeArtboardId: artboardResidency.activeArtboardId || "",
+                  coldArtboardIds: [...(artboardResidency.coldArtboardIds || [])],
+                  hotArtboardIds: [...(artboardResidency.hotArtboardIds || [])],
+                  visibleArtboardIds: [...(artboardResidency.visibleArtboardIds || [])],
+                  warmArtboardIds: [...(artboardResidency.warmArtboardIds || [])],
+                }
+              : null,
+            targetAfterResidencyHydration: activeStrokeTargetAfterResidencyHydration,
+            targetBeforeResidencyHydration: activeStrokeTargetBeforeResidencyHydration,
+          }
+        : null;
+      let didFlushCanvasComposite = false;
+      const markActiveStrokeDraw = (reason, extra = {}) => {
+        if (!activeStrokeBlendDebug) {
+          return;
+        }
+
+        activeStrokeBlendDebug.outcome = {
+          ...(activeStrokeBlendDebug.outcome || {}),
+          didDrawActiveStroke: true,
+          drawReason: activeStrokeBlendDebug.outcome?.drawReason || reason,
+          ...extra,
+        };
+      };
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, outputFramebuffer);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
@@ -1953,6 +2195,7 @@
             });
           });
           didDrawActiveStroke = true;
+          markActiveStrokeDraw("preview-cache-overlay");
         }
       } else {
         if (canvasNeedsLayerComposite) {
@@ -2015,6 +2258,30 @@
             renderRect: staticViewportRenderRect,
             skipLayerEffects: skipLayerEffectsForInteractiveStroke,
           };
+          const activeStrokeLayerDebug = activeStrokeBlendDebug && isActiveStrokeLayer
+            ? {
+                branch: "pending",
+                canCullSparseTilesForViewport,
+                culled: false,
+                isClipBaseLayer,
+                isClippingLayer,
+                layerArtboardId,
+                layerTarget: this.createActiveStrokeBlendDebugTargetSummary(layerTarget),
+                mergeAttempted: false,
+                mergeSucceeded: false,
+                opacity,
+                passedCull: false,
+                rawTarget: this.createActiveStrokeBlendDebugTargetSummary(rawLayerTarget),
+                renderResultCount: 0,
+                shouldRebindArtboardAfterTargetResolve,
+                skipLayerBlendForInteractiveStroke,
+                skipLayerEffectsForInteractiveStroke,
+              }
+            : null;
+
+          if (activeStrokeLayerDebug) {
+            activeStrokeBlendDebug.layer = activeStrokeLayerDebug;
+          }
 
           if (layerArtboardId && artboardFlatPreviewFallbackIds.has(layerArtboardId)) {
             if (!isClippingLayer) {
@@ -2090,11 +2357,18 @@
             this.recordViewportLayerCullDecision(viewportCullingStats, layerCullDecision, shouldCullLayer);
 
             if (shouldCullLayer) {
+              if (activeStrokeLayerDebug) {
+                activeStrokeLayerDebug.culled = true;
+                activeStrokeLayerDebug.cullDecision = layerCullDecision;
+              }
               continue;
             }
           }
 
           viewportCullingStats.layers.passedCull += 1;
+          if (activeStrokeLayerDebug) {
+            activeStrokeLayerDebug.passedCull = true;
+          }
 
           if (isRasterTransformPreviewLayer) {
             setPreviewCut(rasterTransformPreview.sourceRect);
@@ -2104,8 +2378,14 @@
             viewportCullingStats.layers.drawPasses += 1;
             let renderTarget = layerTarget;
             let didMergeActiveStroke = false;
+            if (activeStrokeLayerDebug) {
+              activeStrokeLayerDebug.branch = "texture";
+            }
 
             if (isActiveStrokeLayer && activeStrokeNeedsScratchMerge) {
+              if (activeStrokeLayerDebug) {
+                activeStrokeLayerDebug.mergeAttempted = true;
+              }
               const mergedTarget = this.renderLayerWithActiveStrokeTexture(
                 layerTarget.texture,
                 options.activeStrokeTexture,
@@ -2121,6 +2401,11 @@
                 renderTarget = mergedTarget;
                 didMergeActiveStroke = true;
                 didDrawActiveStroke = true;
+                if (activeStrokeLayerDebug) {
+                  activeStrokeLayerDebug.mergeSucceeded = true;
+                  activeStrokeLayerDebug.mergedTarget = this.createActiveStrokeBlendDebugTargetSummary(mergedTarget);
+                }
+                markActiveStrokeDraw("scratch-merge-texture");
                 if (!isClippingLayer && isClipBaseLayer) {
                   currentClipBase = this.createClipBaseForLayer(layer, mergedTarget, layer.visible !== false, {
                     transformPreview: transformPreviewForClipBase,
@@ -2175,6 +2460,9 @@
             for (const renderResult of this.getLayerRenderResults(layer, renderTarget, viewportLayerRenderOptions)) {
               const layerTexture = renderResult?.texture;
               const layerRect = this.getArtboardDragVisualRect(layer, renderResult?.rect || null, renderTarget);
+              if (activeStrokeLayerDebug) {
+                activeStrokeLayerDebug.renderResultCount += 1;
+              }
 
               if (!layerTexture) {
                 continue;
@@ -2230,6 +2518,7 @@
               currentMaskClipRect = null;
               currentMaskClipRects = null;
               didDrawActiveStroke = true;
+              markActiveStrokeDraw("eraser-mask");
             }
 
             if (didMergeActiveStroke) {
@@ -2242,8 +2531,15 @@
             viewportCullingStats.layers.drawPasses += 1;
             const blendModeId = skipLayerBlendForInteractiveStroke ? 0 : this.getLayerBlendModeId(layer);
             const renderResults = this.getLayerRenderResults(layer, layerTarget, viewportLayerRenderOptions);
+            if (activeStrokeLayerDebug) {
+              activeStrokeLayerDebug.branch = "sparse";
+              activeStrokeLayerDebug.renderResultCount = renderResults.length;
+            }
 
             if (isActiveStrokeLayer && activeStrokeNeedsScratchMerge) {
+              if (activeStrokeLayerDebug) {
+                activeStrokeLayerDebug.mergeAttempted = true;
+              }
               const mergedTarget = this.renderLayerWithActiveStrokeTexture(
                 null,
                 options.activeStrokeTexture,
@@ -2257,9 +2553,20 @@
 
               if (mergedTarget?.texture) {
                 withLayerArtboardClip(layer, () => {
-                  drawBlendTexture(mergedTarget.texture, opacity, null, clipBase, blendModeId);
+                  drawBlendTexture(
+                    mergedTarget.texture,
+                    opacity,
+                    this.getRasterTargetDocumentRect(mergedTarget),
+                    clipBase,
+                    blendModeId,
+                  );
                 });
                 didDrawActiveStroke = true;
+                if (activeStrokeLayerDebug) {
+                  activeStrokeLayerDebug.mergeSucceeded = true;
+                  activeStrokeLayerDebug.mergedTarget = this.createActiveStrokeBlendDebugTargetSummary(mergedTarget);
+                }
+                markActiveStrokeDraw("scratch-merge-sparse");
                 if (!isClippingLayer && isClipBaseLayer) {
                   currentClipBase = this.createClipBaseForLayer(layer, mergedTarget, layer.visible !== false, {
                     transformPreview: transformPreviewForClipBase,
@@ -2322,6 +2629,7 @@
                   });
                 });
                 didDrawActiveStroke = true;
+                markActiveStrokeDraw("sparse-advanced-active-stroke");
               }
 
               if (isRasterTransformPreviewLayer) {
@@ -2349,6 +2657,8 @@
                 );
               });
             }
+          } else if (activeStrokeLayerDebug) {
+            activeStrokeLayerDebug.branch = "missing-target";
           }
 
           if (isRasterTransformPreviewLayer) {
@@ -2372,6 +2682,7 @@
               });
             });
             didDrawActiveStroke = true;
+            markActiveStrokeDraw("layer-loop-active-stroke");
           }
         }
       }
@@ -2385,6 +2696,8 @@
               drawTexture(options.activeStrokeTexture, 1.0, activeStrokeRect);
             });
           });
+          didDrawActiveStroke = true;
+          markActiveStrokeDraw("no-layer-model-overlay");
         }
       }
 
@@ -2395,6 +2708,7 @@
           viewportHeight,
           viewportWidth,
         });
+        didFlushCanvasComposite = true;
         canvasCompositeState = null;
         bindArtboardProgram();
       }
@@ -2406,6 +2720,48 @@
         gl.uniform1f(uniforms.gridMode, 1.0);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         gl.uniform1f(uniforms.gridMode, 0.0);
+      }
+
+      if (activeStrokeBlendDebug) {
+        const anomalyReasons = [];
+        const warnings = [];
+
+        if (activeStrokeNeedsFullStack && !didDrawActiveStroke) {
+          anomalyReasons.push("active-stroke-not-drawn");
+        }
+        if (canvasNeedsLayerComposite && !didFlushCanvasComposite) {
+          anomalyReasons.push("canvas-composite-not-flushed");
+        }
+        if (activeStrokeRequiresResidencyHydration && deferInteractiveResidencyHydration) {
+          anomalyReasons.push("residency-hydration-deferred-for-full-stack-stroke");
+        }
+        if (activeStrokeBlendDebug.layer?.branch === "missing-target") {
+          warnings.push("active-layer-had-no-raster-target-during-live-stroke");
+        }
+        if (activeStrokeTargetAfterResidencyHydration?.state === "CPU_COLD") {
+          warnings.push("active-layer-target-still-cold-after-hydration");
+        }
+
+        activeStrokeBlendDebug.anomaly = anomalyReasons.length > 0;
+        activeStrokeBlendDebug.anomalyReasons = anomalyReasons;
+        activeStrokeBlendDebug.warnings = warnings;
+        activeStrokeBlendDebug.outcome = {
+          ...(activeStrokeBlendDebug.outcome || {}),
+          didDrawActiveStroke,
+          drawReason: activeStrokeBlendDebug.outcome?.drawReason || (didDrawActiveStroke ? "unknown" : ""),
+          flushedCanvasComposite: didFlushCanvasComposite,
+        };
+        activeStrokeBlendDebug.targetAtEnd = activeStrokeLayer?.id
+          ? this.createActiveStrokeBlendDebugTargetSummary(this.rasterTargetsByLayerId.get(activeStrokeLayer.id))
+          : null;
+        activeStrokeBlendDebug.viewportCulling = {
+          activeLayerCull: activeStrokeBlendDebug.layer?.cullDecision || null,
+          flatPreviewDrawnCount: viewportCullingStats.artboardResidency.flatPreviewDrawnCount,
+          layersConsidered: viewportCullingStats.layers.considered,
+          layersDrawPasses: viewportCullingStats.layers.drawPasses,
+          layersSafelyCulled: viewportCullingStats.layers.safelyCulled,
+        };
+        this.publishActiveStrokeBlendDebug(activeStrokeBlendDebug);
       }
 
       gl.bindVertexArray(null);

@@ -3232,7 +3232,9 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /options\.deferPreviewCacheUpdate === true/);
   assert.match(source, /const activeStrokeDefersLayerEffects = Boolean\(/);
   assert.match(source, /const activeStrokeDefersLayerBlend = false/);
+  assert.match(source, /const activeStrokeRequiresResidencyHydration = Boolean\(\s*options\.activeStrokeTexture &&\s*activeStrokeNeedsFullStack\s*\)/);
   assert.match(source, /const deferInteractiveResidencyHydration = Boolean\(/);
+  assert.match(source, /!activeStrokeRequiresResidencyHydration &&\s*\(/);
   assert.match(source, /deferInteractiveResidencyHydration\s*\?\s*0\s*:\s*this\.hydrateHotArtboardTargets/);
   assert.match(source, /const delay = Math\.max\(idleDelay, warmHold\)/);
   assert.match(source, /skipLayerEffectsForInteractiveStroke/);
@@ -4681,7 +4683,7 @@ test("document renderer wires viewport culling stats without touching preview ca
   assert.match(drawToCanvasBody, /const viewportLayerCullingEnabled = this\.isViewportLayerCullingEnabled\(options\)/);
   assert.match(drawToCanvasBody, /const viewportLayerCullingMeasured = this\.isViewportLayerCullingAuditEnabled\(options\)/);
   assert.match(drawToCanvasBody, /this\.recordViewportLayerCullDecision\(viewportCullingStats, layerCullDecision, shouldCullLayer\)/);
-  assert.match(drawToCanvasBody, /if \(shouldCullLayer\) \{\s*continue;\s*\}/);
+  assert.match(drawToCanvasBody, /if \(shouldCullLayer\) \{[\s\S]*?continue;\s*\}/);
   assert.match(drawToCanvasBody, /this\.finalizeViewportCullingStats\(viewportCullingStats\)/);
   assert.doesNotMatch(previewCacheBody, /viewportCullingStats/);
   assert.doesNotMatch(previewCacheBody, /enableViewportLayerCulling/);
@@ -4756,10 +4758,13 @@ test("document renderer composites supported layer blend modes in shader", () =>
   assert.match(source, /renderLayerWithActiveStrokeTexture\(layerTexture, strokeTexture, strokeRect = null, options = \{\}\)/);
   assert.match(source, /const renderResults = Array\.isArray\(options\.renderResults\)/);
   assert.match(source, /const layerRect = options\.layerRect/);
+  assert.match(source, /const scratchRect = sourceRects\.reduce/);
+  assert.match(source, /this\.ensureActiveStrokeScratchTarget\(width, height, \{\s*x: scratchOriginX,\s*y: scratchOriginY,\s*\}\)/);
+  assert.match(source, /gl\.uniform2f\(uniforms\.cameraPosition, originX - scratchOriginX, originY - scratchOriginY\)/);
   assert.match(source, /drawSource\(layerTexture, layerDrawWidth, layerDrawHeight, layerOriginX, layerOriginY\)/);
   assert.match(source, /drawLayerSources\(\);/);
   assert.match(source, /layerRect: this\.getRasterTargetDocumentRect\(layerTarget\)/);
-  assert.match(drawToCanvasBody, /this\.isSparseRasterTarget\(layerTarget\)[\s\S]*isActiveStrokeLayer && activeStrokeNeedsScratchMerge[\s\S]*renderLayerWithActiveStrokeTexture\(\s*null,\s*options\.activeStrokeTexture,[\s\S]*renderResults,[\s\S]*drawBlendTexture\(mergedTarget\.texture, opacity, null, clipBase, blendModeId\)/);
+  assert.match(drawToCanvasBody, /this\.isSparseRasterTarget\(layerTarget\)[\s\S]*isActiveStrokeLayer && activeStrokeNeedsScratchMerge[\s\S]*renderLayerWithActiveStrokeTexture\(\s*null,\s*options\.activeStrokeTexture,[\s\S]*renderResults,[\s\S]*this\.getRasterTargetDocumentRect\(mergedTarget\)[\s\S]*blendModeId/);
   assert.match(previewCacheBody, /drawBlendTexture\(layerTexture, opacity, (?:this\.getLayerBlendModeId\(layer\)|blendModeId), renderResult\.rect, clipBase\)/);
   assert.match(drawToCanvasBody, /activeStrokeNeedsFullStack/);
   assert.match(drawToCanvasBody, /drawBlendTexture\(layerTexture, opacity, layerRect, clipBase, blendModeId\)/);

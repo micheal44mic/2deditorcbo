@@ -716,9 +716,11 @@
     }
 ,
 
-    ensureActiveStrokeScratchTarget(width = this.width, height = this.height) {
+    ensureActiveStrokeScratchTarget(width = this.width, height = this.height, options = {}) {
       const targetWidth = Math.max(1, Math.round(width || this.width || 1));
       const targetHeight = Math.max(1, Math.round(height || this.height || 1));
+      const targetX = Number.isFinite(Number(options.x)) ? Math.round(Number(options.x)) : 0;
+      const targetY = Number.isFinite(Number(options.y)) ? Math.round(Number(options.y)) : 0;
       const needsScratch =
         !this.activeStrokeScratchTarget ||
         this.activeStrokeScratchTarget.width !== targetWidth ||
@@ -736,6 +738,14 @@
         });
       }
 
+      this.activeStrokeScratchTarget.x = targetX;
+      this.activeStrokeScratchTarget.y = targetY;
+      this.activeStrokeScratchTarget.cropped =
+        targetX !== 0 ||
+        targetY !== 0 ||
+        targetWidth !== Math.max(1, Math.round(this.width || 1)) ||
+        targetHeight !== Math.max(1, Math.round(this.height || 1));
+
       return this.activeStrokeScratchTarget;
     }
 ,
@@ -749,19 +759,57 @@
         return null;
       }
 
+      const layerRect = options.layerRect
+        ? this.getUnclampedDocumentRect?.(options.layerRect) || options.layerRect
+        : null;
+      const normalizedRenderResults = renderResults
+        ? renderResults.map((renderResult) => ({
+            ...renderResult,
+            rect: renderResult.rect
+              ? this.getUnclampedDocumentRect?.(renderResult.rect) || renderResult.rect
+              : null,
+          }))
+        : null;
+      const strokeDocRect = strokeRect
+        ? this.getUnclampedDocumentRect?.(strokeRect) || strokeRect
+        : null;
+      const sourceRects = [];
+
+      if (normalizedRenderResults) {
+        normalizedRenderResults.forEach((renderResult) => {
+          if (renderResult.rect) {
+            sourceRects.push(renderResult.rect);
+          }
+        });
+      } else if (layerRect) {
+        sourceRects.push(layerRect);
+      }
+
+      if (strokeDocRect) {
+        sourceRects.push(strokeDocRect);
+      }
+
+      const scratchRect = sourceRects.reduce(
+        (rect, nextRect) => rect
+          ? this.unionRasterHistoryRects(rect, nextRect)
+          : { ...nextRect },
+        null,
+      ) || { x: 0, y: 0, width: Math.max(1, Math.round(this.width || 1)), height: Math.max(1, Math.round(this.height || 1)) };
+      const scratchOriginX = Number.isFinite(scratchRect.x) ? scratchRect.x : 0;
+      const scratchOriginY = Number.isFinite(scratchRect.y) ? scratchRect.y : 0;
       const gl = this.gl;
-      const width = Math.max(1, Math.round(this.width || 1));
-      const height = Math.max(1, Math.round(this.height || 1));
-      const scratch = this.ensureActiveStrokeScratchTarget(width, height);
+      const width = Math.max(1, Math.round(scratchRect.width || this.width || 1));
+      const height = Math.max(1, Math.round(scratchRect.height || this.height || 1));
+      const scratch = this.ensureActiveStrokeScratchTarget(width, height, {
+        x: scratchOriginX,
+        y: scratchOriginY,
+      });
       const { program, uniforms } = this.programInfo;
       const strokeClipRects = Array.isArray(options.clipRects)
         ? options.clipRects
             .map((rect) => this.getUnclampedDocumentRect?.(rect) || rect)
             .filter(Boolean)
         : [];
-      const layerRect = options.layerRect
-        ? this.getUnclampedDocumentRect?.(options.layerRect) || options.layerRect
-        : null;
       const layerDrawWidth = Math.max(1, Math.round(layerRect?.width || width));
       const layerDrawHeight = Math.max(1, Math.round(layerRect?.height || height));
       const layerOriginX = Number.isFinite(layerRect?.x) ? layerRect.x : 0;
@@ -772,10 +820,10 @@
           return null;
         }
 
-        const left = Math.max(0, Math.floor(docRect.x));
-        const top = Math.max(0, Math.floor(docRect.y));
-        const right = Math.min(width, Math.ceil(docRect.x + docRect.width));
-        const bottom = Math.min(height, Math.ceil(docRect.y + docRect.height));
+        const left = Math.max(0, Math.floor(docRect.x - scratchOriginX));
+        const top = Math.max(0, Math.floor(docRect.y - scratchOriginY));
+        const right = Math.min(width, Math.ceil(docRect.x + docRect.width - scratchOriginX));
+        const bottom = Math.min(height, Math.ceil(docRect.y + docRect.height - scratchOriginY));
 
         if (right <= left || bottom <= top) {
           return null;
@@ -794,18 +842,16 @@
         }
 
         gl.uniform2f(uniforms.documentSize, documentWidth, documentHeight);
-        gl.uniform2f(uniforms.cameraPosition, originX, originY);
+        gl.uniform2f(uniforms.cameraPosition, originX - scratchOriginX, originY - scratchOriginY);
         gl.uniform2f(uniforms.drawOrigin, originX, originY);
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.uniform1f(uniforms.opacity, 1);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       };
       const drawLayerSources = () => {
-        if (renderResults) {
-          renderResults.forEach((renderResult) => {
-            const rect = renderResult.rect
-              ? this.getUnclampedDocumentRect?.(renderResult.rect) || renderResult.rect
-              : null;
+        if (normalizedRenderResults) {
+          normalizedRenderResults.forEach((renderResult) => {
+            const rect = renderResult.rect || null;
             const sourceWidth = Math.max(1, Math.round(rect?.width || width));
             const sourceHeight = Math.max(1, Math.round(rect?.height || height));
             const sourceX = Number.isFinite(rect?.x) ? rect.x : 0;
