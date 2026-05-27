@@ -736,18 +736,10 @@ window.CBO = window.CBO || {};
 
     const sourceWidth = Math.max(1, Math.round(Number(width) || AI_IMAGE_BOARD_SIZE_DOC_PX));
     const sourceHeight = Math.max(1, Math.round(Number(height) || AI_IMAGE_BOARD_SIZE_DOC_PX));
-    const maxSide = AI_IMAGE_BOARD_SIZE_DOC_PX;
-    const minSide = Math.min(360, maxSide);
-    const longestSide = Math.max(sourceWidth, sourceHeight);
-    let scale = Math.min(1, maxSide / longestSide);
-
-    if (longestSide * scale < minSide) {
-      scale = minSide / longestSide;
-    }
 
     return {
-      height: Math.max(1, Math.round(sourceHeight * scale)),
-      width: Math.max(1, Math.round(sourceWidth * scale)),
+      height: sourceHeight,
+      width: sourceWidth,
     };
     }
   };

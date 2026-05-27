@@ -33,6 +33,9 @@ test("external media import saves uploads and creates AI image or video boards",
   assert.match(drawerSource, /window\.CBO\.createAiImageBoardFromUpload/);
 
   assert.match(connectionActionsSource, /Controller\.prototype\.createAiImageBoardFromUpload/);
+  assert.match(connectionActionsSource, /Controller\.prototype\.getImportedAiImageBoardSize/);
+  assert.match(connectionActionsSource, /return \{\s*height: sourceHeight,\s*width: sourceWidth,\s*\}/);
+  assert.doesNotMatch(connectionActionsSource, /const maxSide = AI_IMAGE_BOARD_SIZE_DOC_PX/);
   assert.match(connectionActionsSource, /const mediaKind = options\.kind === "video" \? "video" : "image"/);
   assert.match(connectionActionsSource, /generationKind: mediaKind/);
   assert.match(connectionActionsSource, /kind: mediaKind/);

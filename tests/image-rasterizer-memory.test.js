@@ -44,6 +44,11 @@ test("image rasterizer caps imported images before WebGL texture upload", () => 
   assert.match(source, /resizeWidth:\s*decodedSize\.width/);
   assert.match(source, /resizeHeight:\s*decodedSize\.height/);
   assert.match(source, /context\.drawImage\(image,\s*0,\s*0,\s*decodedSize\.width,\s*decodedSize\.height\)/);
+  assert.match(source, /getImportDecodeSize\(width,\s*height,\s*options = \{\}\)/);
+  assert.match(source, /options\.preserveOriginalDimensions === true/);
+  assert.match(source, /return this\.getPreservedImageSize\(width,\s*height,\s*options\)/);
+  assert.match(source, /report\.reason = "image-source-side-over-webgl-limit"/);
+  assert.match(source, /reason:\s*resized[\s\S]*"image-preserved-original-size"[\s\S]*"image-kept-within-import-budget"/);
 });
 
 test("image import reports operation memory to raster resource manager", () => {
@@ -56,20 +61,26 @@ test("image import reports operation memory to raster resource manager", () => {
   assert.match(source, /estimatedPeakBytes\s*=\s*sourceBytes\s*\+\s*targetBytes/);
 });
 
-test("uploaded image placement fits and centers inside the target artboard", () => {
+test("uploaded image placement preserves source dimensions and centers on the target artboard", () => {
   assert.match(editorCanvasSource, /function resolveUploadedImageArtboardId\(layerModel\)/);
   assert.match(editorCanvasSource, /layerModel\?\.resolveInsertionArtboardId\?\.\(activeEntry\)/);
   assert.match(editorCanvasSource, /return knownArtboards\.some\(\(artboard\) => artboard\?\.id === resolvedArtboardId\)/);
+  assert.match(editorCanvasSource, /UPLOAD_ORIGINAL_DIMENSION_IMPORT_OPTIONS/);
+  assert.match(editorCanvasSource, /preserveOriginalDimensions: true/);
   assert.match(editorCanvasSource, /artboardId: uploadArtboardId/);
   assert.match(editorCanvasSource, /insertLayerAtTopOfArtboardEntries\(\s*entries,\s*uploadArtboardId,\s*imageLayer,/);
   assert.match(editorCanvasSource, /layerModel\.setEntries\(nextEntries, \{ activeLayerId: imageLayer\.id, source: "image-upload" \}\)/);
   assert.match(editorCanvasSource, /const artboardRect = window\.CBO\.getActiveDocumentArtboardRect\?\.\(\{\s*artboardId: options\.artboardId,\s*layerId: options\.layerId,/);
+  assert.match(editorCanvasSource, /const preserveOriginalDimensions = options\.preserveOriginalDimensions === true/);
   assert.match(editorCanvasSource, /const fitScale = Math\.min\(1, documentWidth \/ sourceWidth, documentHeight \/ sourceHeight\)/);
-  assert.match(editorCanvasSource, /const drawWidth = Math\.max\(1, Math\.min\(documentWidth, Math\.floor\(sourceWidth \* fitScale\)\)\)/);
-  assert.match(editorCanvasSource, /const drawHeight = Math\.max\(1, Math\.min\(documentHeight, Math\.floor\(sourceHeight \* fitScale\)\)\)/);
-  assert.match(editorCanvasSource, /x: Math\.round\(artboardRect\.x \+ \(documentWidth - drawWidth\) \* 0\.5\)/);
+  assert.match(editorCanvasSource, /const drawWidth = preserveOriginalDimensions[\s\S]*\? sourceWidth[\s\S]*Math\.max\(1, Math\.min\(documentWidth, Math\.floor\(sourceWidth \* fitScale\)\)\)/);
+  assert.match(editorCanvasSource, /const drawHeight = preserveOriginalDimensions[\s\S]*\? sourceHeight[\s\S]*Math\.max\(1, Math\.min\(documentHeight, Math\.floor\(sourceHeight \* fitScale\)\)\)/);
+  assert.match(editorCanvasSource, /const targetRect = \{[\s\S]*x: Math\.round\(artboardRect\.x \+ \(documentWidth - drawWidth\) \* 0\.5\)/);
   assert.match(editorCanvasSource, /y: Math\.round\(artboardRect\.y \+ \(documentHeight - drawHeight\) \* 0\.5\)/);
+  assert.match(editorCanvasSource, /renderer\.createRasterTargetForUnclampedRect\(placementRect,/);
   assert.match(editorCanvasSource, /drawHeight,\s*drawWidth,/);
+  assert.match(editorCanvasSource, /drawX: targetRect\.x - target\.x/);
+  assert.match(editorCanvasSource, /drawY: targetRect\.y - target\.y/);
   assert.match(source, /const destinationWidth = Math\.max\([\s\S]*?target\.drawWidth \|\| width/);
   assert.match(source, /const destinationHeight = Math\.max\([\s\S]*?target\.drawHeight \|\| height/);
   assert.match(source, /Math\.round\(\(targetWidth - destinationWidth\) \* 0\.5\)/);
@@ -82,7 +93,7 @@ test("uploaded image placement reports dirty bounds instead of forcing a full pr
   assert.match(source, /const destinationRect = \{/);
   assert.match(source, /rect: destinationRect/);
   assert.match(source, /return \{\s*destinationRect,/);
-  assert.match(editorCanvasSource, /const placement = await rasterizer\.placeBlob\(detail\.blob, \{\s*artboardId: uploadArtboardId,\s*layerId: imageLayer\.id,/);
+  assert.match(editorCanvasSource, /const placement = await rasterizer\.placeBlob\(detail\.blob, \{\s*\.\.\.UPLOAD_ORIGINAL_DIMENSION_IMPORT_OPTIONS,\s*artboardId: uploadArtboardId,\s*layerId: imageLayer\.id,/);
   assert.match(editorCanvasSource, /imageBounds: placement\.destinationRect/);
   assert.doesNotMatch(editorCanvasSource, /finalizeImportedImageLayerAsEditablePaint\(imageLayer\.id, "image-upload-auto-rasterize"\)/);
   assert.match(editorCanvasSource, /layerModel\.createLayer\(\{\s*artboardId: uploadArtboardId,[\s\S]*type: "image"/);

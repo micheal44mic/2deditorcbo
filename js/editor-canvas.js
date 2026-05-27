@@ -24,6 +24,11 @@ const MOBILE_RASTER_HISTORY_PROFILE = Object.freeze({
   maxRasterHistoryMiB: 400,
   minRasterHistoryGpuHotEntries: 0,
 });
+const UPLOAD_ORIGINAL_DIMENSION_IMPORT_OPTIONS = Object.freeze({
+  maxImportSourceMiB: Number.MAX_SAFE_INTEGER,
+  maxImportSourceSide: Number.MAX_SAFE_INTEGER,
+  preserveOriginalDimensions: true,
+});
 
 function isMobileLikeDevice() {
   if (typeof navigator === "undefined") {
@@ -672,6 +677,7 @@ window.CBO.placeUploadedImageOnCanvas = async function placeUploadedImageOnCanva
 
   try {
     const placement = await rasterizer.placeBlob(detail.blob, {
+      ...UPLOAD_ORIGINAL_DIMENSION_IMPORT_OPTIONS,
       artboardId: uploadArtboardId,
       layerId: imageLayer.id,
       source: "image-rasterize",
@@ -964,16 +970,32 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
         };
         const documentWidth = Math.max(1, Math.round(artboardRect.width || 1));
         const documentHeight = Math.max(1, Math.round(artboardRect.height || 1));
+        const preserveOriginalDimensions = options.preserveOriginalDimensions === true;
         const fitScale = Math.min(1, documentWidth / sourceWidth, documentHeight / sourceHeight);
-        const drawWidth = Math.max(1, Math.min(documentWidth, Math.floor(sourceWidth * fitScale)));
-        const drawHeight = Math.max(1, Math.min(documentHeight, Math.floor(sourceHeight * fitScale)));
-        const rect = renderer.getClampedDocumentRect?.({
+        const drawWidth = preserveOriginalDimensions
+          ? sourceWidth
+          : Math.max(1, Math.min(documentWidth, Math.floor(sourceWidth * fitScale)));
+        const drawHeight = preserveOriginalDimensions
+          ? sourceHeight
+          : Math.max(1, Math.min(documentHeight, Math.floor(sourceHeight * fitScale)));
+        const targetRect = {
           x: Math.round(artboardRect.x + (documentWidth - drawWidth) * 0.5),
           y: Math.round(artboardRect.y + (documentHeight - drawHeight) * 0.5),
           width: drawWidth,
           height: drawHeight,
-        });
-        const target = rect ? renderer.createRasterTargetForRect(rect, [0, 0, 0, 0]) : null;
+        };
+        const rect = preserveOriginalDimensions
+          ? null
+          : renderer.getClampedDocumentRect?.(targetRect);
+        const placementRect = preserveOriginalDimensions ? targetRect : rect;
+        const target = placementRect
+          ? preserveOriginalDimensions && renderer.createRasterTargetForUnclampedRect
+            ? renderer.createRasterTargetForUnclampedRect(placementRect, [0, 0, 0, 0], 0, {
+                layerId: options.layerId,
+                source: options.source || "image-placement-target",
+              })
+            : renderer.createRasterTargetForRect(placementRect, [0, 0, 0, 0])
+          : null;
 
         if (!target) {
           return null;
@@ -989,8 +1011,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
           ...target,
           drawHeight,
           drawWidth,
-          drawX: rect.x - target.x,
-          drawY: rect.y - target.y,
+          drawX: targetRect.x - target.x,
+          drawY: targetRect.y - target.y,
           layerId: options.layerId,
         };
       },

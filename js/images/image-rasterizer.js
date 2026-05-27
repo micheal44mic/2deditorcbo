@@ -210,6 +210,7 @@ void main() {
       const originalBytes = this.getRasterBytes(originalSize.width, originalSize.height);
       const sourceBytes = this.getRasterBytes(decodedSize.width, decodedSize.height);
       const resized = decodedSize.width !== originalSize.width || decodedSize.height !== originalSize.height;
+      const preservedOriginalSize = options.preserveOriginalDimensions === true;
 
       return {
         decodedSize: {
@@ -225,12 +226,49 @@ void main() {
           width: originalSize.width,
         },
         policy: this.classifyImportMemory(sourceBytes),
-        reason: resized ? "image-resized-before-webgl-upload" : "image-kept-within-import-budget",
+        reason: resized
+          ? "image-resized-before-webgl-upload"
+          : preservedOriginalSize
+            ? "image-preserved-original-size"
+            : "image-kept-within-import-budget",
         scale: decodedSize.scale,
         source: options.source || "image-rasterizer",
         sourceBytes,
         tool: "image-import",
       };
+    }
+
+    getPreservedImageSize(width, height, options = {}) {
+      const sourceWidth = Math.max(1, Math.round(Number(width) || 1));
+      const sourceHeight = Math.max(1, Math.round(Number(height) || 1));
+      const caps = this.getImportMemoryCaps(options);
+
+      if (sourceWidth > caps.maxSide || sourceHeight > caps.maxSide) {
+        const report = this.createImportRejectionReport({ width: sourceWidth, height: sourceHeight }, options);
+
+        report.reason = "image-source-side-over-webgl-limit";
+        report.maxSide = caps.maxSide;
+        this.recordRasterOperation(report);
+        throw new Error(
+          `Immagine troppo grande per la texture WebGL: ${sourceWidth}x${sourceHeight}px.`,
+        );
+      }
+
+      return {
+        height: sourceHeight,
+        maxMiB: caps.maxMiB,
+        maxSide: caps.maxSide,
+        scale: 1,
+        width: sourceWidth,
+      };
+    }
+
+    getImportDecodeSize(width, height, options = {}) {
+      if (options.preserveOriginalDimensions === true) {
+        return this.getPreservedImageSize(width, height, options);
+      }
+
+      return this.fitImageSize(width, height, options);
     }
 
     createImportRejectionReport(originalSize, options = {}) {
@@ -462,6 +500,7 @@ void main() {
     async decodeImageBlob(blob, options = {}) {
       const headerSize = await this.readBlobImageSize(blob);
       const useHtmlImageDecode = await this.isSvgImageBlob(blob);
+      const preserveOriginalDimensions = options.preserveOriginalDimensions === true;
 
       if (headerSize) {
         this.assertImportOriginalWithinBudget(headerSize, options);
@@ -470,8 +509,8 @@ void main() {
       if (window.createImageBitmap && !useHtmlImageDecode) {
         try {
           if (headerSize) {
-            const decodedSize = this.fitImageSize(headerSize.width, headerSize.height, options);
-            const bitmapOptions = decodedSize.scale < 1
+            const decodedSize = this.getImportDecodeSize(headerSize.width, headerSize.height, options);
+            const bitmapOptions = !preserveOriginalDimensions && decodedSize.scale < 1
               ? {
                   resizeHeight: decodedSize.height,
                   resizeQuality: "high",
@@ -498,9 +537,9 @@ void main() {
           const bitmap = await window.createImageBitmap(blob);
           const originalSize = this.getRasterSourceSize(bitmap);
           this.assertImportOriginalWithinBudget(originalSize, options);
-          const decodedSize = this.fitImageSize(originalSize.width, originalSize.height, options);
+          const decodedSize = this.getImportDecodeSize(originalSize.width, originalSize.height, options);
 
-          if (decodedSize.scale < 1) {
+          if (!preserveOriginalDimensions && decodedSize.scale < 1) {
             let resizedBitmap = null;
 
             try {
@@ -555,9 +594,17 @@ void main() {
             return;
           }
 
-          const decodedSize = this.fitImageSize(originalSize.width, originalSize.height, options);
+          let decodedSize = null;
 
-          if (decodedSize.scale < 1) {
+          try {
+            decodedSize = this.getImportDecodeSize(originalSize.width, originalSize.height, options);
+          } catch (error) {
+            URL.revokeObjectURL(objectUrl);
+            reject(error);
+            return;
+          }
+
+          if (!preserveOriginalDimensions && decodedSize.scale < 1) {
             const canvas = document.createElement("canvas");
             const context = canvas.getContext("2d", { alpha: true });
 
