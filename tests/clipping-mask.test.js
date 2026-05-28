@@ -90,6 +90,7 @@ test("layers panel exposes clipping mask context action and row indicator", () =
 
 test("document renderer composites clipping masks from the layer below", () => {
   const source = readDocumentRendererSources();
+  const canUsePreviewCacheBody = source.match(/const canUsePreviewCache = Boolean\(([\s\S]*?)\n      \);/)?.[1] || "";
 
   assert.match(source, /uniform sampler2D u_clipTexture;/);
   assert.match(source, /uniform float u_clipMode;/);
@@ -98,12 +99,9 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const orderedLayers = this\.getOrderedLayersBottomToTop\(\)/);
   assert.match(source, /const hasClippingMasks = orderedLayers\.some\(\(layer\) => layer\?\.clippingMask === true\)/);
-  assert.match(source, /canUsePreviewCache[\s\S]*!hasClippingMasks/);
-  assert.match(source, /hasClippingMasksInLayerStack\(layers = null\)/);
-  assert.match(source, /disablePreviewCacheForClippingMasks\(reason = "clipping-mask-stack"\)/);
-  assert.match(source, /createPreviewCache\(options = \{\}\)[\s\S]*hasClippingMasksInLayerStack\(\)/);
-  assert.match(source, /updatePreviewCacheIfNeeded\(options = \{\}\)[\s\S]*hasClippingMasksInLayerStack\(\)/);
-  assert.match(source, /drawPreviewCacheToCanvas\(options = \{\}\)[\s\S]*hasClippingMasksInLayerStack\(\)/);
+  assert.doesNotMatch(canUsePreviewCacheBody, /!hasClippingMasks/);
+  assert.doesNotMatch(source, /hasClippingMasksInLayerStack/);
+  assert.doesNotMatch(source, /disablePreviewCacheForClippingMasks/);
   assert.match(source, /const activeStrokeUsesClippingMask = Boolean/);
   assert.match(source, /const needsClipBaseTexture = \(layer\) => Boolean/);
   assert.match(source, /pendingClipBaseLayer\?\.id && needsClipBaseTexture\(pendingClipBaseLayer\)/);
@@ -123,6 +121,8 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /drawBlendTexture\(\s*options\.activeStrokeTexture,\s*opacity,\s*activeStrokeRect,\s*clipBase,/);
   assert.match(source, /drawTexture\(texture, opacity, rect, clipBase\)/);
   assert.match(source, /drawBlendTexture\(layerTexture, opacity, (?:this\.getLayerBlendModeId\(layer\)|blendModeId), renderResult\.rect, clipBase\)/);
+  assert.match(source, /source: isClippingLayer \? "preview-cache-clipping-layer" : "preview-cache-sparse-layer"/);
+  assert.match(source, /source: "preview-cache-clip-base"/);
   assert.match(source, /currentClipBase = this\.createClipBaseForLayer\(layer, mergedTarget, layer\.visible !== false, \{[\s\S]*transformPreview: transformPreviewForClipBase/);
 });
 

@@ -1630,6 +1630,15 @@
     }
 ,
 
+    getPreviewCacheTextureMinFilter() {
+      const gl = this.gl;
+
+      return this.previewCacheMipmapped !== false && Number(this.previewMipLevels) > 1
+        ? gl.LINEAR_MIPMAP_LINEAR
+        : gl.LINEAR;
+    }
+,
+
     setDisabledClipBaseUniforms(uniforms, options = {}) {
       const gl = this.gl;
       const textureUnit = Number.isFinite(options.textureUnit)

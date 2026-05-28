@@ -3233,6 +3233,9 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /mipmapped \? gl\.LINEAR_MIPMAP_LINEAR : gl\.LINEAR/);
   assert.match(source, /mipmapped = highQualityView/);
   assert.match(source, /this\.previewCacheMipmapped !== false && this\.previewMipLevels > 1/);
+  assert.match(source, /getPreviewCacheTextureMinFilter\(\)/);
+  assert.match(source, /this\.setRasterTextureSampling\(texture, this\.getPreviewCacheTextureMinFilter\(\), gl\.LINEAR\)/);
+  assert.match(source, /this\.setRasterTextureSampling\(this\.previewTexture, this\.getPreviewCacheTextureMinFilter\(\), gl\.LINEAR\)/);
   assert.match(source, /const PREVIEW_HQ_MIPMAP_FRAGMENT_SHADER_SOURCE/);
   assert.match(source, /texelFetch\(u_texture, texel, u_sourceLevel\)/);
   assert.match(source, /srgbToLinear\(straight\) \* alpha/);
@@ -3277,7 +3280,7 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /const exactCacheDocRect = this\.getPreviewCacheExactDocumentRect\(cacheDocRect\)/);
   assert.doesNotMatch(source, /previewCacheCoversDocumentBounds/);
   assert.match(source, /allowPreviewCache &&\s*canUsePreviewCacheAtCurrentZoom/);
-  assert.match(source, /!hasClippingMasks &&/);
+  assert.doesNotMatch(source, /!hasClippingMasks &&/);
   assert.match(source, /const canUseStalePreviewCacheForInteraction = Boolean\(/);
   assert.match(source, /!this\.previewCacheDirty \|\| canUseStalePreviewCacheForInteraction/);
   assert.match(source, /!hasActiveEraserStroke/);
@@ -3349,6 +3352,28 @@ test("document renderer disables pixel-perfect preview on Android performance mo
 
   assert.equal(renderer.getViewportTextureMagFilter({ zoom: 16 }), "nearest");
   assert.equal(renderer.shouldDrawPixelGrid({ zoom: 16 }), true);
+});
+
+test("preview cache texture sampling requests mipmaps only when mip levels exist", () => {
+  const { DocumentRenderer } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.gl = {
+    LINEAR: "linear",
+    LINEAR_MIPMAP_LINEAR: "linear-mipmap-linear",
+  };
+
+  renderer.previewCacheMipmapped = true;
+  renderer.previewMipLevels = 4;
+  assert.equal(renderer.getPreviewCacheTextureMinFilter(), "linear-mipmap-linear");
+
+  renderer.previewCacheMipmapped = false;
+  renderer.previewMipLevels = 1;
+  assert.equal(renderer.getPreviewCacheTextureMinFilter(), "linear");
+
+  renderer.previewCacheMipmapped = true;
+  renderer.previewMipLevels = 1;
+  assert.equal(renderer.getPreviewCacheTextureMinFilter(), "linear");
 });
 
 test("document renderer uses preview cache only when downsampling zoom-out", () => {

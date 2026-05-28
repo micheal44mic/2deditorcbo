@@ -1470,7 +1470,6 @@
         allowPreviewCache &&
         canUsePreviewCacheAtCurrentZoom &&
         !hasArtboardDragPreview &&
-        !hasClippingMasks &&
         !rasterTransformPreview &&
         !vectorTextTransformPreviewLayerId &&
         !hasActiveEraserStroke &&
@@ -1794,7 +1793,7 @@
         });
 
         if (texture === this.previewTexture) {
-          this.setRasterTextureSampling(texture, gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR);
+          this.setRasterTextureSampling(texture, this.getPreviewCacheTextureMinFilter(), gl.LINEAR);
         } else {
           this.setRasterTextureSampling(texture, gl.LINEAR, viewportTextureMagFilter);
         }

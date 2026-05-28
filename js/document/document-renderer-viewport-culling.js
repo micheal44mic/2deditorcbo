@@ -1995,37 +1995,7 @@
     }
 ,
 
-    hasClippingMasksInLayerStack(layers = null) {
-      const stack = Array.isArray(layers)
-        ? layers
-        : (this.getOrderedLayersBottomToTop?.() || []);
-
-      return stack.some((layer) => layer?.clippingMask === true);
-    }
-,
-
-    disablePreviewCacheForClippingMasks(reason = "clipping-mask-stack") {
-      if (this.previewTexture || this.previewFramebuffer) {
-        this.deletePreviewCache();
-      }
-
-      this.previewCacheDirty = true;
-      this.previewCacheReady = false;
-      this.previewCacheReason = reason;
-      this.previewDirtyRects = null;
-      this.previewDirtyCompactOptions = null;
-      this.previewLastDirtyMode = "clipping-mask-full-render";
-      this.previewLastDirtyRect = null;
-
-      return false;
-    }
-,
-
     createPreviewCache(options = {}) {
-      if (this.hasClippingMasksInLayerStack()) {
-        return this.disablePreviewCacheForClippingMasks("clipping-mask-stack");
-      }
-
       if (isAndroidPreviewCacheDisabled(options)) {
         if (this.previewTexture || this.previewFramebuffer) {
           this.deletePreviewCache();
@@ -3671,10 +3641,6 @@
 ,
 
     updatePreviewCacheIfNeeded(options = {}) {
-      if (this.hasClippingMasksInLayerStack()) {
-        return this.disablePreviewCacheForClippingMasks("clipping-mask-stack");
-      }
-
       const didCreate = this.createPreviewCache(options);
 
       if (!didCreate) {
@@ -3690,10 +3656,6 @@
 ,
 
     updatePreviewCache(options = {}) {
-      if (this.hasClippingMasksInLayerStack()) {
-        return this.disablePreviewCacheForClippingMasks("clipping-mask-stack");
-      }
-
       const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("preview-cache.update", {
         dirty: this.previewCacheDirty,
         reason: this.previewCacheReason || "unknown",
@@ -4284,10 +4246,6 @@
 ,
 
     drawPreviewCacheToCanvas(options = {}) {
-      if (this.hasClippingMasksInLayerStack()) {
-        return this.disablePreviewCacheForClippingMasks("clipping-mask-stack");
-      }
-
       if (!this.previewTexture || !this.previewCacheReady || !this.programInfo || !this.quad) {
         return false;
       }
@@ -4329,7 +4287,7 @@
 
       gl.bindVertexArray(this.quad.vao);
       gl.activeTexture(gl.TEXTURE0);
-      this.setRasterTextureSampling(this.previewTexture, gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR);
+      this.setRasterTextureSampling(this.previewTexture, this.getPreviewCacheTextureMinFilter(), gl.LINEAR);
       gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindVertexArray(null);
