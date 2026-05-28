@@ -166,7 +166,7 @@ window.CBO = window.CBO || {};
     const useAlpha = maxAlpha - minAlpha > alphaThreshold && minAlpha < 255 - alphaThreshold;
     const output = context.createImageData(size, size);
     const outputData = output.data;
-    const outlineRadius = Math.max(1, Math.round(renderScale * 0.38));
+    const outlineRadius = Math.max(1, Math.round(renderScale * 0.75));
 
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
@@ -245,6 +245,11 @@ window.CBO = window.CBO || {};
 
     const wrapper = document.createElement("div");
     const canvas = document.createElement("canvas");
+    const svgNamespace = "http://www.w3.org/2000/svg";
+    const ropePreview = document.createElementNS(svgNamespace, "svg");
+    const ropeLine = document.createElementNS(svgNamespace, "line");
+    const ropeBrush = document.createElementNS(svgNamespace, "circle");
+    const ropeCursor = document.createElementNS(svgNamespace, "circle");
     let activeTool = false;
     let camera = {
       ...(namespace.brushEngine?.camera || { zoom: 1 }),
@@ -267,7 +272,17 @@ window.CBO = window.CBO || {};
     canvas.width = baseSize;
     canvas.height = baseSize;
     wrapper.append(canvas);
-    stage.append(wrapper);
+    ropePreview.classList.add("brush-stabilization-rope-preview");
+    ropePreview.dataset.brushStabilizationRopePreview = "";
+    ropePreview.setAttribute("aria-hidden", "true");
+    ropePreview.setAttribute("hidden", "");
+    ropeLine.classList.add("brush-stabilization-rope-line");
+    ropeBrush.classList.add("brush-stabilization-rope-brush");
+    ropeCursor.classList.add("brush-stabilization-rope-cursor");
+    ropeBrush.setAttribute("r", "4.5");
+    ropeCursor.setAttribute("r", "3");
+    ropePreview.append(ropeLine, ropeBrush, ropeCursor);
+    stage.append(wrapper, ropePreview);
     stage.dataset.brushShapeOutlinePreviewReady = "true";
 
     function syncVisibility() {
@@ -276,6 +291,47 @@ window.CBO = window.CBO || {};
         activeStrokePointerId != null ||
         namespace.brushEngine?.isDrawing === true ||
         namespace.isTouchNavigationExclusive?.({ includeGuard: true }) === true;
+    }
+
+    function hideRopePreview() {
+      ropePreview.setAttribute("hidden", "");
+      ropePreview.classList.remove("is-taut", "is-slack");
+    }
+
+    function setRopePoint(element, point, xAttribute, yAttribute) {
+      element.setAttribute(xAttribute, String(Math.round(point.x * 10) / 10));
+      element.setAttribute(yAttribute, String(Math.round(point.y * 10) / 10));
+    }
+
+    function updateRopePreview(event) {
+      const detail = event.detail || {};
+      const brush = detail.brush;
+      const cursor = detail.cursor;
+
+      if (
+        detail.active !== true ||
+        !brush ||
+        !cursor ||
+        namespace.isTouchNavigationExclusive?.({ includeGuard: true }) === true
+      ) {
+        hideRopePreview();
+        return;
+      }
+
+      const rect = stage.getBoundingClientRect();
+      const width = Math.max(1, Math.round(rect.width));
+      const height = Math.max(1, Math.round(rect.height));
+
+      ropePreview.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      ropePreview.setAttribute("width", String(width));
+      ropePreview.setAttribute("height", String(height));
+      setRopePoint(ropeLine, brush, "x1", "y1");
+      setRopePoint(ropeLine, cursor, "x2", "y2");
+      setRopePoint(ropeBrush, brush, "cx", "cy");
+      setRopePoint(ropeCursor, cursor, "cx", "cy");
+      ropePreview.classList.toggle("is-taut", detail.taut === true);
+      ropePreview.classList.toggle("is-slack", detail.taut !== true);
+      ropePreview.removeAttribute("hidden");
     }
 
     function resetPointerTracking() {
@@ -441,10 +497,13 @@ window.CBO = window.CBO || {};
       updateTransform();
     });
 
+    window.addEventListener("cbo:brush-stabilization-guide", updateRopePreview);
+
     window.addEventListener("cbo:touch-navigation-start", () => {
       pointerInsideStage = false;
       activeStrokePointerId = null;
       resetPointerTracking();
+      hideRopePreview();
       syncVisibility();
     });
 
@@ -452,6 +511,7 @@ window.CBO = window.CBO || {};
       pointerInsideStage = false;
       activeStrokePointerId = null;
       resetPointerTracking();
+      hideRopePreview();
       syncVisibility();
       window.setTimeout(syncVisibility, 430);
     });
@@ -463,6 +523,7 @@ window.CBO = window.CBO || {};
 
       resetPointerTracking();
       activeStrokePointerId = null;
+      hideRopePreview();
       activeTool = isBrushPreviewTool(label, toolMode, syncGroup);
       renderIfNeeded();
       syncVisibility();

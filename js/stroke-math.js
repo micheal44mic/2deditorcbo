@@ -23,6 +23,29 @@ window.CBO = window.CBO || {};
     return Math.max(0.5, Number(settings?.radius || 0) * 0.5 * normalizePressure(pressure));
   }
 
+  function clonePoint(point) {
+    return {
+      x: Number(point?.x) || 0,
+      y: Number(point?.y) || 0,
+    };
+  }
+
+  function getBrushSize(settings) {
+    const size = Number(settings?.radius ?? settings?.size);
+
+    return Number.isFinite(size) && size > 0 ? size : 18;
+  }
+
+  function getStabilizationRopeLength(settings, input, amount) {
+    const brushSize = getBrushSize(settings);
+    const zoom = Math.max(0.0001, Number(input?.cameraZoom) || 1);
+    const dpr = Math.max(0.0001, Number(input?.dpr) || 1);
+    const maxCssLength = clamp(brushSize * 2.4 + 18, 14, 96);
+    const ropeCssLength = 2 + Math.pow(clamp01(amount), 1.15) * maxCssLength;
+
+    return ropeCssLength * dpr / zoom;
+  }
+
   function getStreamLineAmount(settings) {
     return clamp01(settings?.streamLineAmount ?? settings?.smoothing);
   }
@@ -52,8 +75,10 @@ window.CBO = window.CBO || {};
       inputPoints: [createInputPoint(point, options)],
       lastStampPoint: { ...point },
       pressure: normalizePressure(options.pressure),
+      pulledStringPoint: { ...point },
       seed: (seed || 1) >>> 0,
       smoothedPoint: { ...point },
+      stabilizationGuide: null,
       tool: options.tool || "",
     };
   }
@@ -205,34 +230,36 @@ window.CBO = window.CBO || {};
     const stabilization = clamp01(settings?.stabilizationAmount) * profile.stabilizationScale;
 
     if (stabilization <= 0 || state.inputPoints.length < 2) {
+      state.stabilizationGuide = null;
+      state.pulledStringPoint = { ...point };
       return point;
     }
 
-    const speedFactor = getSampleSpeedFactor(state.inputPoints);
-    const cornerPreserve = getMotionCornerPreserve(state.inputPoints);
-    const tipAttachment = getTipAttachmentFactor(state, profile);
-    const effectiveStabilization = clamp01(
-      stabilization *
-      (0.25 + speedFactor * 0.75) *
-      (1 - cornerPreserve * 0.82) *
-      tipAttachment,
-    );
+    const anchor = state.pulledStringPoint || state.smoothedPoint || point;
+    const ropeLength = getStabilizationRopeLength(settings, input, stabilization);
+    const deltaX = point.x - anchor.x;
+    const deltaY = point.y - anchor.y;
+    const distance = Math.hypot(deltaX, deltaY);
+    const isTaut = distance > ropeLength;
+    const nextPoint = isTaut
+      ? {
+          x: point.x - (deltaX / distance) * ropeLength,
+          y: point.y - (deltaY / distance) * ropeLength,
+        }
+      : { ...anchor };
+    const guideInputPoint = input?.rawPoint ? clonePoint(input.rawPoint) : clonePoint(point);
 
-    if (effectiveStabilization <= 0.001) {
-      return point;
-    }
-
-    const windowSize = Math.min(
-      state.inputPoints.length,
-      2 + Math.round(effectiveStabilization * 16),
-    );
-    const points = state.inputPoints.slice(-windowSize);
-    const average = getWeightedAverage(points, effectiveStabilization);
-
-    return {
-      x: point.x + (average.x - point.x) * effectiveStabilization,
-      y: point.y + (average.y - point.y) * effectiveStabilization,
+    state.pulledStringPoint = nextPoint;
+    state.stabilizationGuide = {
+      active: true,
+      distance,
+      inputPoint: guideInputPoint,
+      outputPoint: clonePoint(nextPoint),
+      ropeLength,
+      taut: isTaut,
     };
+
+    return nextPoint;
   }
 
   function getMotionCornerPreserve(points) {
@@ -383,29 +410,50 @@ window.CBO = window.CBO || {};
     const profile = getInputProfile(input);
     pushInputPoint(point, state, input);
 
-    const stabilizedPoint = getStabilizedPoint(point, state, settings, input);
-    const motionFilteredPoint = getMotionFilteredPoint(stabilizedPoint, state, settings, input);
+    const motionFilteredPoint = getMotionFilteredPoint(point, state, settings, input);
+    const stabilizedPoint = getStabilizedPoint(motionFilteredPoint, state, settings, {
+      ...input,
+      rawPoint: point,
+    });
     const streamLineAmount = clamp01(getStreamLineAmount(settings) * profile.streamLineScale);
     const nextPressure = getSmoothedPressure(pressure, state, settings);
 
     if (streamLineAmount <= 0) {
-      state.smoothedPoint = { ...motionFilteredPoint };
+      state.smoothedPoint = { ...stabilizedPoint };
       return {
-        point: motionFilteredPoint,
+        point: stabilizedPoint,
         pressure: nextPressure,
+        stabilizationGuide: state.stabilizationGuide
+          ? {
+              ...state.stabilizationGuide,
+              inputPoint: { ...state.stabilizationGuide.inputPoint },
+              outputPoint: { ...state.stabilizationGuide.outputPoint },
+            }
+          : null,
       };
     }
 
     const follow = clamp(1 - streamLineAmount * 0.88, 0.08, 1);
 
     state.smoothedPoint = {
-      x: state.smoothedPoint.x + (motionFilteredPoint.x - state.smoothedPoint.x) * follow,
-      y: state.smoothedPoint.y + (motionFilteredPoint.y - state.smoothedPoint.y) * follow,
+      x: state.smoothedPoint.x + (stabilizedPoint.x - state.smoothedPoint.x) * follow,
+      y: state.smoothedPoint.y + (stabilizedPoint.y - state.smoothedPoint.y) * follow,
     };
+
+    if (state.stabilizationGuide) {
+      state.stabilizationGuide.outputPoint = { ...state.smoothedPoint };
+    }
 
     return {
       point: state.smoothedPoint,
       pressure: nextPressure,
+      stabilizationGuide: state.stabilizationGuide
+        ? {
+            ...state.stabilizationGuide,
+            inputPoint: { ...state.stabilizationGuide.inputPoint },
+            outputPoint: { ...state.stabilizationGuide.outputPoint },
+          }
+        : null,
     };
   }
 
@@ -584,6 +632,7 @@ window.CBO = window.CBO || {};
     normalizePressure,
     getEffectiveRadius,
     getStreamLineAmount,
+    getStabilizationRopeLength,
     getMotionFilteredPoint,
     createStrokeState,
     processStrokeInput,

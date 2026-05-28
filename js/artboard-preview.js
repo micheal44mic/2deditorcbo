@@ -568,7 +568,12 @@ window.CBO = window.CBO || {};
       `;
     }
 
-    return `<span class="editor-mockup-action-plus" aria-hidden="true">+</span>`;
+    return `
+      <svg class="editor-mockup-action-plus lucide lucide-plus-icon lucide-plus" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 12h14"></path>
+        <path d="M12 5v14"></path>
+      </svg>
+    `;
   }
 
   function createMockupActionButton(view, metrics, index, options = {}) {
@@ -637,13 +642,13 @@ window.CBO = window.CBO || {};
   }
 
   function ensureMockupSlotPopover() {
-    const stage = getStage();
+    const host = document.body || document.documentElement;
 
-    if (!stage) {
+    if (!host) {
       return null;
     }
 
-    if (mockupSlotPopover?.isConnected && mockupSlotPopover.parentElement === stage) {
+    if (mockupSlotPopover?.isConnected && mockupSlotPopover.parentElement === host) {
       return mockupSlotPopover;
     }
 
@@ -656,7 +661,7 @@ window.CBO = window.CBO || {};
     mockupSlotPopover.setAttribute("aria-label", "Mockup");
     mockupSlotPopover.addEventListener("pointerdown", handleMockupSlotPointerDown, true);
     mockupSlotPopover.addEventListener("click", handleMockupSlotPopoverClick);
-    stage.append(mockupSlotPopover);
+    host.append(mockupSlotPopover);
 
     return mockupSlotPopover;
   }
@@ -731,25 +736,20 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    const stage = getStage();
     const button = getActiveMockupSlotButton();
 
-    if (!stage || !button) {
+    if (!button) {
       closeMockupSlotPopover();
       return;
     }
 
-    const stageRect = stage.getBoundingClientRect();
-    const buttonRect = button.getBoundingClientRect();
-    const popoverRect = popover.getBoundingClientRect();
-    const gap = 10;
-    const maxLeft = Math.max(8, stageRect.width - popoverRect.width - 8);
-    const maxTop = Math.max(8, stageRect.height - popoverRect.height - 8);
-    const rightLeft = buttonRect.right - stageRect.left + gap;
-    const leftLeft = buttonRect.left - stageRect.left - popoverRect.width - gap;
-    const preferredTop = buttonRect.top - stageRect.top - ((popoverRect.height - buttonRect.height) * 0.5);
-    const left = Math.min(maxLeft, Math.max(8, rightLeft <= maxLeft ? rightLeft : leftLeft));
-    const top = Math.min(maxTop, Math.max(8, preferredTop));
+    const visualViewport = window.visualViewport;
+    const viewportLeft = Math.max(0, Number(visualViewport?.offsetLeft) || 0);
+    const viewportTop = Math.max(0, Number(visualViewport?.offsetTop) || 0);
+    const viewportWidth = visualViewport?.width || window.innerWidth || document.documentElement.clientWidth || 1;
+    const viewportHeight = visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1;
+    const left = viewportLeft + (viewportWidth * 0.5);
+    const top = viewportTop + (viewportHeight * 0.5);
 
     popover.style.left = `${left}px`;
     popover.style.top = `${top}px`;
@@ -2176,6 +2176,8 @@ window.CBO = window.CBO || {};
     window.addEventListener("resize", () => renderArtboardPreviews());
     window.addEventListener("resize", positionArtboardCreatePopover);
     window.addEventListener("resize", positionMockupSlotPopover);
+    window.visualViewport?.addEventListener("resize", positionMockupSlotPopover, { passive: true });
+    window.visualViewport?.addEventListener("scroll", positionMockupSlotPopover, { passive: true });
     document.addEventListener("click", handleArtboardPopoverDocumentClick);
     document.addEventListener("click", handleMockupSlotDocumentClick);
     document.addEventListener("keydown", handleArtboardPopoverKeydown);

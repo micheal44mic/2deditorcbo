@@ -1453,6 +1453,7 @@
       this.resetQuickLineState();
       this.cancelActiveStrokeDirtyRegionDebug();
       this.cancelStrokeTargetPrewarm();
+      this.clearStabilizationGuide?.();
       this.resetStrokeProgress();
       this.strokeDynamicsState = null;
       this.strokeColorRandomState = null;

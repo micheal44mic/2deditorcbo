@@ -122,31 +122,61 @@ test("motion filtering adapts to pen mouse and touch input", () => {
   assert.ok(Math.abs(mousePoint.y) < Math.abs(penPoint.y));
 });
 
-test("stabilization keeps pen corners attached instead of rounding the turn away", () => {
+test("stabilization uses a pulled-string rope before the brush follows the cursor", () => {
+  const StrokeMath = loadStrokeMath();
+  const state = StrokeMath.createStrokeState({ x: 0, y: 0 }, { pressure: 1, seed: 1 });
+  const settings = { stabilizationAmount: 1, radius: 18 };
+  const near = StrokeMath.processStrokeInput(
+    { x: 30, y: 0 },
+    state,
+    settings,
+    1,
+    { pointerType: "pen", time: 16, cameraZoom: 1, dpr: 1 },
+  );
+  const far = StrokeMath.processStrokeInput(
+    { x: 60, y: 0 },
+    state,
+    settings,
+    1,
+    { pointerType: "pen", time: 32, cameraZoom: 1, dpr: 1 },
+  );
+
+  assert.equal(near.point.x, 0);
+  assert.equal(near.stabilizationGuide.taut, false);
+  assert.equal(far.stabilizationGuide.taut, true);
+  assert.ok(far.point.x > 0);
+  assert.ok(far.point.x < 60);
+  assert.ok(Math.abs((60 - far.point.x) - far.stabilizationGuide.ropeLength) < 1e-9);
+});
+
+test("pulled-string stabilization pivots through pen corners instead of averaging them away", () => {
   const StrokeMath = loadStrokeMath();
   const points = [
-    { x: 4, y: 0, time: 16 },
-    { x: 8, y: 0, time: 32 },
-    { x: 12, y: 0, time: 48 },
-    { x: 12, y: 4, time: 64 },
-    { x: 12, y: 8, time: 80 },
-    { x: 12, y: 12, time: 96 },
+    { x: 0, y: 0, time: 0 },
+    { x: 30, y: 0, time: 16 },
+    { x: 60, y: 0, time: 32 },
+    { x: 90, y: 0, time: 48 },
+    { x: 120, y: 0, time: 64 },
+    { x: 120, y: 30, time: 80 },
+    { x: 120, y: 60, time: 96 },
+    { x: 120, y: 90, time: 112 },
+    { x: 120, y: 120, time: 128 },
   ];
-  const state = StrokeMath.createStrokeState({ x: 0, y: 0 }, { pressure: 1, seed: 1 });
-  let result = points[0];
+  const state = StrokeMath.createStrokeState(points[0], { pressure: 1, seed: 1, time: points[0].time });
+  let result = { point: points[0] };
 
-  points.forEach((point) => {
+  points.slice(1).forEach((point) => {
     result = StrokeMath.processStrokeInput(
       point,
       state,
-      { stabilizationAmount: 1, motionFilteringAmount: 1 },
+      { stabilizationAmount: 1, motionFilteringAmount: 1, radius: 18 },
       1,
-      { pointerType: "pen", time: point.time },
+      { pointerType: "pen", time: point.time, cameraZoom: 1, dpr: 1 },
     ).point;
   });
 
-  assert.ok(Math.abs(result.x - 12) < 1);
-  assert.ok(result.y > 10.5);
+  assert.ok(result.x > 110);
+  assert.ok(result.y > 70);
 });
 
 test("stylus release pressure and missing tilt do not inflate the final dab", () => {
@@ -172,6 +202,8 @@ test("brush engine normalizes stylus samples and applies pencil dynamics to stam
   assert.match(inputSource, /if \(pointerType !== "pen"\) \{[\s\S]*?return 1\.0/);
   assert.match(inputSource, /createPointerTiltFromAngles\(altitudeAngle, azimuthAngle\)/);
   assert.match(inputSource, /settings\.motionFilteringAmount/);
+  assert.match(inputSource, /clearStabilizationGuide\?\.\(\)/);
+  assert.match(samplerSource, /cbo:brush-stabilization-guide/);
   assert.match(inputSource, /flowScale: stamp\.flowScale \?\? 1/);
   assert.match(inputSource, /bleedScale: stamp\.bleedScale \?\? 0/);
   assert.match(samplerSource, /isPencilPointerSample\(sample\)[\s\S]*pointerType/);

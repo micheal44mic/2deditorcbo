@@ -87,9 +87,13 @@ test("mockup drawer exposes hoodie body 1 as a 2048 artboard starter", () => {
   assert.match(artboardPreviewSource, /function createMockupActionButtons\(view, viewScale\)/);
   assert.match(artboardPreviewSource, /editor-artboard-action-bubble editor-mockup-action-button is-visible/);
   assert.match(artboardPreviewSource, /editor-mockup-action-plus/);
+  assert.match(artboardPreviewSource, /lucide-plus-icon lucide-plus/);
   assert.match(artboardPreviewSource, /lucide-notebook-icon lucide-notebook/);
   assert.match(artboardPreviewSource, /button\.dataset\.mockupSlotPlaceholder = "true"/);
   assert.match(artboardPreviewSource, /target\.closest\("\[data-mockup-slot\], \[data-mockup-slot-placeholder\], \[data-mockup-slot-popover\]"\)/);
+  assert.match(artboardPreviewSource, /const host = document\.body \|\| document\.documentElement/);
+  assert.match(artboardPreviewSource, /host\.append\(mockupSlotPopover\)/);
+  assert.match(artboardPreviewSource, /window\.visualViewport\?\.addEventListener\("resize", positionMockupSlotPopover/);
   assert.match(artboardPreviewSource, /function isMockupAddonLayerEntry\(entry, artboardId, addonLibrary = getMockupAddonLibrary\(\)\)/);
   assert.match(artboardPreviewSource, /return hasBodyLayer/);
   assert.doesNotMatch(artboardPreviewSource, /slotButton\?\.remove\(\)/);
@@ -102,6 +106,9 @@ test("mockup drawer exposes hoodie body 1 as a 2048 artboard starter", () => {
   assert.match(layoutSource, /\.editor-mockup-action-plus/);
   assert.doesNotMatch(layoutSource, /\.editor-mockup-slot-plus/);
   assert.match(layoutSource, /\.editor-mockup-slot-popover/);
+  assert.match(layoutSource, /\.editor-mockup-slot-popover[\s\S]*position: fixed/);
+  assert.match(layoutSource, /\.editor-mockup-slot-popover[\s\S]*z-index: 30050/);
+  assert.match(layoutSource, /\.editor-mockup-slot-popover[\s\S]*transform: translate\(-50%, -50%\)/);
   assert.match(layoutSource, /\.editor-mockup-slot-choice-thumb[\s\S]*background: #ffffff/);
   assert.match(drawerCssSource, /\.drawer-image-contain[\s\S]*background: #ffffff/);
 });

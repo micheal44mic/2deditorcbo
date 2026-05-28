@@ -205,21 +205,24 @@
 }
 
 .editor-mockup-slot-popover {
-  position: absolute;
-  z-index: 16;
+  position: fixed;
+  z-index: 30050;
   display: grid;
-  width: min(268px, calc(100vw - 24px));
-  max-height: min(640px, calc(100vh - 24px));
+  width: min(320px, calc(var(--cbo-visual-viewport-width, 100vw) - var(--cbo-mobile-edge-left) - var(--cbo-mobile-edge-right)));
+  max-height: min(640px, calc(var(--cbo-visual-viewport-height, 100vh) - var(--cbo-safe-top) - var(--cbo-safe-bottom) - 24px));
   box-sizing: border-box;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   overflow: auto;
-  padding: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
-  background: rgba(20, 22, 28, 0.94);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.36);
+  background: rgba(20, 22, 28, 0.98);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.48),
+    0 0 0 1px rgba(255, 209, 102, 0.08);
   pointer-events: auto;
+  transform: translate(-50%, -50%);
 }
 
 .editor-mockup-slot-popover[hidden] {
@@ -378,6 +381,20 @@
   transform: none;
 }
 
+.editor-mockup-action-button {
+  border-color: #f05023;
+  background: #fffdf7;
+  color: #f05023;
+}
+
+.editor-mockup-action-button:hover,
+.editor-mockup-action-button:focus-visible,
+.editor-mockup-action-button.is-open {
+  border-color: #ffd166;
+  background: #f05023;
+  color: #ffffff;
+}
+
 .editor-artboard-symmetry-line.is-visible {
   opacity: 0.78;
 }
@@ -409,12 +426,15 @@
   z-index: 1;
   display: block;
   color: inherit;
-  font-size: calc(var(--artboard-action-icon-size, 24px) * 0.86);
-  font-weight: 500;
-  letter-spacing: 0;
-  line-height: 0.78;
   pointer-events: none;
-  transform: translateY(-0.04em);
+  stroke-width: 2.8;
+}
+
+@media (max-width: 520px) {
+  .editor-mockup-slot-popover {
+    width: min(348px, calc(var(--cbo-visual-viewport-width, 100vw) - var(--cbo-mobile-edge-left) - var(--cbo-mobile-edge-right)));
+    max-height: min(540px, calc(var(--cbo-visual-viewport-height, 100vh) - var(--cbo-safe-top) - var(--cbo-safe-bottom) - 20px));
+  }
 }
 
 .editor-space-board-layer {
@@ -4410,6 +4430,48 @@ body.cbo-document-restore-active .editor-stage {
   transform-origin: center center;
   filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.24));
   will-change: transform, opacity;
+}
+
+.brush-stabilization-rope-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.brush-stabilization-rope-preview[hidden] {
+  display: none;
+}
+
+.brush-stabilization-rope-line {
+  stroke: rgba(223, 227, 234, 0.72);
+  stroke-dasharray: 6 4;
+  stroke-linecap: round;
+  stroke-width: 1.35;
+  vector-effect: non-scaling-stroke;
+}
+
+.brush-stabilization-rope-brush {
+  fill: rgba(240, 80, 35, 0.94);
+  stroke: rgba(8, 9, 11, 0.68);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
+.brush-stabilization-rope-cursor {
+  fill: rgba(223, 227, 234, 0.92);
+  stroke: rgba(8, 9, 11, 0.62);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.brush-stabilization-rope-preview.is-slack .brush-stabilization-rope-line,
+.brush-stabilization-rope-preview.is-slack .brush-stabilization-rope-brush {
+  opacity: 0.58;
 }
 
 .editor-vector-overlay {

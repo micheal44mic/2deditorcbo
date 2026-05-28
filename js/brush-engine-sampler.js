@@ -166,6 +166,92 @@
     }
 ,
 
+    shouldEmitStabilizationGuide() {
+      return (
+        this.options?.suppressCameraEvents !== true &&
+        this.options?.getSettings == null &&
+        this.stage &&
+        this.canvas &&
+        !this.isDisposed
+      );
+    }
+,
+
+    documentPointToStageCssPoint(point) {
+      if (!point || !this.stage || !this.canvas) {
+        return null;
+      }
+
+      const x = Number(point.x);
+      const y = Number(point.y);
+
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+      }
+
+      const stageRect = this.stage.getBoundingClientRect();
+      const canvasRect = this.canvas.getBoundingClientRect();
+      const dpr = Math.max(0.0001, Number(this.dpr) || 1);
+      const zoom = Math.max(0.0001, Number(this.camera?.zoom) || 1);
+
+      return {
+        x: canvasRect.left - stageRect.left + (x * zoom + (Number(this.camera?.x) || 0)) / dpr,
+        y: canvasRect.top - stageRect.top + (y * zoom + (Number(this.camera?.y) || 0)) / dpr,
+      };
+    }
+,
+
+    updateStabilizationGuide(rawSample, processedPoint, guide) {
+      if (!this.shouldEmitStabilizationGuide()) {
+        return;
+      }
+
+      if (
+        !this.isDrawing ||
+        guide?.active !== true ||
+        this.largeBlendFinalQualityReplay === true ||
+        this.strokeTotalLength != null
+      ) {
+        this.clearStabilizationGuide();
+        return;
+      }
+
+      const cursor = this.documentPointToStageCssPoint(guide.inputPoint || rawSample);
+      const brush = this.documentPointToStageCssPoint(guide.outputPoint || processedPoint);
+
+      if (!cursor || !brush) {
+        this.clearStabilizationGuide();
+        return;
+      }
+
+      this.stabilizationGuideVisible = true;
+      window.dispatchEvent(new CustomEvent("cbo:brush-stabilization-guide", {
+        detail: {
+          active: true,
+          brush,
+          cursor,
+          distance: Number(guide.distance) || 0,
+          ropeLength: Number(guide.ropeLength) || 0,
+          taut: guide.taut === true,
+          tool: this.currentStrokeTool || "brush",
+        },
+      }));
+    }
+,
+
+    clearStabilizationGuide() {
+      if (!this.stabilizationGuideVisible || !this.shouldEmitStabilizationGuide()) {
+        this.stabilizationGuideVisible = false;
+        return;
+      }
+
+      this.stabilizationGuideVisible = false;
+      window.dispatchEvent(new CustomEvent("cbo:brush-stabilization-guide", {
+        detail: { active: false },
+      }));
+    }
+,
+
     processPointerSample(event) {
       return this.applyStabilization(this.createPointerSample(event));
     }
@@ -186,8 +272,14 @@
         this.strokeDynamicsState,
         this.brushState,
         rawSample.pressure,
-        rawSample,
+        {
+          ...rawSample,
+          cameraZoom: this.camera?.zoom,
+          dpr: this.dpr,
+        },
       );
+
+      this.updateStabilizationGuide(rawSample, processed.point, processed.stabilizationGuide);
 
       return {
         ...rawSample,

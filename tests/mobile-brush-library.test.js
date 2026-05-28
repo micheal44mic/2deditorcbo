@@ -118,6 +118,19 @@ test("mobile brush studio opens as a Procreate Pocket style sheet", () => {
   assert.doesNotMatch(studioCss, /brush-studio-mobile-sheet-handle/);
 });
 
+test("brush studio compacts into a visible apply layout on tablet landscape", () => {
+  const studioCss = readRepoFile("css", "brush-studio.css");
+
+  assert.match(studioCss, /@media \(min-width: 901px\) and \(max-width: 1254px\),[\s\S]*\(orientation: landscape\)/);
+  assert.match(studioCss, /\.brush-studio-panel:not\(\[hidden\]\) \{[\s\S]*z-index: 10070[\s\S]*grid-template-columns: minmax\(142px, 0\.78fr\) minmax\(180px, 1fr\) minmax\(236px, 1\.28fr\)/);
+  assert.match(studioCss, /\.brush-studio-selection-column \{[\s\S]*position: relative[\s\S]*height: auto[\s\S]*transform: none/);
+  assert.match(studioCss, /\.brush-studio-panel\.brush-studio-mobile-settings-open \.brush-studio-selection-column,[\s\S]*\.brush-studio-panel\.brush-studio-mobile-settings-expanded \.brush-studio-selection-column \{[\s\S]*height: auto[\s\S]*transform: none/);
+  assert.match(studioCss, /\.brush-studio-categories-column \{[\s\S]*min-height: 0[\s\S]*max-height: none/);
+  assert.match(studioCss, /\.brush-studio-done-label \{[\s\S]*display: inline/);
+  assert.match(studioCss, /\.brush-studio-check-button \.brush-studio-check-icon \{[\s\S]*display: none/);
+  assert.match(studioCss, /\.brush-studio-drawing-title,[\s\S]*\.brush-studio-selected-name \{[\s\S]*font-size: 18px/);
+});
+
 test("mobile brush library rows reveal attached swipe actions for share duplicate and delete", () => {
   const panelSource = readRepoFile("js", "brushes-panel.js");
   const panelCss = readRepoFile("css", "brushes-panel.css");

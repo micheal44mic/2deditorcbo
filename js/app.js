@@ -109,6 +109,7 @@ document.addEventListener(
     ".brush-studio-panel",
     ".brushes-gallery-popout",
     ".artboard-create-popover",
+    ".editor-mockup-slot-popover",
     ".layer-effects-popover",
   ].join(", ");
 
@@ -185,6 +186,7 @@ document.addEventListener(
     ".brush-studio-panel",
     ".brushes-gallery-popout",
     ".artboard-create-popover",
+    ".editor-mockup-slot-popover",
     ".layer-effects-popover",
   ].join(", ");
   const mobileObjectMoveKeepArmedSelector = [
@@ -210,6 +212,7 @@ document.addEventListener(
     ".text-add-toolbar",
     ".mobile-text-panel",
     ".side-panel",
+    ".editor-mockup-slot-popover",
   ].join(", ");
   const state = {
     active: false,
