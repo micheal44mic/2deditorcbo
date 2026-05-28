@@ -1848,13 +1848,24 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return true;
     }
 
+    const clearDeletedArtboardSelection = () => {
+      selectedArtboardGroupId = "";
+      clearArtboardGroupActivation();
+    };
+
+    if (typeof window.CBO.requestDeletePreviewArtboard === "function") {
+      return window.CBO.requestDeletePreviewArtboard(artboardId, {
+        onDelete: clearDeletedArtboardSelection,
+        source: "layers-panel-delete-artboard",
+      }) === true;
+    }
+
     const didDelete = window.CBO.deletePreviewArtboard?.(artboardId, {
       source: "layers-panel-delete-artboard",
     }) === true;
 
     if (didDelete) {
-      selectedArtboardGroupId = "";
-      clearArtboardGroupActivation();
+      clearDeletedArtboardSelection();
     }
 
     return didDelete;

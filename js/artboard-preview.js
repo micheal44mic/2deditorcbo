@@ -41,6 +41,9 @@ window.CBO = window.CBO || {};
   let artboardCreatePopover = null;
   let artboardCreateButton = null;
   let mockupSlotPopover = null;
+  let artboardDeleteDialog = null;
+  let pendingArtboardDelete = null;
+  let artboardDeleteRestoreFocus = null;
   let activeMockupSlotArtboardId = "";
   let activeArtboardSizePreset = "current";
 
@@ -1498,10 +1501,140 @@ window.CBO = window.CBO || {};
     );
   }
 
+  function ensureArtboardDeleteDialog() {
+    if (artboardDeleteDialog?.isConnected) {
+      return artboardDeleteDialog;
+    }
+
+    const dialog = document.createElement("div");
+
+    dialog.className = "artboard-delete-dialog";
+    dialog.setAttribute("data-artboard-delete-dialog", "");
+    dialog.hidden = true;
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "artboard-delete-title");
+    dialog.setAttribute("aria-describedby", "artboard-delete-message");
+    dialog.innerHTML = `
+      <section class="artboard-delete-card">
+        <h2 class="artboard-delete-title" id="artboard-delete-title">DELETE ARTBOARD?</h2>
+        <p class="artboard-delete-message" id="artboard-delete-message" data-artboard-delete-message></p>
+        <div class="artboard-delete-actions">
+          <button class="artboard-delete-cancel" type="button" data-artboard-delete-cancel>CANCEL</button>
+          <button class="artboard-delete-confirm" type="button" data-artboard-delete-confirm>DELETE</button>
+        </div>
+      </section>
+    `;
+
+    dialog.addEventListener("click", (event) => {
+      if (
+        event.target === dialog ||
+        event.target?.closest?.("[data-artboard-delete-cancel]")
+      ) {
+        closeArtboardDeleteDialog();
+        return;
+      }
+
+      if (event.target?.closest?.("[data-artboard-delete-confirm]")) {
+        confirmPendingArtboardDelete();
+      }
+    });
+
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeArtboardDeleteDialog();
+      }
+    });
+
+    document.body.append(dialog);
+    artboardDeleteDialog = dialog;
+
+    return dialog;
+  }
+
+  function closeArtboardDeleteDialog() {
+    if (!artboardDeleteDialog) {
+      pendingArtboardDelete = null;
+      return;
+    }
+
+    artboardDeleteDialog.hidden = true;
+    document.body?.classList.remove("artboard-delete-dialog-open");
+    pendingArtboardDelete = null;
+
+    if (artboardDeleteRestoreFocus?.isConnected) {
+      artboardDeleteRestoreFocus.focus?.();
+    }
+
+    artboardDeleteRestoreFocus = null;
+  }
+
+  function confirmPendingArtboardDelete() {
+    const pending = pendingArtboardDelete;
+
+    if (!pending) {
+      closeArtboardDeleteDialog();
+      return false;
+    }
+
+    const { onDelete, ...deleteOptions } = pending.options || {};
+
+    closeArtboardDeleteDialog();
+
+    const didDelete = deletePreviewArtboard(pending.artboardId, {
+      ...deleteOptions,
+      confirm: false,
+    });
+
+    if (didDelete) {
+      onDelete?.();
+    }
+
+    return didDelete;
+  }
+
+  function requestDeletePreviewArtboard(artboardId, options = {}) {
+    const normalizedId = String(artboardId || "").trim();
+    const artboard = getArtboardById(normalizedId);
+
+    if (!artboard || artboard.isPrimary === true) {
+      return false;
+    }
+
+    const dialog = ensureArtboardDeleteDialog();
+    const message = dialog.querySelector("[data-artboard-delete-message]");
+    const confirmButton = dialog.querySelector("[data-artboard-delete-confirm]");
+    const artboardName = String(artboard.name || "this artboard").trim() || "this artboard";
+
+    pendingArtboardDelete = {
+      artboardId: normalizedId,
+      options,
+    };
+    artboardDeleteRestoreFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    if (message) {
+      message.textContent = `This will delete ${artboardName} and every layer inside it.`;
+    }
+
+    dialog.hidden = false;
+    document.body?.classList.add("artboard-delete-dialog-open");
+    confirmButton?.focus?.();
+
+    return true;
+  }
+
   function deletePreviewArtboard(artboardId, options = {}) {
     const normalizedId = String(artboardId || "").trim();
+    const { confirm, onDelete, ...deleteOptions } = options;
 
-    if (namespace.deleteDocumentArtboard?.(normalizedId, options) !== true) {
+    if (confirm === true) {
+      return requestDeletePreviewArtboard(normalizedId, options);
+    }
+
+    if (namespace.deleteDocumentArtboard?.(normalizedId, deleteOptions) !== true) {
       return false;
     }
 
@@ -2111,6 +2244,10 @@ window.CBO = window.CBO || {};
 
   namespace.deletePreviewArtboard = function deletePreviewArtboardFromTool(artboardId, options = {}) {
     return deletePreviewArtboard(artboardId, options);
+  };
+
+  namespace.requestDeletePreviewArtboard = function requestDeletePreviewArtboardFromTool(artboardId, options = {}) {
+    return requestDeletePreviewArtboard(artboardId, options);
   };
 
   namespace.movePreviewArtboard = function movePreviewArtboardFromTool(artboardId, x, y, options = {}) {

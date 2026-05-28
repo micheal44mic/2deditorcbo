@@ -1,6 +1,7 @@
 window.CBO = window.CBO || {};
 
 window.CBO.initDragScroll = function initDragScroll() {
+  const toolbarDragThresholdPx = 5;
   const verticalScrollerSelector = [
     ".drawer-content",
     ".right-sidebar-content",
@@ -32,6 +33,141 @@ window.CBO.initDragScroll = function initDragScroll() {
 
   function setGlobalDragging(isDragging) {
     document.body.classList.toggle("cbo-drag-scroll-active", isDragging);
+  }
+
+  function isMobileToolbarDragEnabled() {
+    return window.matchMedia?.("(max-width: 900px)")?.matches === true;
+  }
+
+  function bindMobileToolbarDragScroll(scroller) {
+    if (!scroller || scroller.dataset.toolbarDragScrollReady === "true") {
+      return;
+    }
+
+    scroller.dataset.toolbarDragScrollReady = "true";
+
+    let dragState = null;
+    let suppressClick = false;
+    let suppressClickTimer = 0;
+
+    function releasePointerCapture(pointerId) {
+      try {
+        if (scroller.hasPointerCapture(pointerId)) {
+          scroller.releasePointerCapture(pointerId);
+        }
+      } catch (error) {
+        // Pointer capture may already be released by the browser.
+      }
+    }
+
+    function armClickSuppression() {
+      suppressClick = true;
+      window.clearTimeout(suppressClickTimer);
+      suppressClickTimer = window.setTimeout(() => {
+        suppressClick = false;
+      }, 180);
+    }
+
+    function activateDrag(event) {
+      dragState.isActive = true;
+      armClickSuppression();
+      scroller.classList.add("dragging");
+      setGlobalDragging(true);
+
+      try {
+        scroller.setPointerCapture(event.pointerId);
+      } catch (error) {
+        // Dragging still works while the pointer stays over the toolbar.
+      }
+    }
+
+    function stopDragging(event) {
+      if (!dragState || event.pointerId !== dragState.pointerId) {
+        return;
+      }
+
+      const wasActive = dragState.isActive;
+      releasePointerCapture(event.pointerId);
+      dragState = null;
+      scroller.classList.remove("dragging");
+
+      if (wasActive) {
+        setGlobalDragging(false);
+      }
+    }
+
+    scroller.addEventListener("pointerdown", (event) => {
+      if (
+        event.button !== 0 ||
+        event.pointerType !== "mouse" ||
+        !isMobileToolbarDragEnabled() ||
+        event.target.closest(".tool-popover") ||
+        event.target.closest("input, textarea, select, [contenteditable='true']")
+      ) {
+        return;
+      }
+
+      dragState = {
+        isActive: false,
+        pointerId: event.pointerId,
+        startScrollLeft: scroller.scrollLeft,
+        startX: event.clientX,
+        startY: event.clientY,
+      };
+    });
+
+    scroller.addEventListener("pointermove", (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) {
+        return;
+      }
+
+      const distanceX = event.clientX - dragState.startX;
+      const distanceY = event.clientY - dragState.startY;
+      const absX = Math.abs(distanceX);
+      const absY = Math.abs(distanceY);
+
+      if (!dragState.isActive) {
+        if (absX < toolbarDragThresholdPx && absY < toolbarDragThresholdPx) {
+          return;
+        }
+
+        if (absX <= absY) {
+          return;
+        }
+
+        activateDrag(event);
+      }
+
+      scroller.scrollLeft = dragState.startScrollLeft - distanceX;
+      event.preventDefault();
+    });
+
+    scroller.addEventListener("pointerup", stopDragging);
+    scroller.addEventListener("pointercancel", stopDragging);
+    scroller.addEventListener("lostpointercapture", () => {
+      const wasActive = dragState?.isActive;
+      dragState = null;
+      scroller.classList.remove("dragging");
+
+      if (wasActive) {
+        setGlobalDragging(false);
+      }
+    });
+
+    scroller.addEventListener(
+      "click",
+      (event) => {
+        if (!suppressClick) {
+          return;
+        }
+
+        suppressClick = false;
+        window.clearTimeout(suppressClickTimer);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
   }
 
   function bindVerticalDragScroll(scroller) {
@@ -200,6 +336,7 @@ window.CBO.initDragScroll = function initDragScroll() {
   }
 
   function bindAllScrollers() {
+    document.querySelectorAll(".toolbar-dock").forEach(bindMobileToolbarDragScroll);
     document.querySelectorAll(verticalScrollerSelector).forEach(bindVerticalDragScroll);
     document.querySelectorAll(".drawer-image-container").forEach(bindImageRowDragScroll);
   }

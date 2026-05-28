@@ -124,7 +124,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
           <h2>Brushes</h2>
           <div class="mobile-brush-library-actions" aria-label="Brush actions">
             <button class="mobile-brush-library-action" type="button">New set</button>
-            <button class="mobile-brush-library-action" type="button">New brush</button>
+            <button class="mobile-brush-library-action" type="button" data-mobile-brush-create>New brush</button>
             <button class="mobile-brush-library-action" type="button">Import</button>
           </div>
         </div>
@@ -143,6 +143,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   const mobileBrushPackages = mobileBrushLibrary?.querySelector("[data-mobile-brush-packages]");
   const mobileBrushItems = mobileBrushLibrary?.querySelector("[data-mobile-brush-items]");
   const mobileBrushDoneButton = mobileBrushLibrary?.querySelector("[data-mobile-brush-library-done]");
+  const mobileBrushCreateButton = mobileBrushLibrary?.querySelector("[data-mobile-brush-create]");
   const mobileBrushStatus = mobileBrushLibrary?.querySelector("[data-mobile-brush-status]");
   const brushPopoutButtons = panel.querySelectorAll(
     ".brushes-panel-gallery-button, .brushes-panel-see-more",
@@ -696,6 +697,22 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     activePackageIndex = packageIndex;
     selectBrush(packageIndex, duplicatedBrush.id);
     showMobileBrushSelectionFeedback(duplicatedBrush.id);
+  }
+
+  function createMobileBaseBrush() {
+    const activePackage = brushPackages[activePackageIndex] || brushPackages[selectedPackageIndex] || brushPackages[0];
+    const packageIndex = getPackageIndexById(activePackage?.id);
+    const createdBrush = BrushLibrary.createBrush(activePackage?.id);
+
+    if (!createdBrush || packageIndex < 0) {
+      showMobileBrushStatus("Brush could not be created");
+      return;
+    }
+
+    activePackageIndex = packageIndex;
+    closeMobileBrushActions();
+    selectBrush(packageIndex, createdBrush.id);
+    showMobileBrushSelectionFeedback(createdBrush.id);
   }
 
   function deleteMobileBrush(brushId) {
@@ -1392,6 +1409,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   exportBrushesButton?.addEventListener("click", downloadBrushPresetExport);
   createBrushButton?.addEventListener("click", createBrushFromGallery);
   closeButton?.addEventListener("click", closeBrushPopout);
+  mobileBrushCreateButton?.addEventListener("click", createMobileBaseBrush);
   mobileBrushDoneButton?.addEventListener("click", closeMobileBrushLibrary);
   window.addEventListener("pointermove", handleMobileBrushSwipePointerMove, { passive: false });
   window.addEventListener("pointerup", (event) => finishMobileBrushSwipe(event.pointerId));

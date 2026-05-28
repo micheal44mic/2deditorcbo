@@ -1324,10 +1324,15 @@ test("selection tool highlights the clicked artboard and its layer group only", 
   assert.match(previewSource, /namespace\.selectPreviewArtboard = function selectPreviewArtboard/);
   assert.match(previewSource, /namespace\.clearPreviewArtboardSelection = function clearPreviewArtboardSelection/);
   assert.match(previewSource, /namespace\.deletePreviewArtboard = function deletePreviewArtboardFromTool/);
+  assert.match(previewSource, /function requestDeletePreviewArtboard\(artboardId, options = \{\}\)/);
+  assert.match(previewSource, /data-artboard-delete-dialog/);
+  assert.match(previewSource, /namespace\.requestDeletePreviewArtboard = function requestDeletePreviewArtboardFromTool/);
   assert.match(previewSource, /namespace\.movePreviewArtboard = function movePreviewArtboardFromTool/);
   assert.match(previewSource, /cbo:document-artboard-selection-change/);
   assert.match(previewSource, /source: "artboard-preview-stage-empty-pointer"/);
   assert.match(layoutSource, /\.editor-artboard-frame\.is-selected/);
+  assert.match(layoutSource, /\.artboard-delete-dialog \{/);
+  assert.match(layoutSource, /\.artboard-delete-confirm \{/);
 
   assert.match(layersSource, /let selectedArtboardGroupId = ""/);
   assert.match(layersSource, /function isArtboardSelectionEnabled\(\)/);
@@ -1338,6 +1343,8 @@ test("selection tool highlights the clicked artboard and its layer group only", 
   assert.match(layersSource, /window\.addEventListener\("cbo:artboard-selection-change", handleArtboardSelectionChange\)/);
   assert.match(layersSource, /window\.CBO\.selectPreviewArtboard\?\.\(artboardId/);
   assert.match(layersSource, /window\.CBO\.clearPreviewArtboardSelection\?\.\(/);
+  assert.match(layersSource, /window\.CBO\.requestDeletePreviewArtboard\(artboardId/);
+  assert.match(layersSource, /onDelete: clearDeletedArtboardSelection/);
   assert.match(layersSource, /window\.CBO\.deletePreviewArtboard\?\.\(artboardId/);
   assert.match(layersSource, /artboardId === "active-document"/);
   assert.match(layersSource, /!getSelectedRootEntries\(\)\.length && selectedArtboardGroupId/);
@@ -1481,6 +1488,72 @@ test("document artboard model owns artboard records and persistence hooks", () =
   assert.match(layerModelSource, /getArtboardContentLayerIds\(artboardId\)/);
   assert.match(layerModelSource, /translateLayersByIds\(layerIds = \[\], dx = 0, dy = 0/);
   assert.match(layerModelSource, /translateDocumentRect\(entry\.imageBounds, dx, dy\)/);
+});
+
+test("active artboard lookup prefers an explicit layer artboard over stale selection", () => {
+  const namespace = loadDocumentArtboardNamespace();
+
+  namespace.resetDocumentArtboards({
+    artboards: [
+      {
+        height: 100,
+        id: "active-document",
+        isPrimary: true,
+        name: "Artboard 1",
+        width: 100,
+        x: 0,
+        y: 0,
+      },
+      {
+        height: 80,
+        id: "secondary",
+        name: "Artboard 2",
+        width: 120,
+        x: 240,
+        y: 16,
+      },
+    ],
+    defaultSecondaryCount: 0,
+    source: "unit-active-artboard-layer-precedence",
+  });
+  namespace.documentLayerModel = {
+    activeLayerId: "image-secondary",
+    findEntryArtboardId(layerId) {
+      if (layerId === "image-secondary") {
+        return "secondary";
+      }
+
+      if (layerId === "paint-primary") {
+        return "active-document";
+      }
+
+      return "";
+    },
+  };
+
+  namespace.selectDocumentArtboard("active-document", { emit: false });
+
+  assert.equal(namespace.getActiveDocumentArtboardId(), "active-document");
+  assert.equal(namespace.getActiveDocumentArtboardId({ layerId: "image-secondary" }), "secondary");
+  assert.equal(
+    JSON.stringify(namespace.getActiveDocumentArtboardRect({ layerId: "image-secondary" })),
+    JSON.stringify({
+      height: 80,
+      width: 120,
+      x: 240,
+      y: 16,
+    }),
+  );
+  assert.equal(
+    namespace.getActiveDocumentArtboardId({
+      artboardId: "active-document",
+      layerId: "image-secondary",
+    }),
+    "active-document",
+  );
+
+  namespace.clearDocumentArtboardSelection({ emit: false });
+  assert.equal(namespace.getActiveDocumentArtboardId(), "secondary");
 });
 
 test("artboard moves are constrained before they violate the minimum artboard gap", () => {

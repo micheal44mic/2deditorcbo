@@ -4039,6 +4039,98 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   height: 15px;
 }
 
+.artboard-delete-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 16000;
+  display: grid;
+  place-items: center;
+  padding: max(18px, var(--cbo-safe-top)) max(18px, var(--cbo-safe-right)) max(18px, var(--cbo-safe-bottom)) max(18px, var(--cbo-safe-left));
+  background: rgba(18, 20, 24, 0.68);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.artboard-delete-dialog[hidden] {
+  display: none;
+}
+
+.artboard-delete-card {
+  display: grid;
+  gap: 12px;
+  width: min(320px, calc(100vw - 36px));
+  padding: 16px;
+  border: 1px solid rgba(223, 227, 234, 0.32);
+  border-radius: 8px;
+  background: #181a1f;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.16);
+}
+
+.artboard-delete-title,
+.artboard-delete-message {
+  margin: 0;
+  letter-spacing: 0;
+  line-height: 1.12;
+}
+
+.artboard-delete-title {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.artboard-delete-message {
+  color: #c3c8d1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.artboard-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.artboard-delete-cancel,
+.artboard-delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.artboard-delete-cancel {
+  background: #2c303a;
+  color: #c3c8d1;
+}
+
+.artboard-delete-cancel:hover,
+.artboard-delete-cancel:focus-visible {
+  background: #3a3f4b;
+  color: #ffffff;
+  outline: none;
+}
+
+.artboard-delete-confirm {
+  background: #f05023;
+  color: #ffffff;
+}
+
+.artboard-delete-confirm:hover,
+.artboard-delete-confirm:focus-visible {
+  background: #ff6638;
+  outline: none;
+}
+
 .editor-area-selection-overlay {
   position: absolute;
   z-index: 3;

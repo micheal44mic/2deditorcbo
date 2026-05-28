@@ -65,6 +65,17 @@ test("mobile brush library keeps a two-column scrollable package and brush picke
   assert.match(panelCss, /\.mobile-brush-library-brush\.has-preview \.mobile-brush-library-preview \{[\s\S]*opacity: 0\.72/);
 });
 
+test("mobile new brush creates a base brush in the active set", () => {
+  const panelSource = readRepoFile("js", "brushes-panel.js");
+
+  assert.match(panelSource, /data-mobile-brush-create/);
+  assert.match(panelSource, /const mobileBrushCreateButton = mobileBrushLibrary\?\.querySelector\("\[data-mobile-brush-create\]"\)/);
+  assert.match(panelSource, /function createMobileBaseBrush\(\)/);
+  assert.match(panelSource, /const activePackage = brushPackages\[activePackageIndex\][\s\S]*const createdBrush = BrushLibrary\.createBrush\(activePackage\?\.id\)/);
+  assert.match(panelSource, /activePackageIndex = packageIndex;[\s\S]*selectBrush\(packageIndex, createdBrush\.id\);[\s\S]*showMobileBrushSelectionFeedback\(createdBrush\.id\);/);
+  assert.match(panelSource, /mobileBrushCreateButton\?\.addEventListener\("click", createMobileBaseBrush\)/);
+});
+
 test("mobile brush studio opens as a Procreate Pocket style sheet", () => {
   const studioSource = readRepoFile("js", "brush-studio.js");
   const studioCss = readRepoFile("css", "brush-studio.css");

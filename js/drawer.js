@@ -700,12 +700,18 @@ window.CBO.initDrawer = function initDrawer() {
     );
   }
 
+  function closeDrawerAfterUploadPlacement() {
+    window.CBO.closeDrawerPanel?.();
+  }
+
   function placeUploadedImage(id) {
     const record = uploadedImages.find((uploadedImage) => uploadedImage.id === id);
 
     if (!record) {
       return;
     }
+
+    closeDrawerAfterUploadPlacement();
 
     if (getUploadMediaKind(record) === "video") {
       window.CBO.createAiImageBoardFromUpload?.({

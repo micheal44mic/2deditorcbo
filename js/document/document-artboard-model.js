@@ -769,16 +769,27 @@ window.CBO = window.CBO || {};
       return explicitArtboardId;
     }
 
+    const layerModel = namespace.documentLayerModel;
+    const explicitLayerId = Object.prototype.hasOwnProperty.call(options, "layerId")
+      ? String(options.layerId || "").trim()
+      : "";
+    const explicitLayerArtboardId = explicitLayerId
+      ? String(layerModel?.findEntryArtboardId?.(explicitLayerId) || "").trim()
+      : "";
+
+    if (explicitLayerArtboardId) {
+      return explicitLayerArtboardId;
+    }
+
     const selectedArtboardId = namespace.documentArtboardModel.getSelectedArtboardId();
 
     if (selectedArtboardId) {
       return selectedArtboardId;
     }
 
-    const layerModel = namespace.documentLayerModel;
-    const layerId = String(options.layerId || layerModel?.activeLayerId || "").trim();
-    const layerArtboardId = layerId
-      ? layerModel?.findEntryArtboardId?.(layerId)
+    const activeLayerId = String(layerModel?.activeLayerId || "").trim();
+    const layerArtboardId = activeLayerId
+      ? layerModel?.findEntryArtboardId?.(activeLayerId)
       : null;
 
     return String(layerArtboardId || PRIMARY_ARTBOARD_ID);

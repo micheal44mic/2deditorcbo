@@ -31,6 +31,8 @@ test("external media import saves uploads and creates AI image or video boards",
   assert.match(drawerSource, /window\.CBO\.importUploadedMediaFiles = importUploadedImageFiles/);
   assert.match(drawerSource, /window\.CBO\.resolveUploadedImageObjectUrl = resolveUploadedImageObjectUrl/);
   assert.match(drawerSource, /window\.CBO\.createAiImageBoardFromUpload/);
+  assert.match(drawerSource, /function closeDrawerAfterUploadPlacement\(\) \{\s*window\.CBO\.closeDrawerPanel\?\.\(\);/);
+  assert.match(drawerSource, /closeDrawerAfterUploadPlacement\(\);\s*if \(getUploadMediaKind\(record\) === "video"\)/);
 
   assert.match(connectionActionsSource, /Controller\.prototype\.createAiImageBoardFromUpload/);
   assert.match(connectionActionsSource, /Controller\.prototype\.getImportedAiImageBoardSize/);
@@ -52,6 +54,6 @@ test("external media import saves uploads and creates AI image or video boards",
   assert.match(drawerCssSource, /body\.cbo-upload-drop-active::after/);
   assert.match(drawerCssSource, /content: "DROP MEDIA"/);
   assert.match(indexSource, /aria-label="Upload media"/);
-  assert.match(indexSource, /drawer\.js\?v=upload-media-board-v1/);
+  assert.match(indexSource, /drawer\.js\?v=upload-close-sidebar-v1/);
   assert.match(indexSource, /connection-actions\.js\?v=upload-media-board-v1/);
 });
