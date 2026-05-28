@@ -178,7 +178,8 @@
 
 .mobile-layers-button,
 .mobile-rasterize-text-button,
-.mobile-adjustment-layer-button {
+.mobile-adjustment-layer-button,
+.mobile-layer-style-button {
   display: none;
 }
 
@@ -257,7 +258,8 @@
     display: none;
   }
 
-  .toolbar-dock .mobile-adjustment-layer-button {
+  .toolbar-dock .mobile-adjustment-layer-button,
+  .toolbar-dock .mobile-layer-style-button {
     display: inline-flex;
   }
 

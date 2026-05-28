@@ -241,6 +241,117 @@ test("merge down keeps the lower layer id, retile output, and records undo/redo 
   assert.equal(model.findEntryById("bottom").type, "paint");
 });
 
+test("merge undo rolls back to the merged state if a source snapshot restore fails", () => {
+  const { DocumentHistory, DocumentLayerModel, window } = loadDocumentMergeModules();
+  const history = new DocumentHistory({ maxEntries: 20 });
+  const model = new DocumentLayerModel();
+  const renderer = createMockRenderer();
+  const rect = { height: 32, width: 32, x: 0, y: 0 };
+  const topLayer = model.createLayer({ id: "top", name: "Top", type: "paint" });
+  const bottomLayer = model.createLayer({ id: "bottom", name: "Bottom", type: "paint" });
+  const backgroundLayer = model.createLayer({
+    id: "background",
+    locked: true,
+    name: "Background",
+    type: "background",
+  });
+
+  window.CBO.documentHistory = history;
+  window.CBO.documentLayerModel = model;
+  window.CBO.documentRenderer = renderer;
+
+  model.setEntries([topLayer, bottomLayer, backgroundLayer], { history: false, source: "unit-before" });
+  model.setActiveLayer("top", { history: false, source: "unit-before" });
+  const beforeState = history.getLayerSnapshot(model);
+
+  model.setEntries([
+    model.createLayer({ id: "bottom", name: "Bottom", type: "paint" }),
+    backgroundLayer,
+  ], {
+    activeLayerId: "bottom",
+    history: false,
+    source: "unit-after",
+  });
+  const afterState = history.getLayerSnapshot(model);
+  const restoreCalls = [];
+
+  renderer.restoreRasterSnapshot = function restoreRasterSnapshot(layerId, snapshot, options = {}) {
+    restoreCalls.push([layerId, snapshot?.label, options.source]);
+
+    if (layerId === "top" && options.source === "history-undo-layers-merge") {
+      return false;
+    }
+
+    this.rasterTargetsByLayerId.set(layerId, {
+      framebuffer: {},
+      height: snapshot?.rect?.height || 1,
+      layerId,
+      texture: {},
+      width: snapshot?.rect?.width || 1,
+      x: snapshot?.rect?.x || 0,
+      y: snapshot?.rect?.y || 0,
+    });
+    return true;
+  };
+
+  const entry = window.CBO.createLayerMergeHistoryEntry({
+    afterSnapshot: {
+      framebuffer: {},
+      label: "after-bottom",
+      layerId: "bottom",
+      rect,
+      texture: {},
+    },
+    afterState,
+    beforeState,
+    beforeSnapshots: [
+      {
+        hadTarget: true,
+        layerId: "top",
+        preferSparse: false,
+        rect,
+        snapshot: {
+          framebuffer: {},
+          label: "before-top",
+          layerId: "top",
+          rect,
+          texture: {},
+        },
+      },
+      {
+        hadTarget: true,
+        layerId: "bottom",
+        preferSparse: false,
+        rect,
+        snapshot: {
+          framebuffer: {},
+          label: "before-bottom",
+          layerId: "bottom",
+          rect,
+          texture: {},
+        },
+      },
+    ],
+    destinationLayerId: "bottom",
+    history,
+    layerIds: ["top", "bottom"],
+    layerModel: model,
+    renderer,
+    renderRect: rect,
+  });
+
+  assert.equal(history.push(entry, { source: "unit-merge" }), true);
+  assert.equal(history.undo(), false);
+  assert.equal(model.findEntryById("top"), null);
+  assert.equal(model.findEntryById("bottom").type, "paint");
+  assert.equal(model.activeLayerId, "bottom");
+  assert.ok(restoreCalls.some((call) =>
+    call[0] === "bottom" &&
+    call[1] === "after-bottom" &&
+    call[2] === "history-undo-layers-merge-rollback"
+  ));
+});
+
 test("merge plan rejects non-contiguous, hidden, locked, and unbased clipping selections", () => {
   const { DocumentLayerModel, window } = loadDocumentMergeModules();
   const model = new DocumentLayerModel();

@@ -885,7 +885,26 @@
           source: "history-undo-layers-merge",
         });
 
+        if (!didRestoreState) {
+          return false;
+        }
+
         const didRestorePixels = restoreLayerRasterSnapshots(renderer, beforeRecords, "history-undo-layers-merge");
+
+        if (!didRestorePixels) {
+          history.restoreLayerState(layerModel, after, {
+            source: "history-undo-layers-merge-rollback",
+          });
+          restoreLayerRasterSnapshots(renderer, [afterRecord], "history-undo-layers-merge-rollback");
+          emitLayerMergeVisualChange(
+            renderer,
+            destinationLayerId,
+            getSnapshotDirtyRect(renderer, beforeRecords, afterRecord.snapshot, renderRect),
+            "history-undo-layers-merge-rollback",
+          );
+          return false;
+        }
+
         emitLayerMergeVisualChange(
           renderer,
           destinationLayerId,
@@ -893,7 +912,7 @@
           "history-undo-layers-merge",
         );
 
-        return didRestoreState && didRestorePixels;
+        return true;
       },
       redo() {
         const didRestoreState = history.restoreLayerState(layerModel, after, {

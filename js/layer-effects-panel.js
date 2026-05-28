@@ -300,14 +300,22 @@ window.CBO = window.CBO || {};
   }
 
   function getImplementedEffectItems() {
-    return EFFECT_GROUPS
-      .flatMap((group) => group.items)
-      .filter((effect) => effect.implemented === true && effect.mobile !== false);
+    return EFFECT_GROUPS.flatMap((group) => group.items
+      .filter((effect) => {
+        const isMobileEffect = effect.implemented === true && effect.mobile !== false;
+        const isStyleEffect = effect.implemented === true && group.label === "Style";
+
+        return isMobileEffect || isStyleEffect;
+      })
+      .map((effect) => ({
+        ...effect,
+        mobileEffectMode: group.label === "Style" ? "style" : "adjustments",
+      })));
   }
 
   function getMobileLayerEffectsToolbarMarkup() {
     return `
-      <nav class="bottom-toolbar mobile-layer-effects-toolbar" aria-label="Adjustment effects toolbar" data-mobile-layer-effects-toolbar hidden>
+      <nav class="bottom-toolbar mobile-layer-effects-toolbar" aria-label="Adjustment effects toolbar" data-mobile-layer-effects-toolbar data-mobile-layer-effects-mode="adjustments" hidden>
         <button class="tool-button mobile-context-back-button mobile-layer-effects-back-button" type="button" aria-label="BACK" aria-pressed="false" data-tooltip="BACK" data-mobile-layer-effects-back>
           ${MOBILE_LAYER_EFFECTS_BACK_ICON}
         </button>
@@ -318,6 +326,7 @@ window.CBO = window.CBO || {};
             aria-label="${effect.label}"
             aria-pressed="false"
             data-tooltip="${effect.label}"
+            data-mobile-layer-effect-mode="${effect.mobileEffectMode}"
             data-mobile-layer-effect-trigger="${effect.type}"
           >
             ${getEffectIconMarkup(effect.icon)}
@@ -352,9 +361,38 @@ window.CBO = window.CBO || {};
     `;
   }
 
+  function getMobileEffectColorMarkup(label, value, dataName) {
+    return `
+      <label class="mobile-layer-effect-color-row">
+        <span class="mobile-layer-effect-color-swatch" data-mobile-layer-effect-color-swatch="${dataName}" style="--mobile-layer-effect-color: ${value};">
+          <input
+            class="mobile-layer-effect-color-input"
+            type="color"
+            value="${value}"
+            aria-label="${label}"
+            data-mobile-layer-effect-color-input="${dataName}"
+          />
+        </span>
+        <span class="mobile-layer-effect-label">${label}</span>
+        <output class="mobile-layer-effect-value" data-mobile-layer-effect-color-value="${dataName}">${value}</output>
+      </label>
+    `;
+  }
+
   function getMobileLayerEffectsPanelMarkup() {
     return `
       <section class="mobile-layer-effects-panel" aria-label="Adjustment effect values" data-mobile-layer-effects-panel hidden>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="color-overlay" hidden>
+          ${getMobileEffectColorMarkup("Color", DEFAULT_COLOR_OVERLAY_COLOR, "color-overlay-color")}
+          ${getMobileEffectRangeMarkup("Opacity", 100, 100, "color-overlay-opacity", { suffix: "%" })}
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="color-overlay">Reset</button>
+        </div>
+        <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="stroke" hidden>
+          ${getMobileEffectRangeMarkup("Size", DEFAULT_LAYER_STROKE_SIZE, MAX_LAYER_STROKE_SIZE, "stroke-size", { suffix: "px" })}
+          ${getMobileEffectColorMarkup("Color", DEFAULT_COLOR_OVERLAY_COLOR, "stroke-color")}
+          ${getMobileEffectRangeMarkup("Opacity", 100, 100, "stroke-opacity", { suffix: "%" })}
+          <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="stroke">Reset</button>
+        </div>
         <div class="mobile-layer-effects-section" data-mobile-layer-effects-editor="gaussian-blur" hidden>
           ${getMobileEffectRangeMarkup("Radius", 0, MAX_GAUSSIAN_BLUR_RADIUS, "gaussian-radius", { suffix: "px" })}
           <button class="mobile-layer-effect-reset" type="button" data-mobile-layer-effect-reset="gaussian-blur">Reset</button>
@@ -1720,8 +1758,9 @@ window.CBO = window.CBO || {};
     const layerStyleButton = document.querySelector(".vertical-layer-style-button");
     const button = adjustmentButton || layerStyleButton;
     const mobileLauncherButton = document.querySelector(".mobile-adjustment-layer-button");
+    const mobileLayerStyleButton = document.querySelector(".mobile-layer-style-button");
 
-    if ((!button && !mobileLauncherButton) || document.querySelector("[data-layer-effects-panel]")) {
+    if ((!button && !mobileLauncherButton && !mobileLayerStyleButton) || document.querySelector("[data-layer-effects-panel]")) {
       return;
     }
 
@@ -2071,12 +2110,14 @@ window.CBO = window.CBO || {};
     const mobileLayerEffectSections = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effects-editor]") || [];
     const mobileLayerEffectInputs = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-input]") || [];
     const mobileLayerEffectValues = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-value]") || [];
+    const mobileLayerEffectColorInputs = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-color-input]") || [];
     const mobileLayerEffectResets = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-layer-effect-reset]") || [];
     const mobileRadialModeButtons = mobileLayerEffectsPanel?.querySelectorAll("[data-mobile-radial-mode]") || [];
     const mobileGrainMonochromeButton = mobileLayerEffectsPanel?.querySelector("[data-mobile-grain-monochrome]");
     const mobileNoiseMonochromeButton = mobileLayerEffectsPanel?.querySelector("[data-mobile-noise-monochrome]");
     let activeEffectType = "";
     let activeMobileEffectType = "";
+    let activeMobileLayerEffectsMode = "adjustments";
     let fieldBlurDrag = null;
     let fieldBlurPointerTap = null;
     let fieldBlurTapSequence = null;
@@ -2458,8 +2499,21 @@ window.CBO = window.CBO || {};
       return mobileLayerEffectsPanel?.querySelector(`[data-mobile-layer-effect-value="${name}"]`) || null;
     }
 
+    function getMobileLayerEffectColorInput(name) {
+      return mobileLayerEffectsPanel?.querySelector(`[data-mobile-layer-effect-color-input="${name}"]`) || null;
+    }
+
+    function getMobileLayerEffectColorValue(name) {
+      return mobileLayerEffectsPanel?.querySelector(`[data-mobile-layer-effect-color-value="${name}"]`) || null;
+    }
+
+    function getMobileLayerEffectColorSwatch(name) {
+      return mobileLayerEffectsPanel?.querySelector(`[data-mobile-layer-effect-color-swatch="${name}"]`) || null;
+    }
+
     function getMobileLayerEffectSuffix(name) {
       const suffixByName = {
+        "color-overlay-opacity": "%",
         "field-blur": "px",
         "gaussian-radius": "px",
         "grain-amount": "%",
@@ -2469,6 +2523,8 @@ window.CBO = window.CBO || {};
         "noise-scale": "%",
         "radial-center-x": "%",
         "radial-center-y": "%",
+        "stroke-opacity": "%",
+        "stroke-size": "px",
       };
 
       return suffixByName[name] || "";
@@ -2502,6 +2558,23 @@ window.CBO = window.CBO || {};
       }
 
       updateMobileLayerEffectRangeProgress(input);
+    }
+
+    function setMobileLayerEffectColorControl(name, color) {
+      const input = getMobileLayerEffectColorInput(name);
+      const output = getMobileLayerEffectColorValue(name);
+      const swatch = getMobileLayerEffectColorSwatch(name);
+      const nextColor = normalizeHexColor(color);
+
+      if (input && document.activeElement !== input) {
+        input.value = nextColor;
+      }
+
+      if (output) {
+        output.textContent = nextColor;
+      }
+
+      swatch?.style.setProperty("--mobile-layer-effect-color", nextColor);
     }
 
     function setMobileRadialModeButtonState(mode) {
@@ -2548,6 +2621,35 @@ window.CBO = window.CBO || {};
       return mobileNoiseMonochromeButton?.getAttribute("aria-pressed") !== "false";
     }
 
+    function syncMobileLayerEffectButtonsForMode() {
+      mobileLayerEffectButtons.forEach((effectButton) => {
+        const effectMode = effectButton.dataset.mobileLayerEffectMode || "adjustments";
+
+        effectButton.hidden = effectMode !== activeMobileLayerEffectsMode;
+      });
+
+      if (mobileLayerEffectsToolbar) {
+        const isStyleMode = activeMobileLayerEffectsMode === "style";
+
+        mobileLayerEffectsToolbar.dataset.mobileLayerEffectsMode = activeMobileLayerEffectsMode;
+        mobileLayerEffectsToolbar.setAttribute(
+          "aria-label",
+          isStyleMode ? "Layer style toolbar" : "Adjustment effects toolbar",
+        );
+      }
+    }
+
+    function setMobileLayerEffectsMode(mode) {
+      const nextMode = mode === "style" ? "style" : "adjustments";
+
+      if (activeMobileLayerEffectsMode !== nextMode) {
+        closeMobileLayerEffectsPanel();
+      }
+
+      activeMobileLayerEffectsMode = nextMode;
+      syncMobileLayerEffectButtonsForMode();
+    }
+
     function closeMobileLayerEffectsPanel() {
       if (activeMobileEffectType === "field-blur") {
         deactivateFieldBlurUi();
@@ -2578,6 +2680,7 @@ window.CBO = window.CBO || {};
 
       const shouldShow = Boolean(isVisible);
 
+      syncMobileLayerEffectButtonsForMode();
       mobileLayerEffectsToolbar.hidden = !shouldShow;
       toolbarDock.classList.toggle("mobile-layer-effects-active", shouldShow);
 
@@ -2738,6 +2841,12 @@ window.CBO = window.CBO || {};
     function syncMobileLayerEffectsControls() {
       const layer = getActiveLayer();
       const isEligible = isBlurEligibleLayer(layer);
+      const colorOverlay = isEligible
+        ? getColorOverlay(layer)
+        : { color: getSelectedOverlayColor(), enabled: false, opacity: 1 };
+      const stroke = isEligible
+        ? getStroke(layer)
+        : { color: getSelectedOverlayColor(), enabled: false, opacity: 1, size: DEFAULT_LAYER_STROKE_SIZE };
       const radius = isEligible ? getGaussianBlurRadius(layer) : 0;
       const motionBlur = isEligible ? getMotionBlur(layer) : { angle: 0, distance: 0 };
       const fieldBlur = isEligible ? getFieldBlur(layer) : { pins: [] };
@@ -2775,6 +2884,10 @@ window.CBO = window.CBO || {};
         updateMobileLayerEffectRangeProgress(input);
       });
 
+      mobileLayerEffectColorInputs.forEach((input) => {
+        input.disabled = !isEligible;
+      });
+
       mobileLayerEffectResets.forEach((reset) => {
         reset.disabled = !isEligible;
       });
@@ -2792,6 +2905,11 @@ window.CBO = window.CBO || {};
       }
 
       setMobileLayerEffectControl("gaussian-radius", radius);
+      setMobileLayerEffectColorControl("color-overlay-color", colorOverlay.color);
+      setMobileLayerEffectControl("color-overlay-opacity", Math.round(colorOverlay.opacity * 100));
+      setMobileLayerEffectControl("stroke-size", stroke.enabled ? stroke.size : DEFAULT_LAYER_STROKE_SIZE);
+      setMobileLayerEffectColorControl("stroke-color", stroke.color);
+      setMobileLayerEffectControl("stroke-opacity", Math.round((stroke.enabled ? stroke.opacity : 1) * 100));
       setMobileLayerEffectControl("motion-distance", motionBlur.distance);
       setMobileLayerEffectControl("motion-angle", getDisplayAngle(motionBlur.angle));
       setMobileLayerEffectControl("field-blur", fieldBlurAmount);
@@ -2812,8 +2930,14 @@ window.CBO = window.CBO || {};
 
     function openMobileLayerEffectPanel(effectType) {
       const definition = getEffectDefinition(effectType);
+      const effectButton = Array.from(mobileLayerEffectButtons)
+        .find((button) => button.dataset.mobileLayerEffectTrigger === effectType);
 
-      if (!definition?.implemented || !isBlurEligibleLayer(getActiveLayer())) {
+      if (
+        !definition?.implemented ||
+        effectButton?.hidden ||
+        !isBlurEligibleLayer(getActiveLayer())
+      ) {
         syncMobileLayerEffectsControls();
         return;
       }
@@ -2862,7 +2986,51 @@ window.CBO = window.CBO || {};
 
       startMobileLayerEffectsSession();
 
-      if (name === "gaussian-radius") {
+      if (name === "color-overlay-color" || name === "color-overlay-opacity") {
+        const nextColor = normalizeHexColor(
+          getMobileLayerEffectColorInput("color-overlay-color")?.value || getSelectedOverlayColor(),
+        );
+        const nextOpacity = clamp(getMobileLayerEffectInput("color-overlay-opacity")?.value, 0, 100) / 100;
+
+        setMobileLayerEffectColorControl("color-overlay-color", nextColor);
+        queueLayerEffectPreview(
+          "color-overlay",
+          layer.id,
+          () => namespace.setLayerColorOverlay(layer.id, nextColor, nextOpacity, {
+            history: false,
+            source: "mobile-layer-effects-color-overlay",
+          }),
+          {
+            color: nextColor,
+            control: name,
+            opacity: nextOpacity,
+            source: "mobile",
+          },
+        );
+      } else if (name === "stroke-size" || name === "stroke-color" || name === "stroke-opacity") {
+        const nextSize = clamp(getMobileLayerEffectInput("stroke-size")?.value, 0, MAX_LAYER_STROKE_SIZE);
+        const nextColor = normalizeHexColor(
+          getMobileLayerEffectColorInput("stroke-color")?.value || getSelectedOverlayColor(),
+        );
+        const nextOpacity = clamp(getMobileLayerEffectInput("stroke-opacity")?.value, 0, 100) / 100;
+
+        setMobileLayerEffectColorControl("stroke-color", nextColor);
+        queueLayerEffectPreview(
+          "stroke",
+          layer.id,
+          () => namespace.setLayerStroke(layer.id, nextSize, nextColor, nextOpacity, {
+            history: false,
+            source: "mobile-layer-effects-stroke",
+          }),
+          {
+            color: nextColor,
+            control: name,
+            opacity: nextOpacity,
+            size: nextSize,
+            source: "mobile",
+          },
+        );
+      } else if (name === "gaussian-radius") {
         const nextValue = clamp(value, 0, MAX_GAUSSIAN_BLUR_RADIUS);
 
         queueLayerEffectPreview(
@@ -3046,7 +3214,30 @@ window.CBO = window.CBO || {};
       startMobileLayerEffectsSession();
       cancelPendingLayerEffectPreview();
 
-      if (effectType === "gaussian-blur") {
+      if (effectType === "color-overlay") {
+        namespace.setLayerColorOverlay(
+          layer.id,
+          getMobileLayerEffectColorInput("color-overlay-color")?.value || getSelectedOverlayColor(),
+          0,
+          {
+            enabled: false,
+            history: false,
+            source: "mobile-layer-effects-reset",
+          },
+        );
+      } else if (effectType === "stroke") {
+        namespace.setLayerStroke(
+          layer.id,
+          0,
+          getMobileLayerEffectColorInput("stroke-color")?.value || getSelectedOverlayColor(),
+          0,
+          {
+            enabled: false,
+            history: false,
+            source: "mobile-layer-effects-reset",
+          },
+        );
+      } else if (effectType === "gaussian-blur") {
         namespace.setLayerGaussianBlurRadius(layer.id, 0, {
           history: false,
           source: "mobile-layer-effects-reset",
@@ -4373,7 +4564,12 @@ window.CBO = window.CBO || {};
       const label = String(event.detail?.label || "").trim().toUpperCase();
       const toolMode = String(event.detail?.toolMode || "").trim().toLowerCase();
       const isAdjustmentLayer = label === "ADJUSTMENT LAYER" || toolMode === "adjustments";
-      const shouldShow = isAdjustmentLayer && isMobileLayerEffectsViewport();
+      const isLayerStyle = label === "LAYER STYLE" || toolMode === "layer-style";
+      const shouldShow = (isAdjustmentLayer || isLayerStyle) && isMobileLayerEffectsViewport();
+
+      if (shouldShow) {
+        setMobileLayerEffectsMode(isLayerStyle ? "style" : "adjustments");
+      }
 
       showMobileLayerEffectsToolbar(shouldShow);
 
@@ -4382,6 +4578,8 @@ window.CBO = window.CBO || {};
         syncMobileLayerEffectsControls();
       }
     }
+
+    syncMobileLayerEffectButtonsForMode();
 
     mobileLayerEffectButtons.forEach((effectButton) => {
       effectButton.addEventListener("click", () => {
@@ -4395,6 +4593,15 @@ window.CBO = window.CBO || {};
       input.addEventListener("input", () => {
         updateMobileLayerEffectRangeProgress(input);
         applyMobileLayerEffectValue(input.dataset.mobileLayerEffectInput, input.value);
+      });
+    });
+
+    mobileLayerEffectColorInputs.forEach((input) => {
+      input.addEventListener("input", () => {
+        const controlName = input.dataset.mobileLayerEffectColorInput;
+
+        setMobileLayerEffectColorControl(controlName, input.value);
+        applyMobileLayerEffectValue(controlName, input.value);
       });
     });
 
