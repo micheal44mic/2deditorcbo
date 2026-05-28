@@ -12,8 +12,8 @@
     <link rel="stylesheet" href="./css/brushes-panel.css?v=mobile-brush-debug-v1" />
     <link rel="stylesheet" href="./css/brush-studio.css?v=mobile-brush-debug-v1" />
     <link rel="stylesheet" href="./css/drawer.css?v=white-preview-thumbs-v1" />
-    <link rel="stylesheet" href="./css/toolbar.css?v=mobile-layer-style-v1" />
-    <link rel="stylesheet" href="./css/top-toolbar.css?v=mobile-brush-orbs-v1" />
+    <link rel="stylesheet" href="./css/toolbar.css?v=high-quality-view-v1" />
+    <link rel="stylesheet" href="./css/top-toolbar.css?v=high-quality-view-v1" />
     <link rel="stylesheet" href="./css/vertical-toolbar.css?v=mobile-ios-gesture-lock" />
     <link rel="stylesheet" href="./css/layer-effects-panel.css?v=mobile-layer-style-v1" />
     <link rel="stylesheet" href="./css/layers-panel.css?v=android-layer-touch-v1" />
@@ -368,6 +368,14 @@
               <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
             </svg>
           </button>
+          <button class="tool-button mobile-high-quality-view-button" type="button" aria-label="HIGH QUALITY VIEW" aria-pressed="false" data-tooltip="HIGH QUALITY VIEW" data-high-quality-view-toggle>
+            <svg class="lucide lucide-sparkles-icon lucide-sparkles" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+              <path d="M20 2v4" />
+              <path d="M22 4h-4" />
+              <circle cx="4" cy="20" r="2" />
+            </svg>
+          </button>
           <button class="tool-button mobile-rasterize-text-button" type="button" aria-label="RASTERIZE" aria-pressed="false" data-tooltip="RASTERIZE TEXT" data-rasterize-text hidden>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M4 4h6v6H4z" />
@@ -418,7 +426,7 @@
     <script src="./data/grain-textures.js"></script>
     <script src="./js/brush-defaults.js?v=pencil-motion-v5"></script>
     <script src="./data/brush-library.js?v=android-v4.5-no-fill-history-debug"></script>
-    <script src="./js/top-toolbar.js?v=mobile-brush-orbs-v1"></script>
+    <script src="./js/top-toolbar.js?v=high-quality-view-v1"></script>
     <script src="./js/file-adjustments-button.js"></script>
     <script src="./js/rotate-button.js"></script>
     <script src="./js/resize-button.js"></script>
@@ -434,14 +442,14 @@
     <script src="./js/right-sidebar.js?v=document-library-v2"></script>
     <script src="./js/brushes-panel.js?v=mobile-brush-v3"></script>
     <script src="./js/brush-studio.js?v=pencil-motion-v5"></script>
-    <script src="./js/document/document-renderer-shaders.js?v=renderer-modules"></script>
-    <script src="./js/document/document-renderer-raster-targets.js?v=clip-mask-fix-v1"></script>
+    <script src="./js/document/document-renderer-shaders.js?v=high-quality-pyramid-v1"></script>
+    <script src="./js/document/document-renderer-raster-targets.js?v=high-quality-view-v1"></script>
     <script src="./js/document/document-renderer-history-snapshots.js?v=renderer-modules"></script>
-    <script src="./js/document/document-renderer-webgl-programs.js?v=clip-mask-fix-v1"></script>
-    <script src="./js/document/document-renderer-viewport-culling.js?v=clip-mask-fix-v1"></script>
+    <script src="./js/document/document-renderer-webgl-programs.js?v=high-quality-pyramid-v1"></script>
+    <script src="./js/document/document-renderer-viewport-culling.js?v=high-quality-pyramid-v1"></script>
     <script src="./js/document/document-renderer-layer-effects.js?v=clip-base-stroke-rect-v1"></script>
     <script src="./js/document/document-renderer-compositing.js?v=clip-mask-fix-v1"></script>
-    <script src="./js/document/document-renderer.js?v=android-v4.5-no-fill-history-debug"></script>
+    <script src="./js/document/document-renderer.js?v=high-quality-pyramid-v1"></script>
     <script src="./js/document/document-layer-merge.js"></script>
     <script src="./js/puppet-transform-tool.js?v=mobile-ios-gesture-lock"></script>
     <script src="./js/raster-transform-tool.js?v=android-v4.5-no-fill-history-debug"></script>

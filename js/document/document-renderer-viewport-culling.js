@@ -113,6 +113,7 @@
       isAndroidPerformanceMode,
       isAndroidPreviewCacheDisabled,
       isAndroidZoomOutPreviewCacheAllowed,
+      isHighQualityViewEnabled,
       isMobileLikeEnvironment,
       isPixelPerfectRenderingEnabled,
       normalizeAngle,
@@ -128,7 +129,9 @@
     } = internals;
     const PREVIEW_CACHE_INTERACTION_DEFER_MS = 120;
     const PREVIEW_CACHE_LOW_ZOOM_MIN_SIZE = 512;
+    const PREVIEW_CACHE_HIGH_QUALITY_LOW_ZOOM_MIN_SIZE = 1536;
     const PREVIEW_CACHE_ZOOM_OVERSAMPLE = 1.08;
+    const PREVIEW_CACHE_HIGH_QUALITY_ZOOM_OVERSAMPLE = 1.6;
     const PREVIEW_CACHE_ZOOM_SIZE_STEP = 128;
 
     defineDocumentRendererMethods(DocumentRenderer, {
@@ -1936,12 +1939,19 @@
         zoom < PREVIEW_CACHE_ZOOM_THRESHOLD &&
         documentMaxSize > 0
       ) {
-        const targetScale = Math.min(1, zoom * dpr * PREVIEW_CACHE_ZOOM_OVERSAMPLE);
+        const highQualityView = isHighQualityViewEnabled();
+        const zoomOversample = highQualityView
+          ? PREVIEW_CACHE_HIGH_QUALITY_ZOOM_OVERSAMPLE
+          : PREVIEW_CACHE_ZOOM_OVERSAMPLE;
+        const lowZoomMinSize = highQualityView
+          ? PREVIEW_CACHE_HIGH_QUALITY_LOW_ZOOM_MIN_SIZE
+          : PREVIEW_CACHE_LOW_ZOOM_MIN_SIZE;
+        const targetScale = Math.min(1, zoom * dpr * zoomOversample);
         const targetSize = Math.ceil(documentMaxSize * targetScale);
         const zoomMaxSize = Math.ceil(targetSize / PREVIEW_CACHE_ZOOM_SIZE_STEP) * PREVIEW_CACHE_ZOOM_SIZE_STEP;
 
-        maxSize = Math.min(maxSize, Math.max(PREVIEW_CACHE_LOW_ZOOM_MIN_SIZE, zoomMaxSize));
-        mipmapped = false;
+        maxSize = Math.min(maxSize, Math.max(lowZoomMinSize, zoomMaxSize));
+        mipmapped = highQualityView;
       }
 
       const scale = Math.min(1, maxSize / Math.max(documentWidth, documentHeight));
@@ -2076,7 +2086,22 @@
       if (typeof gl.texStorage2D === "function" && gl.RGBA8) {
         gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, width, height);
       } else {
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        for (let level = 0; level < levels; level++) {
+          const levelWidth = Math.max(1, width >> level);
+          const levelHeight = Math.max(1, height >> level);
+
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            level,
+            gl.RGBA,
+            levelWidth,
+            levelHeight,
+            0,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            null,
+          );
+        }
       }
 
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mipmapped ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
@@ -2165,6 +2190,7 @@
       const gl = this.gl;
 
       this.clearPreviewCacheInteractionDefer?.();
+      this.deletePreviewHqMipmapResources?.();
 
       if (this.previewFramebuffer) {
         this.deleteRasterFramebuffer(this.previewFramebuffer);
@@ -2192,6 +2218,146 @@
       this.previewLastDirtyMode = "full";
       this.previewLastDirtyRect = null;
       this.previewCacheReady = false;
+    }
+,
+
+    deletePreviewHqMipmapResources() {
+      const gl = this.gl;
+
+      if (this.previewHqMipmapScratchFramebuffer) {
+        gl.deleteFramebuffer(this.previewHqMipmapScratchFramebuffer);
+        this.previewHqMipmapScratchFramebuffer = null;
+      }
+
+      if (this.previewHqMipmapScratchTexture) {
+        gl.deleteTexture(this.previewHqMipmapScratchTexture);
+        this.previewHqMipmapScratchTexture = null;
+      }
+
+      this.previewHqMipmapScratchWidth = 0;
+      this.previewHqMipmapScratchHeight = 0;
+    }
+,
+
+    ensurePreviewHqMipmapScratch(width, height) {
+      const gl = this.gl;
+      const safeWidth = Math.max(1, Math.round(Number(width) || 1));
+      const safeHeight = Math.max(1, Math.round(Number(height) || 1));
+
+      if (!this.previewHqMipmapScratchTexture) {
+        this.previewHqMipmapScratchTexture = gl.createTexture();
+      }
+
+      if (!this.previewHqMipmapScratchFramebuffer) {
+        this.previewHqMipmapScratchFramebuffer = gl.createFramebuffer();
+      }
+
+      if (!this.previewHqMipmapScratchTexture || !this.previewHqMipmapScratchFramebuffer) {
+        this.deletePreviewHqMipmapResources();
+        return false;
+      }
+
+      gl.bindTexture(gl.TEXTURE_2D, this.previewHqMipmapScratchTexture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      if (
+        this.previewHqMipmapScratchWidth !== safeWidth ||
+        this.previewHqMipmapScratchHeight !== safeHeight
+      ) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, safeWidth, safeHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        this.previewHqMipmapScratchWidth = safeWidth;
+        this.previewHqMipmapScratchHeight = safeHeight;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewHqMipmapScratchFramebuffer);
+      gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D,
+        this.previewHqMipmapScratchTexture,
+        0,
+      );
+
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        this.deletePreviewHqMipmapResources();
+        return false;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      return true;
+    }
+,
+
+    generateHighQualityPreviewMipmaps() {
+      if (
+        !isHighQualityViewEnabled() ||
+        this.previewCacheMipmapped === false ||
+        !this.previewTexture ||
+        this.previewMipLevels <= 1 ||
+        !this.quad?.vao
+      ) {
+        return false;
+      }
+
+      const gl = this.gl;
+      const programInfo = this.ensurePreviewHqMipmapProgramInfo?.();
+
+      if (!programInfo?.program) {
+        return false;
+      }
+
+      const { program, uniforms } = programInfo;
+      let sourceWidth = Math.max(1, Math.round(this.previewCacheWidth || 1));
+      let sourceHeight = Math.max(1, Math.round(this.previewCacheHeight || 1));
+
+      gl.disable(gl.BLEND);
+      gl.useProgram(program);
+      gl.uniform1i(uniforms.texture, 0);
+      gl.bindVertexArray(this.quad.vao);
+
+      for (let level = 1; level < this.previewMipLevels; level++) {
+        const targetWidth = Math.max(1, sourceWidth >> 1);
+        const targetHeight = Math.max(1, sourceHeight >> 1);
+
+        if (!this.ensurePreviewHqMipmapScratch(targetWidth, targetHeight)) {
+          gl.bindVertexArray(null);
+          gl.useProgram(null);
+          return false;
+        }
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewHqMipmapScratchFramebuffer);
+        gl.viewport(0, 0, targetWidth, targetHeight);
+        gl.uniform2f(uniforms.viewportSize, targetWidth, targetHeight);
+        gl.uniform2f(uniforms.documentSize, targetWidth, targetHeight);
+        gl.uniform2f(uniforms.cameraPosition, 0, 0);
+        gl.uniform1f(uniforms.cameraZoom, 1);
+        gl.uniform2f(uniforms.sourceSize, sourceWidth, sourceHeight);
+        gl.uniform1i(uniforms.sourceLevel, level - 1);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER || gl.FRAMEBUFFER, this.previewHqMipmapScratchFramebuffer);
+        gl.copyTexSubImage2D(gl.TEXTURE_2D, level, 0, 0, 0, 0, targetWidth, targetHeight);
+
+        sourceWidth = targetWidth;
+        sourceHeight = targetHeight;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.bindVertexArray(null);
+      gl.useProgram(null);
+
+      return true;
     }
 ,
 
@@ -4078,7 +4244,12 @@
       gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
 
       if (this.previewCacheMipmapped !== false && this.previewMipLevels > 1) {
-        gl.generateMipmap(gl.TEXTURE_2D);
+        const didGenerateHighQualityMipmaps = this.generateHighQualityPreviewMipmaps();
+
+        if (!didGenerateHighQualityMipmaps) {
+          gl.bindTexture(gl.TEXTURE_2D, this.previewTexture);
+          gl.generateMipmap(gl.TEXTURE_2D);
+        }
       }
 
       gl.bindTexture(gl.TEXTURE_2D, null);

@@ -182,11 +182,33 @@ function createMobileTextSettingsToolbar() {
   `;
 }
 
+const HIGH_QUALITY_VIEW_STORAGE_KEY = "cbo.highQualityViewEnabled";
+
+function readStoredHighQualityViewEnabled() {
+  try {
+    return window.localStorage?.getItem(HIGH_QUALITY_VIEW_STORAGE_KEY) === "true";
+  } catch (error) {
+    return false;
+  }
+}
+
+function persistHighQualityViewEnabled(isEnabled) {
+  try {
+    window.localStorage?.setItem(HIGH_QUALITY_VIEW_STORAGE_KEY, isEnabled ? "true" : "false");
+  } catch (error) {
+    // Storage can be unavailable in private or embedded contexts; the session flag still works.
+  }
+}
+
 window.CBO.initTopToolbar = function initTopToolbar() {
   const editorPage = document.querySelector(".editor-page");
   const BrushDefaults = window.CBO.BrushDefaults;
   const defaultBrushSettings = BrushDefaults.settings;
   const brushSizeMax = BrushDefaults.brushSizeMax || 500;
+
+  if (typeof window.CBO.highQualityViewEnabled !== "boolean") {
+    window.CBO.highQualityViewEnabled = readStoredHighQualityViewEnabled();
+  }
 
   if (!editorPage) {
     return;
@@ -429,6 +451,14 @@ window.CBO.initTopToolbar = function initTopToolbar() {
           <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
         </svg>
       </button>
+      <button class="tool-button high-quality-view-button" type="button" aria-label="HIGH QUALITY VIEW" aria-pressed="false" data-tooltip="HIGH QUALITY VIEW" data-high-quality-view-toggle>
+        <svg class="lucide lucide-sparkles-icon lucide-sparkles" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+          <path d="M20 2v4" />
+          <path d="M22 4h-4" />
+          <circle cx="4" cy="20" r="2" />
+        </svg>
+      </button>
       <button class="tool-button top-rasterize-text-button" type="button" aria-label="RASTERIZE" aria-pressed="false" data-tooltip="RASTERIZE TEXT" data-rasterize-text hidden>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4 4h6v6H4z" />
@@ -517,6 +547,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   }
 
   const layersButtons = document.querySelectorAll(".top-layers-button");
+  const highQualityViewButtons = document.querySelectorAll("[data-high-quality-view-toggle]");
   const rasterizeTextButtons = document.querySelectorAll("[data-rasterize-text]");
   const areaSelectionOperationToolbar = dock.querySelector("[data-area-selection-operation-toolbar]");
   const areaSelectionOperationButtons = dock.querySelectorAll("[data-area-selection-operation]");
@@ -547,6 +578,44 @@ window.CBO.initTopToolbar = function initTopToolbar() {
       toolbar.hidden = isDocumentHistoryDisabled();
     });
   }
+
+  function syncHighQualityViewButtons() {
+    const isEnabled = window.CBO.highQualityViewEnabled === true;
+
+    highQualityViewButtons.forEach((button) => {
+      button.classList.toggle("active", isEnabled);
+      button.setAttribute("aria-pressed", String(isEnabled));
+    });
+  }
+
+  function setHighQualityViewEnabled(isEnabled, options = {}) {
+    const nextEnabled = isEnabled === true;
+    const changed = window.CBO.highQualityViewEnabled !== nextEnabled;
+
+    window.CBO.highQualityViewEnabled = nextEnabled;
+    persistHighQualityViewEnabled(nextEnabled);
+    syncHighQualityViewButtons();
+
+    if (!changed && options.force !== true) {
+      return;
+    }
+
+    window.CBO.documentRenderer?.deletePreviewCache?.();
+    window.CBO.documentRenderer?.invalidatePreviewCache?.("high-quality-view-toggle", {
+      highQualityViewEnabled: nextEnabled,
+      source: options.source || "top-toolbar",
+    });
+    window.CBO.documentRenderer?.requestDraw?.();
+    window.dispatchEvent(new CustomEvent("cbo:high-quality-view-change", {
+      detail: {
+        enabled: nextEnabled,
+        source: options.source || "top-toolbar",
+      },
+    }));
+  }
+
+  window.CBO.isHighQualityViewEnabled = () => window.CBO.highQualityViewEnabled === true;
+  window.CBO.setHighQualityViewEnabled = setHighQualityViewEnabled;
 
   syncTopHistoryToolbar();
   window.addEventListener("cbo:history-disabled", syncTopHistoryToolbar);
@@ -2023,6 +2092,16 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     });
   });
 
+  highQualityViewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setHighQualityViewEnabled(window.CBO.highQualityViewEnabled !== true, {
+        source: button.classList.contains("mobile-high-quality-view-button")
+          ? "mobile-toolbar"
+          : "top-toolbar",
+      });
+    });
+  });
+
   rasterizeTextButtons.forEach((button) => {
     button.addEventListener("click", async () => {
       if (button.disabled) {
@@ -2459,6 +2538,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
   window.addEventListener("cbo:brush-settings-change", syncQuickControls);
   setTransformMode(selectedTransformMode, { emit: false });
   setAreaSelectionOperation(selectedAreaSelectionOperation, { emit: false });
+  syncHighQualityViewButtons();
   syncRasterizeTextButton();
   syncMobileTextState();
   syncQuickControls();

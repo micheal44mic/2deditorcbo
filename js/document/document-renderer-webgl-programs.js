@@ -65,6 +65,7 @@
       NOISE_FRAGMENT_SHADER_SOURCE,
       PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE,
       PERSPECTIVE_QUAD_VERTEX_SHADER_SOURCE,
+      PREVIEW_HQ_MIPMAP_FRAGMENT_SHADER_SOURCE,
       PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD,
       PREVIEW_CACHE_MAX_SIZE,
       PREVIEW_CACHE_SCOPE_DEFAULT,
@@ -212,6 +213,46 @@
           viewportSize: gl.getUniformLocation(program, "uViewportSize"),
           opacity: gl.getUniformLocation(program, "u_opacity"),
           gridMode: gl.getUniformLocation(program, "u_gridMode"),
+        },
+      };
+    }
+,
+
+    createPreviewHqMipmapProgramInfo() {
+      const gl = this.gl;
+      const vertexShader = this.compileShader(gl.VERTEX_SHADER, ARTBOARD_VERTEX_SHADER_SOURCE);
+      const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, PREVIEW_HQ_MIPMAP_FRAGMENT_SHADER_SOURCE);
+      const program = gl.createProgram();
+
+      if (!program) {
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        throw new Error("Impossibile creare il programma preview mipmap HQ WebGL2.");
+      }
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || "Errore sconosciuto nel link del programma preview mipmap HQ.";
+
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      return {
+        program,
+        uniforms: {
+          cameraPosition: gl.getUniformLocation(program, "uCameraPosition"),
+          cameraZoom: gl.getUniformLocation(program, "uCameraZoom"),
+          documentSize: gl.getUniformLocation(program, "uDocumentSize"),
+          sourceLevel: gl.getUniformLocation(program, "u_sourceLevel"),
+          sourceSize: gl.getUniformLocation(program, "u_sourceSize"),
+          texture: gl.getUniformLocation(program, "u_texture"),
+          viewportSize: gl.getUniformLocation(program, "uViewportSize"),
         },
       };
     }
@@ -794,6 +835,15 @@
       }
 
       return this.puppetProgramInfo;
+    }
+,
+
+    ensurePreviewHqMipmapProgramInfo() {
+      if (!this.previewHqMipmapProgramInfo) {
+        this.previewHqMipmapProgramInfo = this.createPreviewHqMipmapProgramInfo();
+      }
+
+      return this.previewHqMipmapProgramInfo;
     }
 ,
 

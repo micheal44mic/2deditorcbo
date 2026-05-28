@@ -3166,6 +3166,16 @@ test("renderer caps DPR and cache size for mobile-like and Android devices", () 
   assert.equal(androidRenderer.getPreviewCacheMaxSize(), 1024);
   assert.equal(androidRenderer.getPreviewCacheOverscanCssPx(), 64);
   assert.equal(androidRenderer.getViewportRenderOverscanCssPx(), 64);
+
+  desktopLoad.window.CBO.highQualityViewEnabled = true;
+  mobileLoad.window.CBO.highQualityViewEnabled = true;
+  androidLoad.window.CBO.highQualityViewEnabled = true;
+
+  assert.equal(desktopLoad.DocumentRenderer.getPerformanceDpr(), 3);
+  assert.equal(mobileLoad.DocumentRenderer.getPerformanceDpr(), 2);
+  assert.equal(androidLoad.DocumentRenderer.getPerformanceDpr(), 1.5);
+  assert.equal(mobileRenderer.getPreviewCacheMaxSize(), 3072);
+  assert.equal(androidRenderer.getPreviewCacheMaxSize(), 2048);
 });
 
 test("document renderer exposes mipmapped preview cache helpers", () => {
@@ -3180,15 +3190,23 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /const MOBILE_RENDER_DPR_CAP = 1\.5/);
   assert.match(source, /const ANDROID_RENDER_DPR_CAP = 1\.25/);
   assert.match(source, /const LOW_MEMORY_ANDROID_RENDER_DPR_CAP = 1\.15/);
+  assert.match(source, /const HIGH_QUALITY_DESKTOP_RENDER_DPR_CAP = 3/);
+  assert.match(source, /const HIGH_QUALITY_MOBILE_RENDER_DPR_CAP = 2/);
+  assert.match(source, /const HIGH_QUALITY_ANDROID_RENDER_DPR_CAP = 1\.5/);
   assert.match(source, /const ARTBOARD_RESIDENCY_IDLE_DELAY_MS = 7000/);
   assert.match(source, /const ARTBOARD_RESIDENCY_WARM_HOLD_MS = 7000/);
   assert.match(source, /const ANDROID_PREVIEW_CACHE_MAX_SIZE = 1024/);
+  assert.match(source, /const HIGH_QUALITY_PREVIEW_CACHE_MAX_SIZE = 4096/);
+  assert.match(source, /const HIGH_QUALITY_MOBILE_PREVIEW_CACHE_MAX_SIZE = 3072/);
+  assert.match(source, /const HIGH_QUALITY_ANDROID_PREVIEW_CACHE_MAX_SIZE = 2048/);
   assert.match(source, /const ANDROID_PREVIEW_CACHE_OVERSCAN_CSS_PX = 64/);
   assert.match(source, /const ANDROID_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 64/);
+  assert.match(source, /function isHighQualityViewEnabled\(\)/);
+  assert.match(source, /function getHighQualityPreviewCacheMaxSize\(\)/);
   assert.match(source, /function isAndroidZoomOutPreviewCacheAllowed\(options = \{\}\)/);
   assert.match(source, /function isAndroidPreviewCacheDisabled\(options = \{\}\)/);
   assert.match(source, /function isAndroidDirtyRegionsDisabled\(\)/);
-  assert.match(source, /antialias: false/);
+  assert.match(source, /antialias: true/);
   assert.match(source, /static getPerformanceDpr\(options = \{\}\)/);
   assert.match(source, /static isAndroidLikeEnvironment\(\)/);
   assert.match(source, /createPreviewCache\(options = \{\}\)/);
@@ -3213,7 +3231,17 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
   assert.match(source, /previewCacheMipmapped/);
   assert.match(source, /mipmapped \? gl\.LINEAR_MIPMAP_LINEAR : gl\.LINEAR/);
+  assert.match(source, /mipmapped = highQualityView/);
   assert.match(source, /this\.previewCacheMipmapped !== false && this\.previewMipLevels > 1/);
+  assert.match(source, /const PREVIEW_HQ_MIPMAP_FRAGMENT_SHADER_SOURCE/);
+  assert.match(source, /texelFetch\(u_texture, texel, u_sourceLevel\)/);
+  assert.match(source, /srgbToLinear\(straight\) \* alpha/);
+  assert.match(source, /linearToSrgb\(straight\) \* alpha/);
+  assert.match(source, /createPreviewHqMipmapProgramInfo\(\)/);
+  assert.match(source, /ensurePreviewHqMipmapProgramInfo\(\)/);
+  assert.match(source, /generateHighQualityPreviewMipmaps\(\)/);
+  assert.match(source, /copyTexSubImage2D\(gl\.TEXTURE_2D, level/);
+  assert.match(source, /const didGenerateHighQualityMipmaps = this\.generateHighQualityPreviewMipmaps\(\)/);
   assert.match(source, /const PREVIEW_CACHE_ZOOM_THRESHOLD = 1\.0/);
   assert.match(source, /const PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD = 10\.01/);
   assert.match(source, /if \(safeZoom < 10\.01\) \{\s*discard;/);
@@ -3254,6 +3282,26 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /!this\.previewCacheDirty \|\| canUseStalePreviewCacheForInteraction/);
   assert.match(source, /!hasActiveEraserStroke/);
   assert.match(source, /!rasterTransformPreview/);
+});
+
+test("document renderer requests native WebGL antialiasing", () => {
+  const { context, DocumentRenderer } = loadDocumentRenderer();
+  const canvas = new context.HTMLCanvasElement();
+  const calls = [];
+  const contextValue = {};
+
+  canvas.getContext = (type, attributes) => {
+    calls.push({ attributes, type });
+
+    return contextValue;
+  };
+
+  assert.equal(DocumentRenderer.createContext(canvas), contextValue);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].type, "webgl2");
+  assert.equal(calls[0].attributes.antialias, true);
+  assert.equal(calls[0].attributes.alpha, true);
+  assert.equal(calls[0].attributes.premultipliedAlpha, true);
 });
 
 test("document raster targets sample linearly at zoom intermediates", () => {
@@ -3742,6 +3790,50 @@ test("preview cache dimensions shrink overkill caches at deep zoom out", () => {
   assert.equal(dimensions.height, 896);
   assert.equal(dimensions.scale, 0.224);
   assert.equal(dimensions.mipmapped, false);
+});
+
+test("high quality view keeps more preview detail at deep zoom out", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer({ devicePixelRatio: 4 });
+  const renderer = Object.create(DocumentRenderer.prototype);
+
+  renderer.options = {
+    previewCacheMaxSize: 2048,
+    previewCacheMaxSizeExplicit: false,
+  };
+  renderer.width = 4000;
+  renderer.height = 4000;
+
+  let dimensions = renderer.getPreviewCacheDimensions({
+    camera: { x: 0, y: 0, zoom: 0.148 },
+    dpr: 1,
+    viewportHeight: 945,
+    viewportWidth: 1352,
+  });
+
+  assert.equal(DocumentRenderer.getPerformanceDpr(), 2);
+  assert.equal(renderer.getPreviewCacheMaxSize(), 2048);
+  assert.equal(dimensions.width, 640);
+  assert.equal(dimensions.height, 640);
+  assert.equal(dimensions.mipmapped, false);
+
+  window.CBO.highQualityViewEnabled = true;
+  dimensions = renderer.getPreviewCacheDimensions({
+    camera: { x: 0, y: 0, zoom: 0.148 },
+    dpr: 1,
+    viewportHeight: 945,
+    viewportWidth: 1352,
+  });
+
+  assert.equal(DocumentRenderer.getPerformanceDpr(), 3);
+  assert.equal(DocumentRenderer.getPerformanceDpr({ maxRenderDpr: 1.75 }), 1.75);
+  assert.equal(renderer.getPreviewCacheMaxSize(), 4096);
+  assert.equal(dimensions.width, 1536);
+  assert.equal(dimensions.height, 1536);
+  assert.equal(dimensions.mipmapped, true);
+
+  renderer.options.previewCacheMaxSizeExplicit = true;
+
+  assert.equal(renderer.getPreviewCacheMaxSize(), 2048);
 });
 
 test("preview cache spans artboard bounds and offsets dirty scissors", () => {

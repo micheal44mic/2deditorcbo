@@ -1,7 +1,7 @@
 (function registerDocumentRendererShaders(namespace) {
   const WEBGL2_CONTEXT_ATTRIBUTES = Object.freeze({
     alpha: true,
-    antialias: false,
+    antialias: true,
     premultipliedAlpha: true,
   });
 
@@ -1346,6 +1346,67 @@ void main() {
 }
 `;
 
+  const PREVIEW_HQ_MIPMAP_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_texture;
+uniform vec2 u_sourceSize;
+uniform int u_sourceLevel;
+
+out vec4 outColor;
+
+vec3 srgbToLinear(vec3 color) {
+  bvec3 cutoff = lessThanEqual(color, vec3(0.04045));
+  vec3 low = color / 12.92;
+  vec3 high = pow(max((color + 0.055) / 1.055, vec3(0.0)), vec3(2.4));
+
+  return mix(high, low, cutoff);
+}
+
+vec3 linearToSrgb(vec3 color) {
+  color = max(color, vec3(0.0));
+
+  bvec3 cutoff = lessThanEqual(color, vec3(0.0031308));
+  vec3 low = color * 12.92;
+  vec3 high = 1.055 * pow(color, vec3(1.0 / 2.4)) - 0.055;
+
+  return clamp(mix(high, low, cutoff), vec3(0.0), vec3(1.0));
+}
+
+vec4 readLinearPremul(vec2 sourcePixel) {
+  ivec2 sourceSize = max(ivec2(u_sourceSize), ivec2(1));
+  ivec2 texel = clamp(ivec2(floor(sourcePixel)), ivec2(0), sourceSize - ivec2(1));
+  vec4 color = texelFetch(u_texture, texel, u_sourceLevel);
+  float alpha = clamp(color.a, 0.0, 1.0);
+  vec3 straight = alpha > 0.00001 ? clamp(color.rgb / alpha, vec3(0.0), vec3(1.0)) : vec3(0.0);
+
+  return vec4(srgbToLinear(straight) * alpha, alpha);
+}
+
+vec4 writePremulSrgb(vec4 color) {
+  float alpha = clamp(color.a, 0.0, 1.0);
+  vec3 straight = alpha > 0.00001 ? color.rgb / alpha : vec3(0.0);
+
+  return vec4(linearToSrgb(straight) * alpha, alpha);
+}
+
+void main() {
+  vec2 sourceCenter = gl_FragCoord.xy * 2.0;
+  float offsets[4] = float[](-1.5, -0.5, 0.5, 1.5);
+  float weights[4] = float[](0.125, 0.375, 0.375, 0.125);
+  vec4 sum = vec4(0.0);
+
+  for (int y = 0; y < 4; y++) {
+    for (int x = 0; x < 4; x++) {
+      vec2 samplePixel = sourceCenter + vec2(offsets[x], offsets[y]);
+      sum += readLinearPremul(samplePixel) * weights[x] * weights[y];
+    }
+  }
+
+  outColor = writePremulSrgb(sum);
+}
+`;
+
 
   namespace.DocumentRendererShaders = Object.freeze({
     WEBGL2_CONTEXT_ATTRIBUTES,
@@ -1357,6 +1418,7 @@ void main() {
     TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE,
     PERSPECTIVE_QUAD_VERTEX_SHADER_SOURCE,
     PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE,
+    PREVIEW_HQ_MIPMAP_FRAGMENT_SHADER_SOURCE,
     GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE,
     GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE,
     MOTION_BLUR_VERTEX_SHADER_SOURCE,

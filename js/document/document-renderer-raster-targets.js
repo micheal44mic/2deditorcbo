@@ -104,6 +104,7 @@
       getDefaultPreviewCacheMaxSize,
       getDefaultPreviewCacheOverscanCssPx,
       getDefaultViewportRenderOverscanCssPx,
+      getHighQualityPreviewCacheMaxSize,
       getNavigatorDeviceMemory,
       hasFieldBlurAmount,
       hasMeaningfulCurvesEffect,
@@ -113,6 +114,7 @@
       isAndroidPerformanceMode,
       isAndroidPreviewCacheDisabled,
       isAndroidZoomOutPreviewCacheAllowed,
+      isHighQualityViewEnabled,
       isMobileLikeEnvironment,
       isPixelPerfectRenderingEnabled,
       normalizeAngle,
@@ -1238,6 +1240,7 @@
     getPreviewCacheMaxSize(options = {}) {
       const fallback = getDefaultPreviewCacheMaxSize();
       let requested = Number(options.previewCacheMaxSize);
+      const hasOptionRequest = Number.isFinite(requested) && requested > 0;
 
       if (
         (!Number.isFinite(requested) || requested <= 0) &&
@@ -1250,7 +1253,13 @@
         requested = Number(this.options?.previewCacheMaxSize);
       }
 
-      return Math.max(1, Math.floor(Number.isFinite(requested) && requested > 0 ? requested : fallback));
+      const hasExplicitRendererMaxSize = this.options?.previewCacheMaxSizeExplicit === true;
+      const effectiveMaxSize = Number.isFinite(requested) && requested > 0 ? requested : fallback;
+      const highQualityMaxSize = isHighQualityViewEnabled() && !hasOptionRequest && !hasExplicitRendererMaxSize
+        ? Math.max(effectiveMaxSize, getHighQualityPreviewCacheMaxSize())
+        : effectiveMaxSize;
+
+      return Math.max(1, Math.floor(highQualityMaxSize));
     }
 ,
 

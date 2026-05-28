@@ -179,6 +179,7 @@
 .mobile-layers-button,
 .mobile-rasterize-text-button,
 .mobile-adjustment-layer-button,
+.mobile-high-quality-view-button,
 .mobile-layer-style-button {
   display: none;
 }
@@ -250,6 +251,7 @@
   }
 
   .history-toolbar .mobile-layers-button,
+  .history-toolbar .mobile-high-quality-view-button,
   .history-toolbar .mobile-rasterize-text-button:not([hidden]) {
     display: inline-flex;
   }

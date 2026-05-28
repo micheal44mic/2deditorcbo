@@ -37,6 +37,9 @@
   const LOW_MEMORY_MOBILE_RENDER_DPR_CAP = 1.25;
   const ANDROID_RENDER_DPR_CAP = 1.25;
   const LOW_MEMORY_ANDROID_RENDER_DPR_CAP = 1.15;
+  const HIGH_QUALITY_DESKTOP_RENDER_DPR_CAP = 3;
+  const HIGH_QUALITY_MOBILE_RENDER_DPR_CAP = 2;
+  const HIGH_QUALITY_ANDROID_RENDER_DPR_CAP = 1.5;
   const MOBILE_PREVIEW_CACHE_MAX_SIZE = 1536;
   const MOBILE_PREVIEW_CACHE_OVERSCAN_CSS_PX = 128;
   const MOBILE_VIEWPORT_RENDER_OVERSCAN_CSS_PX = 128;
@@ -58,6 +61,7 @@
     TEXTURED_QUAD_EDGE_AA_FRAGMENT_SHADER_SOURCE,
     PERSPECTIVE_QUAD_VERTEX_SHADER_SOURCE,
     PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE,
+    PREVIEW_HQ_MIPMAP_FRAGMENT_SHADER_SOURCE,
     GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE,
     GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE,
     MOTION_BLUR_VERTEX_SHADER_SOURCE,
@@ -95,6 +99,9 @@
   const PREVIEW_CACHE_ZOOM_THRESHOLD = 1.0;
   const PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD = 10.01;
   const PREVIEW_CACHE_MAX_SIZE = 2048;
+  const HIGH_QUALITY_PREVIEW_CACHE_MAX_SIZE = 4096;
+  const HIGH_QUALITY_MOBILE_PREVIEW_CACHE_MAX_SIZE = 3072;
+  const HIGH_QUALITY_ANDROID_PREVIEW_CACHE_MAX_SIZE = 2048;
   const PREVIEW_CACHE_SCOPE_DEFAULT = "visible-artboards";
   const PREVIEW_CACHE_VIEWPORT_OVERSCAN_CSS_PX = 256;
 
@@ -180,6 +187,22 @@
     return Number.isFinite(memory) && memory > 0 ? memory : 0;
   }
 
+  function isHighQualityViewEnabled() {
+    if (namespace.highQualityViewEnabled === true) {
+      return true;
+    }
+
+    if (typeof namespace.isHighQualityViewEnabled !== "function") {
+      return false;
+    }
+
+    try {
+      return namespace.isHighQualityViewEnabled() === true;
+    } catch (error) {
+      return false;
+    }
+  }
+
   function getCanvasPerformanceDpr(options = {}) {
     const rawDpr = Number.isFinite(Number(options.dpr))
       ? Number(options.dpr)
@@ -197,18 +220,31 @@
     const memory = Number.isFinite(Number(options.deviceMemory))
       ? Number(options.deviceMemory)
       : getNavigatorDeviceMemory();
+    const highQualityView = isHighQualityViewEnabled();
 
-    const defaultCap = isAndroid
+    const normalDefaultCap = isAndroid
       ? (memory > 0 && memory <= 4 ? LOW_MEMORY_ANDROID_RENDER_DPR_CAP : ANDROID_RENDER_DPR_CAP)
       : isMobile
         ? (memory > 0 && memory <= 4 ? LOW_MEMORY_MOBILE_RENDER_DPR_CAP : MOBILE_RENDER_DPR_CAP)
         : DESKTOP_RENDER_DPR_CAP;
+    const highQualityDefaultCap = isAndroid
+      ? HIGH_QUALITY_ANDROID_RENDER_DPR_CAP
+      : isMobile
+        ? HIGH_QUALITY_MOBILE_RENDER_DPR_CAP
+        : HIGH_QUALITY_DESKTOP_RENDER_DPR_CAP;
+    const defaultCap = highQualityView ? highQualityDefaultCap : normalDefaultCap;
 
-    const namespaceCap = isAndroid
+    const normalNamespaceCap = isAndroid
       ? Number(namespace.androidRenderDprCap ?? namespace.mobileRenderDprCap)
       : isMobile
         ? Number(namespace.mobileRenderDprCap ?? namespace.maxRenderDpr)
         : Number(namespace.desktopRenderDprCap ?? namespace.maxRenderDpr);
+    const highQualityNamespaceCap = isAndroid
+      ? Number(namespace.highQualityAndroidRenderDprCap ?? namespace.highQualityMobileRenderDprCap)
+      : isMobile
+        ? Number(namespace.highQualityMobileRenderDprCap ?? namespace.highQualityRenderDprCap)
+        : Number(namespace.highQualityDesktopRenderDprCap ?? namespace.highQualityRenderDprCap);
+    const namespaceCap = highQualityView ? highQualityNamespaceCap : normalNamespaceCap;
 
     const optionCap = Number(options.maxRenderDpr);
 
@@ -221,7 +257,21 @@
     return Math.max(1, Math.min(Math.max(1, rawDpr), cap));
   }
 
+  function getHighQualityPreviewCacheMaxSize() {
+    if (isAndroidLikeEnvironment()) {
+      return HIGH_QUALITY_ANDROID_PREVIEW_CACHE_MAX_SIZE;
+    }
+
+    return isMobileLikeEnvironment()
+      ? HIGH_QUALITY_MOBILE_PREVIEW_CACHE_MAX_SIZE
+      : HIGH_QUALITY_PREVIEW_CACHE_MAX_SIZE;
+  }
+
   function getDefaultPreviewCacheMaxSize() {
+    if (isHighQualityViewEnabled()) {
+      return getHighQualityPreviewCacheMaxSize();
+    }
+
     if (isAndroidLikeEnvironment()) {
       return ANDROID_PREVIEW_CACHE_MAX_SIZE;
     }
@@ -479,6 +529,7 @@
         previewCacheMaxSize: Number.isFinite(options.previewCacheMaxSize) && options.previewCacheMaxSize > 0
           ? Math.floor(options.previewCacheMaxSize)
           : getDefaultPreviewCacheMaxSize(),
+        previewCacheMaxSizeExplicit: Number.isFinite(options.previewCacheMaxSize) && options.previewCacheMaxSize > 0,
         previewCacheOverscanCssPx: Number.isFinite(options.previewCacheOverscanCssPx) && options.previewCacheOverscanCssPx >= 0
           ? Math.floor(options.previewCacheOverscanCssPx)
           : getDefaultPreviewCacheOverscanCssPx(),
@@ -539,6 +590,11 @@
       this.texturedQuadProgramInfo = null;
       this.puppetProgramInfo = null;
       this.perspectiveQuadProgramInfo = null;
+      this.previewHqMipmapProgramInfo = null;
+      this.previewHqMipmapScratchTexture = null;
+      this.previewHqMipmapScratchFramebuffer = null;
+      this.previewHqMipmapScratchWidth = 0;
+      this.previewHqMipmapScratchHeight = 0;
       this.gaussianBlurProgramInfo = null;
       this.motionBlurProgramInfo = null;
       this.fieldBlurProgramInfo = null;
@@ -1543,6 +1599,7 @@
       this.deleteActiveStrokeSelectionClipTexture();
       this.deleteLayerCompositeResources();
       this.deletePreviewCache();
+      this.deletePreviewHqMipmapResources?.();
       this.deleteAllArtboardFlatPreviews("dispose");
 
       if (this.quad) {
@@ -1577,6 +1634,11 @@
       if (this.perspectiveQuadProgramInfo?.program) {
         gl.deleteProgram(this.perspectiveQuadProgramInfo.program);
         this.perspectiveQuadProgramInfo = null;
+      }
+
+      if (this.previewHqMipmapProgramInfo?.program) {
+        gl.deleteProgram(this.previewHqMipmapProgramInfo.program);
+        this.previewHqMipmapProgramInfo = null;
       }
 
       for (const layerId of Array.from(this.puppetMeshResourcesByLayerId.keys())) {
@@ -1621,6 +1683,12 @@
     GAUSSIAN_BLUR_FRAGMENT_SHADER_SOURCE,
     GAUSSIAN_BLUR_VERTEX_SHADER_SOURCE,
     GRAIN_FRAGMENT_SHADER_SOURCE,
+    HIGH_QUALITY_ANDROID_PREVIEW_CACHE_MAX_SIZE,
+    HIGH_QUALITY_ANDROID_RENDER_DPR_CAP,
+    HIGH_QUALITY_DESKTOP_RENDER_DPR_CAP,
+    HIGH_QUALITY_MOBILE_PREVIEW_CACHE_MAX_SIZE,
+    HIGH_QUALITY_MOBILE_RENDER_DPR_CAP,
+    HIGH_QUALITY_PREVIEW_CACHE_MAX_SIZE,
     LAYER_STROKE_FRAGMENT_SHADER_SOURCE,
     LAYER_COMPOSITE_FRAGMENT_SHADER_SOURCE,
     LAYER_COMPOSITE_VERTEX_SHADER_SOURCE,
@@ -1646,6 +1714,7 @@
     NOISE_FRAGMENT_SHADER_SOURCE,
     PERSPECTIVE_QUAD_FRAGMENT_SHADER_SOURCE,
     PERSPECTIVE_QUAD_VERTEX_SHADER_SOURCE,
+    PREVIEW_HQ_MIPMAP_FRAGMENT_SHADER_SOURCE,
     PIXEL_PREVIEW_NEAREST_ZOOM_THRESHOLD,
     PREVIEW_CACHE_MAX_SIZE,
     PREVIEW_CACHE_SCOPE_DEFAULT,
@@ -1688,6 +1757,7 @@
     getDefaultPreviewCacheMaxSize,
     getDefaultPreviewCacheOverscanCssPx,
     getDefaultViewportRenderOverscanCssPx,
+    getHighQualityPreviewCacheMaxSize,
     getNavigatorDeviceMemory,
     hasFieldBlurAmount,
     hasMeaningfulCurvesEffect,
@@ -1697,6 +1767,7 @@
     isAndroidPerformanceMode,
     isAndroidPreviewCacheDisabled,
     isAndroidZoomOutPreviewCacheAllowed,
+    isHighQualityViewEnabled,
     isMobileLikeEnvironment,
     isPixelPerfectRenderingEnabled,
     normalizeAngle,
