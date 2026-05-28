@@ -12,9 +12,11 @@ function readRepoFile(...parts) {
 test("editor starts from a clean two-panel document shell", () => {
   const editorCanvasSource = readRepoFile("js", "editor-canvas.js");
   const startScreenSource = readRepoFile("js", "document-start-screen.js");
+  const themeSource = readRepoFile("js", "theme.js");
   const appSource = readRepoFile("js", "app.js");
   const cssSource = readRepoFile("css", "document-start-screen.css");
   const layoutSource = readRepoFile("css", "layout.css");
+  const themeCssSource = readRepoFile("css", "theme.css");
   const indexSource = readRepoFile("index.html");
 
   assert.match(editorCanvasSource, /const EDITOR_DOCUMENT_PRESETS = Object\.freeze\(\[/);
@@ -69,6 +71,12 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(startScreenSource, /aiArchiveLabel\.textContent = "AI Archive"/);
   assert.match(startScreenSource, /lucide-package-open/);
   assert.match(startScreenSource, /<path d="M12 22v-9" \/>/);
+  assert.match(startScreenSource, /themeToggleButton = createDocumentThemeToggleButton\(\)/);
+  assert.match(startScreenSource, /button\.dataset\.documentThemeToggle = ""/);
+  assert.match(startScreenSource, /button\.setAttribute\("role", "switch"\)/);
+  assert.match(startScreenSource, /label\.textContent = "Light Mode"/);
+  assert.match(startScreenSource, /namespace\.setEditorTheme\(nextTheme, \{ source: "document-start-theme-toggle" \}\)/);
+  assert.match(startScreenSource, /window\.addEventListener\("cbo:theme-change"/);
   assert.match(startScreenSource, /startSidebar\.newProjectButton\.addEventListener\("click"/);
   assert.match(startScreenSource, /document-start-new-project/);
   assert.match(startScreenSource, /document-start-all-projects/);
@@ -113,6 +121,21 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(startScreenSource, /clearCurrentDocument/);
 
   assert.match(appSource, /window\.CBO\.initEditorDocumentStart\(\);/);
+  assert.match(themeSource, /const THEME_STORAGE_KEY = "cbo-editor-theme"/);
+  assert.match(themeSource, /root\.dataset\.cboTheme = theme/);
+  assert.match(themeSource, /page\.classList\.toggle\("light-stage-background", isLight\)/);
+  assert.match(themeSource, /namespace\.setEditorTheme = setEditorTheme/);
+  assert.match(themeSource, /namespace\.toggleEditorTheme = toggleEditorTheme/);
+  assert.match(themeSource, /window\.localStorage\?\.setItem\(THEME_STORAGE_KEY, theme\)/);
+  assert.ok(
+    indexSource.indexOf("./js/theme.js") > -1 &&
+      indexSource.indexOf("./js/theme.js") < indexSource.indexOf("./css/base.css"),
+  );
+  assert.ok(
+    indexSource.indexOf("./css/tooltips.css") > -1 &&
+      indexSource.indexOf("./css/theme.css") > -1 &&
+      indexSource.indexOf("./css/tooltips.css") < indexSource.indexOf("./css/theme.css"),
+  );
   assert.ok(
     indexSource.indexOf("./js/document/document-autosave.js") > -1 &&
       indexSource.indexOf("./js/document/document-save-system.js") > -1 &&
@@ -161,6 +184,12 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(cssSource, /\.document-start-all-projects svg[\s\S]*width: 20px/);
   assert.match(cssSource, /\.document-start-template svg[\s\S]*width: 20px/);
   assert.match(cssSource, /\.document-start-ai-archive svg[\s\S]*width: 20px/);
+  assert.match(cssSource, /\.document-start-theme-toggle/);
+  assert.match(cssSource, /\.document-start-theme-toggle\.is-light \.document-start-theme-knob[\s\S]*transform: translate\(16px, -50%\)/);
+  assert.match(themeCssSource, /:root\[data-cbo-theme="light"\]/);
+  assert.match(themeCssSource, /\.document-start-screen[\s\S]*background: #dfe5ed/);
+  assert.match(themeCssSource, /\.document-start-sidebar,[\s\S]*\.document-start-main[\s\S]*background: var\(--cbo-theme-surface\)/);
+  assert.match(themeCssSource, /\.side-panel,[\s\S]*\.bottom-toolbar,[\s\S]*\.tool-popover/);
   assert.match(cssSource, /\.editor-page\.document-start-active[\s\S]*--left-panel-width: 0px;[\s\S]*--right-panel-width: 0px/);
   assert.match(cssSource, /\.editor-page\.document-start-active > :not\(\.editor-stage\)[\s\S]*display: none !important/);
   assert.match(cssSource, /\.editor-page\.document-start-active \.editor-stage[\s\S]*margin: 0 !important/);

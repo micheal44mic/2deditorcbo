@@ -220,6 +220,7 @@
     const templateLabel = document.createElement("span");
     const aiArchiveButton = document.createElement("button");
     const aiArchiveLabel = document.createElement("span");
+    const themeToggleButton = createDocumentThemeToggleButton();
 
     brand.className = "document-start-brand";
     brand.textContent = "M1M4.COM";
@@ -297,7 +298,76 @@
       brand,
       newProjectButton,
       templateButton,
+      themeToggleButton,
     };
+  }
+
+  function getCurrentEditorTheme() {
+    return namespace.getEditorTheme?.() ||
+      document.documentElement.dataset.cboTheme ||
+      "dark";
+  }
+
+  function syncDocumentThemeToggle(button) {
+    if (!button) {
+      return;
+    }
+
+    const isLight = getCurrentEditorTheme() === "light";
+    const state = button.querySelector("[data-document-theme-state]");
+
+    button.classList.toggle("is-light", isLight);
+    button.setAttribute("aria-checked", isLight ? "true" : "false");
+    button.setAttribute("aria-label", isLight ? "Light Mode on" : "Light Mode off");
+
+    if (state) {
+      state.textContent = isLight ? "ON" : "OFF";
+    }
+  }
+
+  function createDocumentThemeToggleButton() {
+    const button = document.createElement("button");
+    const icon = document.createElement("span");
+    const label = document.createElement("span");
+    const state = document.createElement("span");
+    const switchTrack = document.createElement("span");
+    const knob = document.createElement("span");
+
+    button.className = "document-start-theme-toggle";
+    button.type = "button";
+    button.dataset.documentThemeToggle = "";
+    button.setAttribute("role", "switch");
+
+    icon.className = "document-start-theme-icon";
+    icon.innerHTML = [
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">',
+      '  <circle cx="12" cy="12" r="4" />',
+      '  <path d="M12 2v2" />',
+      '  <path d="M12 20v2" />',
+      '  <path d="m4.93 4.93 1.41 1.41" />',
+      '  <path d="m17.66 17.66 1.41 1.41" />',
+      '  <path d="M2 12h2" />',
+      '  <path d="M20 12h2" />',
+      '  <path d="m6.34 17.66-1.41 1.41" />',
+      '  <path d="m19.07 4.93-1.41 1.41" />',
+      '</svg>',
+    ].join("");
+
+    label.className = "document-start-menu-item-label";
+    label.textContent = "Light Mode";
+
+    state.className = "document-start-theme-state";
+    state.dataset.documentThemeState = "";
+
+    switchTrack.className = "document-start-theme-switch";
+    switchTrack.setAttribute("aria-hidden", "true");
+
+    knob.className = "document-start-theme-knob";
+    switchTrack.append(knob);
+    button.append(icon, label, state, switchTrack);
+    syncDocumentThemeToggle(button);
+
+    return button;
   }
 
   function createDocumentStartOverview() {
@@ -608,6 +678,7 @@
       startSidebar.allProjectsButton,
       startSidebar.templateButton,
       startSidebar.aiArchiveButton,
+      startSidebar.themeToggleButton,
     );
 
     contentPanel.append(contentHeader, contentBody);
@@ -629,6 +700,22 @@
 
     startProjects.createCard.addEventListener("click", () => {
       startDocumentFromPreset(getDocumentPreset(getDefaultDocumentPresetId()), "document-start-project-card-create");
+    });
+
+    startSidebar.themeToggleButton.addEventListener("click", () => {
+      const nextTheme = getCurrentEditorTheme() === "light" ? "dark" : "light";
+
+      if (typeof namespace.setEditorTheme === "function") {
+        namespace.setEditorTheme(nextTheme, { source: "document-start-theme-toggle" });
+      } else {
+        document.documentElement.dataset.cboTheme = nextTheme;
+      }
+
+      syncDocumentThemeToggle(startSidebar.themeToggleButton);
+    });
+
+    window.addEventListener("cbo:theme-change", () => {
+      syncDocumentThemeToggle(startSidebar.themeToggleButton);
     });
 
     presetGrid.addEventListener("click", (event) => {
