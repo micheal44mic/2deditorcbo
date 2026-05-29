@@ -694,9 +694,17 @@ window.CBO.initDrawer = function initDrawer() {
       : 1;
   }
 
+  function getUploadColumnStackHeight(column) {
+    const stackHeight = Number(column?.dataset?.stackHeight);
+
+    return Number.isFinite(stackHeight) ? stackHeight : 0;
+  }
+
   function getShortestUploadColumn(columns) {
     return columns.reduce((shortestColumn, column) =>
-      column.dataset.stackHeight < shortestColumn.dataset.stackHeight ? column : shortestColumn,
+      getUploadColumnStackHeight(column) < getUploadColumnStackHeight(shortestColumn)
+        ? column
+        : shortestColumn,
     );
   }
 

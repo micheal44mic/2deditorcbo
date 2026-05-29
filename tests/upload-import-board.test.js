@@ -9,6 +9,55 @@ function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
+function extractFunctionSource(source, functionName) {
+  const start = source.indexOf(`function ${functionName}(`);
+
+  assert.notEqual(start, -1, `${functionName} should exist`);
+
+  const bodyStart = source.indexOf("{", start);
+  let depth = 0;
+
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+    }
+
+    if (depth === 0) {
+      return source.slice(start, index + 1);
+    }
+  }
+
+  assert.fail(`Unable to extract ${functionName}`);
+}
+
+test("upload masonry column heights are compared numerically", () => {
+  const drawerSource = readRepoFile("js", "drawer.js");
+  const getUploadColumnStackHeightSource = extractFunctionSource(
+    drawerSource,
+    "getUploadColumnStackHeight",
+  );
+  const getShortestUploadColumnSource = extractFunctionSource(
+    drawerSource,
+    "getShortestUploadColumn",
+  );
+  const getShortestUploadColumn = new Function(`
+    ${getUploadColumnStackHeightSource}
+    ${getShortestUploadColumnSource}
+    return getShortestUploadColumn;
+  `)();
+  const tallerLeftColumn = { dataset: { stackHeight: "10.25" } };
+  const shorterRightColumn = { dataset: { stackHeight: "9.75" } };
+
+  assert.equal(
+    getShortestUploadColumn([tallerLeftColumn, shorterRightColumn]),
+    shorterRightColumn,
+  );
+});
+
 test("external media import saves uploads and creates AI image or video boards", () => {
   const drawerSource = readRepoFile("js", "drawer.js");
   const connectionsSource = readRepoFile("js", "artboard-connections.js");
@@ -54,6 +103,6 @@ test("external media import saves uploads and creates AI image or video boards",
   assert.match(drawerCssSource, /body\.cbo-upload-drop-active::after/);
   assert.match(drawerCssSource, /content: "DROP MEDIA"/);
   assert.match(indexSource, /aria-label="Upload media"/);
-  assert.match(indexSource, /drawer\.js\?v=upload-close-sidebar-v1/);
+  assert.match(indexSource, /drawer\.js\?v=upload-masonry-stack-v1/);
   assert.match(indexSource, /connection-actions\.js\?v=upload-media-board-v1/);
 });
