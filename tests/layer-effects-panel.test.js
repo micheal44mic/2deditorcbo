@@ -45,7 +45,7 @@ test("layer effects panel is loaded after the vertical toolbar", () => {
   assert.match(indexSource, /<link rel="stylesheet" href="\.\/css\/layer-effects-panel\.css(?:\?v=[^"]+)?" \/>/);
   assert.match(
     indexSource,
-    /<script src="\.\/js\/vertical-toolbar\.js"><\/script>\s*<script src="\.\/js\/layer-effects-panel\.js(?:\?v=[^"]+)?"><\/script>/,
+    /<script src="\.\/js\/vertical-toolbar\.js(?:\?v=[^"]+)?"><\/script>\s*<script src="\.\/js\/layer-effects-panel\.js(?:\?v=[^"]+)?"><\/script>/,
   );
   assert.match(appSource, /window\.CBO\.initVerticalToolbar\(\);\s*window\.CBO\.initLayerEffectsPanel\?\.\(\);/);
   assert.match(cssSource, /\.layer-effects-popover[\s\S]*?overflow: hidden;/);

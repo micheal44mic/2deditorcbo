@@ -16,4 +16,6 @@ test("vertical toolbar places layer style below resize", () => {
   assert.match(source, /aria-label="LAYER STYLE"/);
   assert.match(source, /data-tool-mode="layer-style"/);
   assert.match(source, /vertical-layer-style-button[\s\S]*<svg\b/);
+  assert.match(source, /data-tool-mode="selection-magic-wand"/);
+  assert.match(source, /MAGIC WAND/);
 });

@@ -3,6 +3,7 @@
   const CIRCLE_TOOL_MODE = "selection-circle";
   const LASSO_TOOL_MODE = "selection-lasso";
   const POLYGON_LASSO_TOOL_MODE = "selection-polygon-lasso";
+  const MAGIC_WAND_TOOL_MODE = "selection-magic-wand";
   const COLOR_RANGE_TOOL_MODE = "selection-color-range";
   const LASSO_MIN_POINTS = 3;
   const LASSO_POINT_SPACING = 1.5;
@@ -609,6 +610,24 @@
     };
   }
 
+  function getMagicWandLayerSource() {
+    const renderer = getRenderer();
+    const layerModel = namespace.documentLayerModel;
+    const activeId = layerModel?.activeLayerId || "";
+    const layer = activeId ? layerModel.findEntryById?.(activeId) : null;
+    const target = activeId ? renderer?.rasterTargetsByLayerId?.get?.(activeId) : null;
+
+    if (!renderer || !layer || (layer.type !== "paint" && layer.type !== "image")) {
+      return null;
+    }
+
+    return {
+      layer,
+      layerId: activeId,
+      target: target || null,
+    };
+  }
+
   function getLayerAlphaSource(layerId) {
     const renderer = getRenderer();
     const layerModel = namespace.documentLayerModel;
@@ -922,6 +941,165 @@
     return createRegionFromRows(rows);
   }
 
+  function createEmptyMagicWandPixelSource() {
+    return {
+      empty: true,
+    };
+  }
+
+  function getMagicWandPixel(source, documentX, documentY) {
+    if (source?.empty === true) {
+      return { a: 0, b: 0, g: 0, r: 0 };
+    }
+
+    return getColorRangePixel(source, documentX, documentY) || { a: 0, b: 0, g: 0, r: 0 };
+  }
+
+  function colorSampleDistanceSq(color, sample) {
+    const dr = color.r - sample.r;
+    const dg = color.g - sample.g;
+    const db = color.b - sample.b;
+    const da = color.a - sample.a;
+
+    return dr * dr + dg * dg + db * db + da * da;
+  }
+
+  function normalizePixelBounds(rect) {
+    const x = Math.floor(Number(rect?.x) || 0);
+    const y = Math.floor(Number(rect?.y) || 0);
+    const right = Math.ceil(x + Math.max(0, Number(rect?.width) || 0));
+    const bottom = Math.ceil(y + Math.max(0, Number(rect?.height) || 0));
+
+    if (right <= x || bottom <= y) {
+      return null;
+    }
+
+    return {
+      height: bottom - y,
+      width: right - x,
+      x,
+      y,
+    };
+  }
+
+  function isPointInsidePixelBounds(x, y, bounds) {
+    return Boolean(
+      bounds &&
+      Number.isFinite(x) &&
+      Number.isFinite(y) &&
+      x >= bounds.x &&
+      y >= bounds.y &&
+      x < bounds.x + bounds.width &&
+      y < bounds.y + bounds.height
+    );
+  }
+
+  function createMagicWandRegion(source, seedPoint, tolerance, bounds = getDocumentRect()) {
+    const scanBounds = normalizePixelBounds(bounds);
+    const seedX = Math.floor(Number(seedPoint?.docX ?? seedPoint?.x));
+    const seedY = Math.floor(Number(seedPoint?.docY ?? seedPoint?.y));
+
+    if (!scanBounds || !isPointInsidePixelBounds(seedX, seedY, scanBounds)) {
+      return createEmptyRegion();
+    }
+
+    const width = scanBounds.width;
+    const height = scanBounds.height;
+    const pixelCount = width * height;
+    const seedLocalX = seedX - scanBounds.x;
+    const seedLocalY = seedY - scanBounds.y;
+    const seedIndex = seedLocalY * width + seedLocalX;
+    const sample = getMagicWandPixel(source, seedX, seedY);
+    const toleranceSq = Math.round(clamp(tolerance, 0, MAX_COLOR_RANGE_TOLERANCE)) ** 2;
+    const mask = new Uint8Array(pixelCount);
+    let stack = new Int32Array(Math.max(1, Math.min(4096, pixelCount)));
+    let stackPtr = 0;
+    let filledCount = 0;
+
+    const pushPixel = (pixelIndex) => {
+      if (mask[pixelIndex] !== 0) {
+        return;
+      }
+
+      if (stackPtr >= stack.length) {
+        const nextStack = new Int32Array(Math.min(pixelCount, Math.max(stack.length * 2, stackPtr + 1)));
+
+        nextStack.set(stack);
+        stack = nextStack;
+      }
+
+      mask[pixelIndex] = 1;
+      stack[stackPtr] = pixelIndex;
+      stackPtr += 1;
+    };
+
+    pushPixel(seedIndex);
+
+    while (stackPtr > 0) {
+      stackPtr -= 1;
+
+      const index = stack[stackPtr];
+      const localY = Math.floor(index / width);
+      const localX = index - localY * width;
+      const docX = scanBounds.x + localX;
+      const docY = scanBounds.y + localY;
+      const color = getMagicWandPixel(source, docX, docY);
+
+      if (colorSampleDistanceSq(color, sample) > toleranceSq) {
+        continue;
+      }
+
+      mask[index] = 2;
+      filledCount += 1;
+
+      if (localX + 1 < width) {
+        pushPixel(index + 1);
+      }
+
+      if (localX > 0) {
+        pushPixel(index - 1);
+      }
+
+      if (localY + 1 < height) {
+        pushPixel(index + width);
+      }
+
+      if (localY > 0) {
+        pushPixel(index - width);
+      }
+    }
+
+    if (filledCount <= 0) {
+      return createEmptyRegion();
+    }
+
+    const rows = new Map();
+
+    for (let localY = 0; localY < height; localY += 1) {
+      const docY = scanBounds.y + localY;
+      let startX = null;
+
+      for (let localX = 0; localX < width; localX += 1) {
+        const index = localY * width + localX;
+        const isFilled = mask[index] === 2;
+        const docX = scanBounds.x + localX;
+
+        if (isFilled && startX == null) {
+          startX = docX;
+        } else if (!isFilled && startX != null) {
+          appendColorRangeInterval(rows, docY, startX, docX);
+          startX = null;
+        }
+      }
+
+      if (startX != null) {
+        appendColorRangeInterval(rows, docY, startX, scanBounds.x + width);
+      }
+    }
+
+    return createRegionFromRows(rows);
+  }
+
   function scanLayerAlphaTile(rows, tileSource, alphaThreshold = COLOR_RANGE_MIN_ALPHA) {
     for (let localY = 0; localY < tileSource.height; localY += 1) {
       const docY = tileSource.y + localY;
@@ -1032,6 +1210,58 @@
     setRegion(nextRegion, {
       historyBeforeRegion: beforeRegion,
       source: "area-selection-color-range-commit",
+    });
+
+    return true;
+  }
+
+  function selectMagicWandAt(point) {
+    const renderer = getRenderer();
+    const gl = renderer?.gl || renderer?.context;
+    const sourceInfo = getMagicWandLayerSource();
+
+    if (!renderer || !gl || !sourceInfo) {
+      return false;
+    }
+
+    const seedX = Math.floor(Number(point?.docX ?? point?.x));
+    const seedY = Math.floor(Number(point?.docY ?? point?.y));
+
+    if (!Number.isFinite(seedX) || !Number.isFinite(seedY)) {
+      return false;
+    }
+
+    const source = sourceInfo.target
+      ? createColorRangePixelSource(gl, sourceInfo.target, {
+          reason: "area-selection-magic-wand-hydrate",
+        })
+      : createEmptyMagicWandPixelSource();
+
+    if (sourceInfo.target && !source) {
+      return false;
+    }
+
+    const sampledRegion = createMagicWandRegion(
+      source,
+      { x: seedX, y: seedY },
+      state.colorRangeTolerance,
+      getDocumentRect(),
+    );
+
+    if (!sampledRegion || sampledRegion.isEmpty?.()) {
+      return false;
+    }
+
+    const sample = getMagicWandPixel(source, seedX, seedY);
+    const beforeRegion = getRegionSnapshot();
+    const nextRegion = applyRegionOperation(beforeRegion, sampledRegion, state.operationMode);
+
+    setColorRangeSampleColor(rgbToHexColor(sample.r, sample.g, sample.b), {
+      source: "area-selection-magic-wand",
+    });
+    setRegion(nextRegion, {
+      historyBeforeRegion: beforeRegion,
+      source: "area-selection-magic-wand-commit",
     });
 
     return true;
@@ -1837,6 +2067,10 @@
     return state.activeToolMode === POLYGON_LASSO_TOOL_MODE;
   }
 
+  function isMagicWandToolActive() {
+    return state.activeToolMode === MAGIC_WAND_TOOL_MODE;
+  }
+
   function isColorRangeToolActive() {
     return state.activeToolMode === COLOR_RANGE_TOOL_MODE;
   }
@@ -1846,7 +2080,14 @@
   }
 
   function isAreaSelectionToolActive() {
-    return isRectToolActive() || isCircleToolActive() || isLassoToolActive() || isPolygonLassoToolActive() || isColorRangeToolActive();
+    return (
+      isRectToolActive() ||
+      isCircleToolActive() ||
+      isLassoToolActive() ||
+      isPolygonLassoToolActive() ||
+      isMagicWandToolActive() ||
+      isColorRangeToolActive()
+    );
   }
 
   function getActiveSelectionShape() {
@@ -2043,6 +2284,13 @@
     const brushEngine = getBrushEngine();
 
     if (!point || !brushEngine?.isDocumentPointInside?.(point)) {
+      return;
+    }
+
+    if (isMagicWandToolActive()) {
+      event.preventDefault();
+      event.stopPropagation();
+      selectMagicWandAt(point);
       return;
     }
 
@@ -2841,6 +3089,7 @@
     intersectRect,
     isPointInside,
     pasteSelectionPixels,
+    selectMagicWandAt,
     selectLayerAlpha,
     setRect,
     setColorRangeTolerance,

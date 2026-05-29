@@ -2922,7 +2922,10 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       normalized === "rect select" ||
       normalized === "circle select" ||
       normalized === "lasso select" ||
-      normalized === "pen select"
+      normalized === "pen select" ||
+      normalized === "polygon lasso" ||
+      normalized === "magic wand" ||
+      normalized === "color range"
     ) {
       return "selection";
     }

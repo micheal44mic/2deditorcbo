@@ -2489,7 +2489,8 @@ window.CBO.initTopToolbar = function initTopToolbar() {
     const syncGroup = String(event.detail?.syncGroup || "").toLowerCase();
     const isBrush = label === "BRUSH" || label === "ERASER" || toolMode === "eraser" || (toolMode === "brush" && syncGroup === "brush");
     const isColorRange = toolMode === "selection-color-range";
-    const isAreaSelection = toolMode === "selection-rect" || toolMode === "selection-circle" || toolMode === "selection-lasso" || toolMode === "selection-polygon-lasso" || isColorRange;
+    const isMagicWand = toolMode === "selection-magic-wand";
+    const isAreaSelection = toolMode === "selection-rect" || toolMode === "selection-circle" || toolMode === "selection-lasso" || toolMode === "selection-polygon-lasso" || isMagicWand || isColorRange;
     const isResize = label === "RESIZE" || toolMode === "resize";
     const isRotate = label === "ROTATE" || toolMode === "rotate";
     const isText = label === "TYPE" || toolMode === "text";
@@ -2508,7 +2509,7 @@ window.CBO.initTopToolbar = function initTopToolbar() {
 
     syncMobileTextState();
     showAreaSelectionOperationToolbar(isAreaSelection);
-    showColorRangeToleranceControl(isColorRange);
+    showColorRangeToleranceControl(isColorRange || isMagicWand);
     showTransformModeToolbar(isResize || isRotate);
     showTransformAngleControl(isRotate);
   });
