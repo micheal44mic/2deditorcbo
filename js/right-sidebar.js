@@ -25,9 +25,52 @@ window.CBO.initRightSidebar = function initRightSidebar() {
               <path d="M7 3v4a1 1 0 0 0 1 1h7" />
             </svg>
           </button>
-          <button class="right-sidebar-share-button" type="button" data-tooltip="SHARE">SHARE</button>
+          <button class="right-sidebar-share-button" type="button" data-tooltip="SHARE" aria-haspopup="dialog" aria-expanded="false" aria-controls="right-sidebar-share-menu" data-share-menu-toggle>SHARE</button>
         </div>
       </div>
+      <section id="right-sidebar-share-menu" class="right-sidebar-share-menu" aria-label="Share" data-share-menu hidden>
+        <div class="right-sidebar-export-header">
+          <h2 class="right-sidebar-export-title">Export</h2>
+          <span class="right-sidebar-export-format" data-export-format-label>PNG</span>
+        </div>
+        <div class="right-sidebar-export-format-options" role="radiogroup" aria-label="Export format" data-export-format-group>
+          <button class="right-sidebar-export-format-button active" type="button" role="radio" aria-checked="true" data-export-format-option="png">PNG</button>
+          <button class="right-sidebar-export-format-button" type="button" role="radio" aria-checked="false" data-export-format-option="jpeg">JPEG</button>
+          <button class="right-sidebar-export-format-button" type="button" role="radio" aria-checked="false" data-export-format-option="webp">WebP</button>
+        </div>
+        <div class="right-sidebar-export-artboards" aria-label="Export artboards">
+          <span class="right-sidebar-export-toggle-label">Artboards</span>
+          <div class="right-sidebar-export-scope-options" role="radiogroup" aria-label="Export artboards" data-export-artboard-scope-group>
+            <button class="right-sidebar-export-scope-button active" type="button" role="radio" aria-checked="true" data-export-artboard-scope="all">All</button>
+            <button class="right-sidebar-export-scope-button" type="button" role="radio" aria-checked="false" data-export-artboard-scope="selected">Selected</button>
+            <button class="right-sidebar-export-scope-button" type="button" role="radio" aria-checked="false" data-export-artboard-scope="custom">Custom</button>
+          </div>
+        </div>
+        <input class="right-sidebar-export-custom-artboards" type="text" inputmode="numeric" placeholder="2,4" aria-label="Custom artboards" autocomplete="off" spellcheck="false" data-export-artboard-custom hidden />
+        <label class="right-sidebar-export-toggle">
+          <span class="right-sidebar-export-toggle-label">Background</span>
+          <button class="right-sidebar-export-background-toggle smudge-sidebar-toggle-button active" type="button" aria-label="Export with background" aria-pressed="true" data-tooltip="BACKGROUND" data-export-background-toggle>
+            <span class="smudge-sidebar-toggle-knob"></span>
+          </button>
+        </label>
+        <div class="right-sidebar-export-scale" aria-label="Export scale">
+          <span class="right-sidebar-export-toggle-label">Scale</span>
+          <div class="right-sidebar-export-scale-options" role="radiogroup" aria-label="Export scale" data-export-scale-group>
+            <button class="right-sidebar-export-scale-button" type="button" role="radio" aria-checked="false" data-export-scale-option="1">1x</button>
+            <button class="right-sidebar-export-scale-button active" type="button" role="radio" aria-checked="true" data-export-scale-option="2">2x</button>
+            <button class="right-sidebar-export-scale-button" type="button" role="radio" aria-checked="false" data-export-scale-option="3">3x</button>
+            <button class="right-sidebar-export-scale-button" type="button" role="radio" aria-checked="false" data-export-scale-option="4">4x</button>
+          </div>
+        </div>
+        <label class="right-sidebar-export-quality" data-export-quality-field hidden>
+          <span class="right-sidebar-export-quality-header">
+            <span class="right-sidebar-export-toggle-label">Quality</span>
+            <span class="right-sidebar-export-quality-value" data-export-quality-value>92%</span>
+          </span>
+          <input class="right-sidebar-export-quality-range" type="range" min="60" max="100" step="5" value="92" aria-label="Export quality" data-export-quality />
+        </label>
+        <button class="right-sidebar-export-button" type="button" data-tooltip="EXPORT ARTBOARDS" data-export-artboards>Export Artboards</button>
+      </section>
       <label class="right-sidebar-project-field right-sidebar-section" data-right-sidebar-project>
         <span class="right-sidebar-project-label">Project name</span>
         <span class="right-sidebar-project-input-wrap">
@@ -375,6 +418,18 @@ window.CBO.initRightSidebar = function initRightSidebar() {
 
   const projectInput = panel.querySelector(".right-sidebar-project-input");
   const saveButton = panel.querySelector("[data-manual-save]");
+  const shareButton = panel.querySelector("[data-share-menu-toggle]");
+  const shareMenu = panel.querySelector("[data-share-menu]");
+  const exportArtboardsButton = panel.querySelector("[data-export-artboards]");
+  const exportBackgroundToggle = panel.querySelector("[data-export-background-toggle]");
+  const exportFormatLabel = panel.querySelector("[data-export-format-label]");
+  const exportFormatButtons = Array.from(panel.querySelectorAll("[data-export-format-option]"));
+  const exportArtboardScopeButtons = Array.from(panel.querySelectorAll("[data-export-artboard-scope]"));
+  const exportArtboardCustomInput = panel.querySelector("[data-export-artboard-custom]");
+  const exportScaleButtons = Array.from(panel.querySelectorAll("[data-export-scale-option]"));
+  const exportQualityField = panel.querySelector("[data-export-quality-field]");
+  const exportQualityInput = panel.querySelector("[data-export-quality]");
+  const exportQualityValue = panel.querySelector("[data-export-quality-value]");
   const rightSidebarContent = panel.querySelector(".right-sidebar-content");
   const globalSections = panel.querySelectorAll("[data-right-sidebar-global], [data-right-sidebar-project]");
   const smudgeSidebar = panel.querySelector("[data-smudge-sidebar]");
@@ -437,6 +492,20 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const textShadowBlurInput = panel.querySelector("[data-text-shadow-blur]");
   const textShadowBlurValue = panel.querySelector("[data-text-shadow-blur-value]");
   const storageKey = window.CBO.documentProjectNameStorageKey || "cbo-project-name";
+  const exportBackgroundStorageKey = "cbo-export-include-background";
+  const exportFormatStorageKey = "cbo-export-format";
+  const exportScaleStorageKey = "cbo-export-raster-scale";
+  const legacyExportPngScaleStorageKey = "cbo-export-png-scale";
+  const exportQualityStorageKey = "cbo-export-raster-quality";
+  const exportArtboardScopeStorageKey = "cbo-export-artboard-scope";
+  const exportArtboardCustomStorageKey = "cbo-export-artboard-custom";
+  const exportScaleOptions = Object.freeze([1, 2, 3, 4]);
+  const exportFormatOptions = Object.freeze(["png", "jpeg", "webp"]);
+  const exportArtboardScopeOptions = Object.freeze(["all", "selected", "custom"]);
+  const defaultExportFormat = "png";
+  const defaultExportScale = 2;
+  const defaultExportQuality = 92;
+  const defaultExportArtboardScope = "all";
   const fallbackSmudgeSettings = {
     radius: 34,
     opacity: 0.78,
@@ -472,6 +541,141 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   let layerBlendModeScrollIndex = 0;
 
   window.CBO.documentProjectNameStorageKey = storageKey;
+
+  function readStoredExportBackgroundEnabled() {
+    try {
+      const stored = window.localStorage.getItem(exportBackgroundStorageKey);
+
+      return stored === null ? true : stored === "true";
+    } catch (error) {
+      return true;
+    }
+  }
+
+  function writeStoredExportBackgroundEnabled(isEnabled) {
+    try {
+      window.localStorage.setItem(exportBackgroundStorageKey, isEnabled ? "true" : "false");
+    } catch (error) {
+      // Export remains usable when storage is unavailable.
+    }
+  }
+
+  function normalizeExportFormat(value) {
+    const format = String(value || "").trim().toLowerCase();
+
+    if (format === "jpg") {
+      return "jpeg";
+    }
+
+    return exportFormatOptions.includes(format) ? format : defaultExportFormat;
+  }
+
+  function readStoredExportFormat() {
+    try {
+      return normalizeExportFormat(window.localStorage.getItem(exportFormatStorageKey));
+    } catch (error) {
+      return defaultExportFormat;
+    }
+  }
+
+  function writeStoredExportFormat(format) {
+    try {
+      window.localStorage.setItem(exportFormatStorageKey, normalizeExportFormat(format));
+    } catch (error) {
+      // Export remains usable when storage is unavailable.
+    }
+  }
+
+  function normalizeExportArtboardScope(value) {
+    const scope = String(value || "").trim().toLowerCase();
+
+    return exportArtboardScopeOptions.includes(scope) ? scope : defaultExportArtboardScope;
+  }
+
+  function readStoredExportArtboardScope() {
+    try {
+      return normalizeExportArtboardScope(window.localStorage.getItem(exportArtboardScopeStorageKey));
+    } catch (error) {
+      return defaultExportArtboardScope;
+    }
+  }
+
+  function writeStoredExportArtboardScope(scope) {
+    try {
+      window.localStorage.setItem(exportArtboardScopeStorageKey, normalizeExportArtboardScope(scope));
+    } catch (error) {
+      // Export remains usable when storage is unavailable.
+    }
+  }
+
+  function readStoredExportArtboardCustom() {
+    try {
+      return window.localStorage.getItem(exportArtboardCustomStorageKey) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function writeStoredExportArtboardCustom(value) {
+    try {
+      window.localStorage.setItem(exportArtboardCustomStorageKey, String(value || ""));
+    } catch (error) {
+      // Export remains usable when storage is unavailable.
+    }
+  }
+
+  function normalizeExportScale(value) {
+    const scale = Number(value);
+
+    return exportScaleOptions.includes(scale) ? scale : defaultExportScale;
+  }
+
+  function readStoredExportScale() {
+    try {
+      return normalizeExportScale(
+        window.localStorage.getItem(exportScaleStorageKey) ||
+        window.localStorage.getItem(legacyExportPngScaleStorageKey),
+      );
+    } catch (error) {
+      return defaultExportScale;
+    }
+  }
+
+  function writeStoredExportScale(scale) {
+    try {
+      window.localStorage.setItem(exportScaleStorageKey, String(normalizeExportScale(scale)));
+    } catch (error) {
+      // Export remains usable when storage is unavailable.
+    }
+  }
+
+  function normalizeExportQuality(value) {
+    if (value === null || value === undefined || value === "") {
+      return defaultExportQuality;
+    }
+
+    const quality = Math.round(Number(value));
+
+    return Number.isFinite(quality) && quality > 0
+      ? Math.max(60, Math.min(100, quality))
+      : defaultExportQuality;
+  }
+
+  function readStoredExportQuality() {
+    try {
+      return normalizeExportQuality(window.localStorage.getItem(exportQualityStorageKey));
+    } catch (error) {
+      return defaultExportQuality;
+    }
+  }
+
+  function writeStoredExportQuality(quality) {
+    try {
+      window.localStorage.setItem(exportQualityStorageKey, String(normalizeExportQuality(quality)));
+    } catch (error) {
+      // Export remains usable when storage is unavailable.
+    }
+  }
 
   function readStoredProjectName() {
     try {
@@ -524,6 +728,13 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     });
   }
 
+  setExportBackgroundEnabled(readStoredExportBackgroundEnabled(), { persist: false });
+  setExportArtboardCustom(readStoredExportArtboardCustom(), { persist: false });
+  setExportArtboardScope(readStoredExportArtboardScope(), { persist: false });
+  setExportScale(readStoredExportScale(), { persist: false });
+  setExportQuality(readStoredExportQuality(), { persist: false });
+  setExportFormat(readStoredExportFormat(), { persist: false });
+
   async function saveDocumentNow() {
     const saveSystem = window.CBO.documentSaveSystem;
 
@@ -548,6 +759,237 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       saveButton.disabled = false;
       saveButton.classList.remove("saving", "active");
       saveButton.removeAttribute("aria-busy");
+    }
+  }
+
+  function isExportBackgroundEnabled() {
+    return exportBackgroundToggle?.getAttribute("aria-pressed") === "true";
+  }
+
+  function setExportBackgroundEnabled(isEnabled, options = {}) {
+    if (!exportBackgroundToggle) {
+      return;
+    }
+
+    const nextEnabled = isEnabled === true;
+
+    exportBackgroundToggle.setAttribute("aria-pressed", String(nextEnabled));
+    exportBackgroundToggle.classList.toggle("active", nextEnabled);
+
+    if (options.persist !== false) {
+      writeStoredExportBackgroundEnabled(nextEnabled);
+    }
+  }
+
+  function getExportFormat() {
+    const activeButton = exportFormatButtons.find((button) => button.getAttribute("aria-checked") === "true");
+
+    return normalizeExportFormat(activeButton?.dataset.exportFormatOption);
+  }
+
+  function setExportFormat(value, options = {}) {
+    const nextFormat = normalizeExportFormat(value);
+
+    exportFormatButtons.forEach((button) => {
+      const isActive = normalizeExportFormat(button.dataset.exportFormatOption) === nextFormat;
+
+      button.setAttribute("aria-checked", String(isActive));
+      button.classList.toggle("active", isActive);
+    });
+
+    if (exportFormatLabel) {
+      exportFormatLabel.textContent = nextFormat === "jpeg" ? "JPEG" : nextFormat.toUpperCase();
+    }
+
+    if (exportQualityField) {
+      exportQualityField.hidden = nextFormat === "png";
+    }
+
+    if (nextFormat === "jpeg") {
+      setExportBackgroundEnabled(true, { persist: false });
+      if (exportBackgroundToggle) {
+        exportBackgroundToggle.disabled = true;
+        exportBackgroundToggle.setAttribute("aria-label", "JPEG export requires background");
+      }
+    } else if (exportBackgroundToggle) {
+      exportBackgroundToggle.disabled = false;
+      exportBackgroundToggle.setAttribute("aria-label", "Export with background");
+      setExportBackgroundEnabled(readStoredExportBackgroundEnabled(), { persist: false });
+    }
+
+    if (options.persist !== false) {
+      writeStoredExportFormat(nextFormat);
+    }
+
+    positionShareMenu();
+
+    return nextFormat;
+  }
+
+  function getExportArtboardScope() {
+    const activeButton = exportArtboardScopeButtons.find((button) => button.getAttribute("aria-checked") === "true");
+
+    return normalizeExportArtboardScope(activeButton?.dataset.exportArtboardScope);
+  }
+
+  function setExportArtboardScope(value, options = {}) {
+    const nextScope = normalizeExportArtboardScope(value);
+
+    exportArtboardScopeButtons.forEach((button) => {
+      const isActive = normalizeExportArtboardScope(button.dataset.exportArtboardScope) === nextScope;
+
+      button.setAttribute("aria-checked", String(isActive));
+      button.classList.toggle("active", isActive);
+    });
+
+    if (exportArtboardCustomInput) {
+      exportArtboardCustomInput.hidden = nextScope !== "custom";
+      exportArtboardCustomInput.disabled = nextScope !== "custom";
+
+      if (nextScope === "custom" && options.focus === true) {
+        exportArtboardCustomInput.focus();
+        exportArtboardCustomInput.select?.();
+      }
+    }
+
+    if (options.persist !== false) {
+      writeStoredExportArtboardScope(nextScope);
+    }
+
+    positionShareMenu();
+
+    return nextScope;
+  }
+
+  function getExportArtboardCustom() {
+    return String(exportArtboardCustomInput?.value || "").trim();
+  }
+
+  function setExportArtboardCustom(value, options = {}) {
+    const nextValue = String(value || "");
+
+    if (exportArtboardCustomInput && exportArtboardCustomInput.value !== nextValue) {
+      exportArtboardCustomInput.value = nextValue;
+    }
+
+    if (options.persist !== false) {
+      writeStoredExportArtboardCustom(nextValue);
+    }
+
+    return nextValue;
+  }
+
+  function getExportScale() {
+    const activeButton = exportScaleButtons.find((button) => button.getAttribute("aria-checked") === "true");
+
+    return normalizeExportScale(activeButton?.dataset.exportScaleOption);
+  }
+
+  function setExportScale(value, options = {}) {
+    const nextScale = normalizeExportScale(value);
+
+    exportScaleButtons.forEach((button) => {
+      const isActive = normalizeExportScale(button.dataset.exportScaleOption) === nextScale;
+
+      button.setAttribute("aria-checked", String(isActive));
+      button.classList.toggle("active", isActive);
+    });
+
+    if (options.persist !== false) {
+      writeStoredExportScale(nextScale);
+    }
+
+    return nextScale;
+  }
+
+  function getExportQuality() {
+    return normalizeExportQuality(exportQualityInput?.value) / 100;
+  }
+
+  function setExportQuality(value, options = {}) {
+    const nextQuality = normalizeExportQuality(value);
+    const progress = ((nextQuality - 60) / 40) * 100;
+
+    if (exportQualityInput) {
+      exportQualityInput.value = String(nextQuality);
+      exportQualityInput.style.setProperty("--right-sidebar-export-quality-progress", `${progress}%`);
+    }
+
+    if (exportQualityValue) {
+      exportQualityValue.textContent = `${nextQuality}%`;
+    }
+
+    if (options.persist !== false) {
+      writeStoredExportQuality(nextQuality);
+    }
+
+    return nextQuality;
+  }
+
+  function positionShareMenu() {
+    if (!shareButton || !shareMenu || shareMenu.hidden) {
+      return;
+    }
+
+    const buttonRect = shareButton.getBoundingClientRect();
+    const menuWidth = Math.max(1, Math.round(shareMenu.offsetWidth || 220));
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || menuWidth);
+    const left = Math.max(10, Math.min(viewportWidth - menuWidth - 10, buttonRect.right - menuWidth));
+    const top = Math.max(10, buttonRect.bottom + 8);
+
+    shareMenu.style.setProperty("--right-sidebar-share-menu-left", `${Math.round(left)}px`);
+    shareMenu.style.setProperty("--right-sidebar-share-menu-top", `${Math.round(top)}px`);
+  }
+
+  function setShareMenuOpen(isOpen) {
+    if (!shareButton || !shareMenu) {
+      return;
+    }
+
+    const shouldOpen = isOpen === true;
+
+    shareMenu.hidden = !shouldOpen;
+    shareButton.classList.toggle("active", shouldOpen);
+    shareButton.setAttribute("aria-expanded", String(shouldOpen));
+
+    if (shouldOpen) {
+      positionShareMenu();
+    }
+  }
+
+  function isShareMenuOpen() {
+    return Boolean(shareMenu && !shareMenu.hidden);
+  }
+
+  async function exportDocumentArtboards() {
+    const exportSystem = window.CBO.documentExportSystem;
+
+    if (!exportArtboardsButton || exportArtboardsButton.disabled || !exportSystem?.exportDrawingArtboardsRaster) {
+      return;
+    }
+
+    exportArtboardsButton.disabled = true;
+    exportArtboardsButton.classList.add("exporting", "active");
+    exportArtboardsButton.setAttribute("aria-busy", "true");
+    exportArtboardsButton.textContent = "EXPORTING";
+
+    try {
+      await exportSystem.exportDrawingArtboardsRaster({
+        artboardSelection: getExportArtboardScope(),
+        artboardSpec: getExportArtboardCustom(),
+        format: getExportFormat(),
+        includeBackground: isExportBackgroundEnabled(),
+        quality: getExportQuality(),
+        scale: getExportScale(),
+        source: "right-sidebar-export",
+      });
+    } catch (error) {
+      console.warn("Export artboard non riuscito.", error);
+    } finally {
+      exportArtboardsButton.disabled = false;
+      exportArtboardsButton.classList.remove("exporting", "active");
+      exportArtboardsButton.removeAttribute("aria-busy");
+      exportArtboardsButton.textContent = "Export Artboards";
     }
   }
 
@@ -2594,11 +3036,15 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     if (layerBlendModeOpen) {
       updateLayerBlendBoxAnchor();
     }
+
+    positionShareMenu();
   });
   window.addEventListener("resize", () => {
     if (layerBlendModeOpen) {
       updateLayerBlendBoxAnchor();
     }
+
+    positionShareMenu();
   });
   document.addEventListener("pointerdown", (event) => {
     if (!layerBlendModeOpen) {
@@ -2841,6 +3287,71 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   });
   saveButton?.addEventListener("click", () => {
     void saveDocumentNow();
+  });
+
+  shareButton?.addEventListener("click", () => {
+    setShareMenuOpen(!isShareMenuOpen());
+  });
+
+  exportBackgroundToggle?.addEventListener("click", () => {
+    setExportBackgroundEnabled(!isExportBackgroundEnabled());
+  });
+
+  exportFormatButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setExportFormat(button.dataset.exportFormatOption);
+    });
+  });
+
+  exportArtboardScopeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setExportArtboardScope(button.dataset.exportArtboardScope, { focus: true });
+    });
+  });
+
+  exportArtboardCustomInput?.addEventListener("input", () => {
+    setExportArtboardCustom(exportArtboardCustomInput.value);
+  });
+
+  exportScaleButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setExportScale(button.dataset.exportScaleOption);
+    });
+  });
+
+  exportQualityInput?.addEventListener("input", () => {
+    setExportQuality(exportQualityInput.value);
+  });
+
+  exportArtboardsButton?.addEventListener("click", () => {
+    void exportDocumentArtboards();
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!isShareMenuOpen()) {
+      return;
+    }
+
+    const target = event.target;
+
+    if (
+      target instanceof Element &&
+      (
+        target.closest("[data-share-menu]") ||
+        target.closest("[data-share-menu-toggle]")
+      )
+    ) {
+      return;
+    }
+
+    setShareMenuOpen(false);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isShareMenuOpen()) {
+      setShareMenuOpen(false);
+      shareButton?.focus?.();
+    }
   });
 
   window.addEventListener("cbo:tool-change", (event) => {

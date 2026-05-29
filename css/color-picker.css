@@ -128,7 +128,9 @@
 }
 
 .color-picker-eyedropper:hover,
-.color-picker-eyedropper:focus-visible {
+.color-picker-eyedropper:focus-visible,
+.color-picker-eyedropper.active,
+.color-picker-eyedropper[aria-pressed="true"] {
   background: rgb(44, 48, 58);
   color: #ffffff;
 }
@@ -138,6 +140,11 @@
   height: 22px;
   fill: none;
   stroke: currentColor;
+}
+
+body.color-eyedropper-active,
+body.color-eyedropper-active .editor-webgl-canvas {
+  cursor: crosshair !important;
 }
 
 .color-picker-slot {

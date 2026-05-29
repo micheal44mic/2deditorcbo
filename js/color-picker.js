@@ -61,7 +61,7 @@ window.CBO.initColorPicker = function initColorPicker() {
       </div>
     </div>
     <div class="color-picker-slots" aria-label="Color slots">
-      <button class="color-picker-eyedropper" type="button" aria-label="Eyedropper" data-color-eyedropper>
+      <button class="color-picker-eyedropper" type="button" aria-label="Eyedropper" aria-pressed="false" data-color-eyedropper>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12" />
           <path d="m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z" />
@@ -91,10 +91,12 @@ window.CBO.initColorPicker = function initColorPicker() {
   const hueHandle = popover.querySelector("[data-color-hue-handle]");
   const svSquare = popover.querySelector("[data-color-sv-square]");
   const svHandle = popover.querySelector("[data-color-sv-handle]");
+  const eyedropperButton = popover.querySelector("[data-color-eyedropper]");
   const slotButtons = popover.querySelectorAll("[data-color-slot]");
   const presetButtons = popover.querySelectorAll("[data-color-preset]");
   const hexInput = popover.querySelector("[data-color-hex-input]");
   let activeControl = null;
+  let isCanvasEyedropperActive = false;
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
@@ -170,6 +172,10 @@ window.CBO.initColorPicker = function initColorPicker() {
       .map((value) => value.toString(16).padStart(2, "0"))
       .join("")
       .toUpperCase();
+  }
+
+  function pixelToHex(pixel) {
+    return `#${rgbToHex(pixel[0], pixel[1], pixel[2])}`;
   }
 
   function hexToRgb(hexColor) {
@@ -314,6 +320,172 @@ window.CBO.initColorPicker = function initColorPicker() {
     syncColorUi();
   }
 
+  function getEditorCanvas() {
+    return window.CBO.brushEngine?.canvas ||
+      window.CBO.documentRenderer?.gl?.canvas ||
+      document.querySelector(".editor-webgl-canvas");
+  }
+
+  function isPointInsideRect(clientX, clientY, rect) {
+    return Boolean(
+      rect &&
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    );
+  }
+
+  function sampleCanvasColor(clientX, clientY) {
+    const canvas = getEditorCanvas();
+    const gl = window.CBO.documentRenderer?.gl || window.CBO.brushEngine?.gl;
+    const rect = canvas?.getBoundingClientRect?.();
+
+    if (!canvas || !gl || !rect || !isPointInsideRect(clientX, clientY, rect)) {
+      return null;
+    }
+
+    if (!canvas.width || !canvas.height || !rect.width || !rect.height) {
+      return null;
+    }
+
+    try {
+      window.CBO.brushEngine?.draw?.();
+    } catch (error) {
+      console.warn("Impossibile aggiornare il canvas prima del prelievo colore.", error);
+    }
+
+    const pixel = new Uint8Array(4);
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const pixelX = clamp(Math.floor((clientX - rect.left) * scaleX), 0, canvas.width - 1);
+    const pixelY = clamp(Math.floor((clientY - rect.top) * scaleY), 0, canvas.height - 1);
+    const webglY = canvas.height - pixelY - 1;
+
+    try {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.readPixels(pixelX, webglY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    } catch (error) {
+      console.warn("Impossibile leggere il colore dal canvas.", error);
+      return null;
+    }
+
+    return pixel[3] > 0 ? pixelToHex(pixel) : null;
+  }
+
+  function emitEyedropperColor(hexColor, source) {
+    window.dispatchEvent(new CustomEvent("cbo:color-picker-eyedropper-color", {
+      detail: {
+        color: hexColor,
+        slot: activeSlot,
+        source,
+      },
+    }));
+  }
+
+  function applyEyedropperColor(hexColor, source) {
+    const normalizedColor = normalizeHexInput(hexColor);
+
+    if (!normalizedColor) {
+      return false;
+    }
+
+    setActiveSlotColor(normalizedColor);
+    emitEyedropperColor(normalizedColor, source);
+
+    return true;
+  }
+
+  function setEyedropperVisualState(isActive) {
+    eyedropperButton?.classList.toggle("active", isActive);
+    eyedropperButton?.setAttribute("aria-pressed", String(isActive));
+    document.body.classList.toggle("color-eyedropper-active", isActive);
+  }
+
+  function stopCanvasEyedropper() {
+    if (!isCanvasEyedropperActive) {
+      return;
+    }
+
+    isCanvasEyedropperActive = false;
+    setEyedropperVisualState(false);
+    document.removeEventListener("pointerdown", handleCanvasEyedropperPointerDown, true);
+    document.removeEventListener("keydown", handleCanvasEyedropperKeydown, true);
+  }
+
+  function handleCanvasEyedropperPointerDown(event) {
+    if (!isCanvasEyedropperActive) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    const sampledColor = sampleCanvasColor(event.clientX, event.clientY);
+
+    if (sampledColor) {
+      applyEyedropperColor(sampledColor, "canvas-eyedropper");
+    }
+
+    stopCanvasEyedropper();
+  }
+
+  function handleCanvasEyedropperKeydown(event) {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    stopCanvasEyedropper();
+  }
+
+  function startCanvasEyedropper() {
+    stopCanvasEyedropper();
+    setOpen(false);
+    isCanvasEyedropperActive = true;
+    setEyedropperVisualState(true);
+    document.addEventListener("pointerdown", handleCanvasEyedropperPointerDown, true);
+    document.addEventListener("keydown", handleCanvasEyedropperKeydown, true);
+  }
+
+  async function startNativeEyedropper() {
+    if (typeof window.EyeDropper !== "function") {
+      return false;
+    }
+
+    setOpen(false);
+    setEyedropperVisualState(true);
+
+    try {
+      const result = await new window.EyeDropper().open();
+      const didApplyColor = applyEyedropperColor(result?.sRGBHex, "native-eyedropper");
+
+      return didApplyColor || result?.sRGBHex == null;
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        console.warn("EyeDropper nativo non disponibile, uso il fallback canvas.", error);
+        return false;
+      }
+
+      return true;
+    } finally {
+      setEyedropperVisualState(false);
+    }
+  }
+
+  async function startEyedropper() {
+    stopCanvasEyedropper();
+
+    const handledByNativePicker = await startNativeEyedropper();
+
+    if (!handledByNativePicker) {
+      startCanvasEyedropper();
+    }
+  }
+
   function closeToolMenus() {
     document.querySelectorAll(".tool-menu-button.open").forEach((menuButton) => {
       menuButton.classList.remove("open");
@@ -420,6 +592,12 @@ window.CBO.initColorPicker = function initColorPicker() {
     });
   });
 
+  eyedropperButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void startEyedropper();
+  });
+
   hexInput.addEventListener("click", (event) => {
     event.stopPropagation();
   });
@@ -466,6 +644,7 @@ window.CBO.initColorPicker = function initColorPicker() {
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      stopCanvasEyedropper();
       setOpen(false);
     }
   });

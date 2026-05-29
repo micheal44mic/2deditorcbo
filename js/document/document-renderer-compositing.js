@@ -1256,6 +1256,17 @@
       const camera = options.camera || { x: 0, y: 0, zoom: 1 };
       const viewportWidth = Math.max(1, Math.round(options.viewportWidth || gl.canvas?.width || 1));
       const viewportHeight = Math.max(1, Math.round(options.viewportHeight || gl.canvas?.height || 1));
+      const transparentBackground = options.transparentBackground !== undefined
+        ? options.transparentBackground === true
+        : this.options.transparentBackground === true;
+      const clearColor = Array.isArray(options.clearColor)
+        ? [
+            Number.isFinite(Number(options.clearColor[0])) ? Math.max(0, Math.min(1, Number(options.clearColor[0]))) : 0,
+            Number.isFinite(Number(options.clearColor[1])) ? Math.max(0, Math.min(1, Number(options.clearColor[1]))) : 0,
+            Number.isFinite(Number(options.clearColor[2])) ? Math.max(0, Math.min(1, Number(options.clearColor[2]))) : 0,
+            Number.isFinite(Number(options.clearColor[3])) ? Math.max(0, Math.min(1, Number(options.clearColor[3]))) : 1,
+          ]
+        : null;
       const viewportRenderOverscanCssPx = this.getViewportRenderOverscanCssPx(options);
       const viewportVisibleDocRect = this.resolveCanvasVisibleDocRect(camera, viewportWidth, viewportHeight);
       const viewportRenderRect = this.getViewportRenderRect(
@@ -2164,7 +2175,9 @@
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, outputFramebuffer);
       gl.viewport(0, 0, viewportWidth, viewportHeight);
-      if (this.options.transparentBackground) {
+      if (clearColor) {
+        gl.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+      } else if (transparentBackground) {
         gl.clearColor(0, 0, 0, 0);
       } else {
         gl.clearColor(0.15, 0.15, 0.15, 1.0);
@@ -2208,6 +2221,16 @@
 
         for (const layer of orderedLayers) {
           viewportCullingStats.layers.considered += 1;
+
+          if (
+            options.skipBackgroundLayers === true &&
+            (layer?.type === "background" || layer?.id === "background")
+          ) {
+            currentClipBase = null;
+            viewportCullingStats.layers.skippedInvisible += 1;
+            continue;
+          }
+
           const rawLayerTarget = this.rasterTargetsByLayerId.get(layer.id);
           const layerArtboardId = this.getLayerArtboardId(layer);
           const isClippingLayer = layer.clippingMask === true;
