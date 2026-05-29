@@ -61,6 +61,21 @@ window.CBO = window.CBO || {};
     return normalizeSettings({ ...(settings || {}) });
   }
 
+  function notifyBrushLibraryChange(detail = {}) {
+    if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("cbo:brush-library-change", {
+        detail: {
+          source: "brush-library",
+          ...detail,
+        },
+      }),
+    );
+  }
+
   function createId(prefix) {
     brushSequence += 1;
 
@@ -145,6 +160,149 @@ window.CBO = window.CBO || {};
     },
   ];
 
+  function getBrushRecordsFromPayload(payload) {
+    if (Array.isArray(payload?.brushes)) {
+      return payload.brushes;
+    }
+
+    if (payload?.brushes && typeof payload.brushes === "object") {
+      return Object.values(payload.brushes);
+    }
+
+    return [];
+  }
+
+  function normalizeBrushRecord(record) {
+    const id = String(record?.id || "").trim();
+
+    if (!id) {
+      return null;
+    }
+
+    return {
+      id,
+      name: String(record?.name || "BRUSH").trim() || "BRUSH",
+      settings: cloneSettings(record?.settings || hardBlendSettings),
+    };
+  }
+
+  function createLibrarySnapshot(options = {}) {
+    const selectedBrushId = String(options.selectedBrushId || "").trim();
+    const selectedPackageId = String(options.selectedPackageId || "").trim();
+    const exportedBrushes = [];
+
+    packages.forEach((brushPackage) => {
+      brushPackage.brushIds.forEach((brushId) => {
+        const brush = brushes[brushId];
+
+        if (!brush) {
+          return;
+        }
+
+        exportedBrushes.push({
+          id: brush.id,
+          name: brush.name,
+          packageId: brushPackage.id,
+          settings: cloneSettings(brush.settings),
+        });
+      });
+    });
+
+    return {
+      format: "cbo-brush-presets",
+      formatVersion: 1,
+      exportedAt: new Date().toISOString(),
+      selectedBrushId: selectedBrushId || null,
+      selectedPackageId: selectedPackageId || null,
+      packages: packages.map((brushPackage) => ({
+        id: brushPackage.id,
+        name: brushPackage.name,
+        brushIds: [...brushPackage.brushIds],
+      })),
+      brushes: exportedBrushes,
+    };
+  }
+
+  function replaceLibraryState(payload, options = {}) {
+    const brushRecords = getBrushRecordsFromPayload(payload);
+    const nextBrushes = {};
+
+    brushRecords.forEach((record) => {
+      const brush = normalizeBrushRecord(record);
+
+      if (brush) {
+        nextBrushes[brush.id] = brush;
+      }
+    });
+
+    const nextPackages = [];
+    const referencedBrushIds = new Set();
+    const packageRecords = Array.isArray(payload?.packages) ? payload.packages : [];
+
+    packageRecords.forEach((record) => {
+      const id = String(record?.id || "").trim();
+      const brushIds = Array.isArray(record?.brushIds)
+        ? record.brushIds
+          .map((brushId) => String(brushId || "").trim())
+          .filter((brushId, index, allIds) => brushId && nextBrushes[brushId] && allIds.indexOf(brushId) === index)
+        : [];
+
+      if (!id || brushIds.length === 0) {
+        return;
+      }
+
+      brushIds.forEach((brushId) => referencedBrushIds.add(brushId));
+      nextPackages.push({
+        id,
+        name: String(record?.name || "BRUSH SET").trim() || "BRUSH SET",
+        brushIds,
+      });
+    });
+
+    Object.keys(nextBrushes).forEach((brushId) => {
+      if (referencedBrushIds.has(brushId)) {
+        return;
+      }
+
+      const record = brushRecords.find((item) => String(item?.id || "").trim() === brushId);
+      const packageId = String(record?.packageId || "").trim();
+      const brushPackage = nextPackages.find((item) => item.id === packageId) || nextPackages[0];
+
+      if (brushPackage) {
+        brushPackage.brushIds.push(brushId);
+        referencedBrushIds.add(brushId);
+      }
+    });
+
+    if (nextPackages.length === 0 || referencedBrushIds.size === 0) {
+      return {
+        restored: false,
+        reason: "empty-library",
+      };
+    }
+
+    Object.keys(brushes).forEach((brushId) => {
+      delete brushes[brushId];
+    });
+    Object.assign(brushes, nextBrushes);
+    packages.splice(0, packages.length, ...nextPackages);
+
+    if (options.silent !== true) {
+      notifyBrushLibraryChange({
+        action: "replace-library",
+        brushCount: Object.keys(brushes).length,
+        packageCount: packages.length,
+        source: options.source || "replace-library",
+      });
+    }
+
+    return {
+      restored: true,
+      brushCount: Object.keys(brushes).length,
+      packageCount: packages.length,
+    };
+  }
+
   function getPackage(packageId) {
     return packages.find((brushPackage) => brushPackage.id === packageId) || packages[0] || null;
   }
@@ -200,11 +358,21 @@ window.CBO = window.CBO || {};
       return null;
     }
 
-    return addBrushToPackage(brushPackage.id, {
+    const brush = addBrushToPackage(brushPackage.id, {
       id: createId("brush"),
       name: getUniqueBrushName(brushPackage.id, "NUOVO PENNELLO"),
       settings: cloneSettings(hardBlendSettings),
     });
+
+    if (brush) {
+      notifyBrushLibraryChange({
+        action: "create-brush",
+        brushId: brush.id,
+        packageId: brushPackage.id,
+      });
+    }
+
+    return brush;
   }
 
   function duplicateBrush(brushId) {
@@ -215,11 +383,22 @@ window.CBO = window.CBO || {};
       return null;
     }
 
-    return addBrushToPackage(sourcePackage.id, {
+    const brush = addBrushToPackage(sourcePackage.id, {
       id: createId("brush-copy"),
       name: getUniqueBrushName(sourcePackage.id, `${sourceBrush.name} COPIA`),
       settings: cloneSettings(sourceBrush.settings),
     });
+
+    if (brush) {
+      notifyBrushLibraryChange({
+        action: "duplicate-brush",
+        brushId: brush.id,
+        packageId: sourcePackage.id,
+        sourceBrushId: brushId,
+      });
+    }
+
+    return brush;
   }
 
   function deleteBrush(brushId) {
@@ -243,6 +422,12 @@ window.CBO = window.CBO || {};
     sourcePackage.brushIds.splice(sourceIndex, 1);
     delete brushes[brushId];
 
+    notifyBrushLibraryChange({
+      action: "delete-brush",
+      brushId,
+      packageId: sourcePackage.id,
+    });
+
     return {
       deleted: true,
       packageId: sourcePackage.id,
@@ -259,11 +444,17 @@ window.CBO = window.CBO || {};
 
     brush.settings = cloneSettings(settings);
 
+    notifyBrushLibraryChange({
+      action: "update-brush-settings",
+      brushId,
+    });
+
     return brush;
   }
 
   namespace.BrushLibrary = {
     createBrush,
+    createLibrarySnapshot,
     deleteBrush,
     duplicateBrush,
     findPackageByBrushId,
@@ -276,6 +467,7 @@ window.CBO = window.CBO || {};
       return brush ? cloneSettings(brush.settings) : null;
     },
     hardBlendSettings: cloneSettings(hardBlendSettings),
+    replaceLibraryState,
     softSettings: cloneSettings(softSettings),
     updateBrushSettings,
   };

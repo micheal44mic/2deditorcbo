@@ -165,6 +165,8 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   let mobileBrushPreviewGeneration = 0;
   let mobileBrushPreviewQueue = [];
   let mobileBrushPreviewTimer = 0;
+  let brushLibraryPersistTimer = 0;
+  let pendingBrushLibraryPersistSource = "";
   const MOBILE_BRUSH_PREVIEW_DELAY_MS = 96;
   const MOBILE_BRUSH_PREVIEW_GAP_MS = 54;
   const MOBILE_BRUSH_PREVIEW_SIZE = Object.freeze({
@@ -334,39 +336,10 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   }
 
   function createBrushPresetExportPayload() {
-    const exportedBrushes = [];
-
-    brushPackages.forEach((brushPackage) => {
-      brushPackage.brushIds.forEach((brushId) => {
-        const brush = BrushLibrary.getBrush(brushId);
-        const settings = BrushLibrary.getSettings(brushId);
-
-        if (!brush || !settings) {
-          return;
-        }
-
-        exportedBrushes.push({
-          id: brush.id,
-          name: brush.name,
-          packageId: brushPackage.id,
-          settings: BrushDefaults.createSettings(settings),
-        });
-      });
-    });
-
-    return {
-      format: "cbo-brush-presets",
-      formatVersion: 1,
-      exportedAt: new Date().toISOString(),
+    return BrushLibrary.createLibrarySnapshot({
       selectedBrushId,
       selectedPackageId: getSelectedPackage()?.id || null,
-      packages: brushPackages.map((brushPackage) => ({
-        id: brushPackage.id,
-        name: brushPackage.name,
-        brushIds: [...brushPackage.brushIds],
-      })),
-      brushes: exportedBrushes,
-    };
+    });
   }
 
   function downloadBrushPresetExport() {
@@ -387,6 +360,101 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     window.setTimeout(() => {
       URL.revokeObjectURL(url);
     }, 1000);
+  }
+
+  function persistBrushLibraryNow(source = "brush-library-change") {
+    const storage = window.CBO.BrushLibraryStorage;
+
+    if (!storage?.save) {
+      return;
+    }
+
+    void storage.save(createBrushPresetExportPayload(), {
+      source,
+    });
+  }
+
+  function scheduleBrushLibraryPersistence(event) {
+    pendingBrushLibraryPersistSource =
+      event?.detail?.action ||
+      event?.detail?.source ||
+      pendingBrushLibraryPersistSource ||
+      "brush-library-change";
+
+    if (brushLibraryPersistTimer) {
+      return;
+    }
+
+    brushLibraryPersistTimer = window.setTimeout(() => {
+      const source = pendingBrushLibraryPersistSource || "brush-library-change";
+
+      brushLibraryPersistTimer = 0;
+      pendingBrushLibraryPersistSource = "";
+      persistBrushLibraryNow(source);
+    }, 0);
+  }
+
+  function syncSelectionFromPayload(payload = {}) {
+    const requestedPackageId = String(payload?.selectedPackageId || "").trim();
+    const requestedBrushId = String(payload?.selectedBrushId || "").trim();
+    const brushPackage = requestedBrushId
+      ? BrushLibrary.findPackageByBrushId(requestedBrushId)
+      : null;
+    let nextPackageIndex = requestedPackageId ? getPackageIndexById(requestedPackageId) : -1;
+
+    if (nextPackageIndex < 0 && brushPackage) {
+      nextPackageIndex = getPackageIndexById(brushPackage.id);
+    }
+
+    if (nextPackageIndex < 0) {
+      nextPackageIndex = 0;
+    }
+
+    const nextPackage = brushPackages[nextPackageIndex] || brushPackages[0] || null;
+    const nextBrushId =
+      nextPackage?.brushIds.includes(requestedBrushId) === true
+        ? requestedBrushId
+        : nextPackage?.brushIds[0] || "";
+
+    activePackageIndex = Math.max(0, nextPackageIndex);
+    selectedPackageIndex = activePackageIndex;
+    selectedBrushId = nextBrushId;
+  }
+
+  async function restoreBrushLibraryFromStorage() {
+    const storage = window.CBO.BrushLibraryStorage;
+
+    if (!storage?.load || !BrushLibrary.replaceLibraryState) {
+      syncSelectionFromPayload();
+      return false;
+    }
+
+    const payload = await storage.load();
+
+    if (!payload) {
+      syncSelectionFromPayload();
+      return false;
+    }
+
+    const restoreResult = BrushLibrary.replaceLibraryState(payload, {
+      silent: true,
+      source: "brush-library-storage",
+    });
+
+    if (!restoreResult?.restored) {
+      syncSelectionFromPayload();
+      return false;
+    }
+
+    syncSelectionFromPayload(payload);
+    window.dispatchEvent(new CustomEvent("cbo:brush-library-restored", {
+      detail: {
+        ...restoreResult,
+        source: "brush-library-storage",
+      },
+    }));
+
+    return true;
   }
 
   function renderBrushPreview(canvas, brushId, variant, options = {}) {
@@ -1396,9 +1464,12 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
   window.CBO.openMobileBrushLibrary = openMobileBrushLibrary;
   window.CBO.closeMobileBrushLibrary = closeMobileBrushLibrary;
 
-  renderPackages();
-  renderSidebarPackages();
-  applyBrushPreset(selectedBrushId);
+  async function initializeBrushPanelState() {
+    await restoreBrushLibraryFromStorage();
+    renderPackages();
+    renderSidebarPackages();
+    applyBrushPreset(selectedBrushId);
+  }
 
   brushPopoutButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -1422,6 +1493,7 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
     }
   });
   window.addEventListener("cbo:brush-settings-change", syncSelectedBrushSettings);
+  window.addEventListener("cbo:brush-library-change", scheduleBrushLibraryPersistence);
 
   document.addEventListener("click", (event) => {
     if (!brushPopout || brushPopout.hidden) {
@@ -1489,4 +1561,6 @@ window.CBO.initBrushesPanel = function initBrushesPanel() {
       closeMobileBrushLibrary();
     }
   });
+
+  void initializeBrushPanelState();
 };

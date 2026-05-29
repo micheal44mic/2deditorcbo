@@ -44,6 +44,19 @@ test("temporary pan owns the cursor and blocks other tool handlers while active"
   assert.match(cssSource, /input,[\s\S]*?\[contenteditable="true"\] \*[\s\S]*?user-select: text;/);
 });
 
+test("document restore lock blocks brush navigation input until loading completes", () => {
+  const source = readBrushEngineSources();
+
+  assert.match(source, /shouldSuppressDocumentRestoreInput\(\)/);
+  assert.match(source, /namespace\.isRestoringDocumentSave === true/);
+  assert.match(source, /classList\?\.contains\("cbo-document-restore-active"\)/);
+  assert.match(source, /suppressDocumentRestoreInput\(event\)/);
+  assert.match(source, /this\.resetTouchNavigationState\("document-restore-input-lock"\)/);
+  assert.match(source, /handleWheel\(event\) \{[\s\S]*this\.shouldSuppressDocumentRestoreInput\(\)[\s\S]*this\.suppressDocumentRestoreInput\(event\);[\s\S]*return;/);
+  assert.match(source, /handleNavigationPointerDown\(event\) \{[\s\S]*this\.shouldSuppressDocumentRestoreInput\(\)[\s\S]*return;/);
+  assert.match(source, /handlePointerDown\(event\) \{[\s\S]*this\.shouldSuppressDocumentRestoreInput\(\)[\s\S]*return;/);
+});
+
 test("preview cache is enabled without waiting for explicit camera navigation", () => {
   const source = readBrushEngineSources();
 

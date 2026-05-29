@@ -26,9 +26,16 @@
   let isRestoring = false;
   let cachedTileCodec = null;
   let restoreUiDepth = 0;
+  let restoreUiHideTimer = 0;
   let restoreUiListenersBound = false;
+  let restoreUiVisibleStartedAt = 0;
 
   const RESTORE_OVERLAY_ID = "cbo-document-restore-overlay";
+  const RESTORE_MIN_VISIBLE_MS = 2600;
+  const RESTORE_FADE_OUT_MS = 700;
+  const RESTORE_VISUAL_READY_MIN_MS = 2600;
+  const RESTORE_VISUAL_READY_TIMEOUT_MS = 12000;
+  const RESTORE_VISUAL_READY_STABLE_FRAMES = 6;
   const RESTORE_BLOCKED_EVENTS = [
     "auxclick",
     "click",
@@ -827,6 +834,7 @@
     overlay.setAttribute("role", "status");
     overlay.setAttribute("aria-live", "assertive");
     overlay.innerHTML = [
+      '<div class="cbo-document-restore-artboards" data-document-restore-artboards aria-hidden="true"></div>',
       '<div class="cbo-document-restore-panel">',
       '  <div class="cbo-document-restore-spinner" aria-hidden="true"></div>',
       '  <p class="cbo-document-restore-title" data-document-restore-title>Loading saved document...</p>',
@@ -838,8 +846,142 @@
     return overlay;
   }
 
+  function getRestoreGhostArtboards(session) {
+    const artboards = getSessionArtboards(session);
+
+    if (artboards.length > 0) {
+      return artboards;
+    }
+
+    return [{
+      height: Math.max(1, Math.round(session?.document?.height || namespace.documentSettings?.height || 1)),
+      id: "restore-document",
+      width: Math.max(1, Math.round(session?.document?.width || namespace.documentSettings?.width || 1)),
+      x: 0,
+      y: 0,
+    }];
+  }
+
+  function getRestoreGhostStackSize(width, height) {
+    const safeWidth = Math.max(1, Number(width) || 1);
+    const safeHeight = Math.max(1, Number(height) || 1);
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || 1);
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1);
+    const maxWidth = Math.max(1, Math.min(1120, viewportWidth * 0.84, viewportWidth - 32));
+    const maxHeight = Math.max(1, Math.min(740, viewportHeight * 0.72, viewportHeight - 32));
+    const scale = Math.min(maxWidth / safeWidth, maxHeight / safeHeight);
+
+    return {
+      height: Math.max(1, Math.round(safeHeight * scale)),
+      width: Math.max(1, Math.round(safeWidth * scale)),
+    };
+  }
+
+  function getRestoreVisibleArtboardGhostRects(artboards = []) {
+    const paperElements = Array.from(document.querySelectorAll(".editor-artboard-paper-layer [data-artboard-id]"));
+    const elementById = new Map(
+      paperElements.map((element) => [String(element?.dataset?.artboardId || ""), element]),
+    );
+
+    return (Array.isArray(artboards) ? artboards : [])
+      .map((artboard) => {
+        const id = String(artboard?.id || "");
+        const element = elementById.get(id);
+
+        if (!element?.getBoundingClientRect) {
+          return null;
+        }
+
+        const rect = element.getBoundingClientRect();
+
+        if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || rect.width <= 0 || rect.height <= 0) {
+          return null;
+        }
+
+        return {
+          height: rect.height,
+          id,
+          width: rect.width,
+          x: rect.left,
+          y: rect.top,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function renderDocumentRestoreArtboardGhosts(session) {
+    const overlay = session ? ensureDocumentRestoreOverlay() : document.getElementById(RESTORE_OVERLAY_ID);
+
+    if (!overlay) {
+      return;
+    }
+
+    const host = overlay.querySelector("[data-document-restore-artboards]");
+
+    if (!host || !session) {
+      host?.replaceChildren();
+      return;
+    }
+
+    const artboards = getRestoreGhostArtboards(session).slice(0, 16);
+    const visibleArtboardRects = getRestoreVisibleArtboardGhostRects(artboards);
+    const ghostRects = visibleArtboardRects.length > 0 ? visibleArtboardRects : artboards;
+    const usesVisibleArtboardRects = visibleArtboardRects.length > 0;
+    const bounds = getBoundsForRects(ghostRects);
+
+    if (!bounds) {
+      host.replaceChildren();
+      return;
+    }
+
+    const stack = document.createElement("div");
+    const safeWidth = Math.max(1, bounds.width);
+    const safeHeight = Math.max(1, bounds.height);
+    const stackSize = getRestoreGhostStackSize(safeWidth, safeHeight);
+
+    stack.className = "cbo-document-restore-artboard-stack";
+    stack.dataset.documentRestoreArtboardStack = usesVisibleArtboardRects ? "viewport" : "session";
+
+    if (usesVisibleArtboardRects) {
+      stack.style.position = "absolute";
+      stack.style.left = `${bounds.x}px`;
+      stack.style.top = `${bounds.y}px`;
+      stack.style.width = `${safeWidth}px`;
+      stack.style.height = `${safeHeight}px`;
+    } else {
+      stack.style.width = `${stackSize.width}px`;
+      stack.style.height = `${stackSize.height}px`;
+    }
+
+    stack.style.setProperty("--restore-artboard-bounds-aspect", `${safeWidth} / ${safeHeight}`);
+    stack.style.setProperty("--restore-artboard-bounds-aspect-value", String(safeWidth / safeHeight));
+
+    ghostRects.forEach((artboard, index) => {
+      const ghost = document.createElement("span");
+      const x = ((Number(artboard.x) || 0) - bounds.x) / safeWidth;
+      const y = ((Number(artboard.y) || 0) - bounds.y) / safeHeight;
+      const width = Math.max(1, Number(artboard.width) || safeWidth) / safeWidth;
+      const height = Math.max(1, Number(artboard.height) || safeHeight) / safeHeight;
+
+      ghost.className = "cbo-document-restore-artboard-ghost";
+      ghost.dataset.documentRestoreGhost = "true";
+      ghost.style.setProperty("--restore-artboard-x", `${x * 100}%`);
+      ghost.style.setProperty("--restore-artboard-y", `${y * 100}%`);
+      ghost.style.setProperty("--restore-artboard-w", `${width * 100}%`);
+      ghost.style.setProperty("--restore-artboard-h", `${height * 100}%`);
+      ghost.style.setProperty("--restore-artboard-delay", `${index * 90}ms`);
+      stack.append(ghost);
+    });
+
+    host.replaceChildren(stack);
+  }
+
   function blockDocumentRestoreInteraction(event) {
-    if (namespace.isRestoringDocumentSave !== true && restoreUiDepth <= 0) {
+    if (
+      namespace.isRestoringDocumentSave !== true &&
+      restoreUiDepth <= 0 &&
+      !document.body?.classList.contains("cbo-document-restore-active")
+    ) {
       return;
     }
 
@@ -879,6 +1021,19 @@
       return false;
     }
 
+    if (restoreUiHideTimer) {
+      window.clearTimeout(restoreUiHideTimer);
+      restoreUiHideTimer = 0;
+    }
+
+    const now = performance.now?.() || Date.now();
+
+    if (restoreUiDepth <= 0) {
+      restoreUiVisibleStartedAt = now;
+    } else {
+      restoreUiVisibleStartedAt = restoreUiVisibleStartedAt || now;
+    }
+
     restoreUiDepth += 1;
 
     const overlay = ensureDocumentRestoreOverlay();
@@ -894,10 +1049,64 @@
     }
 
     document.body?.classList.add("cbo-document-restore-active");
+    overlay.classList.remove("is-finishing");
     overlay.hidden = false;
     bindDocumentRestoreInteractionGuard();
 
     return true;
+  }
+
+  function updateDocumentRestoreUi(options = {}) {
+    const overlay = document.getElementById(RESTORE_OVERLAY_ID);
+
+    if (!overlay || overlay.hidden) {
+      return false;
+    }
+
+    const title = String(options.title || "").trim();
+    const detail = String(options.detail || "").trim();
+    const titleNode = overlay.querySelector("[data-document-restore-title]");
+    const detailNode = overlay.querySelector("[data-document-restore-detail]");
+
+    if (title && titleNode) {
+      titleNode.textContent = title;
+    }
+
+    if (detail && detailNode && detailNode.textContent !== detail) {
+      detailNode.textContent = detail;
+    }
+
+    return true;
+  }
+
+  function completeDocumentRestoreUiHide(overlay = document.getElementById(RESTORE_OVERLAY_ID)) {
+    restoreUiHideTimer = 0;
+    restoreUiVisibleStartedAt = 0;
+
+    if (overlay) {
+      renderDocumentRestoreArtboardGhosts(null);
+      overlay.classList.remove("is-finishing");
+      overlay.hidden = true;
+    }
+
+    document.body?.classList.remove("cbo-document-restore-active");
+    unbindDocumentRestoreInteractionGuard();
+  }
+
+  function finishDocumentRestoreUi() {
+    restoreUiHideTimer = 0;
+
+    const overlay = document.getElementById(RESTORE_OVERLAY_ID);
+
+    if (!overlay || overlay.hidden) {
+      completeDocumentRestoreUiHide(overlay);
+      return;
+    }
+
+    overlay.classList.add("is-finishing");
+    restoreUiHideTimer = window.setTimeout(() => {
+      completeDocumentRestoreUiHide(overlay);
+    }, RESTORE_FADE_OUT_MS);
   }
 
   function endDocumentRestoreUi(didBegin = true) {
@@ -911,14 +1120,16 @@
       return;
     }
 
-    const overlay = document.getElementById(RESTORE_OVERLAY_ID);
+    const now = performance.now?.() || Date.now();
+    const elapsedMs = restoreUiVisibleStartedAt ? now - restoreUiVisibleStartedAt : RESTORE_MIN_VISIBLE_MS;
+    const remainingMs = Math.max(0, RESTORE_MIN_VISIBLE_MS - elapsedMs);
 
-    if (overlay) {
-      overlay.hidden = true;
+    if (remainingMs > 0) {
+      restoreUiHideTimer = window.setTimeout(finishDocumentRestoreUi, remainingMs);
+      return;
     }
 
-    document.body?.classList.remove("cbo-document-restore-active");
-    unbindDocumentRestoreInteractionGuard();
+    finishDocumentRestoreUi();
   }
 
   function getBoundsForRects(rects = []) {
@@ -1141,6 +1352,498 @@
     renderer?.invalidatePreviewCache?.(source);
     renderer?.emitContentChange?.({ source });
     renderer?.requestDraw?.();
+  }
+
+  function waitForDocumentRestoreFrame() {
+    return new Promise((resolve) => {
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(() => resolve());
+        return;
+      }
+
+      window.setTimeout(resolve, 16);
+    });
+  }
+
+  async function waitForDocumentRestoreFrames(frameCount = 1) {
+    const count = Math.max(1, Math.round(Number(frameCount) || 1));
+
+    for (let index = 0; index < count; index += 1) {
+      await waitForDocumentRestoreFrame();
+    }
+  }
+
+  async function waitForDocumentRestoreDrawFrame() {
+    const renderer = namespace.documentRenderer;
+    const beforeFrameId = Number(renderer?.getLastViewportCullingStats?.()?.frameId) || 0;
+
+    namespace.documentRenderer?.requestDraw?.();
+    namespace.brushEngine?.requestDraw?.();
+
+    for (let index = 0; index < 8; index += 1) {
+      await waitForDocumentRestoreFrame();
+
+      const stats = renderer?.getLastViewportCullingStats?.();
+      const frameId = Number(stats?.frameId) || 0;
+
+      if (!beforeFrameId || frameId > beforeFrameId) {
+        return stats || null;
+      }
+    }
+
+    if (typeof namespace.brushEngine?.draw === "function") {
+      namespace.brushEngine.draw();
+      return renderer?.getLastViewportCullingStats?.() || null;
+    }
+
+    return renderer?.getLastViewportCullingStats?.() || null;
+  }
+
+  function flattenRestoreLayerEntries(entries = [], ancestorsVisible = true, result = []) {
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      if (!entry) {
+        continue;
+      }
+
+      const visible = ancestorsVisible && entry.visible !== false;
+
+      if (entry.type === "group") {
+        flattenRestoreLayerEntries(entry.children || [], visible, result);
+        continue;
+      }
+
+      result.push({
+        ...entry,
+        visible,
+      });
+    }
+
+    return result;
+  }
+
+  function getRestoreRenderableLayers() {
+    const layerModel = namespace.documentLayerModel;
+
+    if (typeof layerModel?.flattenTopToBottom === "function") {
+      return layerModel.flattenTopToBottom();
+    }
+
+    return flattenRestoreLayerEntries(layerModel?.getEntries?.() || []);
+  }
+
+  function restoreRectsIntersect(first, second) {
+    if (!first || !second) {
+      return true;
+    }
+
+    const firstLeft = Number(first.x) || 0;
+    const firstTop = Number(first.y) || 0;
+    const firstRight = firstLeft + Math.max(0, Number(first.width) || 0);
+    const firstBottom = firstTop + Math.max(0, Number(first.height) || 0);
+    const secondLeft = Number(second.x) || 0;
+    const secondTop = Number(second.y) || 0;
+    const secondRight = secondLeft + Math.max(0, Number(second.width) || 0);
+    const secondBottom = secondTop + Math.max(0, Number(second.height) || 0);
+
+    return firstRight > secondLeft &&
+      firstLeft < secondRight &&
+      firstBottom > secondTop &&
+      firstTop < secondBottom;
+  }
+
+  function hasRestoreRenderableRasterTarget(renderer, layerId, renderRect = null) {
+    const target = renderer?.rasterTargetsByLayerId?.get?.(layerId);
+
+    if (!target) {
+      return false;
+    }
+
+    if (renderer.isSparseRasterTarget?.(target) === true) {
+      let relevantTileCount = 0;
+      let texturedTileCount = 0;
+
+      target.tiles?.forEach?.((tile) => {
+        const tileRect = renderer.getRasterTargetDocumentRect?.(tile);
+
+        if (renderRect && tileRect && !restoreRectsIntersect(tileRect, renderRect)) {
+          return;
+        }
+
+        relevantTileCount += 1;
+
+        if (tile?.texture && tile.state !== "CPU_COLD") {
+          texturedTileCount += 1;
+        }
+      });
+
+      return relevantTileCount === 0 || texturedTileCount > 0;
+    }
+
+    if (typeof renderer.hasRenderableRasterTarget === "function") {
+      return renderer.hasRenderableRasterTarget(target);
+    }
+
+    return Boolean(target.texture || target.framebuffer) && target.state !== "CPU_COLD";
+  }
+
+  function hasRestoreImageBounds(layer) {
+    const width = Number(layer?.imageBounds?.width);
+    const height = Number(layer?.imageBounds?.height);
+
+    return layer?.type === "image" &&
+      Number.isFinite(width) &&
+      Number.isFinite(height) &&
+      width > 0 &&
+      height > 0;
+  }
+
+  function collectPendingRestoreRasterLayers(session) {
+    const renderer = namespace.documentRenderer;
+
+    if (!renderer) {
+      return [];
+    }
+
+    const renderRect = renderer.getLastViewportCullingStats?.()?.renderRect || null;
+    const layers = getRestoreRenderableLayers();
+    const visibleLayerById = new Map(
+      layers
+        .filter((layer) => layer?.id && layer.visible !== false)
+        .map((layer) => [layer.id, layer]),
+    );
+    const pending = [];
+    const seen = new Set();
+    const addPendingLayer = (layerId, reason) => {
+      if (!layerId || seen.has(layerId)) {
+        return;
+      }
+
+      seen.add(layerId);
+      pending.push({ layerId, reason });
+    };
+
+    for (const layerRecord of session?.rasterLayers || []) {
+      const layerId = String(layerRecord?.layerId || "").trim();
+
+      if (!layerId || !Array.isArray(layerRecord?.tiles) || layerRecord.tiles.length === 0) {
+        continue;
+      }
+
+      if (visibleLayerById.has(layerId) && !hasRestoreRenderableRasterTarget(renderer, layerId, renderRect)) {
+        addPendingLayer(layerId, "saved-raster-target");
+      }
+    }
+
+    for (const layer of layers) {
+      if (layer?.visible === false || !hasRestoreImageBounds(layer)) {
+        continue;
+      }
+
+      if (!hasRestoreRenderableRasterTarget(renderer, layer.id, renderRect)) {
+        addPendingLayer(layer.id, "image-layer-target");
+      }
+    }
+
+    return pending;
+  }
+
+  function getRestoreAiMediaBoards(session) {
+    const workspace = getSessionAiWorkspace(session);
+
+    return (workspace.spaceBoards || []).filter((board) => {
+      const media = board?.generatedMedia;
+      const hasMediaSource = Boolean(
+        String(media?.src || "").trim() ||
+        String(media?.previewSrc || "").trim() ||
+        String(media?.posterSrc || "").trim() ||
+        String(media?.canvasPreviewSrc || "").trim()
+      );
+
+      return board?.type === "ai-image" && hasMediaSource;
+    });
+  }
+
+  function getRestoreAiBoardElement(boardId) {
+    const normalizedBoardId = String(boardId || "").trim();
+
+    if (!normalizedBoardId) {
+      return null;
+    }
+
+    return Array.from(document.querySelectorAll("[data-ai-image-board]"))
+      .find((element) => String(element?.dataset?.boardId || "") === normalizedBoardId) || null;
+  }
+
+  function getRestoreAiBoardVisibilityById() {
+    const metrics = namespace.getAiBoardMetrics?.();
+
+    return new Map(
+      (Array.isArray(metrics?.boards) ? metrics.boards : [])
+        .map((board) => [String(board.id || ""), String(board.visibility || "")]),
+    );
+  }
+
+  function restoreElementIntersectsViewport(element) {
+    if (!element?.getBoundingClientRect) {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || 1);
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1);
+
+    return rect.width > 0 &&
+      rect.height > 0 &&
+      rect.right > 0 &&
+      rect.bottom > 0 &&
+      rect.left < viewportWidth &&
+      rect.top < viewportHeight;
+  }
+
+  function shouldWaitForRestoreAiBoard(board, element, visibilityById) {
+    const visibility = visibilityById.get(String(board?.id || ""));
+
+    if (visibility) {
+      return visibility === "visible";
+    }
+
+    return restoreElementIntersectsViewport(element);
+  }
+
+  function getRestoreAiImageActiveLayer(mediaHost) {
+    const activeLayerName = String(mediaHost?.dataset?.mediaActiveLayer || "").trim();
+
+    if (activeLayerName) {
+      const activeLayer = mediaHost.querySelector(`[data-ai-image-board-preview-layer="${activeLayerName}"]`);
+
+      if (activeLayer) {
+        return activeLayer;
+      }
+    }
+
+    return mediaHost?.querySelector?.("[data-ai-image-board-preview-layer].is-active") || null;
+  }
+
+  function isRestoreAiFinalPlaceholder(mediaHost) {
+    const previewSource = String(mediaHost?.dataset?.mediaPreviewSource || "");
+    const previewLod = String(mediaHost?.dataset?.mediaLod || "");
+    const pendingPlaceholder = previewSource === "loading" ||
+      previewSource === "runtime" ||
+      previewLod.startsWith("loading-");
+
+    return Boolean(
+      mediaHost?.classList?.contains("is-placeholder-preview") &&
+      previewSource &&
+      !pendingPlaceholder
+    );
+  }
+
+  function hasRestoreAiImagePreview(mediaHost) {
+    const activeLayer = getRestoreAiImageActiveLayer(mediaHost);
+    const hasBackgroundPreview = Boolean(
+      mediaHost?.style?.backgroundImage &&
+      mediaHost.style.backgroundImage !== "none"
+    );
+
+    return Boolean(
+      mediaHost?.classList?.contains("is-image-preview") &&
+      !mediaHost.dataset.mediaPreviewSwapRequest &&
+      !mediaHost.dataset.mediaPendingSrc &&
+      (
+        hasBackgroundPreview ||
+        (
+          activeLayer &&
+          activeLayer.complete !== false &&
+          Math.max(0, Number(activeLayer.naturalWidth) || 0) > 0 &&
+          activeLayer.dataset.previewProbeBlank !== "1"
+        )
+      )
+    );
+  }
+
+  function hasRestoreAiVideoPreview(mediaHost) {
+    if (!mediaHost?.classList?.contains("is-video-preview")) {
+      return false;
+    }
+
+    const video = mediaHost.querySelector("[data-ai-image-board-video]");
+    const poster = mediaHost.querySelector(".editor-ai-image-board-video-poster");
+
+    if (poster && (poster.complete === false || Math.max(0, Number(poster.naturalWidth) || 0) <= 0)) {
+      return false;
+    }
+
+    if (video) {
+      return video.readyState >= 1 || Boolean(video.dataset.videoSrc || video.currentSrc || video.src);
+    }
+
+    return Boolean(mediaHost.dataset.mediaVideoSrc);
+  }
+
+  function isRestoreDomMediaVisible(element) {
+    if (!element?.isConnected || !element.getBoundingClientRect) {
+      return false;
+    }
+
+    const style = window.getComputedStyle?.(element);
+
+    if (style?.display === "none" || style?.visibility === "hidden" || Number(style?.opacity) === 0) {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+
+    return rect.width > 0 && rect.height > 0 && restoreElementIntersectsViewport(element);
+  }
+
+  function collectPendingRestoreDomMedia() {
+    const root = document.querySelector(".editor-stage") || document;
+    const pending = [];
+
+    root.querySelectorAll("img").forEach((image) => {
+      if (!isRestoreDomMediaVisible(image)) {
+        return;
+      }
+
+      if (image.complete !== true || Math.max(0, Number(image.naturalWidth) || 0) <= 0) {
+        pending.push({ reason: "dom-image", src: String(image.currentSrc || image.src || "").slice(0, 96) });
+      }
+    });
+
+    root.querySelectorAll("video").forEach((video) => {
+      if (!isRestoreDomMediaVisible(video)) {
+        return;
+      }
+
+      const src = String(video.currentSrc || video.src || video.dataset?.videoSrc || "").trim();
+
+      if (src && video.readyState < 1) {
+        pending.push({ reason: "dom-video", src: src.slice(0, 96) });
+      }
+    });
+
+    return pending;
+  }
+
+  function collectPendingRestoreAiMedia(session) {
+    const visibilityById = getRestoreAiBoardVisibilityById();
+    const pending = [];
+
+    for (const board of getRestoreAiMediaBoards(session)) {
+      const element = getRestoreAiBoardElement(board.id);
+
+      if (!element) {
+        pending.push({ boardId: board.id || "", reason: "board-element" });
+        continue;
+      }
+
+      if (!shouldWaitForRestoreAiBoard(board, element, visibilityById)) {
+        continue;
+      }
+
+      const mediaHost = element.querySelector("[data-ai-image-board-media]");
+
+      if (!mediaHost) {
+        pending.push({ boardId: board.id || "", reason: "media-host" });
+        continue;
+      }
+
+      if (
+        mediaHost.dataset.mediaPendingSrc ||
+        mediaHost.dataset.mediaPreviewSwapRequest ||
+        mediaHost.dataset.mediaPendingPreviewKey
+      ) {
+        pending.push({ boardId: board.id || "", reason: "media-pending" });
+        continue;
+      }
+
+      const kind = board.generatedMedia?.kind === "video" ? "video" : "image";
+      const isReady = kind === "video"
+        ? hasRestoreAiVideoPreview(mediaHost)
+        : hasRestoreAiImagePreview(mediaHost) || isRestoreAiFinalPlaceholder(mediaHost);
+
+      if (!isReady) {
+        pending.push({ boardId: board.id || "", reason: `${kind}-preview` });
+      }
+    }
+
+    return pending;
+  }
+
+  function getRestoreVisualPendingSummary(session) {
+    const pendingRasterLayers = collectPendingRestoreRasterLayers(session);
+    const pendingAiMedia = collectPendingRestoreAiMedia(session);
+    const pendingDomMedia = collectPendingRestoreDomMedia();
+
+    return {
+      aiMedia: pendingAiMedia.length,
+      domMedia: pendingDomMedia.length,
+      pendingAiMedia,
+      pendingDomMedia,
+      pendingRasterLayers,
+      rasterLayers: pendingRasterLayers.length,
+      total: pendingRasterLayers.length + pendingAiMedia.length + pendingDomMedia.length,
+    };
+  }
+
+  function getRestoreVisualDetail(summary) {
+    const mediaCount = Math.max(0, Number(summary.aiMedia) || 0) + Math.max(0, Number(summary.domMedia) || 0);
+
+    if (mediaCount > 0 && summary.rasterLayers > 0) {
+      return "Loading images and layer previews";
+    }
+
+    if (mediaCount > 0) {
+      return "Loading images";
+    }
+
+    if (summary.rasterLayers > 0) {
+      return "Preparing layer previews";
+    }
+
+    return "Finalizing artboards";
+  }
+
+  async function waitForDocumentRestoreVisualContent(session, options = {}) {
+    const timeoutMs = Math.max(1000, Math.round(Number(options.timeoutMs) || RESTORE_VISUAL_READY_TIMEOUT_MS));
+    const minWaitMs = Math.max(0, Math.round(Number(options.minWaitMs) || RESTORE_VISUAL_READY_MIN_MS));
+    const startedAt = performance.now?.() || Date.now();
+    let stableFrames = 0;
+
+    updateDocumentRestoreUi({
+      detail: options.detail || "Loading images and layer previews",
+    });
+
+    await waitForDocumentRestoreDrawFrame();
+
+    while (true) {
+      await waitForDocumentRestoreDrawFrame();
+      const pending = getRestoreVisualPendingSummary(session);
+      const elapsedMs = (performance.now?.() || Date.now()) - startedAt;
+      const minWaitElapsed = elapsedMs >= minWaitMs;
+
+      namespace.lastDocumentRestoreVisualPending = pending;
+      updateDocumentRestoreUi({ detail: getRestoreVisualDetail(pending) });
+
+      if (pending.total === 0 && minWaitElapsed) {
+        stableFrames += 1;
+
+        if (stableFrames >= RESTORE_VISUAL_READY_STABLE_FRAMES) {
+          break;
+        }
+      } else {
+        stableFrames = 0;
+      }
+
+      const now = performance.now?.() || Date.now();
+
+      if (now - startedAt >= timeoutMs) {
+        console.warn?.("[CBO document save] Visual restore wait timed out.", pending);
+        break;
+      }
+    }
+
+    await waitForDocumentRestoreFrames(RESTORE_VISUAL_READY_STABLE_FRAMES);
   }
 
   function emitSaveStatus(status, source) {
@@ -1719,6 +2422,8 @@
       restoreSessionArtboards(session);
       await restoreSessionAiWorkspace(session);
       fitRestoreViewToArtboards(session);
+      await waitForDocumentRestoreFrame();
+      renderDocumentRestoreArtboardGhosts(session);
       await restoreRasterLayers(session, tileRecords);
 
       namespace.documentSettings = {
@@ -1738,6 +2443,8 @@
         namespace.emitEditorCanvasReady?.({ source: "document-save-restore" });
         didDeferCanvasReady = false;
       }
+
+      await waitForDocumentRestoreVisualContent(session);
 
       window.dispatchEvent(new CustomEvent("cbo:document-save-restored", {
         detail: createSummary(session),
@@ -1772,6 +2479,8 @@
         return false;
       }
 
+      renderDocumentRestoreArtboardGhosts(session);
+
       const tileRecords = await getTilesForSession(session.id);
 
       return restoreSession(session, tileRecords, {
@@ -1801,6 +2510,8 @@
       if (!session) {
         return false;
       }
+
+      renderDocumentRestoreArtboardGhosts(session);
 
       const tileRecords = await getTilesForSession(session.id);
 

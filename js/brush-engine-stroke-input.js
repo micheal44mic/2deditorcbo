@@ -314,6 +314,11 @@
 ,
 
     handleWheel(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       event.preventDefault();
 
       let deltaY = event.deltaY;
@@ -694,6 +699,29 @@
     }
 ,
 
+    shouldSuppressDocumentRestoreInput() {
+      return Boolean(
+        namespace.isRestoringDocumentSave === true ||
+        document.body?.classList?.contains("cbo-document-restore-active")
+      );
+    }
+,
+
+    suppressDocumentRestoreInput(event) {
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      event?.stopImmediatePropagation?.();
+
+      if (this.isPanning) {
+        this.endPan(event);
+      }
+
+      if (this.touchNavigationGesture || this.touchNavigationExclusive || this.activeTouchPointers?.size > 0) {
+        this.resetTouchNavigationState("document-restore-input-lock");
+      }
+    }
+,
+
     suppressTouchToolEvent(event) {
       event.preventDefault?.();
       event.stopPropagation?.();
@@ -760,6 +788,11 @@
         return;
       }
 
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       if (event.pointerType === "touch") {
         this.pruneStaleTouchNavigationPointers();
         this.rememberTouchNavigationPointer(event);
@@ -793,6 +826,11 @@
 ,
 
     handleNavigationPointerMove(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       if (event.pointerType === "touch" && this.activeTouchPointers.has(event.pointerId)) {
         this.rememberTouchNavigationPointer(event);
 
@@ -818,6 +856,11 @@
 ,
 
     handleNavigationPointerUp(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       if (event.pointerType === "touch") {
         if (this.isPanning && this.activePanPointerId === event.pointerId) {
           this.markNavigationEvent(event);
@@ -839,6 +882,11 @@
 ,
 
     handleNavigationPointerCancel(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       if (event.pointerType === "touch") {
         if (this.isPanning && this.activePanPointerId === event.pointerId) {
           this.markNavigationEvent(event);
@@ -911,6 +959,13 @@
 ,
 
     handleKeyDown(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        if (event.code === "Space") {
+          this.suppressDocumentRestoreInput(event);
+        }
+        return;
+      }
+
       if (event.code !== "Space" || this.isInputFocused()) {
         return;
       }
@@ -3816,6 +3871,11 @@
 ,
 
     handlePointerDown(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       if (event.__cboNavigationHandled) {
         return;
       }
@@ -3949,6 +4009,11 @@
 ,
 
     handlePointerMove(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       if (event.__cboNavigationHandled) {
         return;
       }
@@ -3983,6 +4048,11 @@
 ,
 
     handlePointerUp(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       if (event.__cboNavigationHandled) {
         return;
       }
@@ -4091,6 +4161,11 @@
 ,
 
     handlePointerCancel(event) {
+      if (this.shouldSuppressDocumentRestoreInput()) {
+        this.suppressDocumentRestoreInput(event);
+        return;
+      }
+
       if (event.__cboNavigationHandled) {
         return;
       }

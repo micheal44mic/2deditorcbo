@@ -4199,8 +4199,27 @@ body.cbo-history-busy-active .editor-stage > .editor-puppet-overlay {
     transform 160ms ease;
 }
 
+body.cbo-document-restore-active .editor-stage > .editor-webgl-canvas,
+body.cbo-document-restore-active .editor-stage > .editor-artboard-paper-layer,
+body.cbo-document-restore-active .editor-stage > .editor-artboard-preview-layer,
+body.cbo-document-restore-active .editor-stage > .editor-vector-overlay,
+body.cbo-document-restore-active .editor-stage > .editor-vector-rect-overlay,
+body.cbo-document-restore-active .editor-stage > .editor-raster-transform-overlay,
+body.cbo-document-restore-active .editor-stage > .editor-puppet-overlay {
+  filter: blur(12px) saturate(0.74);
+  transform: none;
+  transition:
+    filter 260ms ease,
+    transform 260ms ease;
+}
+
 body.cbo-document-restore-active {
   cursor: progress;
+}
+
+body.cbo-document-restore-active .editor-page {
+  pointer-events: none;
+  user-select: none;
 }
 
 body.cbo-document-restore-active .editor-stage {
@@ -4214,9 +4233,60 @@ body.cbo-document-restore-active .editor-stage {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(16, 18, 23, 0.24);
-  backdrop-filter: blur(2px);
+  background: rgba(16, 18, 23, 0.34);
+  backdrop-filter: blur(10px) saturate(0.84);
+  opacity: 1;
   pointer-events: all;
+  transition:
+    opacity 700ms ease,
+    background-color 700ms ease,
+    backdrop-filter 700ms ease;
+  will-change: opacity, backdrop-filter;
+}
+
+.cbo-document-restore-artboards {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  filter: blur(0.8px);
+  pointer-events: none;
+}
+
+.cbo-document-restore-artboard-stack {
+  position: relative;
+  aspect-ratio: var(--restore-artboard-bounds-aspect, 1 / 1);
+  opacity: 0.82;
+  filter: blur(1.2px) saturate(0.72);
+  transform: translateZ(0);
+}
+
+.cbo-document-restore-artboard-ghost {
+  position: absolute;
+  left: var(--restore-artboard-x, 0%);
+  top: var(--restore-artboard-y, 0%);
+  width: var(--restore-artboard-w, 100%);
+  height: var(--restore-artboard-h, 100%);
+  min-width: 2px;
+  min-height: 2px;
+  border: 1px solid rgba(245, 247, 251, 0.22);
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.035) 52%, rgba(113, 208, 180, 0.1)),
+    rgba(28, 32, 40, 0.72);
+  box-shadow:
+    0 20px 58px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  animation: cbo-document-restore-artboard-pulse 1280ms ease-in-out infinite alternate;
+  animation-delay: var(--restore-artboard-delay, 0ms);
+  will-change: opacity, filter;
+}
+
+.cbo-document-restore-overlay.is-finishing {
+  background: rgba(16, 18, 23, 0.18);
+  backdrop-filter: blur(14px) saturate(0.78);
+  opacity: 0;
 }
 
 .cbo-document-restore-overlay[hidden] {
@@ -4224,6 +4294,8 @@ body.cbo-document-restore-active .editor-stage {
 }
 
 .cbo-document-restore-panel {
+  position: relative;
+  z-index: 1;
   display: grid;
   min-width: min(300px, calc(100vw - 48px));
   max-width: min(420px, calc(100vw - 48px));
@@ -4265,6 +4337,18 @@ body.cbo-document-restore-active .editor-stage {
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.35;
+}
+
+@keyframes cbo-document-restore-artboard-pulse {
+  from {
+    opacity: 0.42;
+    filter: blur(1.5px) saturate(0.68);
+  }
+
+  to {
+    opacity: 0.72;
+    filter: blur(0.9px) saturate(0.82);
+  }
 }
 
 .cbo-memory-autosave-overlay {
