@@ -423,6 +423,10 @@ test("artboard connections live in their own module", () => {
   assert.match(connectionsSource, /previewSource: previewSrc \? "fixed-video-preview" : "original-video-fallback"/);
   assert.match(connectionsSource, /function requestAiVideoRuntimePoster\(src, lod = AI_VIDEO_CANVAS_PREVIEW_LOD\)/);
   assert.match(connectionsSource, /function buildAiVideoRuntimePoster\(src, lod = AI_VIDEO_CANVAS_PREVIEW_LOD\)/);
+  assert.match(connectionsSource, /function seekAiVideoRuntimePosterFrame\(video, time\)/);
+  assert.match(connectionsSource, /function isAiVideoRuntimePosterProbeUsable\(probe\)/);
+  assert.match(connectionsSource, /recordAiBoardPreviewDebugEvent\("video-poster-frame-skip"/);
+  assert.match(connectionsSource, /recordAiBoardPreviewDebugEvent\("video-poster-frame-selected"/);
   assert.match(connectionsSource, /recordAiBoardPreviewDebugEvent\("video-poster-ready"/);
   assert.match(connectionsSource, /posterSource = "runtime-poster"/);
   assert.match(connectionsSource, /function createAiImageBoardVideoPosterElement\(\)/);

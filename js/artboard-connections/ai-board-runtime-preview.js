@@ -348,7 +348,7 @@ window.CBO = window.CBO || {};
   Controller.prototype.getAiVideoRuntimePosterCacheKey = function getAiVideoRuntimePosterCacheKey(src, lod = AI_VIDEO_CANVAS_PREVIEW_LOD) {
     with (this) {
 
-    return `${String(src || "").trim()}::poster::${String(lod || AI_VIDEO_CANVAS_PREVIEW_LOD).trim()}`;
+    return `${String(src || "").trim()}::poster-v2::${String(lod || AI_VIDEO_CANVAS_PREVIEW_LOD).trim()}`;
     }
   };
 
@@ -807,13 +807,13 @@ window.CBO = window.CBO || {};
       video.muted = true;
       video.defaultMuted = true;
       video.playsInline = true;
-      video.preload = "metadata";
+      video.preload = "auto";
       video.disablePictureInPicture = true;
       video.disableRemotePlayback = true;
       video.setAttribute("muted", "");
       video.setAttribute("playsinline", "");
       video.setAttribute("webkit-playsinline", "");
-      video.setAttribute("preload", "metadata");
+      video.setAttribute("preload", "auto");
       video.onloadedmetadata = finish;
       video.onloadeddata = finish;
       video.oncanplay = finish;
@@ -825,22 +825,201 @@ window.CBO = window.CBO || {};
     }
   };
 
-  Controller.prototype.drawAiVideoRuntimePosterCanvas = async function drawAiVideoRuntimePosterCanvas(context, canvas, video, width, height, lod, src) {
+  Controller.prototype.getAiVideoRuntimePosterCandidateTimes = function getAiVideoRuntimePosterCandidateTimes(video) {
     with (this) {
 
-    await waitAiImageRuntimePreviewFrame(2);
+    const duration = Number(video?.duration);
+    const finiteDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+    const maxSeekTime = finiteDuration > 0 ? Math.max(0, duration - 0.05) : Number.POSITIVE_INFINITY;
+    const candidates = [0, 0.12, 0.28, 0.5, 0.85, 1.25];
+
+    if (finiteDuration > 0) {
+      candidates.push(
+        duration * 0.05,
+        duration * 0.12,
+        duration * 0.2,
+      );
+    }
+
+    return Array.from(new Set(candidates
+      .map((time) => Math.max(0, Math.min(maxSeekTime, Number(time) || 0)))
+      .map((time) => Math.round(time * 1000) / 1000)))
+      .sort((a, b) => a - b)
+      .slice(0, 8);
+    }
+  };
+
+  Controller.prototype.seekAiVideoRuntimePosterFrame = function seekAiVideoRuntimePosterFrame(video, time) {
+    with (this) {
+
+    const targetTime = Math.max(0, Number(time) || 0);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeoutId = 0;
+      const cleanup = () => {
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+          timeoutId = 0;
+        }
+
+        video.removeEventListener("seeked", finish);
+        video.removeEventListener("loadeddata", finish);
+        video.removeEventListener("canplay", finish);
+        video.removeEventListener("error", fail);
+      };
+      const settle = (ok) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        waitAiImageRuntimePreviewFrame(1).then(() => resolve(ok));
+      };
+      const finish = () => {
+        if (Number(video.readyState) < 2) {
+          return;
+        }
+
+        settle(true);
+      };
+      const fail = () => {
+        settle(false);
+      };
+
+      video.addEventListener("seeked", finish);
+      video.addEventListener("loadeddata", finish);
+      video.addEventListener("canplay", finish);
+      video.addEventListener("error", fail);
+      timeoutId = window.setTimeout(fail, 1400);
+
+      try {
+        if (Math.abs((Number(video.currentTime) || 0) - targetTime) < 0.025 && Number(video.readyState) >= 2) {
+          finish();
+        } else {
+          video.currentTime = targetTime;
+        }
+      } catch (error) {
+        fail();
+      }
+    });
+    }
+  };
+
+  Controller.prototype.isAiVideoRuntimePosterProbeUsable = function isAiVideoRuntimePosterProbeUsable(probe) {
+    with (this) {
+
+    if (!probe || probe.blank) {
+      return false;
+    }
+
+    const lumaAvg = Number(probe.lumaAvg);
+    const lumaRange = Number(probe.lumaRange);
+    const darkRatio = Number(probe.darkRatio);
+    const darkLumaMax = Math.max(1, Number(AI_VIDEO_RUNTIME_POSTER_DARK_LUMA_MAX) || 28);
+    const flatRangeMax = Math.max(1, Number(AI_VIDEO_RUNTIME_POSTER_FLAT_LUMA_RANGE_MAX) || 10);
+    const mostlyDark = probe.mostlyDark === true ||
+      (Number.isFinite(lumaAvg) && Number.isFinite(lumaRange) && lumaAvg <= darkLumaMax && lumaRange <= flatRangeMax) ||
+      (Number.isFinite(darkRatio) && Number.isFinite(lumaRange) && darkRatio >= 0.96 && lumaRange <= flatRangeMax);
+
+    return !mostlyDark;
+    }
+  };
+
+  Controller.prototype.getAiVideoRuntimePosterProbeScore = function getAiVideoRuntimePosterProbeScore(probe) {
+    with (this) {
+
+    if (!probe || probe.blank) {
+      return Number.NEGATIVE_INFINITY;
+    }
+
+    const lumaAvg = Number(probe.lumaAvg);
+    const lumaRange = Number(probe.lumaRange);
+    const darkRatio = Number(probe.darkRatio);
+
+    return (Number.isFinite(lumaRange) ? lumaRange * 3 : 0) +
+      (Number.isFinite(lumaAvg) ? lumaAvg : 0) -
+      (Number.isFinite(darkRatio) ? darkRatio * 24 : 0);
+    }
+  };
+
+  Controller.prototype.drawAiVideoRuntimePosterFrame = async function drawAiVideoRuntimePosterFrame(context, canvas, video, width, height) {
+    with (this) {
 
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, width, height);
-    context.fillStyle = "#111318";
-    context.fillRect(0, 0, width, height);
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = isAiImageBoardMobileLowQualityPreview() ? "low" : "medium";
     context.drawImage(video, 0, 0, width, height);
     context.restore();
 
+    await waitAiImageRuntimePreviewFrame(1);
+
     return probeAiImageRuntimePreviewCanvas(canvas);
+    }
+  };
+
+  Controller.prototype.drawAiVideoRuntimePosterCanvas = async function drawAiVideoRuntimePosterCanvas(context, canvas, video, width, height, lod, src) {
+    with (this) {
+
+    const candidateTimes = getAiVideoRuntimePosterCandidateTimes(video);
+    let best = null;
+
+    await waitAiImageRuntimePreviewFrame(2);
+
+    for (let index = 0; index < candidateTimes.length; index += 1) {
+      const time = candidateTimes[index];
+      const seekOk = await seekAiVideoRuntimePosterFrame(video, time);
+      const probe = {
+        ...await drawAiVideoRuntimePosterFrame(context, canvas, video, width, height),
+        selectedTime: roundMetricValue(time, 3),
+        seekOk,
+      };
+      const score = getAiVideoRuntimePosterProbeScore(probe);
+      const usable = isAiVideoRuntimePosterProbeUsable(probe);
+
+      if (!best || score > best.score) {
+        best = { probe, score };
+      }
+
+      if (usable) {
+        if (index > 0) {
+          recordAiBoardPreviewDebugEvent("video-poster-frame-selected", {
+            attempt: index + 1,
+            lod,
+            probe,
+            src,
+            time,
+          });
+        }
+
+        return probe;
+      }
+
+      recordAiBoardPreviewDebugEvent("video-poster-frame-skip", {
+        attempt: index + 1,
+        lod,
+        probe,
+        reason: probe.blank ? "blank-frame" : "dark-or-flat-frame",
+        src,
+        time,
+      });
+    }
+
+    if (best?.probe) {
+      recordAiBoardPreviewDebugEvent("video-poster-frame-selected", {
+        fallback: 1,
+        lod,
+        probe: best.probe,
+        reason: "best-available-frame",
+        src,
+        time: best.probe.selectedTime,
+      });
+    }
+
+    return best?.probe || probeAiImageRuntimePreviewCanvas(canvas);
     }
   };
 
@@ -918,8 +1097,10 @@ window.CBO = window.CBO || {};
       const data = probeContext.getImageData(0, 0, probeSize, probeSize).data;
       const total = probeSize * probeSize;
       let alphaPixels = 0;
+      let darkPixels = 0;
       let lumaMax = 0;
       let lumaMin = 255;
+      let lumaSum = 0;
       let nonWhitePixels = 0;
 
       for (let index = 0; index < data.length; index += 4) {
@@ -935,8 +1116,12 @@ window.CBO = window.CBO || {};
         const luma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
 
         alphaPixels += 1;
+        lumaSum += luma;
         lumaMin = Math.min(lumaMin, luma);
         lumaMax = Math.max(lumaMax, luma);
+        if (luma < AI_VIDEO_RUNTIME_POSTER_DARK_LUMA_MAX) {
+          darkPixels += 1;
+        }
 
         if (!(red >= 248 && green >= 248 && blue >= 248)) {
           nonWhitePixels += 1;
@@ -944,15 +1129,24 @@ window.CBO = window.CBO || {};
       }
 
       const alphaRatio = alphaPixels / total;
+      const darkRatio = alphaPixels > 0 ? darkPixels / alphaPixels : 0;
+      const lumaAvg = alphaPixels > 0 ? lumaSum / alphaPixels : 0;
       const nonWhiteRatio = nonWhitePixels / total;
       const lumaRange = alphaPixels > 0 ? lumaMax - lumaMin : 0;
       const blank = alphaRatio < 0.01 || (nonWhiteRatio < 0.003 && lumaRange < 8);
+      const mostlyDark = alphaRatio > 0.1 &&
+        darkRatio > 0.96 &&
+        lumaAvg <= AI_VIDEO_RUNTIME_POSTER_DARK_LUMA_MAX &&
+        lumaRange <= AI_VIDEO_RUNTIME_POSTER_FLAT_LUMA_RANGE_MAX;
 
       return {
         alphaRatio: roundMetricValue(alphaRatio, 4),
         blank,
+        darkRatio: roundMetricValue(darkRatio, 4),
         height,
+        lumaAvg: roundMetricValue(lumaAvg, 2),
         lumaRange: roundMetricValue(lumaRange, 2),
+        mostlyDark,
         nonWhiteRatio: roundMetricValue(nonWhiteRatio, 4),
         width,
       };

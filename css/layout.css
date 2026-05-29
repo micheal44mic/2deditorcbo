@@ -12,6 +12,230 @@
   min-height: var(--cbo-visual-viewport-height);
 }
 
+.editor-ai-video-debug-console {
+  position: fixed;
+  right: max(14px, var(--cbo-safe-right, 0px));
+  bottom: max(14px, var(--cbo-safe-bottom, 0px));
+  z-index: 10080;
+  display: flex;
+  flex-direction: column;
+  width: min(470px, calc(100vw - 28px));
+  max-height: min(560px, calc(100vh - 28px));
+  overflow: hidden;
+  color: #f5f7fb;
+  background: rgba(12, 14, 18, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.38);
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  pointer-events: auto;
+}
+
+.editor-ai-video-debug-console.is-collapsed {
+  max-height: 46px;
+}
+
+.editor-ai-video-debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.editor-ai-video-debug-title {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.editor-ai-video-debug-title strong {
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.editor-ai-video-debug-title span {
+  color: rgba(245, 247, 251, 0.68);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-ai-video-debug-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.editor-ai-video-debug-button {
+  height: 28px;
+  padding: 0 9px;
+  color: #f5f7fb;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.editor-ai-video-debug-button:hover,
+.editor-ai-video-debug-button:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  outline: none;
+}
+
+.editor-ai-video-debug-button.is-primary {
+  color: #101318;
+  background: #9be7ff;
+  border-color: #9be7ff;
+}
+
+.editor-ai-video-debug-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.editor-ai-video-debug-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.editor-ai-video-debug-console.is-collapsed .editor-ai-video-debug-body {
+  display: none;
+}
+
+.editor-ai-video-debug-board {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.editor-ai-video-debug-board-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.editor-ai-video-debug-board-title strong,
+.editor-ai-video-debug-board-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-ai-video-debug-board-title span {
+  color: rgba(245, 247, 251, 0.58);
+}
+
+.editor-ai-video-debug-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 8px;
+}
+
+.editor-ai-video-debug-field {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.editor-ai-video-debug-field span {
+  color: rgba(245, 247, 251, 0.56);
+}
+
+.editor-ai-video-debug-field strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #ffffff;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-ai-video-debug-section-title {
+  padding: 3px 1px 0;
+  color: rgba(245, 247, 251, 0.68);
+  font-weight: 700;
+}
+
+.editor-ai-video-debug-events {
+  display: grid;
+  gap: 4px;
+}
+
+.editor-ai-video-debug-event {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 5px 6px;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 5px;
+}
+
+.editor-ai-video-debug-event time {
+  color: rgba(245, 247, 251, 0.48);
+}
+
+.editor-ai-video-debug-event strong {
+  color: #9be7ff;
+  font-weight: 700;
+}
+
+.editor-ai-video-debug-event span {
+  overflow: hidden;
+  color: rgba(245, 247, 251, 0.76);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-ai-video-debug-empty {
+  padding: 9px 8px;
+  color: rgba(245, 247, 251, 0.62);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+@media (max-width: 640px) {
+  .editor-ai-video-debug-console {
+    right: 8px;
+    bottom: calc(var(--cbo-mobile-floating-bottom, 0px) + 8px);
+    left: 8px;
+    width: auto;
+    max-height: min(54vh, 520px);
+  }
+
+  .editor-ai-video-debug-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .editor-ai-video-debug-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .editor-ai-video-debug-button {
+    width: 100%;
+  }
+
+  .editor-ai-video-debug-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .editor-page.light-stage-background {
   --editor-stage-bg: var(--editor-stage-bg-light);
 }
