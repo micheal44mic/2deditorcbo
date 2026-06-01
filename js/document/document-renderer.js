@@ -16,6 +16,8 @@
   const ARTBOARD_RESIDENCY_SOFT_BUDGET_BYTES = 384 * 1024 * 1024;
   const ARTBOARD_RESIDENCY_HARD_BUDGET_BYTES = 640 * 1024 * 1024;
   const ARTBOARD_RESIDENCY_PREFETCH_CSS_PX = 640;
+  const ARTBOARD_RESIDENCY_READBACK_CHUNK_BYTES = 4 * 1024 * 1024;
+  const ARTBOARD_RESIDENCY_MAINTENANCE_FRAME_DELAY_MS = 32;
   const ARTBOARD_FLAT_PREVIEW_MAX_SIZE = 2048;
   const RASTER_TRANSFORM_EDGE_AA_FEATHER_PIXELS = 1;
   const RASTER_TRANSFORM_EDGE_AA_DIRTY_PADDING = 2;
@@ -523,6 +525,12 @@
         artboardResidencyPrefetchCssPx: Number.isFinite(options.artboardResidencyPrefetchCssPx) && options.artboardResidencyPrefetchCssPx >= 0
           ? Math.floor(options.artboardResidencyPrefetchCssPx)
           : ARTBOARD_RESIDENCY_PREFETCH_CSS_PX,
+        artboardResidencyReadbackChunkBytes: Number.isFinite(options.artboardResidencyReadbackChunkBytes) && options.artboardResidencyReadbackChunkBytes > 0
+          ? Math.floor(options.artboardResidencyReadbackChunkBytes)
+          : ARTBOARD_RESIDENCY_READBACK_CHUNK_BYTES,
+        artboardResidencyMaintenanceFrameDelayMs: Number.isFinite(options.artboardResidencyMaintenanceFrameDelayMs) && options.artboardResidencyMaintenanceFrameDelayMs >= 0
+          ? Math.floor(options.artboardResidencyMaintenanceFrameDelayMs)
+          : ARTBOARD_RESIDENCY_MAINTENANCE_FRAME_DELAY_MS,
         artboardFlatPreviewMaxSize: Number.isFinite(options.artboardFlatPreviewMaxSize) && options.artboardFlatPreviewMaxSize > 0
           ? Math.floor(options.artboardFlatPreviewMaxSize)
           : ARTBOARD_FLAT_PREVIEW_MAX_SIZE,
@@ -578,6 +586,11 @@
       this.artboardResidencyLast = null;
       this.artboardResidencyLastViewOptions = null;
       this.artboardResidencyIdleTimer = 0;
+      this.artboardResidencyMaintenanceJob = null;
+      this.artboardResidencyMaintenanceTimer = 0;
+      this.artboardResidencyMaintenanceFrameRequest = 0;
+      this.artboardResidencyMaintenanceIdleCallback = 0;
+      this.artboardResidencyMaintenanceSequence = 0;
       this.artboardResidencyLastColdStorage = null;
       this.artboardResidencyAccessById = new Map();
       this.artboardResidencyMetricsLast = null;
@@ -1664,7 +1677,9 @@
     ARTBOARD_FRAGMENT_SHADER_SOURCE,
     ARTBOARD_RESIDENCY_HARD_BUDGET_BYTES,
     ARTBOARD_RESIDENCY_IDLE_DELAY_MS,
+    ARTBOARD_RESIDENCY_MAINTENANCE_FRAME_DELAY_MS,
     ARTBOARD_RESIDENCY_PREFETCH_CSS_PX,
+    ARTBOARD_RESIDENCY_READBACK_CHUNK_BYTES,
     ARTBOARD_RESIDENCY_SOFT_BUDGET_BYTES,
     ARTBOARD_RESIDENCY_WARM_HOLD_MS,
     ARTBOARD_VERTEX_SHADER_SOURCE,

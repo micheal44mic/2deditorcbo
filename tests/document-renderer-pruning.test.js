@@ -4223,13 +4223,15 @@ test("artboard residency predicts prefetch artboards from pan direction", () => 
   assert.ok(residency.prefetchRect.width > residency.visibleRect.width);
 });
 
-test("artboard residency shows a busy loading state before MiB cooling", () => {
+test("artboard residency schedules background cooling without a busy overlay", () => {
   const { DocumentRenderer, window } = loadDocumentRenderer();
   const renderer = Object.create(DocumentRenderer.prototype);
   const busyEvents = [];
   const timeouts = [];
-  let cooledAtEventCount = null;
   let clearedTimer = null;
+  let startedAtEventCount = null;
+  let startedOptions = null;
+  let startedResidency = null;
 
   window.setTimeout = (callback, delay) => {
     timeouts.push({ callback, delay });
@@ -4259,10 +4261,15 @@ test("artboard residency shows a busy loading state before MiB cooling", () => {
   renderer.artboardResidencyAccessById = new Map();
   renderer.resolveAndPublishArtboardResidency = () => ({
     coldArtboardIds: ["right"],
+    renderArtboardIds: ["left"],
+    visibleArtboardIds: ["left"],
   });
-  renderer.applyArtboardColdStorage = () => {
-    cooledAtEventCount = busyEvents.length;
-    return { releasedRawBytes: 2 * 1024 * 1024 };
+  renderer.startArtboardResidencyMaintenance = (residency, options) => {
+    startedAtEventCount = busyEvents.length;
+    startedOptions = options;
+    startedResidency = residency;
+
+    return { id: 1 };
   };
 
   const didSchedule = renderer.scheduleArtboardResidencyMaintenance({
@@ -4288,17 +4295,126 @@ test("artboard residency shows a busy loading state before MiB cooling", () => {
 
   timeouts[0].callback();
 
-  assert.equal(busyEvents[0].active, true);
-  assert.equal(busyEvents[0].label, "OPTIMIZING");
-  assert.equal(cooledAtEventCount, 1);
-
-  timeouts[1].callback();
-
-  assert.equal(busyEvents.at(-1).active, false);
+  assert.equal(busyEvents.length, 0);
+  assert.equal(startedAtEventCount, 0);
+  assert.deepEqual(startedResidency.coldArtboardIds, ["right"]);
+  assert.equal(startedOptions.reason, "artboard-residency-idle-cold");
 
   renderer.artboardResidencyIdleTimer = 42;
   renderer.cancelArtboardResidencyIdleTimer("test-cancel");
   assert.equal(clearedTimer, 42);
+});
+
+test("artboard residency background cooling reads raster targets in chunks", () => {
+  const { DocumentRenderer, window } = loadDocumentRenderer();
+  const renderer = Object.create(DocumentRenderer.prototype);
+  const texture = { id: "texture" };
+  const framebuffer = { id: "framebuffer" };
+  const target = {
+    framebuffer,
+    height: 4,
+    kind: "layer",
+    layerId: "right-paint",
+    state: "GPU_HOT",
+    texture,
+    version: 0,
+    width: 4,
+  };
+  const timeouts = [];
+  const frames = [];
+  const readCalls = [];
+  const deletedTextures = [];
+  const deletedFramebuffers = [];
+  const compressionJobs = [];
+  const metrics = {
+    artboards: [
+      {
+        artboardId: "right",
+        distanceFromVisible: 10,
+        gpuBytes: 64,
+        lastAccessedAt: 0,
+        status: "cold",
+      },
+    ],
+    budget: {
+      hardBudgetBytes: 640 * 1024 * 1024,
+      pressure: "ok",
+      softBudgetBytes: 384 * 1024 * 1024,
+    },
+    residentGpuBytes: 64,
+  };
+  const orderedLayers = [
+    { artboardId: "right", id: "right-paint", type: "paint", visible: true },
+  ];
+
+  window.setTimeout = (callback, delay) => {
+    timeouts.push({ callback, delay });
+    return timeouts.length;
+  };
+  window.clearTimeout = () => {};
+  window.requestAnimationFrame = (callback) => {
+    frames.push(callback);
+    return frames.length;
+  };
+  window.cancelAnimationFrame = () => {};
+  window.CBO.queueHistoryCompression = (queuedTarget, options) => {
+    compressionJobs.push({ options, queuedTarget });
+  };
+  renderer.options = {
+    artboardResidencyMaintenanceFrameDelayMs: 0,
+    artboardResidencyReadbackChunkBytes: 32,
+    enableArtboardResidency: true,
+    enableArtboardResidencyBudget: true,
+  };
+  renderer.gl = {
+    FRAMEBUFFER: "FRAMEBUFFER",
+    RGBA: "RGBA",
+    UNSIGNED_BYTE: "UNSIGNED_BYTE",
+    bindFramebuffer() {},
+    deleteFramebuffer: (value) => deletedFramebuffers.push(value),
+    deleteTexture: (value) => deletedTextures.push(value),
+    readPixels: (x, y, width, height, format, type, output) => {
+      readCalls.push({ format, height, outputBytes: output.byteLength, type, width, x, y });
+      output.fill(y + 1);
+    },
+  };
+  renderer.rasterTargetsByLayerId = new Map([["right-paint", target]]);
+  renderer.collectArtboardResidencyMetrics = () => metrics;
+
+  const job = renderer.startArtboardResidencyMaintenance({
+    activeArtboardId: "left",
+    coldArtboardIds: ["right"],
+    renderArtboardIds: ["left"],
+    visibleArtboardIds: ["left"],
+  }, {
+    metrics,
+    orderedLayers,
+  });
+
+  assert.ok(job);
+  assert.equal(job.items.length, 1);
+
+  timeouts.shift().callback();
+  frames.shift()();
+
+  assert.deepEqual(readCalls.map((call) => [call.y, call.height, call.outputBytes]), [[0, 2, 32]]);
+  assert.equal(target.state, "GPU_HOT");
+
+  timeouts.shift().callback();
+  frames.shift()();
+
+  assert.deepEqual(readCalls.map((call) => [call.y, call.height, call.outputBytes]), [
+    [0, 2, 32],
+    [2, 2, 32],
+  ]);
+  assert.equal(target.state, "CPU_COLD");
+  assert.equal(target.cpuPixels.byteLength, 64);
+  assert.equal(target.cpuPixels[0], 1);
+  assert.equal(target.cpuPixels[32], 3);
+  assert.deepEqual(deletedFramebuffers, [framebuffer]);
+  assert.deepEqual(deletedTextures, [texture]);
+  assert.equal(compressionJobs.length, 1);
+  assert.equal(compressionJobs[0].options.layerId, "right-paint");
 });
 
 test("artboard flat previews are captured from preview cache and used as cold fallback", () => {
