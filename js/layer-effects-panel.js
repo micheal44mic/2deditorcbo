@@ -1644,6 +1644,12 @@ window.CBO = window.CBO || {};
       return false;
     }
 
+    if (layerModel.requestLayerVisibleForEdit?.(layer.id, {
+      source: "layer-effects-rasterize",
+    }) === false) {
+      return false;
+    }
+
     history?.flushLayerState?.(layerModel);
 
     const beforeState = options.beforeState

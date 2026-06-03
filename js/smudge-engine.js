@@ -1918,6 +1918,13 @@ void main() {
 
       const activeLayer = layerModel.findEntryById(activeId);
 
+      if (namespace.requestLayerVisibleForEdit?.(activeId, {
+        layerModel,
+        source: "smudge-stroke",
+      }) === false) {
+        return null;
+      }
+
       if (activeLayer?.type !== "paint") {
         return null;
       }

@@ -488,6 +488,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
       return;
     }
 
+    if (!requestLayerVisibleForRowEdit(row, "layers-panel-rename")) {
+      return;
+    }
+
     panel.querySelectorAll(".layer-name.renaming").forEach((renamingName) => {
       finishLayerRename(renamingName, true);
     });
@@ -1293,6 +1297,27 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return row?.dataset.layerType === "paint";
   }
 
+  function isLayerHiddenForEdit(row) {
+    const layerId = getLayerId(row);
+
+    if (!layerId) {
+      return false;
+    }
+
+    return row?.classList.contains("hidden-layer") ||
+      layerModel?.isLayerVisibleForEdit?.(layerId) === false;
+  }
+
+  function requestLayerVisibleForRowEdit(row, source = "layers-panel-edit") {
+    const layerId = getLayerId(row);
+
+    if (!layerId || !isLayerHiddenForEdit(row)) {
+      return true;
+    }
+
+    return layerModel?.requestLayerVisibleForEdit?.(layerId, { source }) !== false;
+  }
+
   function getContentLayerRows() {
     return getLayerRows().filter(isContentLayerRow);
   }
@@ -1403,6 +1428,15 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     layerIds.forEach((layerId) => {
       renderer?.clearLayer?.(layerId, options);
     });
+  }
+
+  function requestSelectedEntriesVisibleForEdit(entries, source = "layers-panel-edit") {
+    const rows = Array.from(new Set(entries.flatMap((entry) =>
+      Array.from(entry.querySelectorAll("[data-layer-row]")),
+    )));
+    const hiddenRow = rows.find((row) => !isBackgroundRow(row) && isLayerHiddenForEdit(row));
+
+    return hiddenRow ? requestLayerVisibleForRowEdit(hiddenRow, source) : true;
   }
 
   function showLayerMergeError(fallbackMessage = "Can't merge these layers") {
@@ -1643,6 +1677,10 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     const selectedEntries = getSelectedRootEntries();
 
     if (!selectedEntries.length) {
+      return;
+    }
+
+    if (!requestSelectedEntriesVisibleForEdit(selectedEntries, "layers-panel-delete")) {
       return;
     }
 

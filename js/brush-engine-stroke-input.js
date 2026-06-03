@@ -1305,6 +1305,11 @@
         return false;
       }
 
+      if (layerModel?.isLayerVisibleForEdit?.(activeId) === false) {
+        this.cancelPendingEraserImageRasterize();
+        return false;
+      }
+
       if (this.pendingEraserImageRasterizeLayerId === activeId) {
         return true;
       }
@@ -3921,10 +3926,22 @@
         return;
       }
 
+      const strokeTool = this.activeStrokeTool || "brush";
+
+      if (namespace.requestLayerVisibleForEdit?.(
+        this.documentRenderer?.layerModel?.activeLayerId || "",
+        {
+          layerModel: this.documentRenderer?.layerModel,
+          source: strokeTool === "eraser" ? "eraser-stroke" : "brush-stroke",
+        },
+      ) === false) {
+        event.preventDefault();
+        return;
+      }
+
       event.preventDefault();
       this.resetQuickLineState();
       this.clearPendingBrushHistoryTimer();
-      const strokeTool = this.activeStrokeTool || "brush";
       let strokeTarget = null;
 
       if (strokeTool === "eraser") {

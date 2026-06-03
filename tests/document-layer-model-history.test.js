@@ -237,6 +237,110 @@ test("updateLayer entries with the same historyGroup merge", async () => {
   assert.equal(model.findEntryById("paint-main").name, "Paint");
 });
 
+test("hidden layers must be revealed before edits", () => {
+  const { DocumentLayerModel, window } = loadDocumentModules();
+  const model = new DocumentLayerModel({
+    activeLayerId: "hidden-paint",
+    entries: [
+      {
+        id: "hidden-paint",
+        name: "Hidden Paint",
+        type: "paint",
+        visible: false,
+      },
+      {
+        id: "background",
+        locked: true,
+        name: "Background",
+        type: "background",
+      },
+    ],
+  });
+
+  window.CBO.documentLayerModel = model;
+
+  assert.equal(model.updateLayer("hidden-paint", { name: "Changed" }, {
+    source: "unit-hidden-edit",
+  }), false);
+  assert.equal(model.findEntryById("hidden-paint").name, "Hidden Paint");
+  assert.equal(window.CBO.lastHiddenLayerEditRequest.layerId, "hidden-paint");
+  assert.equal(window.CBO.lastHiddenLayerEditRequest.layerName, "Hidden Paint");
+  assert.equal(window.CBO.lastHiddenLayerEditRequest.source, "unit-hidden-edit");
+
+  assert.equal(model.updateLayer("hidden-paint", { visible: true }, {
+    source: "unit-show-layer",
+  }), true);
+  assert.equal(model.updateLayer("hidden-paint", { name: "Changed" }, {
+    source: "unit-visible-edit",
+  }), true);
+  assert.equal(model.findEntryById("hidden-paint").name, "Changed");
+});
+
+test("revealing a hidden layer for edit also reveals hidden parents", () => {
+  const { DocumentLayerModel } = loadDocumentModules();
+  const model = new DocumentLayerModel({
+    activeLayerId: "child-paint",
+    entries: [
+      {
+        children: [
+          {
+            id: "child-paint",
+            name: "Child Paint",
+            type: "paint",
+            visible: false,
+          },
+        ],
+        id: "hidden-group",
+        name: "Hidden Group",
+        type: "group",
+        visible: false,
+      },
+      {
+        id: "background",
+        locked: true,
+        name: "Background",
+        type: "background",
+      },
+    ],
+  });
+
+  assert.equal(model.isLayerVisibleForEdit("child-paint"), false);
+  assert.equal(model.revealLayerForEdit("child-paint", {
+    history: false,
+    source: "unit-reveal-hidden-layer",
+  }), true);
+  assert.equal(model.findEntryById("hidden-group").visible, true);
+  assert.equal(model.findEntryById("child-paint").visible, true);
+  assert.equal(model.isLayerVisibleForEdit("child-paint"), true);
+});
+
+test("brush paint layer resolution blocks hidden active layers", () => {
+  const { DocumentLayerModel, window } = loadDocumentModules();
+  const model = new DocumentLayerModel({
+    activeLayerId: "hidden-paint",
+    entries: [
+      {
+        id: "hidden-paint",
+        name: "Hidden Paint",
+        type: "paint",
+        visible: false,
+      },
+      {
+        id: "background",
+        locked: true,
+        name: "Background",
+        type: "background",
+      },
+    ],
+  });
+
+  assert.equal(model.ensureActivePaintLayer({ source: "brush-stroke" }), null);
+  assert.equal(window.CBO.lastHiddenLayerEditRequest.layerId, "hidden-paint");
+  assert.equal(window.CBO.lastHiddenLayerEditRequest.layerName, "Hidden Paint");
+  assert.equal(window.CBO.lastHiddenLayerEditRequest.source, "brush-stroke");
+  assert.equal(model.findEntryById("hidden-paint").visible, false);
+});
+
 test("layer effects are normalized and preserved through layer state history", async () => {
   const { DocumentHistory, DocumentLayerModel, window } = loadDocumentModules();
   const history = new DocumentHistory({ groupIdleMs: 1000 });

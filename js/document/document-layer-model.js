@@ -17,6 +17,7 @@
   const MAX_LAYER_STROKE_SIZE = 64;
   const ARTBOARD_LAYER_GROUP_PREFIX = "artboard-group-";
   const CURVE_CHANNELS = Object.freeze(["rgb", "r", "g", "b"]);
+  const HIDDEN_LAYER_EDIT_REVEAL_SOURCE = "hidden-layer-edit-reveal";
   const DEFAULT_VECTOR_TEXT_STYLE = Object.freeze({
     fill: "#000000",
     stroke: "#000000",
@@ -30,6 +31,155 @@
       opacity: 0,
     },
   });
+  let hiddenLayerEditDialog = null;
+  let hiddenLayerEditRestoreFocus = null;
+  let pendingHiddenLayerEditRequest = null;
+
+  function getDomDocument() {
+    return typeof document !== "undefined" ? document : null;
+  }
+
+  function getLayerDisplayName(layer) {
+    const name = String(layer?.name || "").trim();
+
+    return name || "questo layer";
+  }
+
+  function isVisibilityOnlyPatch(patch) {
+    const keys = Object.keys(patch || {});
+
+    return keys.length > 0 && keys.every((key) => key === "visible");
+  }
+
+  function ensureHiddenLayerEditDialog() {
+    const doc = getDomDocument();
+
+    if (!doc?.body) {
+      return null;
+    }
+
+    if (hiddenLayerEditDialog?.isConnected) {
+      return hiddenLayerEditDialog;
+    }
+
+    const dialog = doc.createElement("div");
+
+    dialog.className = "hidden-layer-edit-dialog";
+    dialog.setAttribute("data-hidden-layer-edit-dialog", "");
+    dialog.hidden = true;
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "hidden-layer-edit-title");
+    dialog.setAttribute("aria-describedby", "hidden-layer-edit-message");
+    dialog.innerHTML = `
+      <section class="hidden-layer-edit-card">
+        <h2 class="hidden-layer-edit-title" id="hidden-layer-edit-title">LAYER NASCOSTO</h2>
+        <p class="hidden-layer-edit-message" id="hidden-layer-edit-message" data-hidden-layer-edit-message></p>
+        <div class="hidden-layer-edit-actions">
+          <button class="hidden-layer-edit-cancel" type="button" data-hidden-layer-edit-cancel>ANNULLA</button>
+          <button class="hidden-layer-edit-confirm" type="button" data-hidden-layer-edit-confirm>RENDI VISIBILE</button>
+        </div>
+      </section>
+    `;
+
+    dialog.addEventListener("click", (event) => {
+      if (
+        event.target === dialog ||
+        event.target?.closest?.("[data-hidden-layer-edit-cancel]")
+      ) {
+        closeHiddenLayerEditDialog();
+        return;
+      }
+
+      if (event.target?.closest?.("[data-hidden-layer-edit-confirm]")) {
+        confirmHiddenLayerEditReveal();
+      }
+    });
+
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeHiddenLayerEditDialog();
+      }
+    });
+
+    doc.body.append(dialog);
+    hiddenLayerEditDialog = dialog;
+
+    return dialog;
+  }
+
+  function closeHiddenLayerEditDialog() {
+    if (hiddenLayerEditDialog) {
+      hiddenLayerEditDialog.hidden = true;
+      getDomDocument()?.body?.classList.remove("hidden-layer-edit-dialog-open");
+    }
+
+    pendingHiddenLayerEditRequest = null;
+
+    if (hiddenLayerEditRestoreFocus?.isConnected) {
+      hiddenLayerEditRestoreFocus.focus?.();
+    }
+
+    hiddenLayerEditRestoreFocus = null;
+  }
+
+  function confirmHiddenLayerEditReveal() {
+    const pending = pendingHiddenLayerEditRequest;
+
+    if (!pending?.model || !pending.layerId) {
+      closeHiddenLayerEditDialog();
+      return false;
+    }
+
+    const { layerId, model, options } = pending;
+
+    closeHiddenLayerEditDialog();
+
+    return model.revealLayerForEdit?.(layerId, {
+      ...options,
+      source: HIDDEN_LAYER_EDIT_REVEAL_SOURCE,
+    }) === true;
+  }
+
+  function requestHiddenLayerEditReveal(model, layerId, options = {}) {
+    const layer = model?.findEntryById?.(layerId);
+    const dialog = ensureHiddenLayerEditDialog();
+    const doc = getDomDocument();
+
+    namespace.lastHiddenLayerEditRequest = {
+      layerId,
+      layerName: getLayerDisplayName(layer),
+      source: options.source || "hidden-layer-edit",
+    };
+
+    if (!dialog || !doc?.body) {
+      return false;
+    }
+
+    const message = dialog.querySelector("[data-hidden-layer-edit-message]");
+    const confirmButton = dialog.querySelector("[data-hidden-layer-edit-confirm]");
+    const layerName = getLayerDisplayName(layer);
+
+    pendingHiddenLayerEditRequest = {
+      layerId,
+      model,
+      options,
+    };
+    hiddenLayerEditRestoreFocus = doc.activeElement && typeof doc.activeElement.focus === "function"
+      ? doc.activeElement
+      : null;
+
+    if (message) {
+      message.textContent = `Per modificare ${layerName} devi renderlo visibile.`;
+    }
+
+    dialog.hidden = false;
+    doc.body.classList.add("hidden-layer-edit-dialog-open");
+    confirmButton?.focus?.();
+
+    return false;
+  }
 
   function normalizeAngle(value) {
     const number = Number(value);
@@ -1208,6 +1358,10 @@
             return false;
           }
 
+          if (entry.visible === false) {
+            return false;
+          }
+
           return !normalizedArtboardId || entry.artboardId === normalizedArtboardId;
         }) || null;
     }
@@ -1218,6 +1372,17 @@
       const activeEntryArtboardId = activeEntry
         ? this.findEntryArtboardId(activeEntry.id)
         : undefined;
+
+      if (
+        activeEntry &&
+        options.allowHiddenLayerEdit !== true &&
+        this.requestLayerVisibleForEdit(activeEntry.id, {
+          ...options,
+          source: options.source || "ensure-paint-layer",
+        }) === false
+      ) {
+        return null;
+      }
 
       if (
         activeEntry?.type === "paint" &&
@@ -1383,6 +1548,18 @@
         return false;
       }
 
+      if (
+        options.allowHiddenLayerEdit !== true &&
+        options.allowHiddenLayerUpdate !== true &&
+        !isVisibilityOnlyPatch(nextPatch) &&
+        this.requestLayerVisibleForEdit(entry.id, {
+          ...options,
+          source: options.source || "update-layer",
+        }) === false
+      ) {
+        return false;
+      }
+
       const beforeState = this.captureHistoryState(options);
 
       Object.assign(entry, this.cloneValue(nextPatch));
@@ -1402,6 +1579,102 @@
         this.emitChange(options.source || "update-layer");
       }
       this.recordHistoryStateChange(beforeState, options);
+
+      return true;
+    }
+
+    getLayerVisibilityInfo(id, entries = this.entries, ancestors = [], ancestorsVisible = true) {
+      const normalizedId = String(id || "").trim();
+
+      if (!normalizedId || !Array.isArray(entries)) {
+        return null;
+      }
+
+      for (const entry of entries) {
+        const entryVisible = ancestorsVisible && entry.visible !== false;
+
+        if (entry.id === normalizedId) {
+          return {
+            ancestors: ancestors.slice(),
+            entry,
+            hiddenAncestors: ancestors.filter((ancestor) => ancestor?.visible === false),
+            selfHidden: entry.visible === false,
+            visible: entryVisible,
+          };
+        }
+
+        const childMatch = this.getLayerVisibilityInfo(
+          normalizedId,
+          entry.children || [],
+          [...ancestors, entry],
+          entryVisible,
+        );
+
+        if (childMatch) {
+          return childMatch;
+        }
+      }
+
+      return null;
+    }
+
+    isLayerVisibleForEdit(id) {
+      const visibility = this.getLayerVisibilityInfo(id);
+
+      return Boolean(visibility?.entry && visibility.visible !== false);
+    }
+
+    requestLayerVisibleForEdit(id, options = {}) {
+      const visibility = this.getLayerVisibilityInfo(id);
+
+      if (!visibility?.entry) {
+        return false;
+      }
+
+      if (visibility.visible !== false) {
+        return true;
+      }
+
+      return requestHiddenLayerEditReveal(this, visibility.entry.id, options);
+    }
+
+    revealLayerForEdit(id, options = {}) {
+      const visibility = this.getLayerVisibilityInfo(id);
+
+      if (!visibility?.entry) {
+        return false;
+      }
+
+      const hiddenEntries = [
+        ...visibility.hiddenAncestors,
+        ...(visibility.selfHidden ? [visibility.entry] : []),
+      ];
+
+      if (hiddenEntries.length === 0) {
+        return true;
+      }
+
+      const source = options.source || HIDDEN_LAYER_EDIT_REVEAL_SOURCE;
+      const beforeState = this.captureHistoryState({
+        ...options,
+        source,
+      });
+
+      hiddenEntries.forEach((entry) => {
+        entry.visible = true;
+      });
+
+      if (options.emit !== false) {
+        this.emitChange(source, {
+          changeType: "hidden-layer-reveal",
+          layerId: visibility.entry.id,
+        });
+      }
+      this.recordHistoryStateChange(beforeState, {
+        ...options,
+        source,
+      });
+      namespace.documentRenderer?.requestDraw?.();
 
       return true;
     }
@@ -1528,6 +1801,24 @@
   }
 
   namespace.DocumentLayerModel = DocumentLayerModel;
+
+  namespace.requestLayerVisibleForEdit = function requestLayerVisibleForEdit(layerId, options = {}) {
+    const layerModel = options.layerModel || namespace.documentLayerModel;
+    const targetLayerId = layerId || layerModel?.activeLayerId || "";
+
+    return layerModel?.requestLayerVisibleForEdit && targetLayerId
+      ? layerModel.requestLayerVisibleForEdit(targetLayerId, options)
+      : true;
+  };
+
+  namespace.revealLayerForEdit = function revealLayerForEdit(layerId, options = {}) {
+    const layerModel = options.layerModel || namespace.documentLayerModel;
+    const targetLayerId = layerId || layerModel?.activeLayerId || "";
+
+    return targetLayerId
+      ? layerModel?.revealLayerForEdit?.(targetLayerId, options) === true
+      : false;
+  };
 
   function ensureLayerModelArtboardGroupsFromEvent(event = null) {
     const artboards = Array.isArray(event?.detail?.artboards)

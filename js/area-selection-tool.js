@@ -2441,6 +2441,12 @@
     const activeId = layerModel?.activeLayerId || "";
     const layer = activeId ? layerModel.findEntryById?.(activeId) : null;
 
+    if (layer && layerModel.requestLayerVisibleForEdit?.(layer.id, {
+      source: "area-selection-write",
+    }) === false) {
+      return "";
+    }
+
     if (!layer || layer.locked === true || (layer.type !== "paint" && layer.type !== "image")) {
       return "";
     }
@@ -2498,6 +2504,12 @@
     const history = namespace.documentHistory;
     const activeId = layerModel?.activeLayerId || "";
     const activeLayer = activeId ? layerModel.findEntryById?.(activeId) : null;
+
+    if (activeLayer && layerModel.requestLayerVisibleForEdit?.(activeLayer.id, {
+      source: "area-selection-paste-layer",
+    }) === false) {
+      return { layerId: "" };
+    }
 
     if (activeLayer && activeLayer.locked !== true && (activeLayer.type === "paint" || activeLayer.type === "image")) {
       return { layerId: activeLayer.id };

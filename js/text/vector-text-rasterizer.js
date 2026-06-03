@@ -588,6 +588,12 @@
       return null;
     }
 
+    if (layerModel.requestLayerVisibleForEdit?.(layer.id, {
+      source: "vector-text-rasterize",
+    }) === false) {
+      return null;
+    }
+
     if (typeof namespace.vectorTextRenderer?.renderContent === "function") {
       namespace.vectorTextRenderer.renderContent();
     } else {

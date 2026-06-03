@@ -4151,6 +4151,100 @@ button.editor-ai-image-edit-preview-chip:focus-visible {
   outline: none;
 }
 
+.hidden-layer-edit-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 17000;
+  display: grid;
+  place-items: center;
+  padding: max(18px, var(--cbo-safe-top)) max(18px, var(--cbo-safe-right)) max(18px, var(--cbo-safe-bottom)) max(18px, var(--cbo-safe-left));
+  background: rgba(18, 20, 24, 0.68);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.hidden-layer-edit-dialog[hidden] {
+  display: none;
+}
+
+.hidden-layer-edit-card {
+  display: grid;
+  gap: 12px;
+  width: min(340px, calc(100vw - 36px));
+  padding: 16px;
+  border: 1px solid rgba(223, 227, 234, 0.32);
+  border-radius: 8px;
+  background: #181a1f;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.16);
+}
+
+.hidden-layer-edit-title,
+.hidden-layer-edit-message {
+  margin: 0;
+  letter-spacing: 0;
+  line-height: 1.12;
+}
+
+.hidden-layer-edit-title {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.hidden-layer-edit-message {
+  color: #c3c8d1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.hidden-layer-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.hidden-layer-edit-cancel,
+.hidden-layer-edit-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.hidden-layer-edit-cancel {
+  background: #2c303a;
+  color: #c3c8d1;
+}
+
+.hidden-layer-edit-cancel:hover,
+.hidden-layer-edit-cancel:focus-visible {
+  background: #3a3f4b;
+  color: #ffffff;
+  outline: none;
+}
+
+.hidden-layer-edit-confirm {
+  background: #ffd166;
+  color: #17130a;
+}
+
+.hidden-layer-edit-confirm:hover,
+.hidden-layer-edit-confirm:focus-visible {
+  background: #ffe08c;
+  outline: none;
+}
+
 .editor-area-selection-overlay {
   position: absolute;
   z-index: 3;

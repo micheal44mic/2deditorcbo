@@ -1277,6 +1277,12 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       return Promise.resolve(false);
     }
 
+    if (window.CBO.requestLayerVisibleForEdit?.(layer.id, {
+      source: "layer-sidebar-align",
+    }) === false) {
+      return Promise.resolve(false);
+    }
+
     if (isVectorTextLayer(layer)) {
       return alignVectorTextLayerToDocument(layer, axis, position);
     }

@@ -23,6 +23,13 @@
       ? String(layerModel.findEntryArtboardId?.(activeId) || "").trim()
       : "";
     const activeLayerMatchesArtboard = !requestedArtboardId || activeLayerArtboardId === requestedArtboardId;
+
+    if (activeLayer && layerModel.requestLayerVisibleForEdit?.(activeLayer.id, {
+      source: "color-fill",
+    }) === false) {
+      return null;
+    }
+
     const canWriteActiveLayer =
       activeLayer &&
       activeLayer.locked !== true &&

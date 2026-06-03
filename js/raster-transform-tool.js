@@ -711,6 +711,16 @@
       return Boolean(layer && !this.isVectorTextLayer(layer) && (layer.type === "paint" || layer.type === "image"));
     }
 
+    requestLayerVisibleForTransform(layer, source = "raster-transform") {
+      if (!layer?.id) {
+        return false;
+      }
+
+      return this.layerModel?.requestLayerVisibleForEdit?.(layer.id, {
+        source,
+      }) !== false;
+    }
+
     isSelectableLayer(layer) {
       return Boolean(layer && layer.locked !== true && layer.type !== "group");
     }
@@ -1237,6 +1247,19 @@
 
       this.cancelTransform({ keepGeometry: false });
 
+      if (!selectionOnly && layer && !this.requestLayerVisibleForTransform(layer, "raster-transform-activate")) {
+        this.activeLayerId = null;
+        this.contentRect = null;
+        this.startVectorTextLayer = null;
+        this.startQuad = null;
+        this.currentQuad = null;
+        this.startWarpPoints = null;
+        this.currentWarpPoints = null;
+        this.currentRotationRadians = 0;
+        this.render();
+        return false;
+      }
+
       const canActivateLayer = selectionOnly
         ? this.isSelectableLayer(layer)
         : this.isTransformableLayer(layer);
@@ -1646,6 +1669,10 @@
 
       const effectiveTransformMode = this.getEffectiveTransformMode();
       const activeLayer = this.layerModel?.findEntryById?.(this.activeLayerId);
+
+      if (activeLayer && !this.requestLayerVisibleForTransform(activeLayer, "raster-transform")) {
+        return false;
+      }
 
       if (this.isVectorTextLayer(activeLayer)) {
         return this.commitVectorTextTransform(activeLayer);
