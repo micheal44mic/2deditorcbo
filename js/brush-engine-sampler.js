@@ -98,6 +98,10 @@
       smoothing: 0.35,
       start: 650,
     });
+    const SMALL_BRUSH_PROJECTED_SIZE_MIN = 8;
+    const SMALL_BRUSH_PROJECTED_SIZE_FULL = 24;
+    const SMALL_BRUSH_ADAPTIVE_SPACING_MIN_CAP = 1.05;
+    const SMALL_BRUSH_ADAPTIVE_SPACING_FULL_CAP = 1.45;
 
     defineBrushEngineMethods(BrushEngine, {
     createSeededUnit(seed) {
@@ -498,7 +502,43 @@
 
       const multiplier = Number(this.activeStrokeSpacingMultiplier);
 
-      return Number.isFinite(multiplier) && multiplier > 1 ? multiplier : 1;
+      if (!Number.isFinite(multiplier) || multiplier <= 1) {
+        return 1;
+      }
+
+      return Math.min(multiplier, this.getSmallBrushAdaptiveSpacingCap());
+    }
+,
+
+    getProjectedBrushCssSize(brushSize = this.getBrushSize()) {
+      const size = Math.max(0, Number(brushSize) || 0);
+      const zoom = Math.max(0.0001, Number(this.camera?.zoom) || 1);
+      const dpr = Math.max(0.0001, Number(this.dpr) || 1);
+
+      return size * zoom / dpr;
+    }
+,
+
+    getSmallBrushAdaptiveSpacingCap(brushSize = this.getBrushSize()) {
+      const projectedSize = this.getProjectedBrushCssSize(brushSize);
+
+      if (!Number.isFinite(projectedSize) || projectedSize >= SMALL_BRUSH_PROJECTED_SIZE_FULL) {
+        return Infinity;
+      }
+
+      const t = this.clamp(
+        (projectedSize - SMALL_BRUSH_PROJECTED_SIZE_MIN) /
+          Math.max(1, SMALL_BRUSH_PROJECTED_SIZE_FULL - SMALL_BRUSH_PROJECTED_SIZE_MIN),
+        0,
+        1,
+      );
+      const eased = t * t * (3 - 2 * t);
+
+      return this.lerp(
+        SMALL_BRUSH_ADAPTIVE_SPACING_MIN_CAP,
+        SMALL_BRUSH_ADAPTIVE_SPACING_FULL_CAP,
+        eased,
+      );
     }
 ,
 
