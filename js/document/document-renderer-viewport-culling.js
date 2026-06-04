@@ -2489,6 +2489,7 @@
         documentMaxSize > 0
       ) {
         const highQualityView = isHighQualityViewEnabled();
+        const forceMipmaps = options.forcePreviewCacheMipmaps === true;
         const zoomOversample = highQualityView
           ? PREVIEW_CACHE_HIGH_QUALITY_ZOOM_OVERSAMPLE
           : PREVIEW_CACHE_ZOOM_OVERSAMPLE;
@@ -2500,7 +2501,7 @@
         const zoomMaxSize = Math.ceil(targetSize / PREVIEW_CACHE_ZOOM_SIZE_STEP) * PREVIEW_CACHE_ZOOM_SIZE_STEP;
 
         maxSize = Math.min(maxSize, Math.max(lowZoomMinSize, zoomMaxSize));
-        mipmapped = highQualityView;
+        mipmapped = highQualityView || forceMipmaps;
       }
 
       const scale = Math.min(1, maxSize / Math.max(documentWidth, documentHeight));

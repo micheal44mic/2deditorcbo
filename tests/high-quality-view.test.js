@@ -25,7 +25,7 @@ test("high quality view toggle is exposed on desktop and mobile toolbars", () =>
   assert.match(indexSource, /css\/toolbar\.css\?v=high-quality-view-v1/);
   assert.match(indexSource, /js\/document\/document-renderer-shaders\.js\?v=high-quality-pyramid-v1/);
   assert.match(indexSource, /js\/document\/document-renderer-webgl-programs\.js\?v=high-quality-pyramid-v1/);
-  assert.match(indexSource, /js\/document\/document-renderer-viewport-culling\.js\?v=high-quality-pyramid-v1/);
+  assert.match(indexSource, /js\/document\/document-renderer-viewport-culling\.js\?v=paint-stale-mip-preview-v1/);
   assert.match(indexSource, /js\/document\/document-renderer\.js\?v=high-quality-pyramid-v1/);
   assert.ok(mobileLayersIndex >= 0);
   assert.ok(mobileHighQualityIndex > mobileLayersIndex);
