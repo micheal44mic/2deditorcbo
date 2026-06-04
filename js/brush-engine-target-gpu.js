@@ -2616,13 +2616,6 @@
       const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
       const allowPreviewCache = !namespace.liquifyEngine?.isDragging;
       const deferPreviewCacheUpdate = this.isDrawing || this.isPanning || this.touchNavigationGesture || namespace.liquifyEngine?.isDragging;
-      const allowStalePreviewCacheForActivePaint = Boolean(
-        this.isDrawing &&
-        this.currentStrokeTool !== "eraser" &&
-        this.strokeTexture &&
-        !(this.incrementalStrokeBakeCount > 0) &&
-        !this.incrementalStrokeBakedRect
-      );
       const endRenderSubmit = namespace.EngineGovernor?.beginRenderSubmit?.({
         activeStroke: this.isDrawing,
         allowPreviewCache,
@@ -2633,7 +2626,6 @@
       try {
       this.documentRenderer.drawToCanvas({
         allowPreviewCache,
-        allowStalePreviewCacheForActivePaint,
         activeStrokeClipRect: namespace.areaSelection?.hasSelection?.()
           ? namespace.areaSelection.getRect?.()
           : null,
@@ -2648,7 +2640,6 @@
         camera: this.camera,
         deferPreviewCacheUpdate,
         dpr: this.dpr,
-        forcePreviewCacheMipmaps: allowStalePreviewCacheForActivePaint && !this.isAndroidPerformanceMode(),
         viewportWidth: this.viewportWidth,
         viewportHeight: this.viewportHeight,
       });

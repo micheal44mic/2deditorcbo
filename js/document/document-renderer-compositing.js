@@ -1464,7 +1464,6 @@
         camera,
         deferPreviewCacheUpdate: options.deferPreviewCacheUpdate,
         dpr: options.dpr,
-        forcePreviewCacheMipmaps: options.forcePreviewCacheMipmaps === true,
         previewCacheOverscanCssPx: options.previewCacheOverscanCssPx,
         previewCacheScope: options.previewCacheScope,
         viewportHeight,
@@ -2091,22 +2090,13 @@
         this.previewCacheDirty === true &&
         this.areDocumentRectsEqual(this.previewCacheDocumentRect, previewCacheDocumentRect)
       );
-      const canUseStalePreviewCacheForActivePaint = Boolean(
-        options.allowStalePreviewCacheForActivePaint === true &&
-        options.activeStrokeTexture &&
-        activeStrokeMode === "paint" &&
-        this.previewCacheReady &&
-        this.previewTexture &&
-        this.previewCacheDirty === true &&
-        this.areDocumentRectsEqual(this.previewCacheDocumentRect, previewCacheDocumentRect)
-      );
       const didUpdatePreviewCache = canUsePreviewCache
         ? (
             deferPreviewCacheUpdate
               ? Boolean(
                   this.previewCacheReady &&
                   this.previewTexture &&
-                  (!this.previewCacheDirty || canUseStalePreviewCacheForInteraction || canUseStalePreviewCacheForActivePaint)
+                  (!this.previewCacheDirty || canUseStalePreviewCacheForInteraction)
                 )
               : this.updatePreviewCacheIfNeeded(previewCacheOptions)
           )

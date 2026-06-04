@@ -3231,9 +3231,7 @@ test("document renderer exposes mipmapped preview cache helpers", () => {
   assert.match(source, /gl\.LINEAR_MIPMAP_LINEAR/);
   assert.match(source, /previewCacheMipmapped/);
   assert.match(source, /mipmapped \? gl\.LINEAR_MIPMAP_LINEAR : gl\.LINEAR/);
-  assert.match(source, /mipmapped = highQualityView \|\| forceMipmaps/);
-  assert.match(source, /forcePreviewCacheMipmaps/);
-  assert.match(source, /canUseStalePreviewCacheForActivePaint/);
+  assert.match(source, /mipmapped = highQualityView/);
   assert.match(source, /this\.previewCacheMipmapped !== false && this\.previewMipLevels > 1/);
   assert.match(source, /getPreviewCacheTextureMinFilter\(\)/);
   assert.match(source, /this\.setRasterTextureSampling\(texture, this\.getPreviewCacheTextureMinFilter\(\), gl\.LINEAR\)/);
@@ -3817,19 +3815,6 @@ test("preview cache dimensions shrink overkill caches at deep zoom out", () => {
   assert.equal(dimensions.height, 896);
   assert.equal(dimensions.scale, 0.224);
   assert.equal(dimensions.mipmapped, false);
-
-  dimensions = renderer.getPreviewCacheDimensions({
-    camera: { x: 0, y: 0, zoom: 0.20025 },
-    dpr: 1,
-    forcePreviewCacheMipmaps: true,
-    viewportHeight: 945,
-    viewportWidth: 1352,
-  });
-
-  assert.equal(dimensions.width, 896);
-  assert.equal(dimensions.height, 896);
-  assert.equal(dimensions.scale, 0.224);
-  assert.equal(dimensions.mipmapped, true);
 });
 
 test("high quality view keeps more preview detail at deep zoom out", () => {

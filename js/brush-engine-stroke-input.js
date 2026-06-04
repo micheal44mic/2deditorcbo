@@ -3985,7 +3985,7 @@
       this.strokePreviewDirtyRects = null;
       this.lastStrokePreviewDirtyRects = null;
       this.clearPendingPointerSamples();
-      this.warmPreviewCacheForStroke({ force: true, tool: strokeTool });
+      this.warmPreviewCacheForStroke({ force: true });
       namespace.EngineGovernor?.markActivity?.({ source: "brush-pointerdown" });
       this.currentStrokeTool = strokeTool;
       this.strokeRenderMode = this.getBrushStrokeRenderMode();

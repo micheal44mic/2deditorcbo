@@ -2355,7 +2355,7 @@
     }
 ,
 
-    warmPreviewCacheForStroke({ force = false, tool = this.currentStrokeTool } = {}) {
+    warmPreviewCacheForStroke({ force = false } = {}) {
       if (
         this.isAndroidPreviewCacheDisabled() ||
         this.isDrawing ||
@@ -2366,11 +2366,9 @@
         return false;
       }
 
-      const strokeTool = String(tool || this.currentStrokeTool || "brush").toLowerCase();
       const previewCacheOptions = {
         camera: this.camera,
         dpr: this.dpr,
-        forcePreviewCacheMipmaps: force === true && strokeTool !== "eraser" && !this.isAndroidPerformanceMode(),
         viewportHeight: this.viewportHeight,
         viewportWidth: this.viewportWidth,
       };

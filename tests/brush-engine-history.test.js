@@ -92,9 +92,6 @@ test("brush stroke history prefers tile-memento before and after snapshots", () 
   assert.match(source, /getFallbackStrokePreviewDirtyRects\(effectiveStrokeRect = null\)/);
   assert.match(source, /warmPreviewCacheForStroke\(\)/);
   assert.match(source, /const previewCacheOptions = \{/);
-  assert.match(source, /forcePreviewCacheMipmaps: force === true && strokeTool !== "eraser" && !this\.isAndroidPerformanceMode\(\)/);
-  assert.match(source, /allowStalePreviewCacheForActivePaint/);
-  assert.match(source, /incrementalStrokeBakeCount/);
   assert.match(source, /this\.documentRenderer\.getPreviewCacheDimensions\(previewCacheOptions\)/);
   assert.match(source, /this\.documentRenderer\.updatePreviewCacheIfNeeded\(previewCacheOptions\) === true/);
   assert.match(source, /queueActiveStrokeDirtyRegionDebug\(\)/);
@@ -319,7 +316,7 @@ test("brush live stroke skips mixed buildup targets for plateau and accumulation
   assert.match(source, /drawStampBatchToFramebuffer\(this\.strokeFBO, gl\.MAX, gl\.ONE, gl\.ONE\)/);
   assert.match(source, /drawStampBatchToFramebuffer\(this\.strokeFBO, gl\.FUNC_ADD, gl\.ONE, gl\.ONE_MINUS_SRC_ALPHA\)/);
   assert.match(source, /if \(renderMode === STROKE_RENDER_MODE_MIXED\) \{[\s\S]*this\.composeStrokeBuildUp\(flushDirtyRect\)/);
-  assert.match(source, /this\.warmPreviewCacheForStroke\(\{ force: true, tool: strokeTool \}\)/);
+  assert.match(source, /this\.warmPreviewCacheForStroke\(\{ force: true \}\)/);
   assert.match(source, /this\.strokeRenderMode = this\.getBrushStrokeRenderMode\(\)/);
   assert.match(source, /this\.strokeRenderMode = null/);
   assert.doesNotMatch(source, /STROKE_SCRATCH_TEXTURE_COUNT/);
