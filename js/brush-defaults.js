@@ -37,18 +37,15 @@ window.CBO = window.CBO || {};
     opacity: 0.92,
     renderingMode: "light-glaze",
     flow: 1,
+    hardness: 1,
     wetEdges: 0,
     burntEdges: 0,
     burntEdgesMode: "linear-burn",
     alphaThresholdEnabled: false,
     alphaThreshold: 0.5,
     spacing: 0.18,
-    smoothing: 0,
-    streamLineAmount: 0,
-    streamLinePressure: 0,
-    stabilizationAmount: 0,
-    motionFilteringAmount: 0,
-    motionFilteringExpression: 0,
+    ropeStabilizationAmount: 0,
+    strokeSmoothingAmount: 0,
     spacingJitter: 0,
     jitterLateral: 0,
     jitterLinear: 0,
@@ -210,8 +207,12 @@ window.CBO = window.CBO || {};
       ...nextOverrides,
     };
 
-    nextSettings.streamLineAmount =
-      nextOverrides.streamLineAmount ?? nextOverrides.smoothing ?? nextSettings.streamLineAmount;
+    delete nextSettings.smoothing;
+    delete nextSettings.streamLineAmount;
+    delete nextSettings.streamLinePressure;
+    delete nextSettings.stabilizationAmount;
+    delete nextSettings.motionFilteringAmount;
+    delete nextSettings.motionFilteringExpression;
     if (!hasOwn(nextOverrides, "pencilPressureSize") && hasOwn(nextOverrides, "penPressureSize")) {
       nextSettings.pencilPressureSize = nextOverrides.penPressureSize;
     }
@@ -252,17 +253,15 @@ window.CBO = window.CBO || {};
     nextSettings.grainBlendMode = normalizeGrainBlendMode(nextSettings.grainBlendMode);
     nextSettings.renderingMode = normalizeRenderingMode(nextSettings.renderingMode);
     nextSettings.flow = normalize01(nextSettings.flow, settings.flow);
+    nextSettings.hardness = normalize01(nextSettings.hardness, settings.hardness);
     nextSettings.radius = normalizeRange(nextSettings.radius, settings.radius, 1, brushSizeMax);
-    nextSettings.streamLineAmount = normalize01(nextSettings.streamLineAmount, settings.streamLineAmount);
-    nextSettings.streamLinePressure = normalize01(nextSettings.streamLinePressure, settings.streamLinePressure);
-    nextSettings.stabilizationAmount = normalize01(nextSettings.stabilizationAmount, settings.stabilizationAmount);
-    nextSettings.motionFilteringAmount = normalize01(
-      nextSettings.motionFilteringAmount,
-      settings.motionFilteringAmount,
+    nextSettings.ropeStabilizationAmount = normalize01(
+      nextSettings.ropeStabilizationAmount,
+      settings.ropeStabilizationAmount,
     );
-    nextSettings.motionFilteringExpression = normalize01(
-      nextSettings.motionFilteringExpression,
-      settings.motionFilteringExpression,
+    nextSettings.strokeSmoothingAmount = normalize01(
+      nextSettings.strokeSmoothingAmount,
+      settings.strokeSmoothingAmount,
     );
     nextSettings.spacing = normalizeRange(nextSettings.spacing, settings.spacing, minimumSpacing, 1);
     nextSettings.spacingJitter = normalize01(nextSettings.spacingJitter, settings.spacingJitter);

@@ -123,9 +123,9 @@ body.cbo-canvas-pan-active *::after {
 }
 
 body.cbo-touch-navigation-active .brush-shape-outline-preview,
-body.cbo-touch-navigation-active .brush-stabilization-rope-preview,
+body.cbo-touch-navigation-active .brush-rope-stabilization-preview,
 body.cbo-touch-navigation-guard .brush-shape-outline-preview,
-body.cbo-touch-navigation-guard .brush-stabilization-rope-preview {
+body.cbo-touch-navigation-guard .brush-rope-stabilization-preview {
   display: none !important;
 }
 

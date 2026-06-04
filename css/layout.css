@@ -4610,7 +4610,7 @@ body.cbo-document-restore-active .editor-stage {
   will-change: transform, opacity;
 }
 
-.brush-stabilization-rope-preview {
+.brush-rope-stabilization-preview {
   position: absolute;
   inset: 0;
   z-index: 6;
@@ -4621,11 +4621,11 @@ body.cbo-document-restore-active .editor-stage {
   pointer-events: none;
 }
 
-.brush-stabilization-rope-preview[hidden] {
+.brush-rope-stabilization-preview[hidden] {
   display: none;
 }
 
-.brush-stabilization-rope-line {
+.brush-rope-stabilization-line {
   stroke: rgba(223, 227, 234, 0.72);
   stroke-dasharray: 6 4;
   stroke-linecap: round;
@@ -4633,22 +4633,22 @@ body.cbo-document-restore-active .editor-stage {
   vector-effect: non-scaling-stroke;
 }
 
-.brush-stabilization-rope-brush {
+.brush-rope-stabilization-brush {
   fill: rgba(240, 80, 35, 0.94);
   stroke: rgba(8, 9, 11, 0.68);
   stroke-width: 1.25;
   vector-effect: non-scaling-stroke;
 }
 
-.brush-stabilization-rope-cursor {
+.brush-rope-stabilization-cursor {
   fill: rgba(223, 227, 234, 0.92);
   stroke: rgba(8, 9, 11, 0.62);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
-.brush-stabilization-rope-preview.is-slack .brush-stabilization-rope-line,
-.brush-stabilization-rope-preview.is-slack .brush-stabilization-rope-brush {
+.brush-rope-stabilization-preview.is-slack .brush-rope-stabilization-line,
+.brush-rope-stabilization-preview.is-slack .brush-rope-stabilization-brush {
   opacity: 0.58;
 }
 

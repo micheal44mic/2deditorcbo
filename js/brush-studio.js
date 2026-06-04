@@ -447,11 +447,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
   }
 
   function saveDraftBrushSettings() {
-    draftBrushSettings.smoothing = draftBrushSettings.streamLineAmount;
-    window.CBO.brushSettings = {
+    window.CBO.brushSettings = BrushDefaults.createSettings({
       ...window.CBO.brushSettings,
       ...draftBrushSettings,
-    };
+    });
 
     window.dispatchEvent(
       new CustomEvent("cbo:brush-settings-change", {
@@ -2387,57 +2386,24 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     }
 
     const selectedName = document.createElement("div");
-    const streamLineAmountSetting = createRangeSetting({
-      key: "streamLineAmount",
-      label: "STREAMLINE AMOUNT",
-      min: 0,
-      max: 100,
-      step: 1,
-      value: Math.round(StrokeMath.getStreamLineAmount(draftBrushSettings) * 100),
-      unit: "%",
-      toSetting: (displayValue) => displayValue / 100,
-      toDisplay: (displayValue) => Math.round(displayValue),
-    });
-    const streamLinePressureSetting = createRangeSetting({
-      key: "streamLinePressure",
-      label: "STREAMLINE PRESSURE",
-      min: 0,
-      max: 100,
-      step: 1,
-      value: Math.round(clamp01(draftBrushSettings.streamLinePressure) * 100),
-      unit: "%",
-      toSetting: (displayValue) => displayValue / 100,
-      toDisplay: (displayValue) => Math.round(displayValue),
-    });
-    const stabilizationAmountSetting = createRangeSetting({
-      key: "stabilizationAmount",
+    const ropeSetting = createRangeSetting({
+      key: "ropeStabilizationAmount",
       label: "PULLED STRING",
       min: 0,
       max: 100,
       step: 1,
-      value: Math.round(clamp01(draftBrushSettings.stabilizationAmount) * 100),
+      value: Math.round(clamp01(draftBrushSettings.ropeStabilizationAmount) * 100),
       unit: "%",
       toSetting: (displayValue) => displayValue / 100,
       toDisplay: (displayValue) => Math.round(displayValue),
     });
-    const motionFilteringAmountSetting = createRangeSetting({
-      key: "motionFilteringAmount",
-      label: "MOTION FILTERING",
+    const smoothingSetting = createRangeSetting({
+      key: "strokeSmoothingAmount",
+      label: "SMOOTHING",
       min: 0,
       max: 100,
       step: 1,
-      value: Math.round(clamp01(draftBrushSettings.motionFilteringAmount) * 100),
-      unit: "%",
-      toSetting: (displayValue) => displayValue / 100,
-      toDisplay: (displayValue) => Math.round(displayValue),
-    });
-    const motionFilteringExpressionSetting = createRangeSetting({
-      key: "motionFilteringExpression",
-      label: "EXPRESSION",
-      min: 0,
-      max: 100,
-      step: 1,
-      value: Math.round(clamp01(draftBrushSettings.motionFilteringExpression) * 100),
+      value: Math.round(clamp01(draftBrushSettings.strokeSmoothingAmount) * 100),
       unit: "%",
       toSetting: (displayValue) => displayValue / 100,
       toDisplay: (displayValue) => Math.round(displayValue),
@@ -2447,11 +2413,8 @@ window.CBO.initBrushStudio = function initBrushStudio() {
     selectedName.textContent = selectedCategory;
     settingsPanel.replaceChildren(
       selectedName,
-      streamLineAmountSetting,
-      streamLinePressureSetting,
-      stabilizationAmountSetting,
-      motionFilteringAmountSetting,
-      motionFilteringExpressionSetting,
+      ropeSetting,
+      smoothingSetting,
     );
   }
 

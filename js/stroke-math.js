@@ -36,18 +36,123 @@ window.CBO = window.CBO || {};
     return Number.isFinite(size) && size > 0 ? size : 18;
   }
 
-  function getStabilizationRopeLength(settings, input, amount) {
+  function getRopeStabilizationAmount(settings) {
+    return clamp01(settings?.ropeStabilizationAmount);
+  }
+
+  function getStrokeSmoothingAmount(settings) {
+    return clamp01(settings?.strokeSmoothingAmount);
+  }
+
+  const SMOOTHING_POINTER_PROFILES = Object.freeze({
+    mouse: Object.freeze({
+      cornerDamping: 0.42,
+      cornerFollowBoost: 0.16,
+      followBase: 0.92,
+      followMin: 0.42,
+      followRange: 0.34,
+      followMax: 0.94,
+      maxLagBase: 18,
+      maxLagBrushScale: 1.35,
+      recencyPower: 0.82,
+      speedBrushScale: 0.95,
+      speedOffset: 24,
+      speedStrengthFloor: 0.7,
+      speedFollowBoost: 0.16,
+      startStrength: 0.42,
+      strengthScale: 1.34,
+      targetBlend: 0.98,
+      trendBlend: 0.78,
+      windowBase: 4,
+      windowRange: 14,
+      warmupSamples: 2,
+    }),
+    touch: Object.freeze({
+      cornerDamping: 0.55,
+      cornerFollowBoost: 0.2,
+      followBase: 0.9,
+      followMin: 0.4,
+      followRange: 0.42,
+      followMax: 0.96,
+      maxLagBase: 18,
+      maxLagBrushScale: 1.25,
+      recencyPower: 0.82,
+      speedBrushScale: 1.1,
+      speedOffset: 20,
+      speedStrengthFloor: 0.64,
+      speedFollowBoost: 0.14,
+      startStrength: 0.38,
+      strengthScale: 1.18,
+      targetBlend: 0.92,
+      trendBlend: 0.72,
+      windowBase: 4,
+      windowRange: 12,
+      warmupSamples: 3,
+    }),
+    pen: Object.freeze({
+      cornerDamping: 0.68,
+      cornerFollowBoost: 0.24,
+      followBase: 0.94,
+      followMin: 0.52,
+      followRange: 0.32,
+      followMax: 0.98,
+      maxLagBase: 14,
+      maxLagBrushScale: 0.95,
+      recencyPower: 1.02,
+      speedBrushScale: 0.78,
+      speedOffset: 14,
+      speedStrengthFloor: 0.58,
+      speedFollowBoost: 0.18,
+      startStrength: 0.34,
+      strengthScale: 0.98,
+      targetBlend: 0.82,
+      trendBlend: 0.82,
+      windowBase: 3,
+      windowRange: 9,
+      warmupSamples: 4,
+    }),
+    fallback: Object.freeze({
+      cornerDamping: 0.52,
+      cornerFollowBoost: 0.18,
+      followBase: 0.88,
+      followMin: 0.36,
+      followRange: 0.46,
+      followMax: 0.95,
+      maxLagBase: 20,
+      maxLagBrushScale: 1.35,
+      recencyPower: 0.86,
+      speedBrushScale: 1,
+      speedOffset: 20,
+      speedStrengthFloor: 0.64,
+      speedFollowBoost: 0.12,
+      startStrength: 0.38,
+      strengthScale: 1.14,
+      targetBlend: 0.9,
+      trendBlend: 0.74,
+      windowBase: 4,
+      windowRange: 11,
+      warmupSamples: 3,
+    }),
+  });
+
+  function normalizePointerType(input = {}) {
+    return String(input?.pointerType || "").toLowerCase();
+  }
+
+  function getSmoothingPointerProfile(input = {}) {
+    const pointerType = normalizePointerType(input);
+
+    return SMOOTHING_POINTER_PROFILES[pointerType] || SMOOTHING_POINTER_PROFILES.fallback;
+  }
+
+  function getRopeStabilizationLength(settings, input, amount = getRopeStabilizationAmount(settings)) {
     const brushSize = getBrushSize(settings);
     const zoom = Math.max(0.0001, Number(input?.cameraZoom) || 1);
     const dpr = Math.max(0.0001, Number(input?.dpr) || 1);
-    const maxCssLength = clamp(brushSize * 2.4 + 18, 14, 96);
-    const ropeCssLength = 2 + Math.pow(clamp01(amount), 1.15) * maxCssLength;
+    const maxCssLength = clamp(brushSize * 2.25 + 22, 18, 112);
+    const ropeCssLength = 1 + Math.pow(clamp01(amount), 1.18) * maxCssLength;
 
     return ropeCssLength * dpr / zoom;
-  }
-
-  function getStreamLineAmount(settings) {
-    return clamp01(settings?.streamLineAmount ?? settings?.smoothing);
   }
 
   function getToolSeedSalt(tool) {
@@ -72,60 +177,18 @@ window.CBO = window.CBO || {};
 
     return {
       distance: 0,
-      inputPoints: [createInputPoint(point, options)],
       lastStampPoint: { ...point },
       pressure: normalizePressure(options.pressure),
-      pulledStringPoint: { ...point },
+      ropePoint: { ...point },
+      smoothingPoint: { ...point },
+      smoothingSamples: [createTimedPoint(point, options)],
       seed: (seed || 1) >>> 0,
-      smoothedPoint: { ...point },
-      stabilizationGuide: null,
+      stabilizedPoint: { ...point },
       tool: options.tool || "",
     };
   }
 
-  function normalizePointerType(input) {
-    return String(input?.pointerType || "").toLowerCase();
-  }
-
-  function getInputProfile(input = {}) {
-    const pointerType = normalizePointerType(input);
-
-    if (pointerType === "pen") {
-      return {
-        motionScale: 0.82,
-        stabilizationScale: 0.72,
-        streamLineScale: 0.86,
-        tipAttachmentSamples: 5,
-      };
-    }
-
-    if (pointerType === "touch") {
-      return {
-        motionScale: 1.28,
-        stabilizationScale: 1.12,
-        streamLineScale: 1.05,
-        tipAttachmentSamples: 8,
-      };
-    }
-
-    if (pointerType === "mouse") {
-      return {
-        motionScale: 1.08,
-        stabilizationScale: 0.96,
-        streamLineScale: 1,
-        tipAttachmentSamples: 6,
-      };
-    }
-
-    return {
-      motionScale: 1,
-      stabilizationScale: 1,
-      streamLineScale: 1,
-      tipAttachmentSamples: 6,
-    };
-  }
-
-  function createInputPoint(point, input = {}) {
+  function createTimedPoint(point, input = {}) {
     const time = Number(input?.time);
 
     return {
@@ -133,14 +196,6 @@ window.CBO = window.CBO || {};
       y: point.y,
       time: Number.isFinite(time) ? time : null,
     };
-  }
-
-  function pushInputPoint(point, state, input) {
-    state.inputPoints.push(createInputPoint(point, input));
-
-    if (state.inputPoints.length > 28) {
-      state.inputPoints.shift();
-    }
   }
 
   function distanceBetween(a, b) {
@@ -151,132 +206,51 @@ window.CBO = window.CBO || {};
     return Math.hypot(a.x - b.x, a.y - b.y);
   }
 
-  function getPathDistance(points) {
-    if (!Array.isArray(points) || points.length < 2) {
+  function pushSmoothingSample(point, state, input) {
+    if (!Array.isArray(state.smoothingSamples)) {
+      state.smoothingSamples = [];
+    }
+
+    state.smoothingSamples.push(createTimedPoint(point, input));
+
+    if (state.smoothingSamples.length > 18) {
+      state.smoothingSamples.shift();
+    }
+  }
+
+  function getSmoothingSpeedFactor(samples, settings, profile) {
+    if (!Array.isArray(samples) || samples.length < 2) {
       return 0;
     }
 
-    return points.reduce((total, nextPoint, index) => {
-      if (index === 0) {
-        return 0;
-      }
-
-      return total + distanceBetween(nextPoint, points[index - 1]);
-    }, 0);
-  }
-
-  function getPathDirectness(points) {
-    if (!Array.isArray(points) || points.length < 2) {
-      return 0;
-    }
-
-    const start = points[0];
-    const end = points[points.length - 1];
-    const pathLength = getPathDistance(points);
-
-    return pathLength > 0 ? clamp(distanceBetween(start, end) / pathLength, 0, 1) : 0;
-  }
-
-  function getTipAttachmentFactor(state, profile) {
-    const samples = Math.max(1, Number(profile?.tipAttachmentSamples) || 1);
-    const count = Math.max(0, (state?.inputPoints?.length || 1) - 1);
-
-    return clamp(count / samples, 0.18, 1);
-  }
-
-  function getSampleSpeedFactor(points) {
-    if (!Array.isArray(points) || points.length < 2) {
-      return 0;
-    }
-
-    const point = points[points.length - 1];
-    const previousPoint = points[points.length - 2];
+    const point = samples[samples.length - 1];
+    const previousPoint = samples[samples.length - 2];
     const distance = distanceBetween(point, previousPoint);
     const time = Number(point.time);
     const previousTime = Number(previousPoint.time);
+    const brushScale = getBrushSize(settings) * (profile?.speedBrushScale || 1) +
+      (profile?.speedOffset || 18);
+    const frameDistance = Number.isFinite(time) && Number.isFinite(previousTime) && time > previousTime
+      ? distance * (16.667 / Math.max(1, time - previousTime))
+      : distance;
 
-    if (Number.isFinite(time) && Number.isFinite(previousTime) && time > previousTime) {
-      const frameDistance = distance * (16.667 / Math.max(1, time - previousTime));
-
-      return clamp(frameDistance / 26, 0, 1);
-    }
-
-    return clamp(distance / 28, 0, 1);
+    return clamp(frameDistance / brushScale, 0, 1);
   }
 
-  function getWeightedAverage(points, amount) {
-    const lastIndex = points.length - 1;
-    const recencyPower = 1.15 + (1 - amount) * 1.65;
-    let weightTotal = 0;
-    let x = 0;
-    let y = 0;
-
-    points.forEach((nextPoint, index) => {
-      const recency = lastIndex <= 0 ? 1 : index / lastIndex;
-      const weight = Math.max(0.05, Math.pow(recency, recencyPower));
-
-      weightTotal += weight;
-      x += nextPoint.x * weight;
-      y += nextPoint.y * weight;
-    });
-
-    return weightTotal > 0
-      ? { x: x / weightTotal, y: y / weightTotal }
-      : points[lastIndex];
-  }
-
-  function getStabilizedPoint(point, state, settings, input = {}) {
-    const profile = getInputProfile(input);
-    const stabilization = clamp01(settings?.stabilizationAmount) * profile.stabilizationScale;
-
-    if (stabilization <= 0 || state.inputPoints.length < 2) {
-      state.stabilizationGuide = null;
-      state.pulledStringPoint = { ...point };
-      return point;
-    }
-
-    const anchor = state.pulledStringPoint || state.smoothedPoint || point;
-    const ropeLength = getStabilizationRopeLength(settings, input, stabilization);
-    const deltaX = point.x - anchor.x;
-    const deltaY = point.y - anchor.y;
-    const distance = Math.hypot(deltaX, deltaY);
-    const isTaut = distance > ropeLength;
-    const nextPoint = isTaut
-      ? {
-          x: point.x - (deltaX / distance) * ropeLength,
-          y: point.y - (deltaY / distance) * ropeLength,
-        }
-      : { ...anchor };
-    const guideInputPoint = input?.rawPoint ? clonePoint(input.rawPoint) : clonePoint(point);
-
-    state.pulledStringPoint = nextPoint;
-    state.stabilizationGuide = {
-      active: true,
-      distance,
-      inputPoint: guideInputPoint,
-      outputPoint: clonePoint(nextPoint),
-      ropeLength,
-      taut: isTaut,
-    };
-
-    return nextPoint;
-  }
-
-  function getMotionCornerPreserve(points) {
-    if (!Array.isArray(points) || points.length < 5) {
+  function getSmoothingCornerFactor(samples) {
+    if (!Array.isArray(samples) || samples.length < 3) {
       return 0;
     }
 
-    const start = points[0];
-    const middle = points[Math.floor(points.length * 0.5)];
-    const end = points[points.length - 1];
-    const firstX = middle.x - start.x;
-    const firstY = middle.y - start.y;
-    const secondX = end.x - middle.x;
-    const secondY = end.y - middle.y;
+    const a = samples[samples.length - 3];
+    const b = samples[samples.length - 2];
+    const c = samples[samples.length - 1];
+    const firstX = b.x - a.x;
+    const firstY = b.y - a.y;
+    const secondX = c.x - b.x;
+    const secondY = c.y - b.y;
     const firstLength = Math.hypot(firstX, firstY);
     const secondLength = Math.hypot(secondX, secondY);
-    const directness = getPathDirectness(points);
 
     if (firstLength <= 0.5 || secondLength <= 0.5) {
       return 0;
@@ -284,177 +258,273 @@ window.CBO = window.CBO || {};
 
     const dot = clamp((firstX * secondX + firstY * secondY) / (firstLength * secondLength), -1, 1);
 
-    return clamp((1 - dot) * 0.68 * directness, 0, 0.85);
+    return clamp((1 - dot) * 0.5, 0, 1);
   }
 
-  function getMotionFilteredPoint(point, state, settings, input = {}) {
-    const profile = getInputProfile(input);
-    const amount = clamp01(settings?.motionFilteringAmount) * profile.motionScale;
-
-    if (amount <= 0 || !state?.inputPoints || state.inputPoints.length < 4) {
-      return point;
+  function getSmoothingWeight(index, lastIndex, recencyPower) {
+    if (lastIndex <= 0) {
+      return 1;
     }
 
-    const expression = clamp01(settings?.motionFilteringExpression);
-    const tipAttachment = getTipAttachmentFactor(state, profile);
-    const windowSize = Math.min(state.inputPoints.length, 4 + Math.round(amount * 20));
-    const points = state.inputPoints.slice(-windowSize);
-    const lastIndex = points.length - 1;
-    const meanIndex = lastIndex * 0.5;
-    const mean = points.reduce(
-      (result, nextPoint) => ({
-        x: result.x + nextPoint.x / points.length,
-        y: result.y + nextPoint.y / points.length,
-      }),
-      { x: 0, y: 0 },
-    );
-    const trend = points.reduce(
-      (result, nextPoint, index) => {
-        const indexOffset = index - meanIndex;
+    const recency = (index + 1) / (lastIndex + 1);
 
-        result.denominator += indexOffset * indexOffset;
-        result.x += indexOffset * (nextPoint.x - mean.x);
-        result.y += indexOffset * (nextPoint.y - mean.y);
-        return result;
-      },
-      { denominator: 0, x: 0, y: 0 },
-    );
+    return Math.max(0.04, Math.pow(recency, Math.max(0.2, recencyPower)));
+  }
 
-    if (trend.denominator <= 0) {
-      return point;
-    }
+  function getWeightedSmoothingAverage(samples, windowSize, recencyPower) {
+    const recentSamples = samples.slice(-windowSize);
+    const lastIndex = recentSamples.length - 1;
+    let weightTotal = 0;
+    let x = 0;
+    let y = 0;
 
-    const slopeX = trend.x / trend.denominator;
-    const slopeY = trend.y / trend.denominator;
-    const slopeLength = Math.hypot(slopeX, slopeY);
+    recentSamples.forEach((sample, index) => {
+      const weight = getSmoothingWeight(index, lastIndex, recencyPower);
 
-    if (slopeLength <= 0.0001) {
-      return point;
-    }
-
-    const tangent = {
-      x: slopeX / slopeLength,
-      y: slopeY / slopeLength,
-    };
-    const normal = {
-      x: -tangent.y,
-      y: tangent.x,
-    };
-    const linePointAt = (index) => ({
-      x: mean.x + slopeX * (index - meanIndex),
-      y: mean.y + slopeY * (index - meanIndex),
+      weightTotal += weight;
+      x += sample.x * weight;
+      y += sample.y * weight;
     });
-    const projected = {
-      x: mean.x + slopeX * (lastIndex - meanIndex),
-      y: mean.y + slopeY * (lastIndex - meanIndex),
-    };
-    const lateralX = point.x - projected.x;
-    const lateralY = point.y - projected.y;
-    const lateralDistance = lateralX * normal.x + lateralY * normal.y;
-    const deviationSamples = points
-      .map((nextPoint, index) => {
-        const linePoint = linePointAt(index);
 
-        return Math.abs((nextPoint.x - linePoint.x) * normal.x + (nextPoint.y - linePoint.y) * normal.y);
-      })
-      .sort((a, b) => a - b);
-    const medianDeviation = deviationSamples[Math.floor(deviationSamples.length * 0.5)] || 0;
-    const cornerPreserve = getMotionCornerPreserve(points);
-    const directness = getPathDirectness(points);
-    const effectiveAmount = clamp01(
-      amount *
-      tipAttachment *
-      (0.78 + directness * 0.22) *
-      (1 - expression * 0.55) *
-      (1 - cornerPreserve * 0.92),
-    );
-    const rawDeviation = Math.abs(lateralDistance);
-    const expressiveBand = medianDeviation * (0.12 + expression * 0.9);
-    const allowedDeviation = rawDeviation * (1 - effectiveAmount) + expressiveBand * effectiveAmount;
-    const clippedDistance = Math.sign(lateralDistance) * Math.min(rawDeviation, allowedDeviation);
-    const clipped = {
-      x: projected.x + normal.x * clippedDistance,
-      y: projected.y + normal.y * clippedDistance,
-    };
+    return weightTotal > 0
+      ? { x: x / weightTotal, y: y / weightTotal }
+      : recentSamples[lastIndex];
+  }
+
+  function getWeightedSmoothingTrend(samples, windowSize, recencyPower) {
+    const recentSamples = samples.slice(-windowSize);
+    const lastIndex = recentSamples.length - 1;
+
+    if (lastIndex <= 0) {
+      return recentSamples[lastIndex];
+    }
+
+    let weightTotal = 0;
+    let indexMean = 0;
+    let xMean = 0;
+    let yMean = 0;
+
+    recentSamples.forEach((sample, index) => {
+      const weight = getSmoothingWeight(index, lastIndex, recencyPower);
+
+      weightTotal += weight;
+      indexMean += index * weight;
+      xMean += sample.x * weight;
+      yMean += sample.y * weight;
+    });
+
+    if (weightTotal <= 0) {
+      return recentSamples[lastIndex];
+    }
+
+    indexMean /= weightTotal;
+    xMean /= weightTotal;
+    yMean /= weightTotal;
+
+    let denominator = 0;
+    let xNumerator = 0;
+    let yNumerator = 0;
+
+    recentSamples.forEach((sample, index) => {
+      const weight = getSmoothingWeight(index, lastIndex, recencyPower);
+      const indexOffset = index - indexMean;
+
+      denominator += weight * indexOffset * indexOffset;
+      xNumerator += weight * indexOffset * (sample.x - xMean);
+      yNumerator += weight * indexOffset * (sample.y - yMean);
+    });
+
+    if (denominator <= 0) {
+      return recentSamples[lastIndex];
+    }
+
+    const predictOffset = lastIndex - indexMean;
 
     return {
-      x: point.x + (clipped.x - point.x) * effectiveAmount,
-      y: point.y + (clipped.y - point.y) * effectiveAmount,
+      x: xMean + (xNumerator / denominator) * predictOffset,
+      y: yMean + (yNumerator / denominator) * predictOffset,
     };
   }
 
-  function getSmoothedPressure(pressure, state, settings) {
-    const streamLinePressure = clamp01(settings?.streamLinePressure);
-    const nextPressure = normalizePressure(pressure);
+  function mixPoints(from, to, amount) {
+    const t = clamp01(amount);
 
-    if (streamLinePressure <= 0) {
-      state.pressure = nextPressure;
-      return nextPressure;
+    return {
+      x: from.x + (to.x - from.x) * t,
+      y: from.y + (to.y - from.y) * t,
+    };
+  }
+
+  function getSmoothingWarmupFactor(samples, profile) {
+    const processedSamples = Math.max(0, (samples?.length || 1) - 1);
+    const warmupSamples = Math.max(1, Number(profile?.warmupSamples) || 1);
+
+    return clamp(
+      processedSamples / warmupSamples,
+      profile?.startStrength ?? 0.35,
+      1,
+    );
+  }
+
+  function getSmoothingWindowSize(samples, amount, strength, profile) {
+    const windowBase = Math.max(2, Math.round(Number(profile?.windowBase) || 3));
+    const windowRange = Math.max(0, Math.round(Number(profile?.windowRange) || 8));
+    const windowSize = windowBase + Math.round(windowRange * clamp01(amount) * clamp01(strength));
+
+    return Math.min(samples.length, Math.max(2, windowSize));
+  }
+
+  function getSmoothingMaxLag(settings, amount, profile) {
+    const brushSize = getBrushSize(settings);
+    const base = Math.max(0, Number(profile?.maxLagBase) || 0);
+    const brushScale = Math.max(0, Number(profile?.maxLagBrushScale) || 0);
+
+    return (base + brushSize * brushScale) * (0.45 + clamp01(amount) * 0.55);
+  }
+
+  function getSmoothedStrokePoint(point, state, settings, input = {}) {
+    const amount = getStrokeSmoothingAmount(settings);
+
+    if (amount <= 0) {
+      state.smoothingPoint = { ...point };
+      state.smoothingSamples = [];
+      return point;
     }
 
-    const follow = clamp(1 - streamLinePressure * 0.92, 0.08, 1);
+    pushSmoothingSample(point, state, input);
 
-    state.pressure += (nextPressure - state.pressure) * follow;
+    if (state.smoothingSamples.length < 2) {
+      state.smoothingPoint = { ...point };
+      return point;
+    }
 
-    return state.pressure;
+    const profile = getSmoothingPointerProfile(input);
+    const speedFactor = getSmoothingSpeedFactor(state.smoothingSamples, settings, profile);
+    const cornerFactor = getSmoothingCornerFactor(state.smoothingSamples);
+    const speedPreserve = (profile.speedStrengthFloor || 0.6) +
+      (1 - speedFactor) * (1 - (profile.speedStrengthFloor || 0.6));
+    const cornerPreserve = 1 - cornerFactor * (profile.cornerDamping || 0.5) * amount;
+    const warmup = getSmoothingWarmupFactor(state.smoothingSamples, profile);
+    const strength = clamp01(
+      amount *
+      (profile.strengthScale || 1) *
+      speedPreserve *
+      cornerPreserve *
+      warmup,
+    );
+    const windowSize = getSmoothingWindowSize(state.smoothingSamples, amount, strength, profile);
+    const recencyPower = (profile.recencyPower || 0.85) + (1 - strength) * 0.8;
+    const average = getWeightedSmoothingAverage(state.smoothingSamples, windowSize, recencyPower);
+    const trend = getWeightedSmoothingTrend(state.smoothingSamples, windowSize, recencyPower);
+    const denoisedPoint = mixPoints(average, trend, profile.trendBlend ?? 0.75);
+    const target = mixPoints(point, denoisedPoint, strength * (profile.targetBlend || 0.9));
+    const previous = state.smoothingPoint || point;
+    const follow = clamp(
+      (profile.followBase || 0.88) -
+        strength * (profile.followRange || 0.44) +
+        speedFactor * (profile.speedFollowBoost || 0.12) +
+        cornerFactor * (profile.cornerFollowBoost || 0.18),
+      profile.followMin || 0.36,
+      profile.followMax || 0.96,
+    );
+    let nextPoint = {
+      x: previous.x + (target.x - previous.x) * follow,
+      y: previous.y + (target.y - previous.y) * follow,
+    };
+    const lag = distanceBetween(point, nextPoint);
+    const maxLag = getSmoothingMaxLag(settings, amount, profile);
+
+    if (lag > maxLag) {
+      nextPoint = {
+        x: point.x + (nextPoint.x - point.x) * (maxLag / lag),
+        y: point.y + (nextPoint.y - point.y) * (maxLag / lag),
+      };
+    }
+
+    state.smoothingPoint = nextPoint;
+
+    return nextPoint;
+  }
+
+  function getRopeStabilizedPoint(point, state, settings, input = {}) {
+    const amount = getRopeStabilizationAmount(settings);
+
+    if (amount <= 0) {
+      state.ropePoint = { ...point };
+      state.stabilizedPoint = { ...point };
+      return {
+        guide: null,
+        point,
+      };
+    }
+
+    const ropePoint = state.ropePoint || state.stabilizedPoint || point;
+    const stabilizedPoint = state.stabilizedPoint || ropePoint;
+    const ropeLength = getRopeStabilizationLength(settings, input, amount);
+    const deltaX = point.x - ropePoint.x;
+    const deltaY = point.y - ropePoint.y;
+    const distance = Math.hypot(deltaX, deltaY);
+    const taut = distance > ropeLength;
+    const pulledPoint = taut
+      ? {
+          x: point.x - (deltaX / distance) * ropeLength,
+          y: point.y - (deltaY / distance) * ropeLength,
+        }
+      : ropePoint;
+    const follow = clamp(0.62 - amount * 0.44, 0.18, 0.62);
+    const outputPoint = taut
+      ? {
+          x: stabilizedPoint.x + (pulledPoint.x - stabilizedPoint.x) * follow,
+          y: stabilizedPoint.y + (pulledPoint.y - stabilizedPoint.y) * follow,
+        }
+      : stabilizedPoint;
+    const inputPoint = input?.rawPoint ? clonePoint(input.rawPoint) : clonePoint(point);
+
+    state.ropePoint = { ...pulledPoint };
+    state.stabilizedPoint = { ...outputPoint };
+
+    return {
+      guide: {
+        active: true,
+        distance,
+        inputPoint,
+        outputPoint: clonePoint(outputPoint),
+        ropeLength,
+        taut,
+      },
+      point: outputPoint,
+    };
   }
 
   function processStrokeInput(point, state, settings, pressure = 1, input = {}) {
+    const nextPressure = normalizePressure(pressure);
+
     if (!state) {
       return {
         point,
-        pressure: normalizePressure(pressure),
-      };
-    }
-
-    const profile = getInputProfile(input);
-    pushInputPoint(point, state, input);
-
-    const motionFilteredPoint = getMotionFilteredPoint(point, state, settings, input);
-    const stabilizedPoint = getStabilizedPoint(motionFilteredPoint, state, settings, {
-      ...input,
-      rawPoint: point,
-    });
-    const streamLineAmount = clamp01(getStreamLineAmount(settings) * profile.streamLineScale);
-    const nextPressure = getSmoothedPressure(pressure, state, settings);
-
-    if (streamLineAmount <= 0) {
-      state.smoothedPoint = { ...stabilizedPoint };
-      return {
-        point: stabilizedPoint,
         pressure: nextPressure,
-        stabilizationGuide: state.stabilizationGuide
-          ? {
-              ...state.stabilizationGuide,
-              inputPoint: { ...state.stabilizationGuide.inputPoint },
-              outputPoint: { ...state.stabilizationGuide.outputPoint },
-            }
-          : null,
       };
     }
 
-    const follow = clamp(1 - streamLineAmount * 0.88, 0.08, 1);
-
-    state.smoothedPoint = {
-      x: state.smoothedPoint.x + (stabilizedPoint.x - state.smoothedPoint.x) * follow,
-      y: state.smoothedPoint.y + (stabilizedPoint.y - state.smoothedPoint.y) * follow,
+    state.pressure = nextPressure;
+    const stabilized = getRopeStabilizedPoint(point, state, settings, input);
+    const smoothedPoint = getSmoothedStrokePoint(stabilized.point, state, settings, input);
+    const guide = stabilized.guide
+      ? {
+          ...stabilized.guide,
+          outputPoint: clonePoint(smoothedPoint),
+        }
+      : null;
+    const result = {
+      point: smoothedPoint,
+      pressure: nextPressure,
     };
 
-    if (state.stabilizationGuide) {
-      state.stabilizationGuide.outputPoint = { ...state.smoothedPoint };
+    if (guide) {
+      result.stabilizationGuide = guide;
     }
 
-    return {
-      point: state.smoothedPoint,
-      pressure: nextPressure,
-      stabilizationGuide: state.stabilizationGuide
-        ? {
-            ...state.stabilizationGuide,
-            inputPoint: { ...state.stabilizationGuide.inputPoint },
-            outputPoint: { ...state.stabilizationGuide.outputPoint },
-          }
-        : null,
-    };
+    return result;
   }
 
   function nextRandom(state) {
@@ -631,9 +701,9 @@ window.CBO = window.CBO || {};
     clamp01,
     normalizePressure,
     getEffectiveRadius,
-    getStreamLineAmount,
-    getStabilizationRopeLength,
-    getMotionFilteredPoint,
+    getRopeStabilizationAmount,
+    getRopeStabilizationLength,
+    getStrokeSmoothingAmount,
     createStrokeState,
     processStrokeInput,
     getNextStampStep,

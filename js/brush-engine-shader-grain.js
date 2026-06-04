@@ -307,6 +307,7 @@ void main() {
     } else {
       shape = coreShape;
     }
+
   } else {
     float distanceFromCenter = distance(v_uv, vec2(0.5));
 
@@ -430,7 +431,7 @@ void main() {
     }
 
     float fw = max(fwidth(distanceFromCenter), 0.001);
-    float edgeStart = mix(0.0, 0.5 - fw, clamp(u_hardness, 0.0, 1.0));
+    float edgeStart = mix(0.0, 0.5 - fw, u_hardness);
     shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
   }
 

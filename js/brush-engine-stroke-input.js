@@ -1513,7 +1513,7 @@
       this.resetQuickLineState();
       this.cancelActiveStrokeDirtyRegionDebug();
       this.cancelStrokeTargetPrewarm();
-      this.clearStabilizationGuide?.();
+      this.clearRopeStabilizationGuide?.();
       this.resetStrokeProgress();
       this.strokeDynamicsState = null;
       this.strokeColorRandomState = null;
@@ -1609,11 +1609,8 @@
       return [
         this.currentStrokeTool || "brush",
         this.getReplayStrokeSamplingKey(),
-        this.roundReplayCacheNumber(settings.streamLineAmount ?? settings.smoothing, 10000),
-        this.roundReplayCacheNumber(settings.streamLinePressure, 10000),
-        this.roundReplayCacheNumber(settings.stabilizationAmount, 10000),
-        this.roundReplayCacheNumber(settings.motionFilteringAmount, 10000),
-        this.roundReplayCacheNumber(settings.motionFilteringExpression, 10000),
+        this.roundReplayCacheNumber(settings.ropeStabilizationAmount, 10000),
+        this.roundReplayCacheNumber(settings.strokeSmoothingAmount, 10000),
         settings.velocityPressureEnabled === true ? 1 : 0,
       ].join("|");
     }
@@ -1741,7 +1738,7 @@
       const processedSamples = [{ ...startPoint }];
 
       for (let index = 1; index < rawSamples.length; index += 1) {
-        processedSamples.push({ ...this.applyStabilization(rawSamples[index]) });
+        processedSamples.push({ ...this.processStrokeSample(rawSamples[index]) });
       }
 
       return processedSamples;
@@ -2175,14 +2172,14 @@
       this.currentStroke = [startPoint, startPoint, startPoint];
 
       for (let index = 1; index < rawSamples.length - 1; index += 1) {
-        const stableSample = this.applyStabilization(rawSamples[index]);
+        const stableSample = this.processStrokeSample(rawSamples[index]);
 
         this.currentStroke.push(stableSample);
         this.processStamps();
       }
 
       const lastRaw = rawSamples[rawSamples.length - 1];
-      const lastPoint = rawSamples.length > 1 ? this.applyStabilization(lastRaw) : startPoint;
+      const lastPoint = rawSamples.length > 1 ? this.processStrokeSample(lastRaw) : startPoint;
 
       this.currentStroke.push(lastPoint);
       this.processStamps();
@@ -2597,7 +2594,7 @@
       for (let index = 0; index < samples.length; index += 1) {
         const sample = samples[index];
 
-        this.currentStroke.push(this.applyStabilization(sample));
+        this.currentStroke.push(this.processStrokeSample(sample));
         this.processStamps({ deferFlush: true });
         processedCount += 1;
 
@@ -4108,7 +4105,7 @@
 
           this.recordedStroke.push(rawSample);
 
-          const point = this.applyStabilization(rawSample);
+          const point = this.processStrokeSample(rawSample);
 
           this.currentStroke.push(point);
           this.processStamps();

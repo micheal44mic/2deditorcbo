@@ -272,13 +272,13 @@ window.CBO = window.CBO || {};
     canvas.width = baseSize;
     canvas.height = baseSize;
     wrapper.append(canvas);
-    ropePreview.classList.add("brush-stabilization-rope-preview");
-    ropePreview.dataset.brushStabilizationRopePreview = "";
+    ropePreview.classList.add("brush-rope-stabilization-preview");
+    ropePreview.dataset.brushRopeStabilizationPreview = "";
     ropePreview.setAttribute("aria-hidden", "true");
     ropePreview.setAttribute("hidden", "");
-    ropeLine.classList.add("brush-stabilization-rope-line");
-    ropeBrush.classList.add("brush-stabilization-rope-brush");
-    ropeCursor.classList.add("brush-stabilization-rope-cursor");
+    ropeLine.classList.add("brush-rope-stabilization-line");
+    ropeBrush.classList.add("brush-rope-stabilization-brush");
+    ropeCursor.classList.add("brush-rope-stabilization-cursor");
     ropeBrush.setAttribute("r", "4.5");
     ropeCursor.setAttribute("r", "3");
     ropePreview.append(ropeLine, ropeBrush, ropeCursor);
@@ -497,7 +497,7 @@ window.CBO = window.CBO || {};
       updateTransform();
     });
 
-    window.addEventListener("cbo:brush-stabilization-guide", updateRopePreview);
+    window.addEventListener("cbo:brush-rope-stabilization-guide", updateRopePreview);
 
     window.addEventListener("cbo:touch-navigation-start", () => {
       pointerInsideStage = false;

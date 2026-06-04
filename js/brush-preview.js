@@ -127,12 +127,8 @@ window.CBO = window.CBO || {};
     "wetCharge",
     "wetAttack",
     "wetnessJitter",
-    "streamLineAmount",
-    "streamLinePressure",
-    "stabilizationAmount",
-    "motionFilteringAmount",
-    "motionFilteringExpression",
-    "smoothing",
+    "ropeStabilizationAmount",
+    "strokeSmoothingAmount",
     "stampColorHueJitter",
     "stampColorSaturationJitter",
     "stampColorLightnessJitter",
@@ -608,10 +604,9 @@ window.CBO = window.CBO || {};
       return;
     }
 
-    const hardness = clamp01(settings.hardness ?? 1);
     const wetEdges = clamp01(settings.wetEdges);
-    const effectiveHardness = clamp(hardness * (1 - wetEdges * 0.55), 0.02, 0.98);
-    const hardStop = clamp(effectiveHardness, 0.03, 0.96);
+    const hardness = clamp01(settings.hardness ?? 1);
+    const hardStop = clamp(hardness * (1 - wetEdges * 0.55), 0.03, 0.96);
     const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
     const color = `rgba(${previewColor.r}, ${previewColor.g}, ${previewColor.b}, ${alpha})`;
 

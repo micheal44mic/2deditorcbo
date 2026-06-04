@@ -170,7 +170,7 @@
     }
 ,
 
-    shouldEmitStabilizationGuide() {
+    shouldEmitRopeStabilizationGuide() {
       return (
         this.options?.suppressCameraEvents !== true &&
         this.options?.getSettings == null &&
@@ -205,8 +205,8 @@
     }
 ,
 
-    updateStabilizationGuide(rawSample, processedPoint, guide) {
-      if (!this.shouldEmitStabilizationGuide()) {
+    updateRopeStabilizationGuide(rawSample, processedPoint, guide) {
+      if (!this.shouldEmitRopeStabilizationGuide()) {
         return;
       }
 
@@ -216,7 +216,7 @@
         this.largeBlendFinalQualityReplay === true ||
         this.strokeTotalLength != null
       ) {
-        this.clearStabilizationGuide();
+        this.clearRopeStabilizationGuide();
         return;
       }
 
@@ -224,12 +224,12 @@
       const brush = this.documentPointToStageCssPoint(guide.outputPoint || processedPoint);
 
       if (!cursor || !brush) {
-        this.clearStabilizationGuide();
+        this.clearRopeStabilizationGuide();
         return;
       }
 
-      this.stabilizationGuideVisible = true;
-      window.dispatchEvent(new CustomEvent("cbo:brush-stabilization-guide", {
+      this.ropeStabilizationGuideVisible = true;
+      window.dispatchEvent(new CustomEvent("cbo:brush-rope-stabilization-guide", {
         detail: {
           active: true,
           brush,
@@ -243,25 +243,25 @@
     }
 ,
 
-    clearStabilizationGuide() {
-      if (!this.stabilizationGuideVisible || !this.shouldEmitStabilizationGuide()) {
-        this.stabilizationGuideVisible = false;
+    clearRopeStabilizationGuide() {
+      if (!this.ropeStabilizationGuideVisible || !this.shouldEmitRopeStabilizationGuide()) {
+        this.ropeStabilizationGuideVisible = false;
         return;
       }
 
-      this.stabilizationGuideVisible = false;
-      window.dispatchEvent(new CustomEvent("cbo:brush-stabilization-guide", {
+      this.ropeStabilizationGuideVisible = false;
+      window.dispatchEvent(new CustomEvent("cbo:brush-rope-stabilization-guide", {
         detail: { active: false },
       }));
     }
 ,
 
     processPointerSample(event) {
-      return this.applyStabilization(this.createPointerSample(event));
+      return this.processStrokeSample(this.createPointerSample(event));
     }
 ,
 
-    applyStabilization(rawSample) {
+    processStrokeSample(rawSample) {
       const StrokeMath = namespace.StrokeMath;
 
       if (!this.strokeDynamicsState || !StrokeMath?.processStrokeInput) {
@@ -283,7 +283,7 @@
         },
       );
 
-      this.updateStabilizationGuide(rawSample, processed.point, processed.stabilizationGuide);
+      this.updateRopeStabilizationGuide(rawSample, processed.point, processed.stabilizationGuide);
 
       return {
         ...rawSample,
