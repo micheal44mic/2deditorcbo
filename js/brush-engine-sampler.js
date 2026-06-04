@@ -2360,7 +2360,7 @@
         this.isAndroidPreviewCacheDisabled() ||
         this.isDrawing ||
         (!force && namespace.EngineGovernor?.mode === "interactive") ||
-        namespace.smudgeEngine?.isDragging ||
+        namespace.liquifyEngine?.isDragging ||
         !this.documentRenderer?.updatePreviewCacheIfNeeded
       ) {
         return false;

@@ -268,10 +268,10 @@
 :root[data-cbo-theme="light"] .layer-sidebar,
 :root[data-cbo-theme="light"] .layer-sidebar-title,
 :root[data-cbo-theme="light"] .layer-sidebar-label,
-:root[data-cbo-theme="light"] .smudge-sidebar,
-:root[data-cbo-theme="light"] .smudge-sidebar-title,
-:root[data-cbo-theme="light"] .smudge-sidebar-control-label,
-:root[data-cbo-theme="light"] .smudge-sidebar-toggle-label,
+:root[data-cbo-theme="light"] .tool-settings-sidebar,
+:root[data-cbo-theme="light"] .tool-settings-sidebar-title,
+:root[data-cbo-theme="light"] .tool-settings-sidebar-control-label,
+:root[data-cbo-theme="light"] .tool-settings-sidebar-toggle-label,
 :root[data-cbo-theme="light"] .text-sidebar,
 :root[data-cbo-theme="light"] .text-sidebar-title,
 :root[data-cbo-theme="light"] .text-sidebar-label {
@@ -280,7 +280,7 @@
 
 :root[data-cbo-theme="light"] .right-sidebar-project-input-wrap,
 :root[data-cbo-theme="light"] .layer-sidebar-value-pill,
-:root[data-cbo-theme="light"] .smudge-sidebar-reset,
+:root[data-cbo-theme="light"] .tool-settings-sidebar-reset,
 :root[data-cbo-theme="light"] .text-sidebar-value-pill,
 :root[data-cbo-theme="light"] .text-sidebar-metric,
 :root[data-cbo-theme="light"] .text-sidebar-select,
@@ -302,17 +302,17 @@
 }
 
 :root[data-cbo-theme="light"] .layer-sidebar-range::-webkit-slider-runnable-track,
-:root[data-cbo-theme="light"] .smudge-sidebar-range::-webkit-slider-runnable-track,
+:root[data-cbo-theme="light"] .tool-settings-sidebar-range::-webkit-slider-runnable-track,
 :root[data-cbo-theme="light"] .text-sidebar-range::-webkit-slider-runnable-track {
   background: linear-gradient(
     to right,
-    var(--cbo-theme-text-soft) 0 var(--layer-sidebar-range-progress, var(--smudge-sidebar-range-progress, var(--text-sidebar-range-progress, 50%))),
-    #d8e0ea var(--layer-sidebar-range-progress, var(--smudge-sidebar-range-progress, var(--text-sidebar-range-progress, 50%))) 100%
+    var(--cbo-theme-text-soft) 0 var(--layer-sidebar-range-progress, var(--tool-settings-sidebar-range-progress, var(--text-sidebar-range-progress, 50%))),
+    #d8e0ea var(--layer-sidebar-range-progress, var(--tool-settings-sidebar-range-progress, var(--text-sidebar-range-progress, 50%))) 100%
   );
 }
 
 :root[data-cbo-theme="light"] .layer-sidebar-range::-webkit-slider-thumb,
-:root[data-cbo-theme="light"] .smudge-sidebar-range::-webkit-slider-thumb,
+:root[data-cbo-theme="light"] .tool-settings-sidebar-range::-webkit-slider-thumb,
 :root[data-cbo-theme="light"] .text-sidebar-range::-webkit-slider-thumb {
   border-color: var(--cbo-theme-text-soft);
   background: #ffffff;

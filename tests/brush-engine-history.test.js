@@ -187,7 +187,7 @@ test("brush vertical symmetry mirrors prepared brush and eraser stamps only", ()
   assert.equal(brushSymmetry.artboardId, "active-artboard");
   assert.equal(brushSymmetry.axisX, 100);
   assert.equal(engine.resolveActiveStrokeSymmetry({ layerId: "paint-main", tool: "eraser" }).axisX, 100);
-  assert.equal(engine.resolveActiveStrokeSymmetry({ layerId: "paint-main", tool: "smudge" }), null);
+  assert.equal(engine.resolveActiveStrokeSymmetry({ layerId: "paint-main", tool: "liquify" }), null);
 
   const includedBounds = [];
 

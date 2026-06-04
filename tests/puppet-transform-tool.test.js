@@ -30,6 +30,27 @@ function loadPuppetNamespace() {
   return context.window.CBO;
 }
 
+test("puppet tool does not ship the temporary lag debug panel", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "puppet-transform-tool.js"), "utf8");
+
+  assert.doesNotMatch(source, /editor-puppet-debug-console/);
+  assert.doesNotMatch(source, /data-puppet-debug-copy/);
+  assert.doesNotMatch(source, /PUPPET_DEBUG_/);
+  assert.doesNotMatch(source, /console\.(log|debug|table|group|groupCollapsed)/);
+});
+
+test("puppet overlay mesh uses a lighter adaptive grid than the renderer", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "js", "puppet-transform-tool.js"), "utf8");
+
+  assert.match(source, /PUPPET_OVERLAY_TARGET_CELL_CSS = 8/);
+  assert.match(source, /PUPPET_OVERLAY_MAX_GRID_COLS = 64/);
+  assert.match(source, /PUPPET_OVERLAY_MAX_GRID_ROWS = 128/);
+  assert.match(source, /getOverlayGridSize\(layer, puppet, target\)/);
+  assert.match(source, /getOverlayAlphaSamples\(layer, target, targetRect, sampleCols, sampleRows\)/);
+  assert.match(source, /cacheHit: true/);
+  assert.match(source, /const \{ cols, rows \} = this\.getOverlayGridSize\(layer, puppet, target\)/);
+});
+
 test("puppet rasterize redo can recompute pixels without storing an after snapshot", () => {
   const namespace = loadPuppetNamespace();
   const calls = [];

@@ -2579,7 +2579,7 @@
       }
 
       const governor = namespace.EngineGovernor;
-      const frameMode = this.isDrawing || this.isPanning || this.touchNavigationGesture || namespace.smudgeEngine?.isDragging
+      const frameMode = this.isDrawing || this.isPanning || this.touchNavigationGesture || namespace.liquifyEngine?.isDragging
         ? "interactive"
         : undefined;
 
@@ -2614,8 +2614,8 @@
       });
       const target = this.getDocumentDrawTarget();
       const activeStrokeLayerId = this.strokeTargetLayerId || target.layerId;
-      const allowPreviewCache = !namespace.smudgeEngine?.isDragging;
-      const deferPreviewCacheUpdate = this.isDrawing || this.isPanning || this.touchNavigationGesture || namespace.smudgeEngine?.isDragging;
+      const allowPreviewCache = !namespace.liquifyEngine?.isDragging;
+      const deferPreviewCacheUpdate = this.isDrawing || this.isPanning || this.touchNavigationGesture || namespace.liquifyEngine?.isDragging;
       const endRenderSubmit = namespace.EngineGovernor?.beginRenderSubmit?.({
         activeStroke: this.isDrawing,
         allowPreviewCache,

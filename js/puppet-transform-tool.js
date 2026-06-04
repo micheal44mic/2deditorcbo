@@ -5,6 +5,11 @@
   const DEFAULT_PUPPET_GRID_ROWS = 256;
   const PUPPET_OVERLAY_ALPHA_THRESHOLD = 18;
   const PUPPET_OVERLAY_ALPHA_SAMPLE_SCALE = 2;
+  const PUPPET_OVERLAY_TARGET_CELL_CSS = 8;
+  const PUPPET_OVERLAY_MIN_GRID_COLS = 12;
+  const PUPPET_OVERLAY_MIN_GRID_ROWS = 12;
+  const PUPPET_OVERLAY_MAX_GRID_COLS = 64;
+  const PUPPET_OVERLAY_MAX_GRID_ROWS = 128;
   const PIN_HIT_RADIUS_CSS = 14;
 
   function createSvgElement(name, attributes = {}) {
@@ -237,6 +242,7 @@
       this.dpr = Math.max(1, window.devicePixelRatio || 1);
       this.pinSequence = 0;
       this.dragState = null;
+      this.overlayAlphaCache = null;
       this.handleToolChange = this.handleToolChange.bind(this);
       this.handleBeforeHistoryAction = this.handleBeforeHistoryAction.bind(this);
       this.handleCameraChange = this.handleCameraChange.bind(this);
@@ -318,6 +324,8 @@
         return;
       }
 
+      this.invalidateOverlayAlphaCache();
+
       if (this.dragState) {
         this.finishDrag();
         return;
@@ -341,7 +349,11 @@
       this.render();
     }
 
-    handleDocumentChange() {
+    handleDocumentChange(event) {
+      if (event?.type === "cbo:document-content-change") {
+        this.invalidateOverlayAlphaCache();
+      }
+
       this.render();
     }
 
@@ -402,6 +414,10 @@
       return layer?.id ? this.documentRenderer?.getRasterTarget?.(layer.id) || null : null;
     }
 
+    invalidateOverlayAlphaCache() {
+      this.overlayAlphaCache = null;
+    }
+
     getGridSize(layer, puppet) {
       if (this.documentRenderer?.getPuppetGridSize) {
         return this.documentRenderer.getPuppetGridSize({ ...layer, puppet });
@@ -410,6 +426,90 @@
       return {
         cols: DEFAULT_PUPPET_GRID_COLS,
         rows: DEFAULT_PUPPET_GRID_ROWS,
+      };
+    }
+
+    getOverlayGridSize(layer, puppet, target) {
+      const baseGrid = this.getGridSize(layer, puppet);
+      const targetWidth = Math.max(1, toFiniteNumber(target?.width, this.documentRenderer?.width || 1));
+      const targetHeight = Math.max(1, toFiniteNumber(target?.height, this.documentRenderer?.height || 1));
+      const projectedWidth = Math.max(1, (targetWidth * this.camera.zoom) / this.dpr);
+      const projectedHeight = Math.max(1, (targetHeight * this.camera.zoom) / this.dpr);
+      const adaptiveCols = Math.ceil(projectedWidth / PUPPET_OVERLAY_TARGET_CELL_CSS);
+      const adaptiveRows = Math.ceil(projectedHeight / PUPPET_OVERLAY_TARGET_CELL_CSS);
+
+      return {
+        cols: Math.max(
+          1,
+          Math.min(
+            baseGrid.cols,
+            PUPPET_OVERLAY_MAX_GRID_COLS,
+            Math.max(PUPPET_OVERLAY_MIN_GRID_COLS, adaptiveCols),
+          ),
+        ),
+        rows: Math.max(
+          1,
+          Math.min(
+            baseGrid.rows,
+            PUPPET_OVERLAY_MAX_GRID_ROWS,
+            Math.max(PUPPET_OVERLAY_MIN_GRID_ROWS, adaptiveRows),
+          ),
+        ),
+      };
+    }
+
+    getOverlayAlphaSamples(layer, target, targetRect, sampleCols, sampleRows) {
+      const texture = target?.texture || null;
+      const cache = this.overlayAlphaCache;
+      const targetX = Number.isFinite(targetRect?.x) ? targetRect.x : 0;
+      const targetY = Number.isFinite(targetRect?.y) ? targetRect.y : 0;
+
+      if (
+        cache &&
+        cache.layerId === layer?.id &&
+        cache.texture === texture &&
+        cache.targetWidth === target?.width &&
+        cache.targetHeight === target?.height &&
+        cache.targetX === targetX &&
+        cache.targetY === targetY &&
+        cache.sampleCols === sampleCols &&
+        cache.sampleRows === sampleRows
+      ) {
+        return {
+          cacheHit: true,
+          samples: cache.samples,
+        };
+      }
+
+      let alphaSamples = this.documentRenderer.getPuppetAlphaSamples
+        ? this.documentRenderer.getPuppetAlphaSamples(target, sampleCols, sampleRows)
+        : null;
+
+      if (!alphaSamples?.length && this.documentRenderer.getPuppetAlphaMask) {
+        const alphaMask = this.documentRenderer.getPuppetAlphaMask(target, sampleCols, sampleRows, {
+          threshold: PUPPET_OVERLAY_ALPHA_THRESHOLD,
+        });
+
+        alphaSamples = Uint8Array.from(alphaMask || [], (value) => (value ? 255 : 0));
+      }
+
+      if (alphaSamples?.length) {
+        this.overlayAlphaCache = {
+          layerId: layer?.id || "",
+          sampleCols,
+          sampleRows,
+          samples: alphaSamples,
+          targetHeight: target?.height,
+          targetWidth: target?.width,
+          targetX,
+          targetY,
+          texture,
+        };
+      }
+
+      return {
+        cacheHit: false,
+        samples: alphaSamples,
       };
     }
 
@@ -484,6 +584,8 @@
         return false;
       }
 
+      this.invalidateOverlayAlphaCache();
+
       const renderer = this.documentRenderer;
       const history = namespace.documentHistory;
 
@@ -521,6 +623,7 @@
             source: "puppet-rasterize-rollback",
           });
           this.isRasterizing = false;
+          this.invalidateOverlayAlphaCache();
           this.requestDraw();
           this.render();
           return;
@@ -559,6 +662,7 @@
         }
 
         this.isRasterizing = false;
+        this.invalidateOverlayAlphaCache();
         this.requestDraw();
         this.render();
         window.dispatchEvent(new CustomEvent("cbo:puppet-rasterized", {
@@ -902,7 +1006,7 @@
         return null;
       }
 
-      const { cols, rows } = this.getGridSize(layer, puppet);
+      const { cols, rows } = this.getOverlayGridSize(layer, puppet, target);
       const targetRect = this.documentRenderer.getRasterTargetDocumentRect?.(target) || {
         x: Number.isFinite(target.x) ? target.x : 0,
         y: Number.isFinite(target.y) ? target.y : 0,
@@ -917,17 +1021,8 @@
         }));
       const sampleCols = cols * PUPPET_OVERLAY_ALPHA_SAMPLE_SCALE + 1;
       const sampleRows = rows * PUPPET_OVERLAY_ALPHA_SAMPLE_SCALE + 1;
-      let alphaSamples = this.documentRenderer.getPuppetAlphaSamples
-        ? this.documentRenderer.getPuppetAlphaSamples(target, sampleCols, sampleRows)
-        : null;
-
-      if (!alphaSamples?.length && this.documentRenderer.getPuppetAlphaMask) {
-        const alphaMask = this.documentRenderer.getPuppetAlphaMask(target, sampleCols, sampleRows, {
-          threshold: PUPPET_OVERLAY_ALPHA_THRESHOLD,
-        });
-
-        alphaSamples = Uint8Array.from(alphaMask || [], (value) => (value ? 255 : 0));
-      }
+      const alphaResult = this.getOverlayAlphaSamples(layer, target, targetRect, sampleCols, sampleRows);
+      const alphaSamples = alphaResult.samples;
 
       if (!alphaSamples?.length) {
         return null;

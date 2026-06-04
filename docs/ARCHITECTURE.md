@@ -6,7 +6,7 @@ Revisione rapida: 2026-05-22, verificata contro file tree, `index.html`, `js/app
 
 ## Scopo dell'app
 
-Editor 2D web per clothing brand owner. L'app gira nel browser come sito statico e usa un canvas WebGL2 per disegno raster, livelli, artboard, mockup, testo vettoriale, forme, trasformazioni, pennelli, smudge, riempimento colore, salvataggio locale e workspace AI/infinite canvas.
+Editor 2D web per clothing brand owner. L'app gira nel browser come sito statico e usa un canvas WebGL2 per disegno raster, livelli, artboard, mockup, testo vettoriale, forme, trasformazioni, pennelli, liquify push, riempimento colore, salvataggio locale e workspace AI/infinite canvas.
 
 Non c'e un bundler evidente: gli script browser sono caricati direttamente da `index.html` in ordine preciso e condividono lo stato tramite `window.CBO`. Il `package.json` in root serve solo come punto comando standard per test, server locale e benchmark.
 
@@ -131,7 +131,7 @@ Punto di bootstrap:
 - `window.CBO.documentRenderer`: renderer WebGL2, creato con `DocumentRenderer`.
 - `window.CBO.documentHistory`: history undo/redo, creata con `DocumentHistory` se non disabilitata.
 - `window.CBO.brushEngine`: motore pennello, creato con `BrushEngine`.
-- `window.CBO.smudgeEngine`: motore smudge, creato con `SmudgeEngine`.
+- `window.CBO.liquifyEngine`: motore Liquify Push, creato con `LiquifyEngine`.
 - `window.CBO.imageRasterizer`: import/rasterizzazione immagini, creato con `ImageRasterizer`.
 - `window.CBO.documentSettings`: dimensioni documento/preset.
 
@@ -190,7 +190,7 @@ IndexedDB/localStorage:
 - `js/sidebar.js`: left rail open/close drawer.
 - `js/drawer.js`: drawer template/elements/mockups/upload/layers, ricerca, IndexedDB upload.
 - `js/layers-panel.js`: lista layer nel drawer, context menu, reference layer, clipping mask, merge, drag/reorder.
-- `js/right-sidebar.js`: pannello proprieta: progetto/save, text controls, layer opacity/blend/align, smudge settings.
+- `js/right-sidebar.js`: pannello proprieta: progetto/save, text controls, layer opacity/blend/align, liquify settings.
 - `js/toolbar.js`: bottom toolbar principale, cambio tool, scorciatoie, undo/redo.
 - `js/top-toolbar.js`: toolbar alta, quick brush controls, transform mode, mobile text panels, rasterize buttons.
 - `js/vertical-toolbar.js`: toolbar verticale destra.
@@ -199,7 +199,7 @@ IndexedDB/localStorage:
 - `js/color-drop.js`: UI/entry point color fill.
 - `js/tooltips.js`: tooltip desktop/mobile.
 
-### Disegno, brush, smudge
+### Disegno, brush, liquify
 
 - `js/brush-engine.js`: classe base `BrushEngine`.
 - `js/brush-engine-stroke-input.js`: pointer input, tool brush/eraser, quick shape/quick line, coalescing mobile.
@@ -213,7 +213,7 @@ IndexedDB/localStorage:
 - `js/brush-studio.js`: editor avanzato brush e anteprima.
 - `js/brush-preview.js`: rendering anteprime brush.
 - `js/brush-shape-outline-preview.js`: outline del pennello sul canvas.
-- `js/smudge-engine.js`: smudge WebGL, settings e history.
+- `js/liquify-engine.js`: Liquify Push WebGL, settings e history stroke.
 
 ### Riempimento colore
 
@@ -392,7 +392,7 @@ Test mirati principali:
 - Renderer/memory/performance: `tests/document-renderer-pruning.test.js`, `tests/raster-memory-monitor.test.js`, `tests/raster-resource-manager.test.js`, `tests/raster-history-tile-overlay.test.js`, `tests/performance-trace.test.js`, `tests/dirty-region-monitor.test.js`, `tests/image-rasterizer-memory.test.js`.
 - Transform/selection: `tests/raster-transform-tool.test.js`, `tests/resize-transform-toolbar.test.js`, `tests/puppet-transform-tool.test.js`, `tests/area-selection-tool.test.js`, `tests/selection-region.test.js`, `tests/mobile-transform-toolbar.test.js`.
 - Text/vector/curves: `tests/vector-text-compositing.test.js`, `tests/vector-rect-tool.test.js`, `tests/curves-engine.test.js`.
-- UI controls: `tests/toolbar-history.test.js`, `tests/tooltips.test.js`, `tests/vertical-toolbar.test.js`, `tests/color-picker.test.js`, `tests/layer-effects-panel.test.js`, `tests/smudge-engine-history.test.js`.
+- UI controls: `tests/toolbar-history.test.js`, `tests/tooltips.test.js`, `tests/vertical-toolbar.test.js`, `tests/top-toolbar-liquify.test.js`, `tests/color-picker.test.js`, `tests/layer-effects-panel.test.js`, `tests/liquify-sidebar.test.js`.
 
 La maggior parte dei test legge i sorgenti con `fs.readFileSync`, regex e VM sandbox; pochi richiedono vere API browser. Se cambi stringhe/ordine script/API pubbliche, aggiornare i test corrispondenti.
 
@@ -409,7 +409,7 @@ La maggior parte dei test legge i sorgenti con `fs.readFileSync`, regex e VM san
 - Sparse tiles/memoria raster: `js/document/document-renderer-raster-targets.js`, `js/debug/raster-resource-manager.js`, `tests/document-renderer-pruning.test.js`, `tests/raster-resource-manager.test.js`.
 - Brush drawing/performance: `js/brush-engine*.js`, `data/brush-library.js`, `tests/brush-engine-history.test.js`, `tests/brush-engine-navigation.test.js`.
 - Brush UI/studio: `js/brushes-panel.js`, `js/brush-studio.js`, `js/brush-preview.js`, `css/brushes-panel.css`, `css/brush-studio.css`.
-- Smudge: `js/smudge-engine.js`, `js/right-sidebar.js`, `tests/smudge-engine-history.test.js`.
+- Liquify: `js/liquify-engine.js`, `js/right-sidebar.js`, `tests/liquify-engine.test.js`, `tests/liquify-sidebar.test.js`.
 - Color picker/drop/fill: `js/color-picker.js`, `js/color-drop.js`, `js/color-fill*.js`, `js/pixel/pixel-worker-client.js`, `js/workers/pixel-worker.js`, `tests/color-fill.test.js`.
 - WASM fill: `wasm/pixel_core.c`, `wasm/pixel_core.wasm`, `WASM_BUILD.md`, `tests/pixel-worker-wasm.test.js`.
 - Upload immagini: `js/drawer.js`, `js/editor-canvas.js`, `js/images/image-rasterizer.js`, `tests/image-rasterizer-memory.test.js`.

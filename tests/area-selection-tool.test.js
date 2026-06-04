@@ -91,7 +91,7 @@ test("rect area selection is loaded and wired to the side toolbar", () => {
   assert.match(selectionSource, /function isOverlayAnimationPaused\(\) \{/);
   assert.match(selectionSource, /brushEngine\?\.isDrawing === true/);
   assert.match(selectionSource, /brushEngine\?\.isPanning === true/);
-  assert.match(selectionSource, /smudgeEngine\?\.isDragging === true/);
+  assert.match(selectionSource, /liquifyEngine\?\.isDragging === true/);
   assert.match(selectionSource, /const dashOffset = isOverlayAnimationPaused\(\)/);
   assert.match(selectionSource, /function handleOverlayCameraChange\(\) \{/);
   assert.match(selectionSource, /function rebuildOverlayRegionCache\(\)/);

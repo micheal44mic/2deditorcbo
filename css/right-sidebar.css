@@ -877,22 +877,22 @@
   display: none;
 }
 
-.smudge-sidebar {
+.tool-settings-sidebar {
   color: #dfe3ea;
 }
 
-.smudge-sidebar[hidden] {
+.tool-settings-sidebar[hidden] {
   display: none;
 }
 
-.smudge-sidebar-header {
+.tool-settings-sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.smudge-sidebar-title {
+.tool-settings-sidebar-title {
   margin: 0;
   color: #dfe3ea;
   font-size: 12px;
@@ -901,7 +901,7 @@
   line-height: 1;
 }
 
-.smudge-sidebar-reset {
+.tool-settings-sidebar-reset {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -917,34 +917,34 @@
   line-height: 1;
 }
 
-.smudge-sidebar-reset:hover,
-.smudge-sidebar-reset:focus-visible {
+.tool-settings-sidebar-reset:hover,
+.tool-settings-sidebar-reset:focus-visible {
   background: #3a3f4b;
   color: #ffffff;
 }
 
-.smudge-sidebar-controls {
+.tool-settings-sidebar-controls {
   display: grid;
   gap: 11px;
   margin-top: 14px;
 }
 
-.smudge-sidebar-control {
+.tool-settings-sidebar-control {
   display: grid;
   gap: 7px;
 }
 
-.smudge-sidebar-control-header,
-.smudge-sidebar-toggle {
+.tool-settings-sidebar-control-header,
+.tool-settings-sidebar-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.smudge-sidebar-control-label,
-.smudge-sidebar-control-value,
-.smudge-sidebar-toggle-label {
+.tool-settings-sidebar-control-label,
+.tool-settings-sidebar-control-value,
+.tool-settings-sidebar-toggle-label {
   color: #c3c8d1;
   font-size: 10px;
   font-weight: 800;
@@ -952,19 +952,19 @@
   line-height: 1;
 }
 
-.smudge-sidebar-control-value {
+.tool-settings-sidebar-control-value {
   display: inline-flex;
   justify-content: flex-end;
   min-width: 48px;
   color: #ffffff;
 }
 
-.smudge-sidebar-control-unit {
+.tool-settings-sidebar-control-unit {
   margin-left: 1px;
   color: #8f96a3;
 }
 
-.smudge-sidebar-range {
+.tool-settings-sidebar-range {
   width: 100%;
   height: 18px;
   margin: 0;
@@ -973,17 +973,17 @@
   background: transparent;
 }
 
-.smudge-sidebar-range::-webkit-slider-runnable-track {
+.tool-settings-sidebar-range::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 8px;
   background: linear-gradient(
     to right,
-    #dfe3ea 0 var(--smudge-sidebar-range-progress, 50%),
-    #2c303a var(--smudge-sidebar-range-progress, 50%) 100%
+    #dfe3ea 0 var(--tool-settings-sidebar-range-progress, 50%),
+    #2c303a var(--tool-settings-sidebar-range-progress, 50%) 100%
   );
 }
 
-.smudge-sidebar-range::-webkit-slider-thumb {
+.tool-settings-sidebar-range::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   margin-top: -5px;
@@ -994,25 +994,25 @@
   box-shadow: 0 0 0 2px #181a1f;
 }
 
-.smudge-sidebar-range:hover::-webkit-slider-thumb,
-.smudge-sidebar-range:focus-visible::-webkit-slider-thumb {
+.tool-settings-sidebar-range:hover::-webkit-slider-thumb,
+.tool-settings-sidebar-range:focus-visible::-webkit-slider-thumb {
   background: #ffffff;
 }
 
-.smudge-sidebar-range::-moz-range-track {
+.tool-settings-sidebar-range::-moz-range-track {
   height: 4px;
   border: 0;
   border-radius: 8px;
   background: #2c303a;
 }
 
-.smudge-sidebar-range::-moz-range-progress {
+.tool-settings-sidebar-range::-moz-range-progress {
   height: 4px;
   border-radius: 8px;
   background: #dfe3ea;
 }
 
-.smudge-sidebar-range::-moz-range-thumb {
+.tool-settings-sidebar-range::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border: 0;
@@ -1021,16 +1021,16 @@
   box-shadow: 0 0 0 2px #181a1f;
 }
 
-.smudge-sidebar-range:hover::-moz-range-thumb,
-.smudge-sidebar-range:focus-visible::-moz-range-thumb {
+.tool-settings-sidebar-range:hover::-moz-range-thumb,
+.tool-settings-sidebar-range:focus-visible::-moz-range-thumb {
   background: #ffffff;
 }
 
-.smudge-sidebar-toggle {
+.tool-settings-sidebar-toggle {
   margin-top: 14px;
 }
 
-.smudge-sidebar-toggle-button {
+.tool-settings-sidebar-toggle-button {
   position: relative;
   flex: 0 0 auto;
   width: 48px;
@@ -1041,17 +1041,17 @@
   background: transparent;
 }
 
-.smudge-sidebar-toggle-button:hover,
-.smudge-sidebar-toggle-button:focus-visible {
+.tool-settings-sidebar-toggle-button:hover,
+.tool-settings-sidebar-toggle-button:focus-visible {
   border-color: #c3c8d1;
 }
 
-.smudge-sidebar-toggle-button.active {
+.tool-settings-sidebar-toggle-button.active {
   border-color: #3a3f4b;
   background: #3a3f4b;
 }
 
-.smudge-sidebar-toggle-knob {
+.tool-settings-sidebar-toggle-knob {
   position: absolute;
   top: 50%;
   left: 4px;
@@ -1065,7 +1065,7 @@
     transform 0.14s ease;
 }
 
-.smudge-sidebar-toggle-button.active .smudge-sidebar-toggle-knob {
+.tool-settings-sidebar-toggle-button.active .tool-settings-sidebar-toggle-knob {
   background: #dfe3ea;
   transform: translate(24px, -50%);
 }

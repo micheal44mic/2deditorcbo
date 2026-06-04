@@ -62,9 +62,9 @@ test("preview cache is enabled without waiting for explicit camera navigation", 
 
   assert.match(source, /this\.userManipulatedCamera = false/);
   assert.match(source, /this\.userManipulatedCamera = true;\s*this\.requestDraw\(\);/);
-  assert.doesNotMatch(source, /const allowPreviewCache = this\.userManipulatedCamera && !namespace\.smudgeEngine\?\.isDragging/);
-  assert.match(source, /const allowPreviewCache = !namespace\.smudgeEngine\?\.isDragging/);
-  assert.match(source, /const deferPreviewCacheUpdate = this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.smudgeEngine\?\.isDragging/);
+  assert.doesNotMatch(source, /const allowPreviewCache = this\.userManipulatedCamera && !namespace\.liquifyEngine\?\.isDragging/);
+  assert.match(source, /const allowPreviewCache = !namespace\.liquifyEngine\?\.isDragging/);
+  assert.match(source, /const deferPreviewCacheUpdate = this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.liquifyEngine\?\.isDragging/);
   assert.match(source, /this\.documentRenderer\.shouldUsePreviewCacheForCamera\(this\.camera, previewCacheDimensions\)/);
   assert.match(source, /allowPreviewCache,/);
   assert.match(source, /deferPreviewCacheUpdate,/);
@@ -121,7 +121,7 @@ test("two-finger touch navigation pinches and pans without continuing the brush 
   assert.match(source, /handleWindowTouchNavigationEnd\(event\)/);
   assert.match(source, /touch-navigation-touchend-reset/);
   assert.match(source, /window\.addEventListener\("touchend", this\.handleWindowTouchNavigationEnd, \{ passive: true \}\)/);
-  assert.match(source, /this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.smudgeEngine\?\.isDragging/);
+  assert.match(source, /this\.isDrawing \|\| this\.isPanning \|\| this\.touchNavigationGesture \|\| namespace\.liquifyEngine\?\.isDragging/);
 });
 
 test("selection tool touch drag on empty stage starts camera pan before overlays", () => {

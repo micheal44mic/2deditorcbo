@@ -696,12 +696,12 @@
 
     isRasterHistoryGpuHotPruneInteractionBusy() {
       const brushEngine = namespace.brushEngine;
-      const smudgeEngine = namespace.smudgeEngine;
+      const liquifyEngine = namespace.liquifyEngine;
 
       return Boolean(
         brushEngine?.isDrawing ||
         brushEngine?.isPanning ||
-        smudgeEngine?.isDragging
+        liquifyEngine?.isDragging
       );
     }
 

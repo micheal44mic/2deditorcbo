@@ -204,7 +204,7 @@ test("document autosave can reset the active renderer when restoring a memory ch
   assert.match(source, /previousRenderer\?\.dispose\?\.\(\)/);
   assert.match(source, /new namespace\.DocumentRenderer\(\{/);
   assert.match(source, /namespace\.brushEngine\.documentRenderer = nextRenderer/);
-  assert.match(source, /namespace\.smudgeEngine\.documentRenderer = nextRenderer/);
+  assert.match(source, /namespace\.liquifyEngine\.documentRenderer = nextRenderer/);
   assert.match(source, /options\.resetRenderer === true/);
   assert.match(source, /return restoreSession\(session, tileRecords, \{/);
   assert.match(source, /restoreUiActive: didBeginRestoreUi \|\| options\.restoreUiActive === true/);

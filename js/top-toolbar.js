@@ -496,40 +496,11 @@ window.CBO.initTopToolbar = function initTopToolbar() {
           </span>
         </button>
       </div>
-      <div class="tool-group" aria-label="Smudge tools">
-        <button class="tool-button" type="button" aria-label="SMUDGE" aria-pressed="false" data-tooltip="SMUDGE" data-toolset-primary="top-smudge" data-tool-sync="smudge" data-tool-mode="smudge" data-tool>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M22 14a8 8 0 0 1-8 8" />
-            <path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2" />
-            <path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1" />
-            <path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10" />
-            <path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+      <div class="tool-group" aria-label="Liquify tools">
+        <button class="tool-button" type="button" aria-label="LIQUIFY" aria-pressed="false" data-tooltip="LIQUIFY" data-tool-mode="liquify" data-tool>
+          <svg class="lucide lucide-droplet-icon lucide-droplet" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z" />
           </svg>
-        </button>
-        <button class="tool-button tool-menu-button" type="button" aria-label="Smudge tools" aria-pressed="false" data-tooltip="Smudge tools">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-          <span class="tool-popover" aria-hidden="true">
-            <span class="popover-option active" data-toolset-option="top-smudge" data-tool-mode="smudge" data-label="SMUDGE">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M22 14a8 8 0 0 1-8 8" />
-                <path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2" />
-                <path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1" />
-                <path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10" />
-                <path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
-              </svg>
-              <span class="popover-label">SMUDGE</span>
-              <span class="popover-key"></span>
-            </span>
-            <span class="popover-option" data-toolset-option="top-smudge" data-tool-mode="liquify" data-label="LIQUIFY">
-              <svg class="lucide lucide-droplet-icon lucide-droplet" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z" />
-              </svg>
-              <span class="popover-label">LIQUIFY</span>
-              <span class="popover-key"></span>
-            </span>
-          </span>
         </button>
       </div>
       <button class="tool-button" type="button" aria-label="ERASER" aria-pressed="false" data-tooltip="ERASER" data-tool-mode="eraser" data-tool>

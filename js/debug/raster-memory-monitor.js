@@ -1068,7 +1068,7 @@
     const scratchBytes = Number(memoryReport?.scratchBytes) || getGroupBytes(categories, [
       "renderer scratch targets",
       "brush active stroke",
-      "smudge active targets",
+      "liquify active targets",
       "scratch/strokeScratch",
       "scratch/effectScratch",
     ]);
@@ -1140,7 +1140,7 @@
           scratch: getGroupBytes(categories, [
             "renderer scratch targets",
             "brush active stroke",
-            "smudge active targets",
+            "liquify active targets",
           ]),
         };
     const warnings = buildWarnings(memoryReport, categories, budget, cpuHistory);
@@ -1479,7 +1479,7 @@
   function isRasterInteractionBusy() {
     return Boolean(
       namespace.brushEngine?.isDrawing ||
-      namespace.smudgeEngine?.isDrawing ||
+      namespace.liquifyEngine?.isDragging ||
       namespace.rasterTransformTool?.dragState ||
       namespace.rasterTransformTool?.sourceSnapshot
     );

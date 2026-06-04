@@ -49,8 +49,8 @@ window.CBO.initRightSidebar = function initRightSidebar() {
         <input class="right-sidebar-export-custom-artboards" type="text" inputmode="numeric" placeholder="2,4" aria-label="Custom artboards" autocomplete="off" spellcheck="false" data-export-artboard-custom hidden />
         <label class="right-sidebar-export-toggle">
           <span class="right-sidebar-export-toggle-label">Background</span>
-          <button class="right-sidebar-export-background-toggle smudge-sidebar-toggle-button active" type="button" aria-label="Export with background" aria-pressed="true" data-tooltip="BACKGROUND" data-export-background-toggle>
-            <span class="smudge-sidebar-toggle-knob"></span>
+          <button class="right-sidebar-export-background-toggle tool-settings-sidebar-toggle-button active" type="button" aria-label="Export with background" aria-pressed="true" data-tooltip="BACKGROUND" data-export-background-toggle>
+            <span class="tool-settings-sidebar-toggle-knob"></span>
           </button>
         </label>
         <div class="right-sidebar-export-scale" aria-label="Export scale">
@@ -284,8 +284,8 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           <div class="text-sidebar-shadow-body" data-text-shadow-panel hidden>
             <div class="text-sidebar-shadow-mode-row">
               <span class="text-sidebar-label">Solid 3D</span>
-              <button class="smudge-sidebar-toggle-button text-sidebar-shadow-solid-toggle" type="button" aria-label="Solid 3D shadow" aria-pressed="false" data-text-shadow-solid-toggle>
-                <span class="smudge-sidebar-toggle-knob"></span>
+              <button class="tool-settings-sidebar-toggle-button text-sidebar-shadow-solid-toggle" type="button" aria-label="Solid 3D shadow" aria-pressed="false" data-text-shadow-solid-toggle>
+                <span class="tool-settings-sidebar-toggle-knob"></span>
               </button>
             </div>
             <label class="text-sidebar-color-row text-sidebar-shadow-color-row">
@@ -400,16 +400,16 @@ window.CBO.initRightSidebar = function initRightSidebar() {
           </div>
         </section>
       </div>
-      <section class="smudge-sidebar right-sidebar-section" aria-label="Smudge settings" data-smudge-sidebar hidden>
-        <div class="smudge-sidebar-header">
-          <h2 class="smudge-sidebar-title">SMUDGE</h2>
-          <button class="smudge-sidebar-reset" type="button" data-smudge-reset>RESET</button>
+      <section class="tool-settings-sidebar liquify-sidebar right-sidebar-section" aria-label="Liquify settings" data-liquify-sidebar hidden>
+        <div class="tool-settings-sidebar-header">
+          <h2 class="tool-settings-sidebar-title">LIQUIFY PUSH</h2>
+          <button class="tool-settings-sidebar-reset" type="button" data-liquify-reset>RESET</button>
         </div>
-        <div class="smudge-sidebar-controls" data-smudge-controls></div>
-        <label class="smudge-sidebar-toggle">
-          <span class="smudge-sidebar-toggle-label">PRESSURE</span>
-          <button class="smudge-sidebar-toggle-button" type="button" aria-pressed="true" data-smudge-pressure>
-            <span class="smudge-sidebar-toggle-knob"></span>
+        <div class="tool-settings-sidebar-controls" data-liquify-controls></div>
+        <label class="tool-settings-sidebar-toggle">
+          <span class="tool-settings-sidebar-toggle-label">PRESSURE</span>
+          <button class="tool-settings-sidebar-toggle-button" type="button" aria-pressed="true" data-liquify-pressure>
+            <span class="tool-settings-sidebar-toggle-knob"></span>
           </button>
         </label>
       </section>
@@ -432,10 +432,10 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const exportQualityValue = panel.querySelector("[data-export-quality-value]");
   const rightSidebarContent = panel.querySelector(".right-sidebar-content");
   const globalSections = panel.querySelectorAll("[data-right-sidebar-global], [data-right-sidebar-project]");
-  const smudgeSidebar = panel.querySelector("[data-smudge-sidebar]");
-  const smudgeControls = panel.querySelector("[data-smudge-controls]");
-  const smudgeReset = panel.querySelector("[data-smudge-reset]");
-  const pressureButton = panel.querySelector("[data-smudge-pressure]");
+  const liquifySidebar = panel.querySelector("[data-liquify-sidebar]");
+  const liquifyControls = panel.querySelector("[data-liquify-controls]");
+  const liquifyReset = panel.querySelector("[data-liquify-reset]");
+  const liquifyPressureButton = panel.querySelector("[data-liquify-pressure]");
   const textSidebar = panel.querySelector("[data-text-sidebar]");
   const layerSidebar = panel.querySelector("[data-layer-sidebar]");
   const layerAlignButtons = panel.querySelectorAll("[data-layer-align-axis][data-layer-align-position]");
@@ -506,22 +506,18 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   const defaultExportScale = 2;
   const defaultExportQuality = 92;
   const defaultExportArtboardScope = "all";
-  const fallbackSmudgeSettings = {
-    radius: 34,
-    opacity: 0.78,
-    hardness: 0.35,
-    spacing: 0.03,
-    drag: 0.92,
+  const fallbackLiquifySettings = {
+    mode: "push",
     pressureAffectsStrength: true,
+    radius: 48,
+    spacing: 0.055,
+    strength: 0.72,
   };
-  const smudgeControlDefs = [
-    { key: "radius", label: "SIZE", min: 1, max: 120, step: 1, unit: "PX", fromDisplay: (value) => value, toDisplay: (value) => Math.round(value) },
-    { key: "opacity", label: "OPACITY", min: 0, max: 100, step: 1, unit: "%", fromDisplay: (value) => value / 100, toDisplay: (value) => Math.round(value * 100) },
-    { key: "hardness", label: "HARDNESS", min: 0, max: 100, step: 1, unit: "%", fromDisplay: (value) => value / 100, toDisplay: (value) => Math.round(value * 100) },
-    { key: "spacing", label: "SPACING", min: 1, max: 12, step: 1, unit: "%", fromDisplay: (value) => value / 100, toDisplay: (value) => Math.round(value * 100) },
-    { key: "drag", label: "DRAG", min: 0, max: 100, step: 1, unit: "%", fromDisplay: (value) => value / 100, toDisplay: (value) => Math.round(value * 100) },
+  const liquifyControlDefs = [
+    { key: "radius", label: "SIZE", min: 1, max: 160, step: 1, unit: "PX", fromDisplay: (value) => value, toDisplay: (value) => Math.round(value) },
+    { key: "strength", label: "STRENGTH", min: 0, max: 100, step: 1, unit: "%", fromDisplay: (value) => value / 100, toDisplay: (value) => Math.round(value * 100) },
   ];
-  const smudgeControlElements = new Map();
+  const liquifyControlElements = new Map();
   const blendModeApi = window.CBO.BlendModes || {};
   const layerBlendModeOptions = Array.isArray(blendModeApi.supportedModes)
     ? blendModeApi.supportedModes.map((mode) => ({ key: mode.key, label: mode.label }))
@@ -1294,27 +1290,31 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     return Promise.resolve(false);
   }
 
-  function getDefaultSmudgeSettings() {
+  function getDefaultLiquifySettings() {
     return {
-      ...fallbackSmudgeSettings,
-      ...(window.CBO.SmudgeBrushes?.wetPaint || {}),
+      ...fallbackLiquifySettings,
+      mode: "push",
     };
   }
 
-  function getSmudgeSettings() {
+  function getLiquifySettings() {
     return {
-      ...getDefaultSmudgeSettings(),
-      ...(window.CBO.smudgeSettings || {}),
+      ...getDefaultLiquifySettings(),
+      ...(window.CBO.liquifySettings || {}),
+      mode: "push",
     };
   }
 
-  function dispatchSmudgeSettings(settings) {
-    window.CBO.smudgeSettings = { ...settings };
+  function dispatchLiquifySettings(settings) {
+    window.CBO.liquifySettings = {
+      ...settings,
+      mode: "push",
+    };
     window.dispatchEvent(
       new CustomEvent("cbo:paint-settings-change", {
         detail: {
-          tool: "smudge",
-          settings: { ...settings },
+          tool: "liquify",
+          settings: { ...window.CBO.liquifySettings },
         },
       }),
     );
@@ -1323,14 +1323,14 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   function updateRangeProgress(input, min, max) {
     const progress = ((Number(input.value) - min) / (max - min)) * 100;
 
-    input.style.setProperty("--smudge-sidebar-range-progress", `${progress}%`);
+    input.style.setProperty("--tool-settings-sidebar-range-progress", `${progress}%`);
   }
 
-  function syncSmudgeControls() {
-    const settings = getSmudgeSettings();
+  function syncLiquifyControls() {
+    const settings = getLiquifySettings();
 
-    smudgeControlDefs.forEach((definition) => {
-      const elements = smudgeControlElements.get(definition.key);
+    liquifyControlDefs.forEach((definition) => {
+      const elements = liquifyControlElements.get(definition.key);
 
       if (!elements) {
         return;
@@ -1347,30 +1347,30 @@ window.CBO.initRightSidebar = function initRightSidebar() {
       updateRangeProgress(elements.input, definition.min, definition.max);
     });
 
-    if (pressureButton) {
+    if (liquifyPressureButton) {
       const isActive = settings.pressureAffectsStrength !== false;
 
-      pressureButton.classList.toggle("active", isActive);
-      pressureButton.setAttribute("aria-pressed", String(isActive));
+      liquifyPressureButton.classList.toggle("active", isActive);
+      liquifyPressureButton.setAttribute("aria-pressed", String(isActive));
     }
   }
 
-  function updateSmudgeSetting(key, value) {
-    const definition = smudgeControlDefs.find((nextDefinition) => nextDefinition.key === key);
+  function updateLiquifySetting(key, value) {
+    const definition = liquifyControlDefs.find((nextDefinition) => nextDefinition.key === key);
 
     if (!definition) {
       return;
     }
 
-    const settings = getSmudgeSettings();
+    const settings = getLiquifySettings();
     const displayValue = clamp(value, definition.min, definition.max);
 
     settings[key] = definition.fromDisplay(displayValue);
-    dispatchSmudgeSettings(settings);
-    syncSmudgeControls();
+    dispatchLiquifySettings(settings);
+    syncLiquifyControls();
   }
 
-  function createSmudgeControl(definition) {
+  function createLiquifyControl(definition) {
     const control = document.createElement("label");
     const header = document.createElement("span");
     const label = document.createElement("span");
@@ -1379,13 +1379,13 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     const unit = document.createElement("span");
     const input = document.createElement("input");
 
-    control.className = "smudge-sidebar-control";
-    header.className = "smudge-sidebar-control-header";
-    label.className = "smudge-sidebar-control-label";
-    valueWrap.className = "smudge-sidebar-control-value";
-    value.className = "smudge-sidebar-control-number";
-    unit.className = "smudge-sidebar-control-unit";
-    input.className = "smudge-sidebar-range";
+    control.className = "tool-settings-sidebar-control";
+    header.className = "tool-settings-sidebar-control-header";
+    label.className = "tool-settings-sidebar-control-label";
+    valueWrap.className = "tool-settings-sidebar-control-value";
+    value.className = "tool-settings-sidebar-control-number";
+    unit.className = "tool-settings-sidebar-control-unit";
+    input.className = "tool-settings-sidebar-range";
 
     label.textContent = definition.label;
     unit.textContent = definition.unit;
@@ -1393,29 +1393,29 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     input.min = String(definition.min);
     input.max = String(definition.max);
     input.step = String(definition.step);
-    input.setAttribute("aria-label", definition.label);
+    input.setAttribute("aria-label", `LIQUIFY ${definition.label}`);
 
     input.addEventListener("input", () => {
-      updateSmudgeSetting(definition.key, input.value);
+      updateLiquifySetting(definition.key, input.value);
     });
 
     valueWrap.append(value, unit);
     header.append(label, valueWrap);
     control.append(header, input);
-    smudgeControlElements.set(definition.key, { input, value });
+    liquifyControlElements.set(definition.key, { input, value });
 
     return control;
   }
 
-  function showSmudgeSettings(isVisible) {
-    if (!smudgeSidebar) {
+  function showLiquifySettings(isVisible) {
+    if (!liquifySidebar) {
       return;
     }
 
-    smudgeSidebar.hidden = !isVisible;
+    liquifySidebar.hidden = !isVisible;
 
     if (isVisible) {
-      syncSmudgeControls();
+      syncLiquifyControls();
     }
   }
 
@@ -1857,7 +1857,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
 
     showLayerSettings(showLayer);
     showTextSettings(showText);
-    showSmudgeSettings(activeTool === "smudge");
+    showLiquifySettings(activeTool === "liquify");
   }
 
   let currentToolName = "";
@@ -2915,8 +2915,8 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   function normalizeToolName(value) {
     const normalized = String(value || "").trim().toLowerCase();
 
-    if (normalized === "smudge") {
-      return "smudge";
+    if (normalized === "liquify") {
+      return "liquify";
     }
 
     if (normalized === "text" || normalized === "type") {
@@ -2939,22 +2939,22 @@ window.CBO.initRightSidebar = function initRightSidebar() {
     return "";
   }
 
-  smudgeControlDefs.forEach((definition) => {
-    smudgeControls?.append(createSmudgeControl(definition));
+  liquifyControlDefs.forEach((definition) => {
+    liquifyControls?.append(createLiquifyControl(definition));
   });
   populateLayerBlendModes();
 
-  pressureButton?.addEventListener("click", () => {
-    const settings = getSmudgeSettings();
+  liquifyPressureButton?.addEventListener("click", () => {
+    const settings = getLiquifySettings();
 
     settings.pressureAffectsStrength = settings.pressureAffectsStrength === false;
-    dispatchSmudgeSettings(settings);
-    syncSmudgeControls();
+    dispatchLiquifySettings(settings);
+    syncLiquifyControls();
   });
 
-  smudgeReset?.addEventListener("click", () => {
-    dispatchSmudgeSettings(getDefaultSmudgeSettings());
-    syncSmudgeControls();
+  liquifyReset?.addEventListener("click", () => {
+    dispatchLiquifySettings(getDefaultLiquifySettings());
+    syncLiquifyControls();
   });
 
   bindTextHistoryGroup(textContentInput, "content");
@@ -3378,7 +3378,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
 
   const activeToolButton = document.querySelector("[data-tool].active");
   currentToolName = normalizeToolName(activeToolButton?.dataset.toolMode || activeToolButton?.getAttribute("aria-label"));
-  syncSmudgeControls();
+  syncLiquifyControls();
   syncTextControls();
   syncLayerControlsFromLayer();
   syncRightSidebarPanels();

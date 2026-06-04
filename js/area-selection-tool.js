@@ -81,13 +81,13 @@
 
   function isOverlayAnimationPaused() {
     const brushEngine = namespace.brushEngine || null;
-    const smudgeEngine = namespace.smudgeEngine || null;
+    const liquifyEngine = namespace.liquifyEngine || null;
 
     return (
       state.pointerId != null ||
       brushEngine?.isDrawing === true ||
       brushEngine?.isPanning === true ||
-      smudgeEngine?.isDragging === true ||
+      liquifyEngine?.isDragging === true ||
       getNow() < state.overlayAnimationPausedUntil
     );
   }

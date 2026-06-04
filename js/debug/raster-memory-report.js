@@ -209,7 +209,7 @@
     const layerModel = renderer?.layerModel || namespace.documentLayerModel;
     const history = namespace.documentHistory;
     const brushEngine = namespace.brushEngine;
-    const smudgeEngine = namespace.smudgeEngine;
+    const liquifyEngine = namespace.liquifyEngine;
     const report = createReport();
 
     if (!renderer) {
@@ -303,11 +303,11 @@
     }
 
     ["scratchTarget", "activeHistoryBeforeSnapshot"].forEach((key) => {
-      const target = smudgeEngine?.[key];
+      const target = liquifyEngine?.[key];
       const { height, width } = getRectSize(target);
 
       report.addTexture({
-        category: "smudge active targets",
+        category: "liquify active targets",
         height,
         label: key,
         texture: target?.texture,

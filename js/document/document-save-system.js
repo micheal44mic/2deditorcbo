@@ -2338,8 +2338,8 @@
       namespace.brushEngine.documentRenderer = nextRenderer;
     }
 
-    if (namespace.smudgeEngine) {
-      namespace.smudgeEngine.documentRenderer = nextRenderer;
+    if (namespace.liquifyEngine) {
+      namespace.liquifyEngine.documentRenderer = nextRenderer;
     }
 
     if (namespace.rasterTransformTool) {

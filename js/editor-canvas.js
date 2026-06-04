@@ -816,8 +816,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     throw new Error("DocumentHistory non caricato: impossibile inizializzare la history documento.");
   }
 
-  if (!window.CBO.SmudgeEngine) {
-    throw new Error("SmudgeEngine non caricato: impossibile inizializzare lo smudge WebGL2.");
+  if (!window.CBO.LiquifyEngine) {
+    throw new Error("LiquifyEngine non caricato: impossibile inizializzare il liquify WebGL2.");
   }
 
   if (!window.CBO.ImageRasterizer) {
@@ -843,8 +843,8 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   window.CBO.documentHistory = null;
   window.CBO.imageRasterizer?.dispose?.();
   window.CBO.imageRasterizer = null;
-  window.CBO.smudgeEngine?.dispose?.();
-  window.CBO.smudgeEngine = null;
+  window.CBO.liquifyEngine?.dispose?.();
+  window.CBO.liquifyEngine = null;
   window.CBO.brushEngine?.dispose?.();
   window.CBO.documentRenderer?.dispose?.();
   window.CBO.documentRenderer = null;
@@ -876,7 +876,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
     ? null
     : new window.CBO.DocumentHistory(getRasterHistoryProfile());
   let brushEngine;
-  let smudgeEngine;
+  let liquifyEngine;
 
   try {
     brushEngine = new window.CBO.BrushEngine(canvas, {
@@ -892,7 +892,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   }
 
   try {
-    smudgeEngine = new window.CBO.SmudgeEngine(canvas, {
+    liquifyEngine = new window.CBO.LiquifyEngine(canvas, {
       gl,
       documentRenderer,
       getViewState: () => ({
@@ -910,7 +910,7 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   }
 
   window.CBO.brushEngine = brushEngine;
-  window.CBO.smudgeEngine = smudgeEngine;
+  window.CBO.liquifyEngine = liquifyEngine;
   window.CBO.documentRenderer = documentRenderer;
   window.CBO.documentSettings = {
     height: documentRenderer.height,
@@ -1027,10 +1027,10 @@ window.CBO.initEditorCanvas = function initEditorCanvas(options = {}) {
   } catch (error) {
     window.CBO.documentHistory?.dispose?.();
     window.CBO.documentHistory = null;
-    smudgeEngine.dispose();
+    liquifyEngine.dispose();
     brushEngine.dispose();
     documentRenderer.dispose();
-    window.CBO.smudgeEngine = null;
+    window.CBO.liquifyEngine = null;
     window.CBO.brushEngine = null;
     window.CBO.documentRenderer = null;
     throw error;
