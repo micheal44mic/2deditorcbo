@@ -4701,22 +4701,19 @@
 
             if (this.hasPuppetLayerTransform(layer)) {
               withLayerPreviewArtboardClip(layer, () => {
-                if (isClippingLayer) {
+                const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
+                const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
+                  camera: flatCamera,
+                  clipBase,
+                  sourceTexture: layerTexture,
+                  viewportHeight: cacheHeight,
+                  viewportWidth: cacheWidth,
+                });
+
+                bindArtboardProgram();
+
+                if (!didDrawPuppet) {
                   drawBlendTexture(layerTexture, opacity, blendModeId, renderResult.rect, clipBase);
-                } else {
-                  const puppetTarget = this.getPuppetVisualTarget(layerTarget, renderResult);
-                  const didDrawPuppet = this.drawPuppetLayer(layer, puppetTarget, opacity, {
-                    camera: flatCamera,
-                    sourceTexture: layerTexture,
-                    viewportHeight: cacheHeight,
-                    viewportWidth: cacheWidth,
-                  });
-
-                  bindArtboardProgram();
-
-                  if (!didDrawPuppet) {
-                    drawBlendTexture(layerTexture, opacity, blendModeId, renderResult.rect, null);
-                  }
                 }
               });
             } else {

@@ -282,6 +282,24 @@ window.CBO.initLayersPanel = function initLayersPanel() {
     return index >= 0 ? layers[index + 1] || null : null;
   }
 
+  function publishClippingMaskAction(detail = {}) {
+    const action = {
+      at: new Date().toISOString(),
+      ...detail,
+    };
+
+    window.CBO.clippingMaskActionHistory = Array.isArray(window.CBO.clippingMaskActionHistory)
+      ? window.CBO.clippingMaskActionHistory
+      : [];
+    window.CBO.clippingMaskActionHistory.push(action);
+    if (window.CBO.clippingMaskActionHistory.length > 18) {
+      window.CBO.clippingMaskActionHistory.splice(0, window.CBO.clippingMaskActionHistory.length - 18);
+    }
+    window.CBO.lastClippingMaskAction = action;
+
+    window.dispatchEvent(new CustomEvent("cbo:clipping-mask-action", { detail: action }));
+  }
+
   function isClippingMaskAllowed(layerId) {
     const layer = layerModel?.findEntryById?.(layerId);
     const below = getLayerBelow(layerId);
@@ -303,22 +321,51 @@ window.CBO.initLayersPanel = function initLayersPanel() {
 
   function toggleClippingMask(layerId) {
     const layer = layerModel?.findEntryById?.(layerId);
+    const below = getLayerBelow(layerId);
 
     if (!layer || layer.locked === true) {
+      publishClippingMaskAction({
+        layerId,
+        reason: "missing-or-locked",
+        result: "blocked",
+      });
       return false;
     }
 
     const shouldClip = layer.clippingMask !== true;
 
     if (shouldClip && !isClippingMaskAllowed(layerId)) {
+      publishClippingMaskAction({
+        baseId: below?.id || "",
+        baseName: below?.name || "",
+        baseType: below?.type || "",
+        layerId: layer.id,
+        layerName: layer.name || "",
+        reason: "not-allowed",
+        result: "blocked",
+        shouldClip,
+      });
       return false;
     }
 
-    return layerModel.updateLayer(layerId, {
+    const didUpdate = layerModel.updateLayer(layerId, {
       clippingMask: shouldClip,
     }, {
       source: "layers-panel-clipping-mask",
     });
+
+    publishClippingMaskAction({
+      baseId: below?.id || "",
+      baseName: below?.name || "",
+      baseType: below?.type || "",
+      layerId: layer.id,
+      layerName: layer.name || "",
+      reason: didUpdate ? "toggle" : "update-failed",
+      result: didUpdate ? "ok" : "blocked",
+      shouldClip,
+    });
+
+    return didUpdate;
   }
 
   function setFocusedLayerUi(row) {

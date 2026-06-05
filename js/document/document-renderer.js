@@ -1382,6 +1382,7 @@
       const textureMagFilter = Number.isFinite(options.textureMagFilter)
         ? options.textureMagFilter
         : this.getViewportTextureMagFilter(camera);
+      const clipBase = options.clipBase || null;
 
       if (resource.signature !== signature) {
         this.updatePuppetMeshVertices(resource, layer, target);
@@ -1396,6 +1397,15 @@
       gl.uniform1f(uniforms.cameraZoom, camera.zoom || 1);
       gl.uniform1f(uniforms.opacity, opacity);
       gl.uniform1i(uniforms.texture, 0);
+      gl.uniform1i(uniforms.backdropTexture, 3);
+      gl.uniform1f(uniforms.blendModeEnabled, 0.0);
+      gl.uniform1i(uniforms.blendMode, 0);
+      this.setClipBaseUniforms(uniforms, clipBase, {
+        fallbackHeight: this.height,
+        fallbackWidth: this.width,
+        textureMagFilter,
+        textureUnit: 2,
+      });
 
       gl.activeTexture(gl.TEXTURE0);
       this.setRasterTextureSampling(sourceTexture, gl.LINEAR, textureMagFilter);

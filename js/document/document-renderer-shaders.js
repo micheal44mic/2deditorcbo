@@ -233,6 +233,7 @@ uniform float uCameraZoom;
 
 out vec2 v_uv;
 out vec2 v_backdropUv;
+out vec2 v_destPixel;
 
 void main() {
   vec2 viewportPixel = uCameraPosition + aDestPixel * uCameraZoom;
@@ -243,6 +244,7 @@ void main() {
 
   v_uv = aSourceUv;
   v_backdropUv = vec2(viewportPixel.x / uViewportSize.x, 1.0 - viewportPixel.y / uViewportSize.y);
+  v_destPixel = aDestPixel;
   gl_Position = vec4(clipPosition, 0.0, 1.0);
 }
 `;
@@ -252,14 +254,63 @@ precision highp float;
 
 uniform sampler2D u_texture;
 uniform sampler2D u_backdropTexture;
+uniform sampler2D u_clipTexture;
 uniform float u_opacity;
 uniform float u_blendModeEnabled;
 uniform int u_blendMode;
+uniform float u_clipMode;
+uniform float u_clipOpacity;
+uniform vec2 u_clipOrigin;
+uniform vec2 u_clipTextureSize;
+uniform mat3 u_clipDestToSourceUv;
+uniform vec4 u_clipSourceUvRect;
 
 in vec2 v_uv;
 in vec2 v_backdropUv;
+in vec2 v_destPixel;
 
 out vec4 outColor;
+
+bool isInsideUnitRect(vec2 point) {
+  return point.x >= 0.0 && point.x <= 1.0 && point.y >= 0.0 && point.y <= 1.0;
+}
+
+float sampleClipAlpha(vec2 documentPixel) {
+  if (u_clipMode <= 0.5) {
+    return 1.0;
+  }
+
+  if (u_clipMode > 1.5) {
+    vec3 mapped = u_clipDestToSourceUv * vec3(documentPixel, 1.0);
+
+    if (abs(mapped.z) < 0.000001) {
+      return 0.0;
+    }
+
+    vec2 unitUv = mapped.xy / mapped.z;
+
+    if (!isInsideUnitRect(unitUv)) {
+      return 0.0;
+    }
+
+    vec2 sourceUnitUv = u_clipSourceUvRect.xy + unitUv * u_clipSourceUvRect.zw;
+
+    return texture(u_clipTexture, vec2(sourceUnitUv.x, 1.0 - sourceUnitUv.y)).a *
+      clamp(u_clipOpacity, 0.0, 1.0);
+  }
+
+  vec2 clipLocalPixel = documentPixel - u_clipOrigin;
+  vec2 clipUv = vec2(
+    clipLocalPixel.x / max(u_clipTextureSize.x, 1.0),
+    1.0 - clipLocalPixel.y / max(u_clipTextureSize.y, 1.0)
+  );
+
+  if (!isInsideUnitRect(clipUv)) {
+    return 0.0;
+  }
+
+  return texture(u_clipTexture, clipUv).a * clamp(u_clipOpacity, 0.0, 1.0);
+}
 
 vec3 blendOverlay(vec3 baseColor, vec3 sourceColor) {
   vec3 dark = 2.0 * baseColor * sourceColor;
@@ -302,6 +353,10 @@ vec3 applyBlendMode(vec3 baseColor, vec3 sourceColor, int blendMode) {
 
 void main() {
   vec4 source = texture(u_texture, v_uv) * u_opacity;
+
+  if (u_clipMode > 0.5) {
+    source *= sampleClipAlpha(v_destPixel);
+  }
 
   if (u_blendModeEnabled <= 0.5) {
     outColor = source;
