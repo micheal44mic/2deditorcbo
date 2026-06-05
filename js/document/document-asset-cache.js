@@ -45,6 +45,38 @@
     return (hash >>> 0).toString(36);
   }
 
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer || 0);
+    const chunkSize = 0x8000;
+    let output = "";
+
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      output += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+
+    return btoa(output);
+  }
+
+  function base64ToBlob(base64, type = "application/octet-stream") {
+    const data = String(base64 || "").split(",").pop();
+    const binary = atob(data);
+    const chunkSize = 0x8000;
+    const chunks = [];
+
+    for (let offset = 0; offset < binary.length; offset += chunkSize) {
+      const slice = binary.slice(offset, offset + chunkSize);
+      const bytes = new Uint8Array(slice.length);
+
+      for (let index = 0; index < slice.length; index += 1) {
+        bytes[index] = slice.charCodeAt(index);
+      }
+
+      chunks.push(bytes);
+    }
+
+    return new Blob(chunks, { type: type || "application/octet-stream" });
+  }
+
   function normalizeUrl(value) {
     return String(value || "").trim();
   }
@@ -274,6 +306,75 @@
     });
   }
 
+  async function exportRecords(ids = []) {
+    const uniqueIds = Array.from(new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean),
+    ));
+    const records = [];
+
+    for (const id of uniqueIds) {
+      const record = await getAsset(id).catch(() => null);
+
+      if (!record?.blob) {
+        continue;
+      }
+
+      const { blob, ...metadata } = record;
+      const data = await arrayBufferToBase64(await blob.arrayBuffer());
+
+      records.push({
+        ...cloneValue(metadata),
+        data,
+        size: Math.max(0, Math.round(Number(record.size) || Number(blob.size) || 0)),
+        type: record.type || blob.type || "application/octet-stream",
+      });
+    }
+
+    return records;
+  }
+
+  async function importRecords(records = [], options = {}) {
+    if (!Array.isArray(records) || records.length === 0) {
+      return [];
+    }
+
+    await namespace.requestPersistentStorage?.({
+      source: options.source || "document-asset-import",
+    });
+
+    const imported = [];
+    const now = new Date().toISOString();
+
+    for (const value of records) {
+      const id = String(value?.id || "").trim();
+      const data = String(value?.data || "").trim();
+
+      if (!id || !data) {
+        continue;
+      }
+
+      const { data: _data, ...metadata } = value;
+      const blob = base64ToBlob(data, value.type || "application/octet-stream");
+      const record = {
+        ...cloneValue(metadata),
+        blob,
+        createdAt: metadata.createdAt || now,
+        id,
+        sessionId: String(options.sessionId || metadata.sessionId || ""),
+        size: Math.max(0, Math.round(Number(metadata.size) || Number(blob.size) || 0)),
+        type: String(metadata.type || blob.type || "application/octet-stream"),
+        updatedAt: now,
+      };
+
+      await writeAssetRecord(record);
+      imported.push(createAssetManifest(record, record.source || ""));
+    }
+
+    return imported;
+  }
+
   function setCachedAssetRef(target, field, manifest, group = "") {
     if (!target || !manifest?.id) {
       return;
@@ -490,7 +591,9 @@
     cacheBlob,
     cacheUrl,
     clear,
+    exportRecords,
     hydrateAiWorkspace,
+    importRecords,
     prepareAiWorkspace,
     revokeObjectUrls,
   };

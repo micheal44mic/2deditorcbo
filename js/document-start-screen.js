@@ -113,6 +113,7 @@
     const thumbnailSrc = getProjectThumbnailSrc(summary);
     const title = document.createElement("span");
     const meta = document.createElement("span");
+    const exportButton = document.createElement("button");
     const deleteButton = document.createElement("button");
     const projectName = String(summary?.projectName || "").trim();
     const savedAt = formatDocumentSaveDate(summary?.savedAt);
@@ -147,6 +148,12 @@
     meta.className = "document-start-project-card-meta";
     meta.textContent = [sizeLabel, savedAt].filter(Boolean).join(" | ");
 
+    exportButton.className = "document-start-project-export";
+    exportButton.type = "button";
+    exportButton.dataset.documentExport = summary?.sessionId || "";
+    exportButton.textContent = "EXPORT";
+    exportButton.setAttribute("aria-label", `Export saved project ${projectName || "Untitled project"}`);
+
     deleteButton.className = "document-start-project-delete";
     deleteButton.type = "button";
     deleteButton.dataset.documentDelete = summary?.sessionId || "";
@@ -154,11 +161,12 @@
     deleteButton.setAttribute("aria-label", `Delete saved project ${projectName || "Untitled project"}`);
 
     openButton.append(preview, title, meta);
-    card.append(openButton, deleteButton);
+    card.append(openButton, exportButton, deleteButton);
 
     return {
       card,
       deleteButton,
+      exportButton,
       openButton,
     };
   }
@@ -382,6 +390,7 @@
     const templateTab = document.createElement("button");
     const aiArchiveTab = document.createElement("button");
     const newProjectButton = document.createElement("button");
+    const importProjectButton = document.createElement("button");
     const searchButton = document.createElement("button");
 
     container.className = "document-start-overview";
@@ -452,6 +461,19 @@
       '<span>New Project</span>',
     ].join("");
 
+    importProjectButton.className = "document-start-overview-import-project";
+    importProjectButton.type = "button";
+    importProjectButton.dataset.documentOverviewImportProject = "";
+    importProjectButton.setAttribute("aria-label", "Import Project");
+    importProjectButton.innerHTML = [
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">',
+      '  <path d="M12 3v12" />',
+      '  <path d="m17 8-5-5-5 5" />',
+      '  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />',
+      '</svg>',
+      '<span>Import</span>',
+    ].join("");
+
     searchButton.className = "document-start-overview-icon-button";
     searchButton.type = "button";
     searchButton.dataset.documentOverviewSearch = "";
@@ -464,12 +486,13 @@
     ].join("");
 
     tabs.append(allProjectsTab, templateTab, aiArchiveTab);
-    actions.append(newProjectButton, searchButton);
+    actions.append(newProjectButton, importProjectButton, searchButton);
     commandBar.append(tabs, actions);
     container.append(copy, commandBar);
 
     return {
       container,
+      importProjectButton,
       newProjectButton,
     };
   }
@@ -576,6 +599,21 @@
           });
         });
 
+        projectCard.exportButton.addEventListener("click", () => {
+          if (!sessionId || typeof saveSystem.export !== "function") {
+            return;
+          }
+
+          projectCard.exportButton.disabled = true;
+          projectCard.exportButton.dataset.loading = "true";
+          void saveSystem.export(sessionId).catch((error) => {
+            console.warn("Impossibile esportare il documento salvato.", error);
+          }).finally(() => {
+            projectCard.exportButton.disabled = false;
+            projectCard.exportButton.dataset.loading = "false";
+          });
+        });
+
         projectCard.deleteButton.addEventListener("click", () => {
           if (!sessionId) {
             return;
@@ -599,6 +637,38 @@
         grid.append(projectCard.card);
       });
     });
+  }
+
+  async function importProjectFile(file, stage, projects, saveSystem, importButton) {
+    if (!file || typeof saveSystem?.import !== "function") {
+      return;
+    }
+
+    importButton.disabled = true;
+    importButton.dataset.loading = "true";
+
+    try {
+      const summary = await saveSystem.import(file);
+
+      renderSavedProjects(stage, projects, saveSystem);
+
+      if (summary?.sessionId && typeof saveSystem.restore === "function") {
+        const didRestore = await saveSystem.restore(summary.sessionId);
+
+        if (didRestore) {
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn("Impossibile importare il progetto.", error);
+
+      if (typeof window.alert === "function") {
+        window.alert("Import project failed. The file may be invalid.");
+      }
+    } finally {
+      importButton.disabled = false;
+      importButton.dataset.loading = "false";
+    }
   }
 
   function renderLatestRecoverableProject(stage, recoveryHost, saveSystem) {
@@ -654,6 +724,7 @@
     const startProjects = createDocumentStartProjects();
     const recoveryHost = document.createElement("div");
     const presetGrid = document.createElement("div");
+    const importInput = document.createElement("input");
 
     screen.className = "document-start-screen";
     screen.dataset.documentStart = "";
@@ -689,6 +760,12 @@
     presetGrid.className = "document-start-presets";
     presetGrid.setAttribute("aria-label", "Document presets");
     presetGrid.append(...getDocumentPresets().map(createDocumentPresetButton));
+
+    importInput.className = "document-start-import-input";
+    importInput.type = "file";
+    importInput.accept = ".cbo-project,.json,application/json,application/vnd.cbo.project+json";
+    importInput.dataset.documentProjectImportInput = "";
+    importInput.hidden = true;
 
     startSidebar.newProjectButton.addEventListener("click", () => {
       startDocumentFromPreset(getDocumentPreset(getDefaultDocumentPresetId()), "document-start-new-project");
@@ -729,12 +806,28 @@
     });
 
     layout.append(sidebarPanel, contentPanel);
-    screen.append(layout);
+    screen.append(layout, importInput);
     editorPage?.classList.add("document-start-active");
     stage.dataset.documentStartReady = "true";
     stage.replaceChildren(screen);
 
     const saveSystem = namespace.documentSaveSystem;
+
+    if (typeof saveSystem?.import === "function") {
+      startOverview.importProjectButton.addEventListener("click", () => {
+        importInput.click();
+      });
+
+      importInput.addEventListener("change", () => {
+        const file = importInput.files?.[0] || null;
+
+        void importProjectFile(file, stage, startProjects, saveSystem, startOverview.importProjectButton).finally(() => {
+          importInput.value = "";
+        });
+      });
+    } else {
+      startOverview.importProjectButton.disabled = true;
+    }
 
     if (saveSystem?.listSummaries && saveSystem?.restore) {
       renderSavedProjects(stage, startProjects, saveSystem);

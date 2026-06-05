@@ -131,6 +131,7 @@
 
 .document-start-overview-tab,
 .document-start-overview-new-project,
+.document-start-overview-import-project,
 .document-start-overview-icon-button {
   display: inline-flex;
   align-items: center;
@@ -144,7 +145,8 @@
 }
 
 .document-start-overview-tab,
-.document-start-overview-new-project {
+.document-start-overview-new-project,
+.document-start-overview-import-project {
   gap: 8px;
   min-width: 0;
   padding: 0 12px;
@@ -168,6 +170,11 @@
   color: #101216;
 }
 
+.document-start-overview-import-project {
+  background: #242832;
+  color: #dfe3ea;
+}
+
 .document-start-overview-icon-button {
   width: 32px;
   padding: 0;
@@ -179,6 +186,8 @@
 .document-start-overview-tab:focus-visible,
 .document-start-overview-new-project:hover,
 .document-start-overview-new-project:focus-visible,
+.document-start-overview-import-project:hover,
+.document-start-overview-import-project:focus-visible,
 .document-start-overview-icon-button:hover,
 .document-start-overview-icon-button:focus-visible {
   outline: none;
@@ -187,6 +196,7 @@
 
 .document-start-overview-tab svg,
 .document-start-overview-new-project svg,
+.document-start-overview-import-project svg,
 .document-start-overview-icon-button svg {
   flex: 0 0 auto;
   width: 16px;
@@ -194,7 +204,8 @@
 }
 
 .document-start-overview-tab span,
-.document-start-overview-new-project span {
+.document-start-overview-new-project span,
+.document-start-overview-import-project span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -326,10 +337,10 @@
   white-space: nowrap;
 }
 
+.document-start-project-export,
 .document-start-project-delete {
   position: absolute;
   top: 8px;
-  right: 8px;
   height: 24px;
   min-width: 58px;
   padding: 0 8px;
@@ -346,6 +357,14 @@
   transition: opacity 120ms ease, transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
+.document-start-project-export {
+  right: 74px;
+}
+
+.document-start-project-delete {
+  right: 8px;
+}
+
 .document-start-project-card:hover .document-start-project-preview,
 .document-start-project-card:focus-visible .document-start-project-preview,
 .document-start-project-card:focus-within .document-start-project-preview {
@@ -353,6 +372,8 @@
   filter: brightness(1.08);
 }
 
+.document-start-project-card:hover .document-start-project-export,
+.document-start-project-card:focus-within .document-start-project-export,
 .document-start-project-card:hover .document-start-project-delete,
 .document-start-project-card:focus-within .document-start-project-delete {
   opacity: 1;
@@ -360,11 +381,14 @@
 }
 
 .document-start-project-open:focus-visible,
+.document-start-project-export:focus-visible,
 .document-start-project-delete:focus-visible,
 .document-start-project-card:focus-visible {
   outline: none;
 }
 
+.document-start-project-export:hover,
+.document-start-project-export:focus-visible,
 .document-start-project-delete:hover,
 .document-start-project-delete:focus-visible {
   border-color: #71d0b4;
@@ -372,6 +396,7 @@
 }
 
 .document-start-project-open:disabled,
+.document-start-project-export:disabled,
 .document-start-project-delete:disabled {
   cursor: wait;
   opacity: 0.64;

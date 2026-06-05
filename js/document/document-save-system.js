@@ -9,6 +9,9 @@
   const PROJECT_NAME_STORAGE_KEY = namespace.documentProjectNameStorageKey || "cbo-project-name";
   const TILE_SIZE = 256;
   const DOCUMENT_SAVE_FORMAT_VERSION = 2;
+  const PROJECT_EXPORT_FORMAT = "cbo-project";
+  const PROJECT_EXPORT_FORMAT_VERSION = 1;
+  const PROJECT_EXPORT_MIME_TYPE = "application/vnd.cbo.project+json";
   const AI_WORKSPACE_FORMAT_VERSION = 1;
   const TILE_PIXEL_FORMAT = "rgba8";
   const TILE_CODECS = Object.freeze(["zstd", "gzip", "deflate"]);
@@ -82,6 +85,82 @@
     }
 
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer || 0);
+    const chunkSize = 0x8000;
+    let output = "";
+
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      output += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+
+    return btoa(output);
+  }
+
+  function base64ToBlob(base64, type = "application/octet-stream") {
+    const data = String(base64 || "").split(",").pop();
+    const binary = atob(data);
+    const chunkSize = 0x8000;
+    const chunks = [];
+
+    for (let offset = 0; offset < binary.length; offset += chunkSize) {
+      const slice = binary.slice(offset, offset + chunkSize);
+      const bytes = new Uint8Array(slice.length);
+
+      for (let index = 0; index < slice.length; index += 1) {
+        bytes[index] = slice.charCodeAt(index);
+      }
+
+      chunks.push(bytes);
+    }
+
+    return new Blob(chunks, { type: type || "application/octet-stream" });
+  }
+
+  async function blobToBase64(blob) {
+    if (!blob?.arrayBuffer) {
+      return "";
+    }
+
+    return arrayBufferToBase64(await blob.arrayBuffer());
+  }
+
+  function downloadBlob(blob, filename) {
+    if (!blob || !filename) {
+      return false;
+    }
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    return true;
+  }
+
+  function getSafeProjectExportName(value) {
+    const name = String(value || "")
+      .trim()
+      .replace(/[^a-z0-9._-]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80);
+
+    return name || "untitled-project";
+  }
+
+  function getProjectExportFilename(summary, exportedAt) {
+    const timestamp = String(exportedAt || new Date().toISOString()).replace(/[:.]/g, "-");
+    const name = getSafeProjectExportName(summary?.projectName || "untitled-project");
+
+    return `${name}-${timestamp}.cbo-project`;
   }
 
   function requestToPromise(request) {
@@ -795,6 +874,44 @@
       spaceBoards: cloneValue(boards),
       version: Math.max(1, Math.round(Number(workspace?.version) || 1)),
     };
+  }
+
+  function collectCachedAssetIds(value, result = new Set()) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectCachedAssetIds(item, result));
+      return result;
+    }
+
+    if (!isObject(value)) {
+      return result;
+    }
+
+    if (
+      typeof value.id === "string" &&
+      (
+        typeof value.cachedAt === "string" ||
+        typeof value.originalSrc === "string" ||
+        typeof value.type === "string"
+      )
+    ) {
+      result.add(value.id);
+    }
+
+    Object.values(value).forEach((item) => collectCachedAssetIds(item, result));
+    return result;
+  }
+
+  async function exportAiWorkspaceAssets(session) {
+    const exporter = namespace.documentAssetCache?.exportRecords;
+
+    if (typeof exporter !== "function") {
+      return [];
+    }
+
+    const workspace = session?.document?.aiWorkspace || session?.aiWorkspace || {};
+    const assetIds = Array.from(collectCachedAssetIds(workspace));
+
+    return assetIds.length > 0 ? exporter(assetIds) : [];
   }
 
   async function restoreSessionAiWorkspace(session, source = "document-save-restore-ai-workspace") {
@@ -2524,6 +2641,223 @@
     }
   }
 
+  async function createExportTileRecord(tileRecord = {}) {
+    if (!tileRecord?.bytes?.arrayBuffer) {
+      return null;
+    }
+
+    const { bytes, ...metadata } = tileRecord;
+    const data = await blobToBase64(bytes);
+
+    if (!data) {
+      return null;
+    }
+
+    return {
+      ...cloneValue(metadata),
+      data,
+      type: bytes.type || metadata.type || "application/octet-stream",
+    };
+  }
+
+  async function createProjectExportPackage(session, tileRecords = []) {
+    const exportedAt = new Date().toISOString();
+    const tiles = await Promise.all((Array.isArray(tileRecords) ? tileRecords : []).map(createExportTileRecord));
+
+    return {
+      app: "CBO Editor",
+      assets: await exportAiWorkspaceAssets(session),
+      exportedAt,
+      format: PROJECT_EXPORT_FORMAT,
+      session: cloneValue(session),
+      summary: createSummary(session),
+      tiles: tiles.filter(Boolean),
+      version: PROJECT_EXPORT_FORMAT_VERSION,
+    };
+  }
+
+  async function exportSession(sessionId, options = {}) {
+    const normalizedSessionId = String(sessionId || "").trim();
+
+    if (!normalizedSessionId) {
+      throw new Error("Progetto non valido per export.");
+    }
+
+    const session = await getSession(normalizedSessionId);
+
+    if (!session) {
+      throw new Error("Progetto salvato non trovato per export.");
+    }
+
+    const tileRecords = await getTilesForSession(session.id);
+    const projectPackage = await createProjectExportPackage(session, tileRecords);
+
+    if (options.download !== false) {
+      const blob = new Blob([JSON.stringify(projectPackage, null, 2)], {
+        type: PROJECT_EXPORT_MIME_TYPE,
+      });
+
+      downloadBlob(blob, getProjectExportFilename(projectPackage.summary, projectPackage.exportedAt));
+    }
+
+    return projectPackage;
+  }
+
+  async function readProjectImportPackage(source) {
+    if (typeof source === "string") {
+      return JSON.parse(source);
+    }
+
+    if (typeof Blob !== "undefined" && source instanceof Blob && typeof source.text === "function") {
+      return JSON.parse(await source.text());
+    }
+
+    if (isObject(source)) {
+      return source;
+    }
+
+    throw new Error("File progetto non valido.");
+  }
+
+  function getProjectPackageSession(projectPackage) {
+    return isObject(projectPackage?.session)
+      ? projectPackage.session
+      : isObject(projectPackage?.project?.session)
+        ? projectPackage.project.session
+        : null;
+  }
+
+  function assertImportableProjectPackage(projectPackage) {
+    const session = getProjectPackageSession(projectPackage);
+
+    if (!isObject(session?.document) || !Array.isArray(session?.entries)) {
+      throw new Error("File progetto non compatibile.");
+    }
+
+    return session;
+  }
+
+  function createImportedTileKey(sessionId, layerId, tileManifest = {}, fallbackIndex = 0) {
+    const tx = Number.isFinite(Number(tileManifest.tx)) ? Math.round(Number(tileManifest.tx)) : fallbackIndex;
+    const ty = Number.isFinite(Number(tileManifest.ty)) ? Math.round(Number(tileManifest.ty)) : 0;
+    const safeLayerId = String(layerId || "layer").trim() || "layer";
+
+    return `${sessionId}/${safeLayerId}/${tx}/${ty}`;
+  }
+
+  function remapImportedSession(sourceSession, options = {}) {
+    const session = cloneValue(sourceSession);
+    const sessionId = String(options.sessionId || "").trim() || createId("project");
+    const keyMap = new Map();
+    let tileIndex = 0;
+
+    session.id = sessionId;
+    session.savedAt = new Date().toISOString();
+    session.project = isObject(session.project) ? session.project : {};
+    session.project.name = typeof session.project.name === "string" ? session.project.name : "";
+
+    for (const layerRecord of Array.isArray(session.rasterLayers) ? session.rasterLayers : []) {
+      const layerId = String(layerRecord?.layerId || "").trim();
+
+      for (const tileManifest of Array.isArray(layerRecord?.tiles) ? layerRecord.tiles : []) {
+        const previousKey = String(tileManifest?.key || "").trim();
+        const nextKey = createImportedTileKey(sessionId, layerId, tileManifest, tileIndex);
+
+        tileIndex += 1;
+        tileManifest.key = nextKey;
+
+        if (previousKey) {
+          keyMap.set(previousKey, {
+            key: nextKey,
+            layerId,
+          });
+        }
+      }
+    }
+
+    return {
+      keyMap,
+      session,
+      sessionId,
+    };
+  }
+
+  function getImportedTileData(tileRecord = {}) {
+    return String(tileRecord.data || tileRecord.base64 || tileRecord.bytesBase64 || "").trim();
+  }
+
+  async function createImportedTileRecords(projectPackage, keyMap, sessionId) {
+    const exportedTiles = Array.isArray(projectPackage?.tiles)
+      ? projectPackage.tiles
+      : Array.isArray(projectPackage?.tileRecords)
+        ? projectPackage.tileRecords
+        : [];
+    const tileRecords = [];
+
+    for (const tileRecord of exportedTiles) {
+      const previousKey = String(tileRecord?.key || "").trim();
+      const mapped = keyMap.get(previousKey);
+      const data = getImportedTileData(tileRecord);
+
+      if (!mapped || !data) {
+        continue;
+      }
+
+      const {
+        base64: _base64,
+        bytesBase64: _bytesBase64,
+        data: _data,
+        type,
+        ...metadata
+      } = tileRecord;
+      const blob = base64ToBlob(data, type || "application/octet-stream");
+
+      tileRecords.push({
+        ...cloneValue(metadata),
+        bytes: blob,
+        key: mapped.key,
+        layerId: mapped.layerId || metadata.layerId || "",
+        sessionId,
+        storedByteLength: Math.max(0, Math.round(Number(metadata.storedByteLength) || Number(blob.size) || 0)),
+        type: type || blob.type || "application/octet-stream",
+      });
+    }
+
+    return tileRecords;
+  }
+
+  async function importSessionPackage(source, options = {}) {
+    await namespace.requestPersistentStorage?.({
+      source: options.source || "document-import",
+    });
+
+    const projectPackage = await readProjectImportPackage(source);
+    const sourceSession = assertImportableProjectPackage(projectPackage);
+    const imported = remapImportedSession(sourceSession, {
+      sessionId: options.sessionId,
+    });
+    const tileRecords = await createImportedTileRecords(projectPackage, imported.keyMap, imported.sessionId);
+
+    if (Array.isArray(projectPackage.assets) && typeof namespace.documentAssetCache?.importRecords === "function") {
+      await namespace.documentAssetCache.importRecords(projectPackage.assets, {
+        sessionId: imported.sessionId,
+        source: "document-import-assets",
+      });
+    }
+
+    const session = await writeSession({
+      session: imported.session,
+      tileRecords,
+    });
+    const summary = createSummary(session);
+
+    window.dispatchEvent(new CustomEvent("cbo:document-import", {
+      detail: summary,
+    }));
+
+    return summary;
+  }
+
   async function getLatestSummary() {
     try {
       const sessionId = await getLatestSessionId();
@@ -2626,7 +2960,9 @@
     clear,
     clearCurrentDocument,
     delete: deleteSession,
+    export: exportSession,
     getLatestSummary,
+    import: importSessionPackage,
     listSummaries,
     restore,
     restoreLatest,

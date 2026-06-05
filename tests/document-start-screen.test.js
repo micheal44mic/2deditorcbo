@@ -93,6 +93,8 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(startScreenSource, /title\.textContent = "All Project"/);
   assert.match(startScreenSource, /subtitle\.textContent = "Create, open and organize your projects\."/);
   assert.match(startScreenSource, /newProjectButton\.dataset\.documentOverviewNewProject = ""/);
+  assert.match(startScreenSource, /importProjectButton\.dataset\.documentOverviewImportProject = ""/);
+  assert.match(startScreenSource, /<span>Import<\/span>/);
   assert.match(startScreenSource, /startOverview\.newProjectButton\.addEventListener\("click"/);
   assert.match(startScreenSource, /section\.className = "document-start-projects"/);
   assert.match(startScreenSource, /grid\.className = "document-start-project-grid"/);
@@ -117,7 +119,11 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(startScreenSource, /renderSavedProjects\(stage, startProjects, saveSystem\)/);
   assert.match(startScreenSource, /grid\.append\(projectCard\.card\)/);
   assert.match(startScreenSource, /saveSystem\.restore\(sessionId\)/);
+  assert.match(startScreenSource, /saveSystem\.export\(sessionId\)/);
   assert.match(startScreenSource, /saveSystem\.delete\?\.\(sessionId\)/);
+  assert.match(startScreenSource, /importInput\.accept = "\.cbo-project,\.json,application\/json,application\/vnd\.cbo\.project\+json"/);
+  assert.match(startScreenSource, /saveSystem\.import\(file\)/);
+  assert.match(startScreenSource, /saveSystem\.restore\(summary\.sessionId\)/);
   assert.match(startScreenSource, /clearCurrentDocument/);
 
   assert.match(appSource, /window\.CBO\.initEditorDocumentStart\(\);/);
@@ -162,6 +168,7 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(cssSource, /\.document-start-overview-title[\s\S]*font-size: 26px/);
   assert.match(cssSource, /\.document-start-overview-command-bar[\s\S]*justify-content: space-between/);
   assert.match(cssSource, /\.document-start-overview-new-project[\s\S]*height: 32px/);
+  assert.match(cssSource, /\.document-start-overview-import-project[\s\S]*height: 32px/);
   assert.match(cssSource, /\.document-start-projects[\s\S]*padding: 20px 20px 28px/);
   assert.match(cssSource, /\.document-start-project-grid[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(220px, 280px\)\)/);
   assert.match(cssSource, /\.document-start-project-preview[\s\S]*aspect-ratio: 16 \/ 9/);
@@ -172,6 +179,7 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(cssSource, /\.document-start-project-preview-fallback/);
   assert.match(cssSource, /\.document-start-project-card-title[\s\S]*font-size: 13px/);
   assert.match(cssSource, /\.document-start-project-card-meta[\s\S]*font-size: 11px/);
+  assert.match(cssSource, /\.document-start-project-export[\s\S]*position: absolute/);
   assert.match(cssSource, /\.document-start-project-delete[\s\S]*position: absolute/);
   assert.doesNotMatch(cssSource, /document-start-project-saved-shape/);
   assert.match(cssSource, /\.document-start-sidebar[\s\S]*padding: 18px/);

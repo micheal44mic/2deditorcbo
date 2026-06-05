@@ -24,10 +24,13 @@ test("document save system is loaded separately and owns manual project saves", 
   );
   assert.match(saveSource, /const DB_NAME = "cbo-editor-documents"/);
   assert.match(saveSource, /const PROJECTS_META_KEY = "projects"/);
+  assert.match(saveSource, /const PROJECT_EXPORT_FORMAT = "cbo-project"/);
   assert.match(saveSource, /namespace\.documentSaveSystem = \{/);
   assert.match(saveSource, /listSummaries/);
   assert.match(saveSource, /restore,/);
   assert.match(saveSource, /delete: deleteSession/);
+  assert.match(saveSource, /export: exportSession/);
+  assert.match(saveSource, /import: importSessionPackage/);
   assert.match(sidebarSource, /const saveSystem = window\.CBO\.documentSaveSystem/);
   assert.match(sidebarSource, /saveSystem\.saveNow\(\{ source: "manual-save" \}\)/);
   assert.doesNotMatch(sidebarSource, /documentAutosave\.saveNow\(\{ source: "manual-save" \}\)/);
@@ -137,6 +140,28 @@ test("document save system keeps multiple saved projects and updates the current
   assert.match(source, /async function deleteSession\(sessionId\)/);
   assert.match(source, /cleanupSessionTiles\(db, normalizedSessionId\)/);
   assert.doesNotMatch(source, /cleanupOldSessions/);
+});
+
+test("document save system exports and imports portable project packages", () => {
+  const source = readRepoFile("js", "document", "document-save-system.js");
+  const assetCacheSource = readRepoFile("js", "document", "document-asset-cache.js");
+
+  assert.match(source, /const PROJECT_EXPORT_MIME_TYPE = "application\/vnd\.cbo\.project\+json"/);
+  assert.match(source, /function getProjectExportFilename\(summary, exportedAt\)/);
+  assert.match(source, /async function createProjectExportPackage\(session, tileRecords = \[\]\)/);
+  assert.match(source, /format: PROJECT_EXPORT_FORMAT/);
+  assert.match(source, /assets: await exportAiWorkspaceAssets\(session\)/);
+  assert.match(source, /tiles: tiles\.filter\(Boolean\)/);
+  assert.match(source, /downloadBlob\(blob, getProjectExportFilename\(projectPackage\.summary, projectPackage\.exportedAt\)\)/);
+  assert.match(source, /async function importSessionPackage\(source, options = \{\}\)/);
+  assert.match(source, /const sourceSession = assertImportableProjectPackage\(projectPackage\)/);
+  assert.match(source, /const imported = remapImportedSession\(sourceSession/);
+  assert.match(source, /const tileRecords = await createImportedTileRecords\(projectPackage, imported\.keyMap, imported\.sessionId\)/);
+  assert.match(source, /namespace\.documentAssetCache\.importRecords\(projectPackage\.assets/);
+  assert.match(source, /session: imported\.session/);
+  assert.match(source, /new CustomEvent\("cbo:document-import"/);
+  assert.match(assetCacheSource, /async function exportRecords\(ids = \[\]\)/);
+  assert.match(assetCacheSource, /async function importRecords\(records = \[\], options = \{\}\)/);
 });
 
 test("document save system restores saved view state without requiring tool state", () => {

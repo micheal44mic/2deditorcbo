@@ -66,6 +66,7 @@
 }
 
 :root[data-cbo-theme="light"] .document-start-overview-tab,
+:root[data-cbo-theme="light"] .document-start-overview-import-project,
 :root[data-cbo-theme="light"] .document-start-overview-icon-button,
 :root[data-cbo-theme="light"] .document-start-new-project,
 :root[data-cbo-theme="light"] .document-start-all-projects,
@@ -76,6 +77,7 @@
 }
 
 :root[data-cbo-theme="light"] .document-start-overview-tab.is-active,
+:root[data-cbo-theme="light"] .document-start-overview-import-project,
 :root[data-cbo-theme="light"] .document-start-overview-icon-button,
 :root[data-cbo-theme="light"] .document-start-new-project:hover,
 :root[data-cbo-theme="light"] .document-start-new-project:focus-visible,
@@ -88,6 +90,12 @@
 :root[data-cbo-theme="light"] .document-start-theme-toggle:hover,
 :root[data-cbo-theme="light"] .document-start-theme-toggle:focus-visible {
   background: var(--cbo-theme-control);
+  color: var(--cbo-theme-text);
+}
+
+:root[data-cbo-theme="light"] .document-start-overview-import-project:hover,
+:root[data-cbo-theme="light"] .document-start-overview-import-project:focus-visible {
+  background: var(--cbo-theme-control-hover);
   color: var(--cbo-theme-text);
 }
 
@@ -126,6 +134,7 @@
   border-color: rgba(240, 80, 35, 0.42);
 }
 
+:root[data-cbo-theme="light"] .document-start-project-export,
 :root[data-cbo-theme="light"] .document-start-project-delete {
   border-color: var(--cbo-theme-border);
   background: rgba(255, 255, 255, 0.88);
