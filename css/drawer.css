@@ -15,6 +15,49 @@
   white-space: nowrap;
 }
 
+.drawer-manual-save-button {
+  position: absolute;
+  top: calc(12px + var(--cbo-safe-top));
+  right: max(16px, var(--cbo-safe-right));
+  z-index: 2;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: #2c303a;
+  color: #c3c8d1;
+}
+
+.drawer-manual-save-button:hover,
+.drawer-manual-save-button:focus-visible,
+.drawer-manual-save-button.active {
+  background: rgb(58, 63, 75);
+  color: #ffffff;
+}
+
+.drawer-manual-save-button:disabled {
+  opacity: 0.68;
+}
+
+.drawer-manual-save-button.saving svg {
+  animation: right-sidebar-save-pulse 720ms ease-in-out infinite;
+}
+
+.drawer-manual-save-button.saved {
+  color: #7ee787;
+}
+
+.drawer-manual-save-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+}
+
 .drawer-panel-header {
   position: absolute;
   top: calc(64px + var(--cbo-safe-top));
@@ -94,6 +137,16 @@
   height: 23px;
   fill: none;
   stroke: currentColor;
+}
+
+@media (max-width: 900px) {
+  .drawer-title {
+    right: calc(60px + var(--cbo-safe-right));
+  }
+
+  .drawer-manual-save-button {
+    display: inline-flex;
+  }
 }
 
 .drawer-search {

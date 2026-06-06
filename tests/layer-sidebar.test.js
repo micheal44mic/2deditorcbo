@@ -14,9 +14,27 @@ test("right sidebar exposes a manual save button next to share", () => {
   assert.match(source, /data-manual-save[\s\S]*<svg\b/);
   assert.match(source, /documentSaveSystem/);
   assert.match(source, /saveSystem\.saveNow\(\{ source: "manual-save" \}\)/);
-  assert.match(source, /saveButton\?\.addEventListener\("click"/);
+  assert.match(source, /const saveButtons = Array\.from\(document\.querySelectorAll\("\[data-manual-save\]"\)\)/);
+  assert.match(source, /let manualSaveBusy = false/);
+  assert.match(source, /function setManualSaveButtonsBusy\(isBusy\)/);
+  assert.match(source, /function pulseManualSaveButtonsSaved\(\)/);
+  assert.match(source, /saveButtons\.forEach\(\(button\) => \{[\s\S]*button\.addEventListener\("click"/);
   assert.match(css, /\.right-sidebar-save-button/);
   assert.match(css, /\.right-sidebar-primary-actions/);
+});
+
+test("mobile left drawer exposes the manual save action", () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
+  const drawerCss = fs.readFileSync(path.join(repoRoot, "css", "drawer.css"), "utf8");
+  const themeCss = fs.readFileSync(path.join(repoRoot, "css", "theme.css"), "utf8");
+
+  assert.match(indexSource, /class="drawer-manual-save-button"[\s\S]*data-manual-save/);
+  assert.match(indexSource, /aria-label="Save document"[\s\S]*lucide-save/);
+  assert.match(drawerCss, /\.drawer-manual-save-button[\s\S]*display: none/);
+  assert.match(drawerCss, /@media \(max-width: 900px\)[\s\S]*\.drawer-manual-save-button \{[\s\S]*display: inline-flex/);
+  assert.match(drawerCss, /\.drawer-title \{[\s\S]*right: calc\(60px \+ var\(--cbo-safe-right\)\)/);
+  assert.match(drawerCss, /\.drawer-manual-save-button\.saving svg[\s\S]*right-sidebar-save-pulse/);
+  assert.match(themeCss, /:root\[data-cbo-theme="light"\] \.drawer-manual-save-button/);
 });
 
 test("right sidebar shows layer controls for the selection tool", () => {

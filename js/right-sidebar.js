@@ -417,7 +417,7 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   `;
 
   const projectInput = panel.querySelector(".right-sidebar-project-input");
-  const saveButton = panel.querySelector("[data-manual-save]");
+  const saveButtons = Array.from(document.querySelectorAll("[data-manual-save]"));
   const shareButton = panel.querySelector("[data-share-menu-toggle]");
   const shareMenu = panel.querySelector("[data-share-menu]");
   const exportArtboardsButton = panel.querySelector("[data-export-artboards]");
@@ -734,27 +734,24 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   async function saveDocumentNow() {
     const saveSystem = window.CBO.documentSaveSystem;
 
-    if (!saveButton || saveButton.disabled || !saveSystem?.saveNow) {
+    if (manualSaveBusy || saveButtons.length === 0 || !saveSystem?.saveNow) {
       return;
     }
 
-    saveButton.disabled = true;
-    saveButton.classList.add("saving", "active");
-    saveButton.setAttribute("aria-busy", "true");
+    manualSaveBusy = true;
+    setManualSaveButtonsBusy(true);
 
     try {
       const didSave = await saveSystem.saveNow({ source: "manual-save" });
 
       if (didSave) {
-        saveButton.classList.add("saved");
-        window.setTimeout(() => saveButton.classList.remove("saved"), 520);
+        pulseManualSaveButtonsSaved();
       }
     } catch (error) {
       console.warn("Salvataggio documento non riuscito.", error);
     } finally {
-      saveButton.disabled = false;
-      saveButton.classList.remove("saving", "active");
-      saveButton.removeAttribute("aria-busy");
+      manualSaveBusy = false;
+      setManualSaveButtonsBusy(false);
     }
   }
 
@@ -1861,8 +1858,35 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   }
 
   let currentToolName = "";
+  let manualSaveBusy = false;
   let isSyncingTextLayerControls = false;
   let textGeometryPatchRevision = 0;
+
+  function setManualSaveButtonsBusy(isBusy) {
+    saveButtons.forEach((button) => {
+      button.disabled = isBusy;
+      button.classList.toggle("saving", isBusy);
+      button.classList.toggle("active", isBusy);
+
+      if (isBusy) {
+        button.setAttribute("aria-busy", "true");
+      } else {
+        button.removeAttribute("aria-busy");
+      }
+    });
+  }
+
+  function pulseManualSaveButtonsSaved() {
+    saveButtons.forEach((button) => {
+      button.classList.add("saved");
+    });
+
+    window.setTimeout(() => {
+      saveButtons.forEach((button) => {
+        button.classList.remove("saved");
+      });
+    }, 520);
+  }
 
   function isVectorTextLayer(layer) {
     return layer?.type === "vector-text" || layer?.type === "text" || layer?.kind === "text";
@@ -3294,8 +3318,10 @@ window.CBO.initRightSidebar = function initRightSidebar() {
   textTransformToggle?.addEventListener("click", () => {
     setTextTransformationOpen(textTransformToggle.getAttribute("aria-expanded") !== "true");
   });
-  saveButton?.addEventListener("click", () => {
-    void saveDocumentNow();
+  saveButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      void saveDocumentNow();
+    });
   });
 
   shareButton?.addEventListener("click", () => {
