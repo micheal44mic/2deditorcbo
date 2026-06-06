@@ -763,7 +763,7 @@
 
     importInput.className = "document-start-import-input";
     importInput.type = "file";
-    importInput.accept = ".cbo-project,.json,application/json,application/vnd.cbo.project+json";
+    importInput.accept = ".cbo-project,.cbo-project.json,.json,application/json,text/json,application/vnd.cbo.project+json";
     importInput.dataset.documentProjectImportInput = "";
     importInput.hidden = true;
 

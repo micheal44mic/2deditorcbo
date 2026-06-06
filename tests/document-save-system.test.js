@@ -146,8 +146,9 @@ test("document save system exports and imports portable project packages", () =>
   const source = readRepoFile("js", "document", "document-save-system.js");
   const assetCacheSource = readRepoFile("js", "document", "document-asset-cache.js");
 
-  assert.match(source, /const PROJECT_EXPORT_MIME_TYPE = "application\/vnd\.cbo\.project\+json"/);
+  assert.match(source, /const PROJECT_EXPORT_MIME_TYPE = "application\/json;charset=utf-8"/);
   assert.match(source, /function getProjectExportFilename\(summary, exportedAt\)/);
+  assert.match(source, /return `\$\{name\}-\$\{timestamp\}\.cbo-project\.json`/);
   assert.match(source, /async function createProjectExportPackage\(session, tileRecords = \[\]\)/);
   assert.match(source, /format: PROJECT_EXPORT_FORMAT/);
   assert.match(source, /assets: await exportAiWorkspaceAssets\(session\)/);

@@ -11,7 +11,7 @@
   const DOCUMENT_SAVE_FORMAT_VERSION = 2;
   const PROJECT_EXPORT_FORMAT = "cbo-project";
   const PROJECT_EXPORT_FORMAT_VERSION = 1;
-  const PROJECT_EXPORT_MIME_TYPE = "application/vnd.cbo.project+json";
+  const PROJECT_EXPORT_MIME_TYPE = "application/json;charset=utf-8";
   const AI_WORKSPACE_FORMAT_VERSION = 1;
   const TILE_PIXEL_FORMAT = "rgba8";
   const TILE_CODECS = Object.freeze(["zstd", "gzip", "deflate"]);
@@ -160,7 +160,7 @@
     const timestamp = String(exportedAt || new Date().toISOString()).replace(/[:.]/g, "-");
     const name = getSafeProjectExportName(summary?.projectName || "untitled-project");
 
-    return `${name}-${timestamp}.cbo-project`;
+    return `${name}-${timestamp}.cbo-project.json`;
   }
 
   function requestToPromise(request) {

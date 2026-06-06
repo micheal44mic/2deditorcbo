@@ -121,7 +121,7 @@ test("editor starts from a clean two-panel document shell", () => {
   assert.match(startScreenSource, /saveSystem\.restore\(sessionId\)/);
   assert.match(startScreenSource, /saveSystem\.export\(sessionId\)/);
   assert.match(startScreenSource, /saveSystem\.delete\?\.\(sessionId\)/);
-  assert.match(startScreenSource, /importInput\.accept = "\.cbo-project,\.json,application\/json,application\/vnd\.cbo\.project\+json"/);
+  assert.match(startScreenSource, /importInput\.accept = "\.cbo-project,\.cbo-project\.json,\.json,application\/json,text\/json,application\/vnd\.cbo\.project\+json"/);
   assert.match(startScreenSource, /saveSystem\.import\(file\)/);
   assert.match(startScreenSource, /saveSystem\.restore\(summary\.sessionId\)/);
   assert.match(startScreenSource, /clearCurrentDocument/);
