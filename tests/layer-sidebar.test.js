@@ -23,18 +23,17 @@ test("right sidebar exposes a manual save button next to share", () => {
   assert.match(css, /\.right-sidebar-primary-actions/);
 });
 
-test("mobile left drawer exposes the manual save action", () => {
+test("mobile left rail exposes the manual save action", () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
-  const drawerCss = fs.readFileSync(path.join(repoRoot, "css", "drawer.css"), "utf8");
-  const themeCss = fs.readFileSync(path.join(repoRoot, "css", "theme.css"), "utf8");
+  const leftSidebarCss = fs.readFileSync(path.join(repoRoot, "css", "left-sidebar.css"), "utf8");
 
-  assert.match(indexSource, /class="drawer-manual-save-button"[\s\S]*data-manual-save/);
+  assert.match(indexSource, /class="rail-button mobile-save-button"[\s\S]*data-manual-save/);
   assert.match(indexSource, /aria-label="Save document"[\s\S]*lucide-save/);
-  assert.match(drawerCss, /\.drawer-manual-save-button[\s\S]*display: none/);
-  assert.match(drawerCss, /@media \(max-width: 900px\)[\s\S]*\.drawer-manual-save-button \{[\s\S]*display: inline-flex/);
-  assert.match(drawerCss, /\.drawer-title \{[\s\S]*right: calc\(60px \+ var\(--cbo-safe-right\)\)/);
-  assert.match(drawerCss, /\.drawer-manual-save-button\.saving svg[\s\S]*right-sidebar-save-pulse/);
-  assert.match(themeCss, /:root\[data-cbo-theme="light"\] \.drawer-manual-save-button/);
+  assert.match(indexSource, /data-artboard-create[\s\S]*class="rail-button mobile-save-button"/);
+  assert.match(leftSidebarCss, /\.mobile-save-button \{[\s\S]*display: none/);
+  assert.match(leftSidebarCss, /@media \(max-width: 900px\)[\s\S]*\.mobile-save-button \{[\s\S]*display: inline-flex/);
+  assert.match(leftSidebarCss, /\.mobile-save-button\.saving svg[\s\S]*right-sidebar-save-pulse/);
+  assert.doesNotMatch(indexSource, /drawer-manual-save-button/);
 });
 
 test("right sidebar shows layer controls for the selection tool", () => {

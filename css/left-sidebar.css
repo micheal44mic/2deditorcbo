@@ -137,3 +137,25 @@
   fill: none;
   stroke: currentColor;
 }
+
+.mobile-save-button {
+  display: none;
+}
+
+.mobile-save-button:disabled {
+  opacity: 0.68;
+}
+
+.mobile-save-button.saving svg {
+  animation: right-sidebar-save-pulse 720ms ease-in-out infinite;
+}
+
+.mobile-save-button.saved {
+  color: #7ee787;
+}
+
+@media (max-width: 900px) {
+  .mobile-save-button {
+    display: inline-flex;
+  }
+}
