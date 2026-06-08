@@ -56,6 +56,7 @@ window.CBO = window.CBO || {};
     "wetEdges",
     "burntEdges",
     "burntEdgesMode",
+    "antiAliasing",
     "alphaThresholdEnabled",
     "alphaThreshold",
     "spacing",
@@ -599,6 +600,10 @@ window.CBO = window.CBO || {};
     return clamp(opacity * flowAlpha * alphaScale, 0, 0.96);
   }
 
+  function isAntiAliasingEnabled(settings) {
+    return settings?.antiAliasing !== false;
+  }
+
   function drawDab(context, point, radius, alpha, settings, randomState) {
     if (radius <= 0.2 || alpha <= 0.001) {
       return;
@@ -607,17 +612,39 @@ window.CBO = window.CBO || {};
     const wetEdges = clamp01(settings.wetEdges);
     const hardness = clamp01(settings.hardness ?? 1);
     const hardStop = clamp(hardness * (1 - wetEdges * 0.55), 0.03, 0.96);
-    const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+    const antiAliasing = isAntiAliasingEnabled(settings);
     const color = `rgba(${previewColor.r}, ${previewColor.g}, ${previewColor.b}, ${alpha})`;
 
-    gradient.addColorStop(0, color);
-    gradient.addColorStop(hardStop, color);
-    gradient.addColorStop(1, `rgba(${previewColor.r}, ${previewColor.g}, ${previewColor.b}, 0)`);
+    if (!antiAliasing && hardness >= 0.999 && wetEdges <= 0.001) {
+      const left = Math.floor(point.x - radius);
+      const right = Math.ceil(point.x + radius);
+      const top = Math.floor(point.y - radius);
+      const bottom = Math.ceil(point.y + radius);
+      const radiusSq = radius * radius;
 
-    context.fillStyle = gradient;
-    context.beginPath();
-    context.arc(point.x, point.y, radius, 0, Math.PI * 2);
-    context.fill();
+      context.fillStyle = color;
+      for (let y = top; y <= bottom; y += 1) {
+        for (let x = left; x <= right; x += 1) {
+          const dx = x + 0.5 - point.x;
+          const dy = y + 0.5 - point.y;
+
+          if (dx * dx + dy * dy <= radiusSq) {
+            context.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    } else {
+      const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+
+      gradient.addColorStop(0, color);
+      gradient.addColorStop(hardStop, color);
+      gradient.addColorStop(1, `rgba(${previewColor.r}, ${previewColor.g}, ${previewColor.b}, 0)`);
+
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      context.fill();
+    }
 
     const burntEdges = clamp01(settings.burntEdges);
 
@@ -803,6 +830,7 @@ window.CBO = window.CBO || {};
     }
 
     context.scale(size.dpr, size.dpr);
+    context.imageSmoothingEnabled = isAntiAliasingEnabled(settings);
     context.clearRect(0, 0, size.width, size.height);
 
     const radius = getPreviewRadius(settings, size.height);

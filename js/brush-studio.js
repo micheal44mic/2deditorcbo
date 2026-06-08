@@ -2333,6 +2333,10 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       label: "BURNT EDGES MODE",
       options: burntEdgesModeOptions,
     });
+    const antiAliasingToggle = createToggleSetting({
+      key: "antiAliasing",
+      label: "ANTIALIAS",
+    });
     const thresholdAmountSetting = createPercentSetting("alphaThreshold", "THRESHOLD AMOUNT");
     const thresholdToggle = createToggleSetting({
       key: "alphaThresholdEnabled",
@@ -2353,6 +2357,7 @@ window.CBO.initBrushStudio = function initBrushStudio() {
       wetEdgesSetting,
       burntEdgesSetting,
       burntEdgesModeSetting,
+      antiAliasingToggle,
       thresholdToggle,
       thresholdAmountSetting,
     );

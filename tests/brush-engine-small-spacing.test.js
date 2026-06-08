@@ -73,6 +73,8 @@ function loadBrushEngine() {
 }
 
 function createSpacingEngine({
+  adaptiveSpacingEnabled = false,
+  antiAliasing = false,
   dpr = 1,
   multiplier = 1,
   radius = 33,
@@ -84,6 +86,8 @@ function createSpacingEngine({
 
   engine.activeStrokeSpacingMultiplier = multiplier;
   engine.brushState = {
+    adaptiveSpacingEnabled,
+    antiAliasing,
     radius,
     spacing,
     spacingJitter: 0,
@@ -104,6 +108,7 @@ function createSpacingEngine({
 
 test("small projected brushes cap only the automatic adaptive spacing multiplier", () => {
   const engine = createSpacingEngine({
+    adaptiveSpacingEnabled: true,
     dpr: 1,
     multiplier: 3,
     radius: 33,
@@ -119,8 +124,10 @@ test("small projected brushes cap only the automatic adaptive spacing multiplier
   assert.ok(engine.getStampSpacing() <= 33 * 0.18 * 1.12);
 });
 
-test("full-size brush previews keep the existing adaptive spacing behavior", () => {
+test("full-size brush previews keep adaptive spacing behavior when explicitly enabled", () => {
   const engine = createSpacingEngine({
+    adaptiveSpacingEnabled: true,
+    antiAliasing: false,
     dpr: 1,
     multiplier: 2.5,
     radius: 33,
@@ -131,4 +138,50 @@ test("full-size brush previews keep the existing adaptive spacing behavior", () 
   assert.equal(engine.getSmallBrushAdaptiveSpacingCap(), Infinity);
   assert.equal(engine.getActiveAdaptiveSpacingMultiplier(), 2.5);
   assert.equal(engine.getStampSpacing(), 33 * 0.18 * 2.5);
+});
+
+test("antialias toggle does not change configured brush stamp spacing", () => {
+  const withoutAntialias = createSpacingEngine({
+    antiAliasing: false,
+    dpr: 1,
+    multiplier: 2.5,
+    radius: 33,
+    spacing: 0.18,
+    zoom: 1,
+  });
+  const engine = createSpacingEngine({
+    antiAliasing: true,
+    dpr: 1,
+    multiplier: 2.5,
+    radius: 33,
+    spacing: 0.18,
+    zoom: 1,
+  });
+
+  assert.equal(withoutAntialias.getActiveAdaptiveSpacingMultiplier(), 1);
+  assert.equal(withoutAntialias.getStampSpacing(), 33 * 0.18);
+  assert.equal(engine.getActiveAdaptiveSpacingMultiplier(), 1);
+  assert.equal(engine.getStampSpacing(), 33 * 0.18);
+});
+
+test("antialias stamp spacing is stable across camera zoom levels", () => {
+  const zoomedOut = createSpacingEngine({
+    antiAliasing: true,
+    dpr: 1,
+    multiplier: 1,
+    radius: 33,
+    spacing: 0.18,
+    zoom: 0.25,
+  });
+  const zoomedIn = createSpacingEngine({
+    antiAliasing: true,
+    dpr: 2,
+    multiplier: 1,
+    radius: 33,
+    spacing: 0.18,
+    zoom: 8,
+  });
+
+  assert.equal(zoomedOut.getStampSpacing(), zoomedIn.getStampSpacing());
+  assert.equal(zoomedOut.getStampSpacing(), 33 * 0.18);
 });

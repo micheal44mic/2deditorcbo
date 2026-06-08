@@ -89,6 +89,7 @@ uniform float u_hardness;
 uniform float u_wetEdges;
 uniform float u_burntEdges;
 uniform int u_burntEdgesMode;
+uniform bool u_antiAliasing;
 uniform bool u_alphaThresholdEnabled;
 uniform float u_alphaThreshold;
 uniform sampler2D u_shapeTexture;
@@ -179,6 +180,25 @@ float getBurntEdgeMask(float shape, float amount) {
   float hardRing = clamp(fwidth(safeShape) * 16.0, 0.0, 1.0) * smoothstep(0.001, 0.15, safeShape);
 
   return clamp(max(softRing, hardRing) * clamp(amount, 0.0, 1.0), 0.0, 1.0);
+}
+
+float sampleShapeTextureAlpha(vec2 uv) {
+  ivec2 shapeSize = max(textureSize(u_shapeTexture, 0), ivec2(1));
+
+  if (u_antiAliasing) {
+    vec2 footprint = max(fwidth(uv) * 0.55, vec2(0.35) / vec2(shapeSize));
+    float center = texture(u_shapeTexture, uv).a * 4.0;
+    float right = texture(u_shapeTexture, uv + vec2(footprint.x, 0.0)).a;
+    float left = texture(u_shapeTexture, uv - vec2(footprint.x, 0.0)).a;
+    float top = texture(u_shapeTexture, uv + vec2(0.0, footprint.y)).a;
+    float bottom = texture(u_shapeTexture, uv - vec2(0.0, footprint.y)).a;
+
+    return (center + right + left + top + bottom) / 8.0;
+  }
+
+  ivec2 texel = ivec2(clamp(floor(uv * vec2(shapeSize)), vec2(0.0), vec2(shapeSize - ivec2(1))));
+
+  return texelFetch(u_shapeTexture, texel, 0).a;
 }
 
 vec3 applyGrainBlendMode(vec3 baseColor, float grain, int blendMode) {
@@ -293,14 +313,14 @@ void main() {
   float effectiveBurntEdges = clamp(u_burntEdges + v_bleedScale * 0.5, 0.0, 1.0);
 
   if (u_useShapeTexture > 0.5) {
-    float coreShape = texture(u_shapeTexture, v_uv).a;
+    float coreShape = sampleShapeTextureAlpha(v_uv);
 
     if (effectiveWetEdges > 0.0) {
       float offset = 0.05 * effectiveWetEdges;
-      float rightShape = texture(u_shapeTexture, v_uv + vec2(offset, 0.0)).a;
-      float leftShape = texture(u_shapeTexture, v_uv + vec2(-offset, 0.0)).a;
-      float topShape = texture(u_shapeTexture, v_uv + vec2(0.0, offset)).a;
-      float bottomShape = texture(u_shapeTexture, v_uv + vec2(0.0, -offset)).a;
+      float rightShape = sampleShapeTextureAlpha(v_uv + vec2(offset, 0.0));
+      float leftShape = sampleShapeTextureAlpha(v_uv + vec2(-offset, 0.0));
+      float topShape = sampleShapeTextureAlpha(v_uv + vec2(0.0, offset));
+      float bottomShape = sampleShapeTextureAlpha(v_uv + vec2(0.0, -offset));
       float blurredShape = (coreShape * 2.0 + rightShape + leftShape + topShape + bottomShape) / 6.0;
 
       shape = mix(coreShape, blurredShape, effectiveWetEdges);
@@ -311,15 +331,20 @@ void main() {
   } else {
     float distanceFromCenter = distance(v_uv, vec2(0.5));
 
-    if (distanceFromCenter > 0.5) {
+    // Hardness=1: bordo nitido (fade in 1 px AA). Hardness=0: gradiente radiale dal centro.
+    float fw = max(fwidth(distanceFromCenter), 0.001);
+    float aaWidth = u_antiAliasing ? fw * 1.35 : 0.0;
+
+    if (distanceFromCenter > 0.5 + aaWidth) {
       discard;
     }
 
-    // Hardness=1: bordo nitido (fade in 1 px AA). Hardness=0: gradiente radiale dal centro.
-    float fw = max(fwidth(distanceFromCenter), 0.001);
     float effectiveHardness = clamp(u_hardness * (1.0 - effectiveWetEdges * 0.8), 0.0, 1.0);
-    float edgeStart = mix(0.0, 0.5 - fw, effectiveHardness);
-    shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
+    float edgeStart = mix(0.0, 0.5 - (u_antiAliasing ? fw : 0.0), effectiveHardness);
+    float edgeEnd = 0.5 + aaWidth;
+    shape = (!u_antiAliasing && effectiveHardness >= 0.999)
+      ? 1.0
+      : 1.0 - smoothstep(edgeStart, edgeEnd, distanceFromCenter);
   }
 
   if (shape <= 0.001) {
@@ -400,6 +425,7 @@ precision highp float;
 
 uniform float u_flow;
 uniform float u_hardness;
+uniform bool u_antiAliasing;
 uniform sampler2D u_shapeTexture;
 uniform float u_useShapeTexture;
 
@@ -418,21 +444,46 @@ float applyFlowCoverageCurve(float coverage, float flow) {
   return pow(safeCoverage, edgePower);
 }
 
+float sampleShapeTextureAlpha(vec2 uv) {
+  ivec2 shapeSize = max(textureSize(u_shapeTexture, 0), ivec2(1));
+
+  if (u_antiAliasing) {
+    vec2 footprint = max(fwidth(uv) * 0.55, vec2(0.35) / vec2(shapeSize));
+    float center = texture(u_shapeTexture, uv).a * 4.0;
+    float right = texture(u_shapeTexture, uv + vec2(footprint.x, 0.0)).a;
+    float left = texture(u_shapeTexture, uv - vec2(footprint.x, 0.0)).a;
+    float top = texture(u_shapeTexture, uv + vec2(0.0, footprint.y)).a;
+    float bottom = texture(u_shapeTexture, uv - vec2(0.0, footprint.y)).a;
+
+    return (center + right + left + top + bottom) / 8.0;
+  }
+
+  ivec2 texel = ivec2(clamp(floor(uv * vec2(shapeSize)), vec2(0.0), vec2(shapeSize - ivec2(1))));
+
+  return texelFetch(u_shapeTexture, texel, 0).a;
+}
+
 void main() {
   float shape = 1.0;
 
   if (u_useShapeTexture > 0.5) {
-    shape = texture(u_shapeTexture, v_uv).a;
+    shape = sampleShapeTextureAlpha(v_uv);
   } else {
     float distanceFromCenter = distance(v_uv, vec2(0.5));
 
-    if (distanceFromCenter > 0.5) {
+    float fw = max(fwidth(distanceFromCenter), 0.001);
+    float aaWidth = u_antiAliasing ? fw * 1.35 : 0.0;
+
+    if (distanceFromCenter > 0.5 + aaWidth) {
       discard;
     }
 
-    float fw = max(fwidth(distanceFromCenter), 0.001);
-    float edgeStart = mix(0.0, 0.5 - fw, u_hardness);
-    shape = 1.0 - smoothstep(edgeStart, 0.5, distanceFromCenter);
+    float safeHardness = clamp(u_hardness, 0.0, 1.0);
+    float edgeStart = mix(0.0, 0.5 - (u_antiAliasing ? fw : 0.0), safeHardness);
+    float edgeEnd = 0.5 + aaWidth;
+    shape = (!u_antiAliasing && safeHardness >= 0.999)
+      ? 1.0
+      : 1.0 - smoothstep(edgeStart, edgeEnd, distanceFromCenter);
   }
 
   if (shape <= 0.001) {
@@ -637,6 +688,7 @@ void main() {
           wetEdges: gl.getUniformLocation(program, "u_wetEdges"),
           burntEdges: gl.getUniformLocation(program, "u_burntEdges"),
           burntEdgesMode: gl.getUniformLocation(program, "u_burntEdgesMode"),
+          antiAliasing: gl.getUniformLocation(program, "u_antiAliasing"),
           alphaThresholdEnabled: gl.getUniformLocation(program, "u_alphaThresholdEnabled"),
           alphaThreshold: gl.getUniformLocation(program, "u_alphaThreshold"),
           shapeTexture: gl.getUniformLocation(program, "u_shapeTexture"),
@@ -1237,6 +1289,11 @@ void main() {
         .replace(/\s+/g, "-");
 
       return BURNT_EDGES_MODE_IDS[mode] ?? BURNT_EDGES_MODE_IDS["linear-burn"];
+    }
+,
+
+    isAntiAliasingEnabled() {
+      return this.brushState.antiAliasing !== false;
     }
 ,
 

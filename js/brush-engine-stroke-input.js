@@ -1625,6 +1625,7 @@
         this.roundReplayCacheNumber(settings.size ?? settings.radius, 10000),
         this.roundReplayCacheNumber(settings.spacing, 10000),
         this.roundReplayCacheNumber(settings.spacingJitter, 10000),
+        settings.antiAliasing !== false ? 1 : 0,
         this.roundReplayCacheNumber(settings.jitterLateral, 10000),
         this.roundReplayCacheNumber(settings.jitterLinear, 10000),
         this.roundReplayCacheNumber(settings.fallOff, 10000),

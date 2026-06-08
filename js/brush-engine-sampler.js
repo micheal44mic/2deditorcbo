@@ -377,7 +377,7 @@
       return (
         namespace.adaptiveStrokeSpacingEnabled !== false &&
         toolEnabled &&
-        this.brushState?.adaptiveSpacingEnabled !== false &&
+        this.brushState?.adaptiveSpacingEnabled === true &&
         this.isDrawing === true &&
         this.largeBlendFinalQualityReplay !== true &&
         this.strokeTotalLength == null
@@ -1319,7 +1319,10 @@
       const spacingJitter = this.clamp01(this.brushState.spacingJitter);
       const effectiveSizeScale = this.clamp((Number(sizeScale) || 1) * pressureSizeFactor, 0.05, 1);
       const adaptiveSpacingMultiplier = this.getActiveAdaptiveSpacingMultiplier();
-      const baseSpacing = Math.max(0.5, brushSize * effectiveSizeScale * effectiveSpacing * adaptiveSpacingMultiplier);
+      const baseSpacing = Math.max(
+        0.5,
+        brushSize * effectiveSizeScale * effectiveSpacing * adaptiveSpacingMultiplier,
+      );
       const jitterAmount = baseSpacing * spacingJitter * 0.85;
       const spacing = Math.max(0.5, baseSpacing + this.randomSigned() * jitterAmount);
 

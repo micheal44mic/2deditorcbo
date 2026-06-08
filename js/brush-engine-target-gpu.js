@@ -1218,6 +1218,7 @@
       gl.uniform1f(brushProgramInfo.uniforms.wetEdges, this.getWetEdges());
       gl.uniform1f(brushProgramInfo.uniforms.burntEdges, this.getBurntEdges());
       gl.uniform1i(brushProgramInfo.uniforms.burntEdgesMode, this.getBurntEdgesModeId());
+      gl.uniform1i(brushProgramInfo.uniforms.antiAliasing, this.isAntiAliasingEnabled() ? 1 : 0);
       gl.uniform1i(brushProgramInfo.uniforms.alphaThresholdEnabled, this.isAlphaThresholdEnabled() ? 1 : 0);
       gl.uniform1f(brushProgramInfo.uniforms.alphaThreshold, this.getAlphaThreshold());
       gl.uniform1f(brushProgramInfo.uniforms.useShapeTexture, useShapeTexture);

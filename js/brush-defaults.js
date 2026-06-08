@@ -41,6 +41,7 @@ window.CBO = window.CBO || {};
     wetEdges: 0,
     burntEdges: 0,
     burntEdgesMode: "linear-burn",
+    antiAliasing: true,
     alphaThresholdEnabled: false,
     alphaThreshold: 0.5,
     spacing: 0.18,
@@ -271,6 +272,7 @@ window.CBO = window.CBO || {};
     nextSettings.wetEdges = normalize01(nextSettings.wetEdges, settings.wetEdges);
     nextSettings.burntEdges = normalize01(nextSettings.burntEdges, settings.burntEdges);
     nextSettings.burntEdgesMode = normalizeBurntEdgesMode(nextSettings.burntEdgesMode);
+    nextSettings.antiAliasing = nextSettings.antiAliasing !== false;
     nextSettings.alphaThresholdEnabled = nextSettings.alphaThresholdEnabled === true;
     nextSettings.alphaThreshold = normalize01(nextSettings.alphaThreshold, settings.alphaThreshold);
     nextSettings.velocityPressureEnabled = nextSettings.velocityPressureEnabled === true;
