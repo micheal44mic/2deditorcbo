@@ -88,28 +88,20 @@ test("layers panel exposes clipping mask context action and row indicator", () =
   assert.match(cssSource, /\.layer-row\.clipping-mask \.layer-clipping-indicator/);
 });
 
-test("layers panel publishes clipping mask debug actions", () => {
-  const source = readRepoFile("js", "layers-panel.js");
-
-  assert.match(source, /function publishClippingMaskAction\(detail = \{\}\)/);
-  assert.match(source, /"cbo:clipping-mask-action"/);
-  assert.match(source, /reason: "not-allowed"/);
-  assert.match(source, /reason: didUpdate \? "toggle" : "update-failed"/);
-});
-
-test("clipping mask debug console is loaded with a compact copy view", () => {
+test("clipping mask debug console and hooks are absent", () => {
   const indexSource = readRepoFile("index.html");
-  const consoleSource = readRepoFile("js", "debug", "clipping-mask-console.js");
+  const layersPanelSource = readRepoFile("js", "layers-panel.js");
+  const rendererSource = readRepoFile("js", "document", "document-renderer-compositing.js");
+  const consolePath = path.join(repoRoot, "js", "debug", "clipping-mask-console.js");
 
-  assert.match(indexSource, /js\/debug\/clipping-mask-console\.js\?v=clip-mask-debug-v1/);
-  assert.match(consoleSource, /CBO CLIP DEBUG/);
-  assert.match(consoleSource, /data-clipping-mask-console-copy/);
-  assert.match(consoleSource, /const EVENT_LIMIT = 14/);
-  assert.match(consoleSource, /"Order:"/);
-  assert.match(consoleSource, /getLayerOrderSignature\(\)/);
-  assert.match(consoleSource, /"cbo:clipping-mask-action"/);
-  assert.match(consoleSource, /"cbo:clipping-mask-debug"/);
-  assert.doesNotMatch(consoleSource, /JSON\.stringify\(telemetry, null, 2\)/);
+  assert.equal(fs.existsSync(consolePath), false);
+  assert.doesNotMatch(indexSource, /js\/debug\/clipping-mask-console\.js/);
+  assert.doesNotMatch(indexSource, /clipping-mask-console/);
+  assert.doesNotMatch(layersPanelSource, /publishClippingMaskAction/);
+  assert.doesNotMatch(layersPanelSource, /cbo:clipping-mask-action/);
+  assert.doesNotMatch(rendererSource, /createClippingMaskStackDebug/);
+  assert.doesNotMatch(rendererSource, /publishClippingMaskDebug/);
+  assert.doesNotMatch(rendererSource, /cbo:clipping-mask-debug/);
 });
 
 test("document renderer composites clipping masks from the layer below", () => {
@@ -153,19 +145,6 @@ test("document renderer composites clipping masks from the layer below", () => {
   assert.match(source, /drawPuppetLayer\(layer, target, opacity, options = \{\}\)[\s\S]*this\.setClipBaseUniforms\(uniforms, clipBase,/);
   assert.match(source, /drawPuppetLayer\(this\.getArtboardDragVisualLayer\(layer\), puppetTarget, opacity, \{[\s\S]*clipBase,/);
   assert.match(source, /drawPuppetLayer\(layer, puppetTarget, opacity, \{[\s\S]*clipBase,/);
-});
-
-test("document renderer publishes clipping mask debug snapshots only on signature changes", () => {
-  const source = readDocumentRendererSources();
-
-  assert.match(source, /const CLIPPING_MASK_DEBUG_EVENT = "cbo:clipping-mask-debug"/);
-  assert.match(source, /createClippingMaskStackDebug\(orderedLayers = \[\], options = \{\}\)/);
-  assert.match(source, /publishClippingMaskDebug\(detail = \{\}\)/);
-  assert.match(source, /lastClippingMaskDebugSignature/);
-  assert.match(source, /reason\s*=\s*"base-hidden"/);
-  assert.match(source, /reason\s*=\s*"base-no-texture"/);
-  assert.match(source, /"no-current-base"/);
-  assert.match(source, /skippedClippingBaseMissing/);
 });
 
 test("document renderer treats image upload metadata as visual for clipping masks", () => {

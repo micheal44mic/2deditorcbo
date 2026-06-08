@@ -3,9 +3,6 @@
   namespace.activeStrokeBlendDebugHistory = Array.isArray(namespace.activeStrokeBlendDebugHistory)
     ? namespace.activeStrokeBlendDebugHistory
     : [];
-  const CLIPPING_MASK_DEBUG_EVENT = "cbo:clipping-mask-debug";
-  const CLIPPING_MASK_DEBUG_HISTORY_LIMIT = 18;
-
   namespace.startActiveStrokeBlendDebug = function startActiveStrokeBlendDebug(options = {}) {
     namespace.debugActiveStrokeBlend = true;
     namespace.debugActiveStrokeBlendLog = options.log !== false;
@@ -205,176 +202,6 @@
         : null;
 
       return Number.isFinite(layer?.opacity) ? Math.min(1, Math.max(0, layer.opacity)) : 1;
-    }
-,
-
-    createClippingMaskDebugTargetSummary(target) {
-      if (!target) {
-        return {
-          framebuffer: false,
-          height: 0,
-          state: "none",
-          texture: false,
-          textureTiles: 0,
-          tiles: 0,
-          width: 0,
-          x: 0,
-          y: 0,
-        };
-      }
-
-      const rect = this.getRasterTargetDocumentRect?.(target) || target;
-      const isSparse = this.isSparseRasterTarget?.(target) === true;
-      const width = Math.max(0, Math.round(Number(rect?.width || target.width || 0)));
-      const height = Math.max(0, Math.round(Number(rect?.height || target.height || 0)));
-
-      return {
-        framebuffer: Boolean(target.framebuffer),
-        height,
-        state: isSparse ? "sparse" : target.cropped ? "cropped" : "dense",
-        texture: Boolean(target.texture),
-        textureTiles: Math.max(0, Math.round(Number(target.textureTileCount || 0))),
-        tiles: isSparse ? Math.max(0, target.tiles?.size || 0) : 0,
-        width,
-        x: Math.round(Number(rect?.x || target.x || 0)),
-        y: Math.round(Number(rect?.y || target.y || 0)),
-      };
-    }
-,
-
-    createClippingMaskStackDebug(orderedLayers = [], options = {}) {
-      const rows = [];
-      const clipBaseLayerIds = options.clipBaseLayerIds || new Set();
-      const isValidClipBaseLayer = typeof options.isValidClipBaseLayer === "function"
-        ? options.isValidClipBaseLayer
-        : (layer) => Boolean(layer && layer.type !== "group" && layer.type !== "background" && layer.id !== "background");
-      const needsClipBaseTexture = typeof options.needsClipBaseTexture === "function"
-        ? options.needsClipBaseTexture
-        : () => false;
-      let pendingBase = null;
-
-      (Array.isArray(orderedLayers) ? orderedLayers : []).forEach((layer) => {
-        if (!layer) {
-          return;
-        }
-
-        if (layer.clippingMask === true) {
-          const base = pendingBase;
-          const baseTarget = base?.id ? this.rasterTargetsByLayerId?.get?.(base.id) : null;
-          const layerTarget = layer?.id ? this.rasterTargetsByLayerId?.get?.(layer.id) : null;
-          const baseTargetSummary = this.createClippingMaskDebugTargetSummary(baseTarget);
-          const layerTargetSummary = this.createClippingMaskDebugTargetSummary(layerTarget);
-          const baseValid = isValidClipBaseLayer(base);
-          const baseVisible = base?.visible !== false;
-          const baseContent = base ? this.hasLayerRenderableOrPendingRasterContent?.(base) === true : false;
-          const basePrepared = Boolean(base?.id && clipBaseLayerIds.has(base.id));
-          const baseNeedsTexture = base ? needsClipBaseTexture(base) === true : false;
-          let reason = "ready";
-          let status = "ok";
-
-          if (layer.visible === false) {
-            reason = "clip-hidden";
-            status = "off";
-          } else if (!base) {
-            reason = "no-base";
-            status = "issue";
-          } else if (!baseValid) {
-            reason = "invalid-base";
-            status = "issue";
-          } else if (!baseVisible) {
-            reason = "base-hidden";
-            status = "issue";
-          } else if (!baseContent && !baseTargetSummary.texture && !basePrepared) {
-            reason = "base-empty";
-            status = "issue";
-          } else if (!baseTargetSummary.texture && !basePrepared && baseNeedsTexture) {
-            reason = "base-no-texture";
-            status = "issue";
-          }
-
-          rows.push({
-            baseContent,
-            baseId: base?.id || "",
-            baseName: base?.name || "",
-            baseNeedsTexture,
-            basePrepared,
-            baseTarget: baseTargetSummary,
-            baseType: base?.type || "",
-            baseVisible,
-            layerId: layer.id || "",
-            layerName: layer.name || "",
-            layerPuppet: this.hasPuppetLayerTransform?.(layer) === true,
-            layerTarget: layerTargetSummary,
-            layerVisible: layer.visible !== false,
-            reason,
-            status,
-          });
-          return;
-        }
-
-        pendingBase = isValidClipBaseLayer(layer) ? layer : null;
-      });
-
-      return rows;
-    }
-,
-
-    publishClippingMaskDebug(detail = {}) {
-      const payload = {
-        at: new Date().toISOString(),
-        ...detail,
-      };
-      const signature = JSON.stringify({
-        activeStrokeLayerId: payload.activeStrokeLayerId || "",
-        activeStrokeMode: payload.activeStrokeMode || "",
-        materialized: (payload.materialized || []).map((item) => [
-          item.layerId,
-          item.target?.state,
-          item.target?.texture,
-          item.target?.textureTiles,
-          item.target?.tiles,
-        ]),
-        rows: (payload.rows || []).map((row) => [
-          row.layerId,
-          row.baseId,
-          row.status,
-          row.reason,
-          row.basePrepared,
-          row.baseTarget?.state,
-          row.baseTarget?.texture,
-          row.baseTarget?.textureTiles,
-          row.baseTarget?.tiles,
-        ]),
-        skips: (payload.skips || []).map((item) => [
-          item.layerId,
-          item.baseId,
-          item.reason,
-          item.baseTarget?.state,
-          item.baseTarget?.texture,
-          item.baseTarget?.textureTiles,
-          item.baseTarget?.tiles,
-        ]),
-      });
-
-      if (signature === this.lastClippingMaskDebugSignature) {
-        return false;
-      }
-
-      this.lastClippingMaskDebugSignature = signature;
-      namespace.clippingMaskDebugHistory = Array.isArray(namespace.clippingMaskDebugHistory)
-        ? namespace.clippingMaskDebugHistory
-        : [];
-      namespace.clippingMaskDebugHistory.push(payload);
-      if (namespace.clippingMaskDebugHistory.length > CLIPPING_MASK_DEBUG_HISTORY_LIMIT) {
-        namespace.clippingMaskDebugHistory.splice(
-          0,
-          namespace.clippingMaskDebugHistory.length - CLIPPING_MASK_DEBUG_HISTORY_LIMIT,
-        );
-      }
-      namespace.lastClippingMaskDebug = payload;
-
-      window.dispatchEvent(new CustomEvent(CLIPPING_MASK_DEBUG_EVENT, { detail: payload }));
-      return true;
     }
 ,
 
@@ -1594,20 +1421,6 @@
         : activeStrokeClipRect
           ? [activeStrokeClipRect]
           : [];
-      const clippingMaskDebugFrame = hasClippingMasks
-        ? {
-            activeStrokeLayerId: activeStrokeLayerId || "",
-            activeStrokeMode,
-            activeStrokeTexture: Boolean(options.activeStrokeTexture),
-            frameId: 0,
-            materialized: [],
-            rows: [],
-            skippedClippingBaseMissing: 0,
-            skips: [],
-            type: "render",
-          }
-        : null;
-
       if (!activeStrokeNeedsScratchMerge && this.activeStrokeScratchTarget) {
         this.deleteActiveStrokeScratchTarget();
       }
@@ -2514,11 +2327,6 @@
               if (baseTarget !== previousLayerTarget || baseTarget !== rawLayerTarget) {
                 shouldRebindArtboardAfterTargetResolve = true;
               }
-              clippingMaskDebugFrame?.materialized.push({
-                layerId: layer.id || "",
-                layerName: layer.name || "",
-                target: this.createClippingMaskDebugTargetSummary(baseTarget),
-              });
             }
 
             currentClipBase = isValidClipBaseLayer(layer)
@@ -2547,18 +2355,6 @@
           }
 
           if (isClippingLayer && (!clipBase?.visible || !this.hasClipBaseSamplingTexture(clipBase))) {
-            clippingMaskDebugFrame?.skips.push({
-              baseId: clipBase?.layer?.id || "",
-              baseName: clipBase?.layer?.name || "",
-              baseTarget: this.createClippingMaskDebugTargetSummary(clipBase?.target),
-              layerId: layer.id || "",
-              layerName: layer.name || "",
-              reason: !clipBase
-                ? "no-current-base"
-                : clipBase.visible === false
-                  ? "base-hidden"
-                  : "base-no-texture",
-            });
             viewportCullingStats.layers.skippedClippingBaseMissing += 1;
             continue;
           }
@@ -2633,11 +2429,6 @@
                 if (!isClippingLayer && isClipBaseLayer) {
                   currentClipBase = this.createClipBaseForLayer(layer, mergedTarget, layer.visible !== false, {
                     transformPreview: transformPreviewForClipBase,
-                  });
-                  clippingMaskDebugFrame?.materialized.push({
-                    layerId: layer.id || "",
-                    layerName: layer.name || "",
-                    target: this.createClippingMaskDebugTargetSummary(mergedTarget),
                   });
                 }
                 bindArtboardProgram();
@@ -2797,11 +2588,6 @@
                   currentClipBase = this.createClipBaseForLayer(layer, mergedTarget, layer.visible !== false, {
                     transformPreview: transformPreviewForClipBase,
                   });
-                  clippingMaskDebugFrame?.materialized.push({
-                    layerId: layer.id || "",
-                    layerName: layer.name || "",
-                    target: this.createClippingMaskDebugTargetSummary(mergedTarget),
-                  });
                 }
 
                 if (isRasterTransformPreviewLayer) {
@@ -2951,18 +2737,6 @@
         gl.uniform1f(uniforms.gridMode, 1.0);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         gl.uniform1f(uniforms.gridMode, 0.0);
-      }
-
-      if (clippingMaskDebugFrame) {
-        clippingMaskDebugFrame.frameId = viewportCullingStats.frameId || 0;
-        clippingMaskDebugFrame.rows = this.createClippingMaskStackDebug(orderedLayers, {
-          clipBaseLayerIds,
-          isValidClipBaseLayer,
-          needsClipBaseTexture,
-        });
-        clippingMaskDebugFrame.skippedClippingBaseMissing =
-          viewportCullingStats.layers.skippedClippingBaseMissing || 0;
-        this.publishClippingMaskDebug(clippingMaskDebugFrame);
       }
 
       if (activeStrokeBlendDebug) {
