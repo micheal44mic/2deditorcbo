@@ -1803,6 +1803,8 @@
 
         if (texture === this.previewTexture) {
           this.setRasterTextureSampling(texture, this.getPreviewCacheTextureMinFilter(), gl.LINEAR);
+        } else if (texture && texture === this.interactiveHqProxyTexture) {
+          this.setRasterTextureSampling(texture, gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR);
         } else {
           this.setRasterTextureSampling(texture, gl.LINEAR, viewportTextureMagFilter);
         }
@@ -2100,7 +2102,23 @@
           )
         : false;
       const usePreviewCache = canUsePreviewCache && didUpdatePreviewCache && this.previewCacheReady;
-      const canvasNeedsLayerComposite = !usePreviewCache && orderedLayers.some((layer) =>
+      const useInteractiveHqProxy = Boolean(
+        !usePreviewCache &&
+        options.__interactiveHqPass !== true &&
+        allowPreviewCache &&
+        canUsePreviewCacheAtCurrentZoom &&
+        (
+          options.activeStrokeTexture ||
+          rasterTransformPreview ||
+          hasArtboardDragPreview ||
+          vectorTextTransformPreviewLayerId ||
+          deferPreviewCacheUpdate
+        ) &&
+        this.isInteractiveHighQualityViewActive?.(previewCacheOptions) === true
+      );
+      const didDrawInteractiveHqProxy = useInteractiveHqProxy &&
+        this.renderInteractiveHqProxyFrame(options, previewCacheDimensions) === true;
+      const canvasNeedsLayerComposite = !usePreviewCache && !didDrawInteractiveHqProxy && orderedLayers.some((layer) =>
         layer?.visible !== false &&
         !(activeStrokeDefersLayerBlend && layer?.id === activeStrokeLayerId) &&
         this.hasAdvancedLayerBlendMode(layer)
@@ -2141,6 +2159,7 @@
             previewCache: {
               canUsePreviewCache,
               dirty: this.previewCacheDirty === true,
+              interactiveHqProxy: didDrawInteractiveHqProxy,
               ready: this.previewCacheReady === true,
               usePreviewCache,
             },
@@ -2206,6 +2225,16 @@
           });
           didDrawActiveStroke = true;
           markActiveStrokeDraw("preview-cache-overlay");
+        }
+      } else if (didDrawInteractiveHqProxy) {
+        // Frame interattivo gia' ricomposto nel proxy mipmappato: lo si disegna
+        // come la preview cache, cosi' il downsample resta pulito anche durante
+        // tratti, gomma e trasformazioni.
+        drawTexture(this.interactiveHqProxyTexture, 1, this.getInteractiveHqProxyExactDocumentRect());
+
+        if (options.activeStrokeTexture) {
+          didDrawActiveStroke = true;
+          markActiveStrokeDraw("interactive-hq-proxy");
         }
       } else {
         if (canvasNeedsLayerComposite) {

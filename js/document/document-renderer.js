@@ -580,6 +580,13 @@
       this.previewCacheReady = false;
       this.previewCacheReason = "init";
       this.previewCacheUpdateDeferFramePending = false;
+      this.interactiveHqProxyTexture = null;
+      this.interactiveHqProxyFramebuffer = null;
+      this.interactiveHqProxyWidth = 0;
+      this.interactiveHqProxyHeight = 0;
+      this.interactiveHqProxyMipLevels = 0;
+      this.interactiveHqProxyDocumentRect = null;
+      this.interactiveHqProxyScale = 1;
       this.viewportCullingStatsSequence = 0;
       this.viewportCullingLastStats = null;
       this.artboardResidencyWarmUntilById = new Map();
@@ -1623,6 +1630,7 @@
       this.deleteLayerCompositeResources();
       this.deletePreviewCache();
       this.deletePreviewHqMipmapResources?.();
+      this.deleteInteractiveHqProxyTarget?.();
       this.deleteAllArtboardFlatPreviews("dispose");
 
       if (this.quad) {

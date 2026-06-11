@@ -2710,6 +2710,7 @@
 
       this.clearPreviewCacheInteractionDefer?.();
       this.deletePreviewHqMipmapResources?.();
+      this.deleteInteractiveHqProxyTarget?.();
 
       if (this.previewFramebuffer) {
         this.deleteRasterFramebuffer(this.previewFramebuffer);
@@ -2877,6 +2878,241 @@
       gl.useProgram(null);
 
       return true;
+    }
+,
+
+    isInteractiveHighQualityViewActive(options = {}) {
+      if (namespace.interactiveHighQualityViewEnabled === false) {
+        return false;
+      }
+
+      if (isAndroidPreviewCacheDisabled(options)) {
+        return false;
+      }
+
+      return namespace.interactiveHighQualityViewEnabled === true || isHighQualityViewEnabled();
+    }
+,
+
+    deleteInteractiveHqProxyTarget() {
+      const gl = this.gl;
+
+      if (this.interactiveHqProxyFramebuffer) {
+        this.deleteRasterFramebuffer(this.interactiveHqProxyFramebuffer);
+        gl.deleteFramebuffer(this.interactiveHqProxyFramebuffer);
+        this.interactiveHqProxyFramebuffer = null;
+      }
+
+      if (this.interactiveHqProxyTexture) {
+        this.deleteRasterTexture(this.interactiveHqProxyTexture);
+        gl.deleteTexture(this.interactiveHqProxyTexture);
+        this.interactiveHqProxyTexture = null;
+      }
+
+      this.interactiveHqProxyWidth = 0;
+      this.interactiveHqProxyHeight = 0;
+      this.interactiveHqProxyMipLevels = 0;
+      this.interactiveHqProxyDocumentRect = null;
+      this.interactiveHqProxyScale = 1;
+    }
+,
+
+    ensureInteractiveHqProxyTarget(width, height, documentRect = null) {
+      const gl = this.gl;
+      const safeWidth = Math.max(1, Math.round(Number(width) || 1));
+      const safeHeight = Math.max(1, Math.round(Number(height) || 1));
+
+      if (
+        this.interactiveHqProxyTexture &&
+        this.interactiveHqProxyFramebuffer &&
+        this.interactiveHqProxyWidth === safeWidth &&
+        this.interactiveHqProxyHeight === safeHeight
+      ) {
+        return true;
+      }
+
+      this.deleteInteractiveHqProxyTarget();
+
+      const texture = gl.createTexture();
+      const framebuffer = gl.createFramebuffer();
+
+      if (!texture || !framebuffer) {
+        if (texture) {
+          gl.deleteTexture(texture);
+        }
+
+        if (framebuffer) {
+          gl.deleteFramebuffer(framebuffer);
+        }
+
+        return false;
+      }
+
+      const levels = Math.max(1, Math.floor(Math.log2(Math.max(safeWidth, safeHeight))) + 1);
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+
+      if (typeof gl.texStorage2D === "function" && gl.RGBA8) {
+        gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, safeWidth, safeHeight);
+      } else {
+        for (let level = 0; level < levels; level++) {
+          const levelWidth = Math.max(1, safeWidth >> level);
+          const levelHeight = Math.max(1, safeHeight >> level);
+
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            level,
+            gl.RGBA,
+            levelWidth,
+            levelHeight,
+            0,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            null,
+          );
+        }
+      }
+
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      if (Number.isFinite(gl.TEXTURE_BASE_LEVEL) && Number.isFinite(gl.TEXTURE_MAX_LEVEL)) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, 0);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, levels - 1);
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.deleteFramebuffer(framebuffer);
+        gl.deleteTexture(texture);
+        console.warn("Interactive HQ proxy FBO incompleto: uso il rendering live come fallback.");
+        return false;
+      }
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      const textureRow = this.registerRasterTexture(texture, {
+        bbox: documentRect ? { ...documentRect } : null,
+        height: safeHeight,
+        kind: "interactiveHqProxy",
+        label: "interactive hq proxy",
+        mipLevels: levels,
+        ownerId: "interactive-hq-proxy",
+        ownerType: "cache",
+        purgeable: true,
+        reason: "create-interactive-hq-proxy",
+        width: safeWidth,
+      });
+
+      this.registerRasterFramebuffer(framebuffer, {
+        bbox: documentRect ? { ...documentRect } : null,
+        height: safeHeight,
+        kind: "interactiveHqProxyFramebuffer",
+        label: "interactive hq proxy framebuffer",
+        linkedTextureId: textureRow?.id || "",
+        ownerId: "interactive-hq-proxy",
+        ownerType: "cache",
+        purgeable: true,
+        reason: "create-interactive-hq-proxy",
+        width: safeWidth,
+      });
+
+      this.interactiveHqProxyTexture = texture;
+      this.interactiveHqProxyFramebuffer = framebuffer;
+      this.interactiveHqProxyWidth = safeWidth;
+      this.interactiveHqProxyHeight = safeHeight;
+      this.interactiveHqProxyMipLevels = levels;
+
+      return true;
+    }
+,
+
+    getInteractiveHqProxyExactDocumentRect() {
+      const documentRect = this.interactiveHqProxyDocumentRect;
+
+      if (!documentRect) {
+        return null;
+      }
+
+      const scale = Math.max(0.0001, Number(this.interactiveHqProxyScale) || 1);
+
+      return {
+        height: Math.max(1, this.interactiveHqProxyHeight / scale),
+        width: Math.max(1, this.interactiveHqProxyWidth / scale),
+        x: documentRect.x,
+        y: documentRect.y,
+      };
+    }
+,
+
+    renderInteractiveHqProxyFrame(options = {}, dimensions = null) {
+      const resolvedDimensions = dimensions || this.getPreviewCacheDimensions(options);
+
+      if (
+        !resolvedDimensions ||
+        !resolvedDimensions.documentRect ||
+        resolvedDimensions.width <= 0 ||
+        resolvedDimensions.height <= 0
+      ) {
+        return false;
+      }
+
+      const documentRect = resolvedDimensions.documentRect;
+      const scale = Math.max(0.0001, Number(resolvedDimensions.scale) || 1);
+
+      if (!this.ensureInteractiveHqProxyTarget(resolvedDimensions.width, resolvedDimensions.height, documentRect)) {
+        return false;
+      }
+
+      this.interactiveHqProxyDocumentRect = { ...documentRect };
+      this.interactiveHqProxyScale = scale;
+
+      const trace = namespace.PerfTrace?.enabled ? namespace.PerfTrace.begin("canvas.interactiveHqProxy", {
+        height: this.interactiveHqProxyHeight,
+        width: this.interactiveHqProxyWidth,
+      }) : null;
+
+      try {
+        // Ricompone il frame interattivo alla risoluzione della preview cache,
+        // riusando il percorso live (tratto attivo, gomma, trasformazioni incluse).
+        this.drawToCanvas({
+          ...options,
+          __interactiveHqPass: true,
+          allowPreviewCache: false,
+          camera: {
+            x: -documentRect.x * scale,
+            y: -documentRect.y * scale,
+            zoom: scale,
+          },
+          clearColor: null,
+          deferPreviewCacheUpdate: true,
+          dpr: 1,
+          framebuffer: this.interactiveHqProxyFramebuffer,
+          transparentBackground: true,
+          viewportHeight: this.interactiveHqProxyHeight,
+          viewportWidth: this.interactiveHqProxyWidth,
+        });
+
+        const gl = this.gl;
+
+        gl.bindTexture(gl.TEXTURE_2D, this.interactiveHqProxyTexture);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+
+        return true;
+      } finally {
+        trace?.end({
+          documentHeight: documentRect.height,
+          documentWidth: documentRect.width,
+        });
+      }
     }
 ,
 
